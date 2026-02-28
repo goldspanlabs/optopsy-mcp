@@ -1,0 +1,28 @@
+[package]
+name = "optopsy-polars"
+version = "0.1.0"
+edition = "2021"
+description = "Options backtesting engine exposed as an MCP server"
+
+[features]
+default = []
+postgres = ["sqlx"]
+
+[dependencies]
+rmcp = { version = "0.17", features = ["server", "transport-io", "macros"] }
+polars = { version = "0.53", features = ["lazy", "parquet", "dtype-date", "dtype-datetime", "dtype-struct", "round_series", "is_in", "cum_agg", "rolling_window", "abs", "cross_join"] }
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+schemars = "1"
+tokio = { version = "1", features = ["full"] }
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rust_ti = "2.2"
+blackscholes = "0.24"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono"], optional = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
