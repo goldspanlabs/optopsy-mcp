@@ -1,4 +1,5 @@
 use chrono::{NaiveDate, NaiveDateTime};
+use garde::Validate;
 use ordered_float::OrderedFloat;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -32,17 +33,23 @@ pub enum ExpirationCycle {
     Secondary, // Far-term (calendar/diagonal only)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct TargetRange {
+    #[garde(range(min = -1.0, max = 1.0))]
     pub target: f64,
+    #[garde(range(min = -1.0, max = 1.0))]
     pub min: f64,
+    #[garde(range(min = -1.0, max = 1.0))]
     pub max: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct Commission {
+    #[garde(range(min = 0.0))]
     pub per_contract: f64,
+    #[garde(range(min = 0.0))]
     pub base_fee: f64,
+    #[garde(range(min = 0.0))]
     pub min_fee: f64,
 }
 
@@ -63,7 +70,7 @@ impl Commission {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 #[serde(tag = "type")]
 #[derive(Default)]
 pub enum Slippage {
@@ -71,10 +78,13 @@ pub enum Slippage {
     Mid,
     Spread,
     Liquidity {
+        #[garde(range(min = 0.0, max = 1.0))]
         fill_ratio: f64,
+        #[garde(skip)]
         ref_volume: u64,
     },
     PerLeg {
+        #[garde(range(min = 0.0))]
         per_leg: f64,
     },
 }
@@ -128,39 +138,62 @@ impl StrategyDef {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct EvaluateParams {
+    #[garde(skip)]
     pub strategy: String,
+    #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
+    #[garde(range(min = 1))]
     pub max_entry_dte: i32,
+    #[garde(range(min = 0))]
     pub exit_dte: i32,
+    #[garde(range(min = 1))]
     pub dte_interval: i32,
+    #[garde(range(min = 0.001, max = 1.0))]
     pub delta_interval: f64,
+    #[garde(dive)]
     pub slippage: Slippage,
     #[serde(default)]
+    #[garde(dive)]
     pub commission: Option<Commission>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct BacktestParams {
+    #[garde(skip)]
     pub strategy: String,
+    #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
+    #[garde(range(min = 1))]
     pub max_entry_dte: i32,
+    #[garde(range(min = 0))]
     pub exit_dte: i32,
+    #[garde(dive)]
     pub slippage: Slippage,
     #[serde(default)]
+    #[garde(dive)]
     pub commission: Option<Commission>,
+    #[garde(inner(range(min = 0.0, max = 1.0)))]
     pub stop_loss: Option<f64>,
+    #[garde(inner(range(min = 0.0)))]
     pub take_profit: Option<f64>,
+    #[garde(inner(range(min = 1)))]
     pub max_hold_days: Option<i32>,
+    #[garde(range(min = 0.01))]
     pub capital: f64,
+    #[garde(range(min = 1))]
     pub quantity: i32,
     #[serde(default = "default_multiplier")]
+    #[garde(range(min = 1))]
     pub multiplier: i32,
+    #[garde(range(min = 1))]
     pub max_positions: i32,
     #[serde(default)]
+    #[garde(skip)]
     pub selector: TradeSelector,
     #[serde(default)]
+    #[garde(skip)]
     pub adjustment_rules: Vec<AdjustmentRule>,
 }
 
@@ -168,34 +201,50 @@ fn default_multiplier() -> i32 {
     100
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct CompareParams {
+    #[garde(length(min = 2), dive)]
     pub strategies: Vec<CompareEntry>,
+    #[garde(dive)]
     pub sim_params: SimParams,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct CompareEntry {
+    #[garde(skip)]
     pub name: String,
+    #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
+    #[garde(range(min = 1))]
     pub max_entry_dte: i32,
+    #[garde(range(min = 0))]
     pub exit_dte: i32,
+    #[garde(dive)]
     pub slippage: Slippage,
     #[serde(default)]
+    #[garde(dive)]
     pub commission: Option<Commission>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct SimParams {
+    #[garde(range(min = 0.01))]
     pub capital: f64,
+    #[garde(range(min = 1))]
     pub quantity: i32,
     #[serde(default = "default_multiplier")]
+    #[garde(range(min = 1))]
     pub multiplier: i32,
+    #[garde(range(min = 1))]
     pub max_positions: i32,
     #[serde(default)]
+    #[garde(skip)]
     pub selector: TradeSelector,
+    #[garde(inner(range(min = 0.0, max = 1.0)))]
     pub stop_loss: Option<f64>,
+    #[garde(inner(range(min = 0.0)))]
     pub take_profit: Option<f64>,
+    #[garde(inner(range(min = 1)))]
     pub max_hold_days: Option<i32>,
 }
 
