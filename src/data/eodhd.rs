@@ -192,33 +192,36 @@ impl EodhdProvider {
             .join(format!("{safe}.parquet"))
     }
 
+    /// Read cached parquet for a symbol, offloading blocking I/O from the
+    /// async executor via `block_in_place`.
     fn read_cache(&self, symbol: &str) -> Option<DataFrame> {
         let path = self.cache_path(symbol);
-        if !path.exists() {
-            return None;
-        }
-        let path_str = path.to_string_lossy().to_string();
-        LazyFrame::scan_parquet(path_str.as_str().into(), ScanArgsParquet::default())
-            .ok()?
-            .collect()
-            .ok()
+        tokio::task::block_in_place(|| {
+            if !path.exists() {
+                return None;
+            }
+            let path_str = path.to_string_lossy().to_string();
+            LazyFrame::scan_parquet(path_str.as_str().into(), ScanArgsParquet::default())
+                .ok()?
+                .collect()
+                .ok()
+        })
     }
 
-    fn save_parquet(&self, symbol: &str, df: &mut DataFrame) -> Result<()> {
-        let path = self.cache_path(symbol);
+    fn save_parquet_sync(path: &std::path::Path, df: &mut DataFrame) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("Failed to create cache dir: {}", parent.display()))?;
         }
         // Write to a temp file then atomically rename to avoid corruption
-        // from concurrent writes or interrupted I/O.
+        // from interrupted I/O.
         let tmp_path = path.with_extension("parquet.tmp");
         let file = std::fs::File::create(&tmp_path)
             .with_context(|| format!("Failed to create temp file: {}", tmp_path.display()))?;
         ParquetWriter::new(file)
             .finish(df)
             .context("Failed to write parquet")?;
-        std::fs::rename(&tmp_path, &path).with_context(|| {
+        std::fs::rename(&tmp_path, path).with_context(|| {
             format!(
                 "Failed to rename {} → {}",
                 tmp_path.display(),
@@ -228,44 +231,49 @@ impl EodhdProvider {
         Ok(())
     }
 
-    /// Merge new rows into the existing cache and save.
+    /// Merge new rows into the existing cache and save, offloading blocking
+    /// I/O from the async executor via `block_in_place`.
     fn merge_and_save(&self, symbol: &str, new_df: DataFrame) -> Result<()> {
-        let merged = if let Some(existing) = self.read_cache(symbol) {
-            concat(
-                [existing.lazy(), new_df.lazy()],
-                UnionArgs {
-                    rechunk: true,
-                    to_supertypes: true,
-                    diagonal: true,
-                    ..Default::default()
-                },
-            )?
-            .collect()?
-        } else {
-            new_df
-        };
+        let path = self.cache_path(symbol);
+        let cached = self.read_cache(symbol);
+        tokio::task::block_in_place(move || {
+            let merged = if let Some(existing) = cached {
+                concat(
+                    [existing.lazy(), new_df.lazy()],
+                    UnionArgs {
+                        rechunk: true,
+                        to_supertypes: true,
+                        diagonal: true,
+                        ..Default::default()
+                    },
+                )?
+                .collect()?
+            } else {
+                new_df
+            };
 
-        // Deduplicate
-        let available: Vec<String> = DEDUP_COLS
-            .iter()
-            .filter(|c| merged.schema().contains(c))
-            .map(|c| (*c).to_string())
-            .collect();
-        let mut deduped = if available.is_empty() {
-            merged
-        } else {
-            merged.unique::<String, String>(Some(&available), UniqueKeepStrategy::Last, None)?
-        };
+            // Deduplicate
+            let available: Vec<String> = DEDUP_COLS
+                .iter()
+                .filter(|c| merged.schema().contains(c))
+                .map(|c| (*c).to_string())
+                .collect();
+            let mut deduped = if available.is_empty() {
+                merged
+            } else {
+                merged.unique::<String, String>(Some(&available), UniqueKeepStrategy::Last, None)?
+            };
 
-        // Sort by quote_date for efficient reads later
-        if deduped.schema().contains("quote_date") {
-            deduped = deduped
-                .lazy()
-                .sort(["quote_date"], SortMultipleOptions::default())
-                .collect()?;
-        }
+            // Sort by quote_date for efficient reads later
+            if deduped.schema().contains("quote_date") {
+                deduped = deduped
+                    .lazy()
+                    .sort(["quote_date"], SortMultipleOptions::default())
+                    .collect()?;
+            }
 
-        self.save_parquet(symbol, &mut deduped)
+            Self::save_parquet_sync(&path, &mut deduped)
+        })
     }
 
     // -- HTTP ---------------------------------------------------------------
