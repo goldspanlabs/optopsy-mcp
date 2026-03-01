@@ -233,14 +233,14 @@ use rmcp::handler::server::wrapper::Parameters;
 impl OptopsyServer {
     /// Bulk download options data from EODHD API (~2 years historical coverage).
     ///
-    /// **Workflow Phase**: 0 (optional, before load_data)
+    /// **Workflow Phase**: 0 (optional, before `load_data`)
     /// **When to use**: Proactively download data before analysis, or to refresh cache
-    /// **Prerequisites**: EODHD_API_KEY environment variable must be set
-    /// **Next tool**: load_data (will use cached data automatically)
+    /// **Prerequisites**: `EODHD_API_KEY` environment variable must be set
+    /// **Next tool**: `load_data` (will use cached data automatically)
     ///
     /// Downloads calls + puts across weekly/monthly expirations and caches locally.
     /// Resumable — re-run to extend cache with only new data.
-    /// For single ad-hoc loads, just call load_data directly (auto-fetches if needed).
+    /// For single ad-hoc loads, just call `load_data` directly (auto-fetches if needed).
     #[tool(name = "download_options_data")]
     async fn download_options_data(
         &self,
@@ -262,15 +262,15 @@ impl OptopsyServer {
     /// **Prerequisites**: None
     /// **Data sources** (in priority order):
     ///   1. Local Parquet cache (~/.optopsy/cache/options/{SYMBOL}.parquet)
-    ///   2. EODHD API (if EODHD_API_KEY set) — auto-downloads & caches
+    ///   2. EODHD API (if `EODHD_API_KEY` set) — auto-downloads & caches
     ///   3. S3-compatible storage (if S3 credentials configured)
     /// **Next tools**:
-    ///   - list_strategies() or list_signals() (explore available options)
-    ///   - suggest_parameters() (get data-driven parameter recommendations)
-    ///   - evaluate_strategy() (fast statistical screening)
+    ///   - `list_strategies()` or `list_signals()` (explore available options)
+    ///   - `suggest_parameters()` (get data-driven parameter recommendations)
+    ///   - `evaluate_strategy()` (fast statistical screening)
     ///
-    /// Automatically handles date column normalization (quote_date/data_date/quote_datetime).
-    /// Optional date filtering via start_date/end_date.
+    /// Automatically handles date column normalization (`quote_date`/`data_date`/`quote_datetime`).
+    /// Optional date filtering via `start_date`/`end_date`.
     #[tool(name = "load_data")]
     async fn load_data(
         &self,
@@ -296,10 +296,10 @@ impl OptopsyServer {
     /// Browse all 32 built-in options strategies grouped by category.
     ///
     /// **Workflow Phase**: 2a/7 (exploration)
-    /// **When to use**: After load_data, to choose a strategy for analysis
+    /// **When to use**: After `load_data`, to choose a strategy for analysis
     /// **Prerequisites**: None (informational, no data required)
     /// **Categories**: singles, spreads, straddles, strangles, butterflies, condors, iron, calendars, diagonals
-    /// **Next tools**: suggest_parameters() or evaluate_strategy() (once you pick a strategy)
+    /// **Next tools**: `suggest_parameters()` or `evaluate_strategy()` (once you pick a strategy)
     #[tool(name = "list_strategies")]
     async fn list_strategies(&self) -> Json<StrategiesResponse> {
         Json(tools::strategies::execute())
@@ -308,11 +308,11 @@ impl OptopsyServer {
     /// Browse all 40+ available technical analysis (TA) signals for entry/exit filtering.
     ///
     /// **Workflow Phase**: 2b/7 (exploration)
-    /// **When to use**: After list_strategies, to understand available signal options for filtering
+    /// **When to use**: After `list_strategies`, to understand available signal options for filtering
     /// **Prerequisites**: None (informational, no data required)
     /// **Categories**: momentum (RSI, MACD, Stoch), trend (SMA, EMA, ADX),
-    ///   volatility (BBands, ATR), overlap, price, volume
-    /// **Next tool**: construct_signal() (if you want to use signals in backtest)
+    ///   volatility (`BBands`, ATR), overlap, price, volume
+    /// **Next tool**: `construct_signal()` (if you want to use signals in backtest)
     /// **Note**: Signals are optional — only needed if you want signal-filtered entry/exit
     #[tool(name = "list_signals")]
     async fn list_signals(&self) -> Json<SignalsResponse> {
@@ -323,15 +323,15 @@ impl OptopsyServer {
     ///
     /// **Workflow Phase**: 2c/7 (signal design, optional)
     /// **When to use**: If you want to filter backtests by TA signals (e.g., "RSI oversold")
-    /// **Prerequisites**: fetch_to_parquet() must have been called first (to load OHLCV data)
+    /// **Prerequisites**: `fetch_to_parquet()` must have been called first (to load OHLCV data)
     /// **How it works**:
     ///   - Fuzzy-searches signal catalog for matches
     ///   - Returns candidate signals with sensible defaults
     ///   - Generates live JSON schema for all signal variants
-    /// **Next tool**: run_backtest() with entry_signal/exit_signal parameters set to
+    /// **Next tool**: `run_backtest()` with `entry_signal`/`exit_signal` parameters set to
     ///   the JSON spec from this tool's response
     /// **Example usage**: "RSI oversold" → returns RSI signal spec with threshold=30
-    /// **Note**: Signals are optional; run_backtest works without them
+    /// **Note**: Signals are optional; `run_backtest` works without them
     #[tool(name = "construct_signal")]
     async fn construct_signal(
         &self,
@@ -346,17 +346,17 @@ impl OptopsyServer {
     /// Fast statistical screening without capital simulation.
     ///
     /// **Workflow Phase**: 4/7 (statistical validation)
-    /// **When to use**: Before run_backtest, to validate strategy parameters and identify
+    /// **When to use**: Before `run_backtest`, to validate strategy parameters and identify
     ///   promising DTE/delta ranges from historical data
-    /// **Prerequisites**: load_data() must have been called first
+    /// **Prerequisites**: `load_data()` must have been called first
     /// **Why use this**: Avoid wasting time on backtest simulations with poor parameter choices;
     ///   groups historical P&L by DTE × delta buckets to find winners
-    /// **Next tool**: run_backtest() with parameters refined from results
+    /// **Next tool**: `run_backtest()` with parameters refined from results
     ///
     /// Returns: Best/worst buckets, win rates, profit factors, and full DTE×delta grid stats
     /// **Time to run**: Fast (seconds)
     /// **Output includes**:
-    ///   - Best performer bucket (highest PnL)
+    ///   - Best performer bucket (highest `PnL`)
     ///   - Worst bucket (warning sign)
     ///   - Highest win-rate bucket (consistency indicator)
     ///   - Full bucket grid with mean, std, quartiles, count
@@ -395,23 +395,23 @@ impl OptopsyServer {
     /// Full event-driven day-by-day simulation with position management and metrics.
     ///
     /// **Workflow Phase**: 5/7 (full validation)
-    /// **When to use**: After evaluate_strategy() to validate strategy performance in capital-constrained scenario
+    /// **When to use**: After `evaluate_strategy()` to validate strategy performance in capital-constrained scenario
     /// **Prerequisites**:
-    ///   - load_data() must have been called
-    ///   - evaluate_strategy() recommended (not required, but avoids bad parameter choices)
-    ///   - fetch_to_parquet() required ONLY if using entry_signal or exit_signal
-    /// **⚠️  Warning**: Slow! Run evaluate_strategy() first to validate parameters
-    /// **Next tools**: compare_strategies() (to test variations) or iterate on parameters
+    ///   - `load_data()` must have been called
+    ///   - `evaluate_strategy()` recommended (not required, but avoids bad parameter choices)
+    ///   - `fetch_to_parquet()` required ONLY if using `entry_signal` or `exit_signal`
+    /// **⚠️  Warning**: Slow! Run `evaluate_strategy()` first to validate parameters
+    /// **Next tools**: `compare_strategies()` (to test variations) or iterate on parameters
     ///
     /// **What it simulates**:
-    ///   - Day-by-day position opens (respecting max_positions constraint)
+    ///   - Day-by-day position opens (respecting `max_positions` constraint)
     ///   - Position management (stop loss, take profit, max hold days, DTE exit)
-    ///   - Optional signal-based filtering (if entry_signal/exit_signal provided)
+    ///   - Optional signal-based filtering (if `entry_signal`/`exit_signal` provided)
     ///   - Realistic P&L with bid/ask slippage and commissions
     /// **Output**:
     ///   - Trade log (every open/close with P&L and exit reason)
     ///   - Equity curve (daily capital evolution)
-    ///   - Performance metrics (Sharpe, Sortino, Calmar, VaR, max drawdown, win rate, etc.)
+    ///   - Performance metrics (Sharpe, Sortino, Calmar, `VaR`, max drawdown, win rate, etc.)
     ///   - AI-enriched assessment and suggested next steps
     /// **Time to run**: 5-30 seconds depending on data size
     #[tool(name = "run_backtest")]
@@ -475,9 +475,9 @@ impl OptopsyServer {
     /// Run multiple strategies in parallel and rank by performance metrics.
     ///
     /// **Workflow Phase**: 6/7 (comparison & optimization)
-    /// **When to use**: After validating one strategy via run_backtest(), to test
+    /// **When to use**: After validating one strategy via `run_backtest()`, to test
     ///   parameter variations and find the best-performing approach
-    /// **Prerequisites**: load_data() must have been called
+    /// **Prerequisites**: `load_data()` must have been called
     /// **Why use this**: Compare different delta targets, DTE parameters, or strategies
     ///   side-by-side in a single call (faster than running multiple backtests)
     /// **Next tools**: pick best performer and iterate further, or conclude analysis
@@ -486,7 +486,7 @@ impl OptopsyServer {
     ///   - Compare DTE/delta variations of same strategy
     ///   - Compare different strategies with same parameters
     ///   - Compare hybrid parameter sets
-    /// **Rankings**: By Sharpe ratio (primary) and total PnL (secondary)
+    /// **Rankings**: By Sharpe ratio (primary) and total `PnL` (secondary)
     /// **Output**: Metrics for each strategy + recommended best performer
     #[tool(name = "compare_strategies")]
     async fn compare_strategies(
@@ -516,17 +516,17 @@ impl OptopsyServer {
 
     /// Check if cached Parquet data exists and when it was last updated.
     ///
-    /// **Workflow Phase**: 0 (optional, before load_data/fetch_to_parquet)
+    /// **Workflow Phase**: 0 (optional, before `load_data`/`fetch_to_parquet`)
     /// **When to use**: To avoid redundant downloads or to verify data staleness
     /// **Prerequisites**: None
-    /// **Next tools**: load_data or fetch_to_parquet (if cache is missing/stale)
+    /// **Next tools**: `load_data` or `fetch_to_parquet` (if cache is missing/stale)
     ///
     /// **Returns**:
     ///   - Cache exists (boolean)
     ///   - File path (if exists)
     ///   - File size and row count
     ///   - Last update timestamp
-    /// **Use case**: Before calling load_data/fetch_to_parquet, check if you need
+    /// **Use case**: Before calling `load_data`/`fetch_to_parquet`, check if you need
     ///   to download fresh data or if cache is recent enough
     #[tool(name = "check_cache_status")]
     async fn check_cache_status(
@@ -543,21 +543,21 @@ impl OptopsyServer {
 
     /// Download OHLCV price data from Yahoo Finance and cache locally as Parquet.
     ///
-    /// **Workflow Phase**: 0b (optional, before run_backtest with signals)
-    /// **When to use**: ONLY if you want to use entry_signal or exit_signal in run_backtest
+    /// **Workflow Phase**: 0b (optional, before `run_backtest` with signals)
+    /// **When to use**: ONLY if you want to use `entry_signal` or `exit_signal` in `run_backtest`
     /// **Prerequisites**: None
-    /// **Next tool**: run_backtest with entry_signal/exit_signal parameters
+    /// **Next tool**: `run_backtest` with `entry_signal`/`exit_signal` parameters
     ///
-    /// **Why separate from load_data**:
-    ///   - load_data() loads options chain data (bid/ask/delta)
-    ///   - fetch_to_parquet() loads price bars (OHLCV) for TA indicators
+    /// **Why separate from `load_data`**:
+    ///   - `load_data()` loads options chain data (bid/ask/delta)
+    ///   - `fetch_to_parquet()` loads price bars (OHLCV) for TA indicators
     ///   - Both can be loaded simultaneously
     /// **Categories**: Use "prices" for standard price data
     /// **Periods**: "6mo" (default), "1y", "5y", "max"
     /// **Performance**: Downloads to ~/.optopsy/cache/prices/{SYMBOL}.parquet
     ///
     /// **Important**: Not needed for basic backtest (no signals).
-    ///   Only load if using construct_signal → enter signal JSON into run_backtest.
+    ///   Only load if using `construct_signal` → enter signal JSON into `run_backtest`.
     #[tool(name = "fetch_to_parquet")]
     async fn fetch_to_parquet(
         &self,
@@ -576,22 +576,22 @@ impl OptopsyServer {
     /// Analyze the loaded options chain and suggest data-driven parameters.
     ///
     /// **Workflow Phase**: 3/7 (parameter optimization)
-    /// **When to use**: After load_data(), to get intelligent parameter suggestions
+    /// **When to use**: After `load_data()`, to get intelligent parameter suggestions
     ///   based on actual market data (DTE coverage, spread quality, delta distribution)
-    /// **Prerequisites**: load_data() must have been called first
-    /// **Next tools**: evaluate_strategy() or run_backtest() with suggested parameters
+    /// **Prerequisites**: `load_data()` must have been called first
+    /// **Next tools**: `evaluate_strategy()` or `run_backtest()` with suggested parameters
     ///
     /// **What it analyzes**:
     ///   - DTE distribution and contiguous coverage zones
     ///   - Bid/ask spread quality per DTE bucket
     ///   - Delta distribution per leg (quartile-based targeting)
-    ///   - Suggested exit_dte based on data coverage
+    ///   - Suggested `exit_dte` based on data coverage
     /// **Risk preferences**: Conservative (tight filters), Moderate (balanced), Aggressive (loose)
     /// **Output**:
-    ///   - leg_deltas array (optimized delta targets/ranges per leg)
-    ///   - max_entry_dte (maximum viable entry DTE from data)
-    ///   - exit_dte (recommended exit DTE)
-    ///   - slippage model recommendation (Mid/Spread/Liquidity)
+    ///   - `leg_deltas` array (optimized delta targets/ranges per leg)
+    ///   - `max_entry_dte` (maximum viable entry DTE from data)
+    ///   - `exit_dte` (recommended exit DTE)
+    ///   - `slippage` model recommendation (Mid/Spread/Liquidity)
     ///   - Confidence score (combines data coverage and calendar quality)
     /// **Saves time**: No need to guess parameters; use market-driven recommendations
     #[tool(name = "suggest_parameters")]
