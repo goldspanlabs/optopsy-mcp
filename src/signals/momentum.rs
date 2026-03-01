@@ -142,7 +142,7 @@ impl SignalFn for MacdCrossover {
 }
 
 /// Computes the stochastic oscillator values over a rolling window.
-/// Formula: (close - lowest_low) / (highest_high - lowest_low) * 100
+/// Formula: (close - `lowest_low`) / (`highest_high` - `lowest_low`) * 100
 #[allow(dead_code)]
 fn compute_stochastic(close: &[f64], high: &[f64], low: &[f64], period: usize) -> Vec<f64> {
     let n = close.len();
