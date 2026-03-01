@@ -1,4 +1,7 @@
+use std::collections::HashSet;
+
 use anyhow::{bail, Result};
+use chrono::NaiveDate;
 use polars::prelude::*;
 
 use super::evaluation;
@@ -11,6 +14,7 @@ use super::rules;
 #[allow(clippy::wildcard_imports)]
 use super::types::*;
 use crate::data::parquet::QUOTE_DATETIME_COL;
+use crate::signals;
 use crate::strategies;
 
 /// Evaluate strategy statistically — returns grouped stats by DTE/delta buckets
@@ -204,6 +208,16 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
     output::bin_and_aggregate(&combined, params.dte_interval, params.delta_interval)
 }
 
+/// Load OHLCV parquet and compute active dates for a signal spec.
+fn build_date_filter(
+    signal: &signals::registry::SignalSpec,
+    ohlcv_path: &str,
+) -> Result<HashSet<NaiveDate>> {
+    let args = ScanArgsParquet::default();
+    let ohlcv_df = LazyFrame::scan_parquet(ohlcv_path.into(), args)?.collect()?;
+    signals::active_dates(signal, &ohlcv_df, "date")
+}
+
 /// Run a full backtest simulation using event-driven simulation
 pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestResult> {
     let strategy_def = strategies::find_strategy(&params.strategy)
@@ -218,14 +232,31 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
         );
     }
 
+    // Build signal date filters if specified
+    let entry_dates = match (&params.entry_signal, &params.ohlcv_path) {
+        (Some(spec), Some(path)) => Some(build_date_filter(spec, path)?),
+        _ => None,
+    };
+    let exit_dates = match (&params.exit_signal, &params.ohlcv_path) {
+        (Some(spec), Some(path)) => Some(build_date_filter(spec, path)?),
+        _ => None,
+    };
+
     let (price_table, trading_days) = event_sim::build_price_table(df)?;
-    let candidates = event_sim::find_entry_candidates(df, &strategy_def, params)?;
+    let mut candidates = event_sim::find_entry_candidates(df, &strategy_def, params)?;
+
+    // Filter entry candidates to only dates where the entry signal is active
+    if let Some(ref allowed_dates) = entry_dates {
+        candidates.retain(|date, _| allowed_dates.contains(date));
+    }
+
     let (trade_log, equity_curve) = event_sim::run_event_loop(
         &price_table,
         &candidates,
         &trading_days,
         params,
         &strategy_def,
+        exit_dates.as_ref(),
     );
 
     let perf_metrics = metrics::calculate_metrics(&equity_curve, &trade_log, params.capital)?;
@@ -261,6 +292,9 @@ pub fn compare_strategies(df: &DataFrame, params: &CompareParams) -> Result<Vec<
             max_positions: params.sim_params.max_positions,
             selector: params.sim_params.selector.clone(),
             adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
         };
 
         match run_backtest(df, &backtest_params) {
@@ -440,6 +474,9 @@ mod tests {
             max_positions: 5,
             selector: TradeSelector::First,
             adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
         }
     }
 
@@ -652,6 +689,9 @@ mod tests {
             max_positions: 5,
             selector: TradeSelector::First,
             adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
         };
 
         let result = run_backtest(&df, &params);

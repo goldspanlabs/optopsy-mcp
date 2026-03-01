@@ -5,7 +5,6 @@ use polars::prelude::*;
 
 /// Signal: ATR is above a threshold, indicating high volatility.
 /// Requires `close_col`, `high_col`, and `low_col` columns.
-#[allow(dead_code)]
 pub struct AtrAbove {
     pub close_col: String,
     pub high_col: String,
@@ -47,7 +46,6 @@ impl SignalFn for AtrAbove {
 }
 
 /// Signal: ATR is below a threshold, indicating low volatility.
-#[allow(dead_code)]
 pub struct AtrBelow {
     pub close_col: String,
     pub high_col: String,
@@ -90,7 +88,6 @@ impl SignalFn for AtrBelow {
 
 /// Signal: price touches or crosses below the lower Bollinger Band.
 /// Uses SMA center with 2×standard deviation bands over a configurable period.
-#[allow(dead_code)]
 pub struct BollingerLowerTouch {
     pub column: String,
     pub period: usize,
@@ -128,7 +125,6 @@ impl SignalFn for BollingerLowerTouch {
 
 /// Signal: price touches or crosses above the upper Bollinger Band.
 /// Uses SMA center with 2×standard deviation bands over a configurable period.
-#[allow(dead_code)]
 pub struct BollingerUpperTouch {
     pub column: String,
     pub period: usize,
@@ -166,7 +162,6 @@ impl SignalFn for BollingerUpperTouch {
 
 /// Signal: price is below the lower Keltner Channel.
 /// Uses EMA for center and SMA-based ATR with a configurable multiplier.
-#[allow(dead_code)]
 pub struct KeltnerLowerBreak {
     pub close_col: String,
     pub high_col: String,
@@ -210,7 +205,6 @@ impl SignalFn for KeltnerLowerBreak {
 }
 
 /// Signal: price is above the upper Keltner Channel.
-#[allow(dead_code)]
 pub struct KeltnerUpperBreak {
     pub close_col: String,
     pub high_col: String,

@@ -40,6 +40,7 @@ fn exit_type_name(exit_type: &ExitType) -> &'static str {
         ExitType::MaxHold => "MaxHold",
         ExitType::DteExit => "DteExit",
         ExitType::Adjustment => "Adjustment",
+        ExitType::Signal => "Signal",
     }
 }
 
@@ -913,6 +914,9 @@ mod tests {
             max_positions: 1,
             selector: crate::engine::types::TradeSelector::default(),
             adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
         }
     }
 

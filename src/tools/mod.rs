@@ -6,4 +6,5 @@ pub mod evaluate;
 pub mod fetch;
 pub mod load_data;
 pub mod response_types;
+pub mod signals;
 pub mod strategies;

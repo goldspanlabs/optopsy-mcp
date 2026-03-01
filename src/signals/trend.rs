@@ -5,7 +5,6 @@ use polars::prelude::*;
 
 /// Signal: Aroon oscillator is positive, indicating an uptrend.
 /// Aroon oscillator = Aroon Up - Aroon Down.
-#[allow(dead_code)]
 pub struct AroonUptrend {
     pub high_col: String,
     pub low_col: String,
@@ -37,7 +36,6 @@ impl SignalFn for AroonUptrend {
 }
 
 /// Signal: Aroon oscillator is negative, indicating a downtrend.
-#[allow(dead_code)]
 pub struct AroonDowntrend {
     pub high_col: String,
     pub low_col: String,
@@ -69,7 +67,6 @@ impl SignalFn for AroonDowntrend {
 }
 
 /// Signal: Aroon Up is above a threshold (strong uptrend with recent highs).
-#[allow(dead_code)]
 pub struct AroonUpAbove {
     pub high_col: String,
     pub period: usize,
@@ -102,7 +99,6 @@ impl SignalFn for AroonUpAbove {
 }
 
 /// Signal: price is below the supertrend line (bearish trend).
-#[allow(dead_code)]
 pub struct SupertrendBearish {
     pub close_col: String,
     pub high_col: String,
@@ -144,7 +140,6 @@ impl SignalFn for SupertrendBearish {
 }
 
 /// Signal: price is above the supertrend line (bullish trend).
-#[allow(dead_code)]
 pub struct SupertrendBullish {
     pub close_col: String,
     pub high_col: String,

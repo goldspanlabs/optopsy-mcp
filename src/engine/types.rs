@@ -4,6 +4,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::signals::registry::SignalSpec;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Side {
     Long = 1,
@@ -96,6 +98,7 @@ pub enum ExitType {
     MaxHold,
     DteExit,
     Adjustment,
+    Signal,
 }
 
 #[derive(Debug, Clone)]
@@ -162,6 +165,15 @@ pub struct BacktestParams {
     pub selector: TradeSelector,
     #[serde(default)]
     pub adjustment_rules: Vec<AdjustmentRule>,
+    /// Optional entry signal — only enter trades on dates where this signal is active
+    #[serde(default)]
+    pub entry_signal: Option<SignalSpec>,
+    /// Optional exit signal — close open positions on dates where this signal is active
+    #[serde(default)]
+    pub exit_signal: Option<SignalSpec>,
+    /// Path to OHLCV parquet file (auto-resolved by server from cached price data)
+    #[serde(default)]
+    pub ohlcv_path: Option<String>,
 }
 
 fn default_multiplier() -> i32 {

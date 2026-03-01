@@ -4,7 +4,6 @@ use super::helpers::{column_to_f64, pad_and_compare, pad_series, SignalFn};
 use polars::prelude::*;
 
 /// Computes typical price as `(high + low + close) / 3` for each row.
-#[allow(dead_code)]
 fn compute_typical_price(high: &[f64], low: &[f64], close: &[f64]) -> Vec<f64> {
     high.iter()
         .zip(low.iter())
@@ -15,7 +14,6 @@ fn compute_typical_price(high: &[f64], low: &[f64], close: &[f64]) -> Vec<f64> {
 
 /// Signal: Money Flow Index is below a threshold (oversold by volume-weighted momentum).
 /// Typical price is computed internally as `(high + low + close) / 3`.
-#[allow(dead_code)]
 pub struct MfiOversold {
     pub high_col: String,
     pub low_col: String,
@@ -52,7 +50,6 @@ impl SignalFn for MfiOversold {
 
 /// Signal: Money Flow Index is above a threshold (overbought).
 /// Typical price is computed internally as `(high + low + close) / 3`.
-#[allow(dead_code)]
 pub struct MfiOverbought {
     pub high_col: String,
     pub low_col: String,
@@ -88,7 +85,6 @@ impl SignalFn for MfiOverbought {
 }
 
 /// Signal: On-Balance Volume is rising (current OBV > previous OBV).
-#[allow(dead_code)]
 pub struct ObvRising {
     pub price_col: String,
     pub volume_col: String,
@@ -119,7 +115,6 @@ impl SignalFn for ObvRising {
 }
 
 /// Signal: On-Balance Volume is falling (current OBV < previous OBV).
-#[allow(dead_code)]
 pub struct ObvFalling {
     pub price_col: String,
     pub volume_col: String,
@@ -151,7 +146,6 @@ impl SignalFn for ObvFalling {
 
 /// Computes the Chaikin Money Flow values over a rolling window.
 /// CMF = `sum(money_flow_volume)` / sum(volume) for each window of `period`.
-#[allow(dead_code)]
 fn compute_cmf(
     close: &[f64],
     high: &[f64],
@@ -189,7 +183,6 @@ fn compute_cmf(
 
 /// Signal: Chaikin Money Flow is positive (buying pressure).
 /// CMF = `sum(money_flow_volume)` / `sum(volume)` over a rolling window.
-#[allow(dead_code)]
 pub struct CmfPositive {
     pub close_col: String,
     pub high_col: String,
@@ -217,7 +210,6 @@ impl SignalFn for CmfPositive {
 }
 
 /// Signal: Chaikin Money Flow is negative (selling pressure).
-#[allow(dead_code)]
 pub struct CmfNegative {
     pub close_col: String,
     pub high_col: String,

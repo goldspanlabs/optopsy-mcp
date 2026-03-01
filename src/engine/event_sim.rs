@@ -51,7 +51,7 @@ pub fn build_price_table(df: &DataFrame) -> Result<(PriceTable, Vec<NaiveDate>)>
 
 /// Extract a `NaiveDate` from a column value at a given index.
 /// Handles both Date and Datetime column types.
-fn extract_date_from_column(col: &Column, idx: usize) -> Result<NaiveDate> {
+pub(crate) fn extract_date_from_column(col: &Column, idx: usize) -> Result<NaiveDate> {
     match col.dtype() {
         DataType::Date => {
             let days = col.date()?.phys.get(idx);
@@ -273,12 +273,14 @@ pub fn find_entry_candidates(
 }
 
 /// Run the event-driven simulation loop.
+#[allow(clippy::implicit_hasher)]
 pub fn run_event_loop(
     price_table: &PriceTable,
     candidates: &BTreeMap<NaiveDate, Vec<EntryCandidate>>,
     trading_days: &[NaiveDate],
     params: &BacktestParams,
     strategy_def: &StrategyDef,
+    exit_dates: Option<&std::collections::HashSet<NaiveDate>>,
 ) -> (Vec<TradeRecord>, Vec<EquityPoint>) {
     let mut positions: Vec<Position> = Vec::new();
     let mut trade_log: Vec<TradeRecord> = Vec::new();
@@ -301,8 +303,14 @@ pub fn run_event_loop(
                 continue;
             }
 
-            let exit_type =
-                check_exit_triggers(&positions[i], today, price_table, &last_known, params);
+            // Signal-based exit takes priority — check before other triggers
+            let signal_exit = exit_dates
+                .is_some_and(|dates| dates.contains(&today))
+                .then_some(ExitType::Signal);
+
+            let exit_type = signal_exit.or_else(|| {
+                check_exit_triggers(&positions[i], today, price_table, &last_known, params)
+            });
 
             if let Some(exit_type) = exit_type {
                 let pnl = close_position(
@@ -909,10 +917,13 @@ mod tests {
             max_positions: 5,
             selector: TradeSelector::First,
             adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
         };
 
         let (_trade_log, equity_curve) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def);
+            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None);
 
         // Should have 1 trade, closed by DTE exit on day 3 (DTE = 18, which is > 15, so no DTE exit)
         // Actually DTE on Jan 29 = Feb 16 - Jan 29 = 18 days, exit_dte=15, so 18 > 15 → no DTE exit
@@ -999,9 +1010,13 @@ mod tests {
             max_positions: 5,
             selector: TradeSelector::First,
             adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
         };
 
-        let (trade_log, _) = run_event_loop(&table, &candidates, &days, &params, &strategy_def);
+        let (trade_log, _) =
+            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None);
 
         // Stop loss: entry_cost = 5.25 * 100 = 525, threshold = 525 * 0.5 = 262.5
         // Day 2 MTM: (4.25 - 5.25) * 100 = -100 → no trigger
@@ -1090,9 +1105,13 @@ mod tests {
             max_positions: 5,
             selector: TradeSelector::First,
             adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
         };
 
-        let (trade_log, _) = run_event_loop(&table, &candidates, &days, &params, &strategy_def);
+        let (trade_log, _) =
+            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None);
 
         // Take profit: entry_cost = 525, threshold = 525 * 0.5 = 262.5
         // Day 2 MTM: (6.25 - 5.25) * 100 = 100 → no trigger
@@ -1177,9 +1196,13 @@ mod tests {
             max_positions: 1, // Only 1 position allowed
             selector: TradeSelector::First,
             adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
         };
 
-        let (trade_log, _) = run_event_loop(&table, &candidates, &days, &params, &strategy_def);
+        let (trade_log, _) =
+            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None);
 
         // Max positions = 1, first position stays open, second rejected
         assert_eq!(trade_log.len(), 0, "No trades should close in 2 days");
@@ -1232,9 +1255,13 @@ mod tests {
             max_positions: 5,
             selector: TradeSelector::First,
             adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
         };
 
-        let (_, equity_curve) = run_event_loop(&table, &candidates, &days, &params, &strategy_def);
+        let (_, equity_curve) =
+            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None);
 
         // Should have one equity point per trading day
         assert_eq!(
@@ -1323,6 +1350,9 @@ mod tests {
             max_positions: 5,
             selector: TradeSelector::First,
             adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
         };
 
         let candidates = find_entry_candidates(&df, &strategy_def, &params).unwrap();
@@ -1396,6 +1426,9 @@ mod tests {
             max_positions: 5,
             selector: TradeSelector::First,
             adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
         };
 
         let candidates = find_entry_candidates(&df, &strategy_def, &params).unwrap();
