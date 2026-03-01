@@ -138,40 +138,12 @@ pub fn find_entry_candidates(
             );
         }
 
-        // Rename columns to avoid conflicts when joining legs
-        let renamed = selected
-            .lazy()
-            .rename(
-                ["strike", "bid", "ask", "delta"],
-                [
-                    format!("strike_{i}"),
-                    format!("bid_{i}"),
-                    format!("ask_{i}"),
-                    format!("delta_{i}"),
-                ],
-                true,
-            )
-            .collect()?;
+        // Select only needed columns and rename with leg index to avoid
+        // duplicate column errors (e.g. `option_type_right`) when joining 3+ legs.
+        let prepared =
+            filters::prepare_leg_for_join(&selected, i, &["strike", "bid", "ask", "delta"])?;
 
-        // Keep only join keys + renamed leg columns to avoid duplicate column
-        // errors (e.g. `option_type_right`) when joining 3+ legs.
-        let keep_cols: Vec<PlSmallStr> = renamed
-            .get_column_names()
-            .into_iter()
-            .filter(|name| {
-                let s = name.as_str();
-                s == QUOTE_DATETIME_COL
-                    || s == "expiration"
-                    || s.starts_with("strike_")
-                    || s.starts_with("bid_")
-                    || s.starts_with("ask_")
-                    || s.starts_with("delta_")
-            })
-            .cloned()
-            .collect();
-        let renamed = renamed.select(keep_cols)?;
-
-        leg_dfs.push(renamed);
+        leg_dfs.push(prepared);
     }
 
     // Join all legs on (quote_datetime, expiration)
@@ -435,6 +407,7 @@ fn check_exit_triggers(
 }
 
 /// Calculate unrealized P&L for a position at current market prices.
+#[allow(clippy::implicit_hasher)]
 pub fn mark_to_market(
     position: &Position,
     date: NaiveDate,
@@ -1314,6 +1287,77 @@ mod tests {
         // Each date group should have exactly 1 candidate (1 strike per date)
         for (_date, cands) in &candidates {
             assert_eq!(cands[0].legs.len(), 1);
+        }
+    }
+
+    #[test]
+    fn find_entry_candidates_three_legs_no_duplicate_columns() {
+        // Regression test: joining 3+ legs used to produce duplicate
+        // `option_type_right` columns causing a polars error.
+        let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
+        let d1 = NaiveDate::from_ymd_opt(2024, 1, 15)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+
+        // 3 call strikes for a butterfly (100/105/110)
+        let mut df = df! {
+            QUOTE_DATETIME_COL => &[d1, d1, d1],
+            "option_type" => &["call", "call", "call"],
+            "strike" => &[100.0f64, 105.0, 110.0],
+            "bid" => &[5.0f64, 3.0, 1.5],
+            "ask" => &[5.50f64, 3.50, 2.0],
+            "delta" => &[0.50f64, 0.35, 0.20],
+        }
+        .unwrap();
+        df.with_column(
+            DateChunked::from_naive_date(PlSmallStr::from("expiration"), [exp, exp, exp])
+                .into_column(),
+        )
+        .unwrap();
+
+        let strategy_def = crate::strategies::find_strategy("long_call_butterfly").unwrap();
+        let params = BacktestParams {
+            strategy: "long_call_butterfly".to_string(),
+            leg_deltas: vec![
+                TargetRange {
+                    target: 0.50,
+                    min: 0.01,
+                    max: 0.99,
+                },
+                TargetRange {
+                    target: 0.35,
+                    min: 0.01,
+                    max: 0.99,
+                },
+                TargetRange {
+                    target: 0.20,
+                    min: 0.01,
+                    max: 0.99,
+                },
+            ],
+            max_entry_dte: 45,
+            exit_dte: 5,
+            slippage: Slippage::Mid,
+            commission: None,
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            capital: 10000.0,
+            quantity: 1,
+            multiplier: 100,
+            max_positions: 5,
+            selector: TradeSelector::First,
+            adjustment_rules: vec![],
+        };
+
+        let candidates = find_entry_candidates(&df, &strategy_def, &params).unwrap();
+        assert!(
+            !candidates.is_empty(),
+            "Should find entry candidates for 3-leg butterfly"
+        );
+        for (_date, cands) in &candidates {
+            assert_eq!(cands[0].legs.len(), 3, "Butterfly should have 3 legs");
         }
     }
 }

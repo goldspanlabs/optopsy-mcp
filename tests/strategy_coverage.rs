@@ -6,15 +6,12 @@
 //! DTE-based exit on Feb 11 (DTE=5) produces deterministic, hand-calculated `PnL`.
 
 use chrono::NaiveDate;
+use optopsy_mcp::data::parquet::QUOTE_DATETIME_COL;
 use optopsy_mcp::engine::core::{evaluate_strategy, run_backtest};
 use optopsy_mcp::engine::types::{
     BacktestParams, EvaluateParams, Slippage, TargetRange, TradeSelector,
 };
 use polars::prelude::*;
-
-// ─── Constants ───────────────────────────────────────────────────────────────
-
-const QUOTE_DATETIME_COL: &str = "quote_datetime";
 
 // ─── Synthetic DataFrame Builder ─────────────────────────────────────────────
 
@@ -171,7 +168,7 @@ fn assert_backtest(strategy: &str, deltas: Vec<TargetRange>, expected_pnl: f64) 
     assert_eq!(bt.trade_count, 1, "{strategy}: expected 1 trade");
     assert_eq!(bt.trade_log.len(), 1, "{strategy}: expected 1 trade log");
     assert!(
-        (bt.total_pnl - expected_pnl).abs() < 1.0,
+        (bt.total_pnl - expected_pnl).abs() < 0.01,
         "{strategy}: expected PnL {expected_pnl}, got {}",
         bt.total_pnl
     );
@@ -390,6 +387,13 @@ fn backtest_short_put_condor() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // BACKTEST TESTS — Iron (4)
 // 4 legs: [Put, Put, Call, Call] at strikes 95/100/105/110
+//
+// Note: iron_butterfly and iron_condor have identical leg type patterns
+// ([L Put, S Put, S Call, L Call]) and the strict ascending strike constraint
+// forces both to use 4 distinct strikes, so with the same delta targets they
+// produce identical PnL. The difference (same vs different middle strikes)
+// only manifests with 5+ strike choices. This is acceptable — the tests still
+// verify each strategy's leg wiring is correct.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
@@ -439,6 +443,8 @@ fn backtest_reverse_iron_butterfly() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // BACKTEST TESTS — Calendar / Diagonal (6)
 // Since all legs join on same expiration, these behave like spreads.
+// TODO: revisit when multi-expiration support is added — these should then
+// test near-term vs far-term expiration behavior.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
@@ -456,11 +462,7 @@ fn backtest_call_calendar_spread() {
 fn backtest_put_calendar_spread() {
     // S Put@100 (δ0.40) + L Put@105 (δ0.55)
     // +150 + (-200) = -50
-    assert_backtest(
-        "put_calendar_spread",
-        vec![delta(0.40), delta(0.55)],
-        -50.0,
-    );
+    assert_backtest("put_calendar_spread", vec![delta(0.40), delta(0.55)], -50.0);
 }
 
 #[test]
@@ -478,11 +480,7 @@ fn backtest_call_diagonal_spread() {
 fn backtest_put_diagonal_spread() {
     // S Put@100 (δ0.40) + L Put@105 (δ0.55)
     // Same as put_calendar: -50
-    assert_backtest(
-        "put_diagonal_spread",
-        vec![delta(0.40), delta(0.55)],
-        -50.0,
-    );
+    assert_backtest("put_diagonal_spread", vec![delta(0.40), delta(0.55)], -50.0);
 }
 
 #[test]
@@ -519,9 +517,16 @@ fn evaluate_singles() {
     let df = make_multi_strike_df();
     let params = evaluate_params("long_call", vec![delta(0.50)]);
     let result = evaluate_strategy(&df, &params);
-    assert!(result.is_ok(), "evaluate long_call failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "evaluate long_call failed: {:?}",
+        result.err()
+    );
     let stats = result.unwrap();
-    assert!(!stats.is_empty(), "Expected at least one group stat for long_call");
+    assert!(
+        !stats.is_empty(),
+        "Expected at least one group stat for long_call"
+    );
 }
 
 #[test]
@@ -529,9 +534,16 @@ fn evaluate_spreads() {
     let df = make_multi_strike_df();
     let params = evaluate_params("bull_call_spread", vec![delta(0.50), delta(0.35)]);
     let result = evaluate_strategy(&df, &params);
-    assert!(result.is_ok(), "evaluate bull_call_spread failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "evaluate bull_call_spread failed: {:?}",
+        result.err()
+    );
     let stats = result.unwrap();
-    assert!(!stats.is_empty(), "Expected at least one group stat for bull_call_spread");
+    assert!(
+        !stats.is_empty(),
+        "Expected at least one group stat for bull_call_spread"
+    );
 }
 
 #[test]
@@ -542,9 +554,16 @@ fn evaluate_butterflies() {
         vec![delta(0.50), delta(0.35), delta(0.20)],
     );
     let result = evaluate_strategy(&df, &params);
-    assert!(result.is_ok(), "evaluate long_call_butterfly failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "evaluate long_call_butterfly failed: {:?}",
+        result.err()
+    );
     let stats = result.unwrap();
-    assert!(!stats.is_empty(), "Expected at least one group stat for long_call_butterfly");
+    assert!(
+        !stats.is_empty(),
+        "Expected at least one group stat for long_call_butterfly"
+    );
 }
 
 #[test]
@@ -555,9 +574,16 @@ fn evaluate_condors() {
         vec![delta(0.70), delta(0.50), delta(0.35), delta(0.20)],
     );
     let result = evaluate_strategy(&df, &params);
-    assert!(result.is_ok(), "evaluate long_call_condor failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "evaluate long_call_condor failed: {:?}",
+        result.err()
+    );
     let stats = result.unwrap();
-    assert!(!stats.is_empty(), "Expected at least one group stat for long_call_condor");
+    assert!(
+        !stats.is_empty(),
+        "Expected at least one group stat for long_call_condor"
+    );
 }
 
 #[test]
@@ -568,9 +594,16 @@ fn evaluate_iron() {
         vec![delta(0.20), delta(0.40), delta(0.35), delta(0.20)],
     );
     let result = evaluate_strategy(&df, &params);
-    assert!(result.is_ok(), "evaluate iron_condor failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "evaluate iron_condor failed: {:?}",
+        result.err()
+    );
     let stats = result.unwrap();
-    assert!(!stats.is_empty(), "Expected at least one group stat for iron_condor");
+    assert!(
+        !stats.is_empty(),
+        "Expected at least one group stat for iron_condor"
+    );
 }
 
 #[test]
@@ -578,7 +611,14 @@ fn evaluate_calendar() {
     let df = make_multi_strike_df();
     let params = evaluate_params("call_calendar_spread", vec![delta(0.50), delta(0.35)]);
     let result = evaluate_strategy(&df, &params);
-    assert!(result.is_ok(), "evaluate call_calendar_spread failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "evaluate call_calendar_spread failed: {:?}",
+        result.err()
+    );
     let stats = result.unwrap();
-    assert!(!stats.is_empty(), "Expected at least one group stat for call_calendar_spread");
+    assert!(
+        !stats.is_empty(),
+        "Expected at least one group stat for call_calendar_spread"
+    );
 }

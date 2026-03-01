@@ -68,44 +68,15 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
             );
         }
 
-        // Rename columns to avoid conflicts when joining legs
-        let renamed = matched
-            .lazy()
-            .rename(
-                ["strike", "bid", "ask", "delta", "exit_bid", "exit_ask"],
-                [
-                    format!("strike_{i}"),
-                    format!("bid_{i}"),
-                    format!("ask_{i}"),
-                    format!("delta_{i}"),
-                    format!("exit_bid_{i}"),
-                    format!("exit_ask_{i}"),
-                ],
-                true,
-            )
-            .collect()?;
+        // Select only needed columns and rename with leg index to avoid
+        // duplicate column errors (e.g. `option_type_right`) when joining 3+ legs.
+        let prepared = filters::prepare_leg_for_join(
+            &matched,
+            i,
+            &["strike", "bid", "ask", "delta", "exit_bid", "exit_ask"],
+        )?;
 
-        // Keep only join keys + renamed leg columns to avoid duplicate column
-        // errors (e.g. `option_type_right`) when joining 3+ legs.
-        let keep_cols: Vec<PlSmallStr> = renamed
-            .get_column_names()
-            .into_iter()
-            .filter(|name| {
-                let s = name.as_str();
-                s == QUOTE_DATETIME_COL
-                    || s == "expiration"
-                    || s.starts_with("strike_")
-                    || s.starts_with("bid_")
-                    || s.starts_with("ask_")
-                    || s.starts_with("delta_")
-                    || s.starts_with("exit_bid_")
-                    || s.starts_with("exit_ask_")
-            })
-            .cloned()
-            .collect();
-        let renamed = renamed.select(keep_cols)?;
-
-        leg_dfs.push(renamed);
+        leg_dfs.push(prepared);
     }
 
     // Join all legs on (quote_datetime, expiration)
