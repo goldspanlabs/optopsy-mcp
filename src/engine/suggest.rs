@@ -264,8 +264,10 @@ fn extract_leg_deltas(df: &DataFrame, strategy_def: &StrategyDef) -> Result<Vec<
 
         // Analyze delta distribution
         let delta_col = leg_df.column("abs_delta")?.f64()?;
-        #[allow(clippy::filter_map_identity)]
-        let mut deltas: Vec<f64> = delta_col.iter().filter_map(|x| x).collect();
+        let mut deltas: Vec<f64> = delta_col
+            .iter()
+            .filter_map(|x| x.filter(|v| v.is_finite()))
+            .collect();
 
         if deltas.is_empty() {
             leg_deltas.push(TargetRange {
@@ -276,7 +278,7 @@ fn extract_leg_deltas(df: &DataFrame, strategy_def: &StrategyDef) -> Result<Vec<
             continue;
         }
 
-        deltas.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        deltas.sort_by(f64::total_cmp);
 
         let q25_idx = (deltas.len() as f64 * 0.25) as usize;
         let q50_idx = (deltas.len() as f64 * 0.50) as usize;
