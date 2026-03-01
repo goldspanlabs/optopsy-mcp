@@ -865,8 +865,14 @@ mod tests {
         assert!(response.summary.contains("short_put"));
         assert!(response.summary.contains("2 trades"));
         // Low drawdown + high sharpe means no risk warnings
-        assert!(!response.suggested_next_steps.iter().any(|s| s.contains("drawdown")));
-        assert!(!response.suggested_next_steps.iter().any(|s| s.contains("stop_loss")));
+        assert!(!response
+            .suggested_next_steps
+            .iter()
+            .any(|s| s.contains("drawdown")));
+        assert!(!response
+            .suggested_next_steps
+            .iter()
+            .any(|s| s.contains("stop_loss")));
     }
 
     #[test]
@@ -883,10 +889,19 @@ mod tests {
         assert!(response.summary.contains("poor"));
         assert_eq!(response.assessment, "poor");
         // Should suggest risk improvements
-        assert!(response.suggested_next_steps.iter().any(|s| s.contains("stop_loss") || s.contains("risk")));
-        assert!(response.suggested_next_steps.iter().any(|s| s.contains("drawdown") || s.contains("risk management")));
+        assert!(response
+            .suggested_next_steps
+            .iter()
+            .any(|s| s.contains("stop_loss") || s.contains("risk")));
+        assert!(response
+            .suggested_next_steps
+            .iter()
+            .any(|s| s.contains("drawdown") || s.contains("risk management")));
         // Key findings should mention losses exceed wins
-        assert!(response.key_findings.iter().any(|f| f.contains("losses exceed wins")));
+        assert!(response
+            .key_findings
+            .iter()
+            .any(|f| f.contains("losses exceed wins")));
     }
 
     #[test]
@@ -895,13 +910,17 @@ mod tests {
             make_trade(100.0, 5, ExitType::TakeProfit),
             make_trade(200.0, 7, ExitType::TakeProfit),
         ];
-        let result = make_backtest_result(300.0, 1.2, 0.02, 1.0, f64::INFINITY, 5.0, trades, vec![]);
+        let result =
+            make_backtest_result(300.0, 1.2, 0.02, 1.0, f64::INFINITY, 5.0, trades, vec![]);
         let params = make_backtest_params("bull_call_spread", 50_000.0);
         let response = format_backtest(result, &params);
 
         assert_eq!(response.assessment, "strong");
         // Infinite profit factor branch
-        assert!(response.key_findings.iter().any(|f| f.contains("no losing trades")));
+        assert!(response
+            .key_findings
+            .iter()
+            .any(|f| f.contains("no losing trades")));
         // Trade summary should have 0 losers
         assert_eq!(response.trade_summary.losers, 0);
         assert_eq!(response.trade_summary.winners, 2);
@@ -915,7 +934,8 @@ mod tests {
             make_equity_point(2, 110_000.0),
         ];
         let trades = vec![make_trade(10_000.0, 2, ExitType::Expiration)];
-        let result = make_backtest_result(10_000.0, 1.0, 0.05, 1.0, f64::INFINITY, 2.0, trades, curve);
+        let result =
+            make_backtest_result(10_000.0, 1.0, 0.05, 1.0, f64::INFINITY, 2.0, trades, curve);
         let params = make_backtest_params("test", 100_000.0);
         let response = format_backtest(result, &params);
 
