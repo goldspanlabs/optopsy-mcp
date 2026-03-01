@@ -16,7 +16,8 @@ use crate::engine::types::{
 };
 use crate::tools;
 use crate::tools::response_types::{
-    BacktestResponse, CompareResponse, EvaluateResponse, LoadDataResponse, StrategiesResponse,
+    BacktestResponse, CheckCacheResponse, CompareResponse, EvaluateResponse, FetchResponse,
+    LoadDataResponse, StrategiesResponse,
 };
 
 #[derive(Clone)]
@@ -104,6 +105,24 @@ pub struct CompareStrategiesParams {
     pub strategies: Vec<CompareEntry>,
     /// Shared simulation parameters
     pub sim_params: SimParams,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CheckCacheParams {
+    /// Ticker symbol (e.g. "SPY")
+    pub symbol: String,
+    /// Cache category subdirectory (e.g. "prices", "options")
+    pub category: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FetchToParquetParams {
+    /// Ticker symbol (e.g. "SPY")
+    pub symbol: String,
+    /// Cache category subdirectory (e.g. "prices")
+    pub category: String,
+    /// Time period to fetch (e.g. "6mo", "1y", "5y", "max"). Defaults to "6mo".
+    pub period: Option<String>,
 }
 
 use rmcp::handler::server::wrapper::Parameters;
@@ -215,6 +234,30 @@ impl OptopsyServer {
             .map(Json)
             .map_err(|e| format!("Error: {e}"))
     }
+
+    /// Check if cached parquet data exists for a symbol and when it was last updated
+    #[tool(name = "check_cache_status")]
+    async fn check_cache_status(
+        &self,
+        Parameters(params): Parameters<CheckCacheParams>,
+    ) -> Result<Json<CheckCacheResponse>, String> {
+        tools::cache_status::execute(&self.cache, &params.symbol, &params.category)
+            .map(Json)
+            .map_err(|e| format!("Error: {e}"))
+    }
+
+    /// Fetch historical OHLCV data from Yahoo Finance and save as a local Parquet file
+    #[tool(name = "fetch_to_parquet")]
+    async fn fetch_to_parquet(
+        &self,
+        Parameters(params): Parameters<FetchToParquetParams>,
+    ) -> Result<Json<FetchResponse>, String> {
+        let period = params.period.as_deref().unwrap_or("6mo");
+        tools::fetch::execute(&self.cache, &params.symbol, &params.category, period)
+            .await
+            .map(Json)
+            .map_err(|e| format!("Error: {e}"))
+    }
 }
 
 #[tool_handler]
@@ -234,6 +277,14 @@ impl ServerHandler for OptopsyServer {
             instructions: Some(
                 "Options backtesting engine. \
                 \n\nRecommended exploration workflow:\
+                \n0a. check_cache_status({ symbol, category }) — check if cached data \
+                exists for a symbol and when it was last updated. Call this before \
+                fetch_to_parquet to avoid re-downloading data that is already available.\
+                \n0b. fetch_to_parquet({ symbol, category, period? }) — fetch historical \
+                OHLCV data from Yahoo Finance and write it to a local Parquet file. \
+                Only needed if check_cache_status shows the data is missing or stale. \
+                Note: the resulting Parquet file is for OHLCV price data and is separate from \
+                the options chain loaded by load_data.\
                 \n1. load_data({ symbol }) — load (or auto-fetch) a symbol's options chain. \
                 All subsequent tools operate on the in-memory DataFrame loaded here.\
                 \n2. list_strategies() — browse all built-in strategies grouped by category \
