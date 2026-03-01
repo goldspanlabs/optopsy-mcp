@@ -55,7 +55,6 @@ mod tests {
             .unwrap()
             .and_hms_opt(0, 0, 0)
             .unwrap();
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let exit_dt = NaiveDate::from_ymd_opt(2024, 1, 1 + days_held as u32)
             .unwrap()
             .and_hms_opt(0, 0, 0)

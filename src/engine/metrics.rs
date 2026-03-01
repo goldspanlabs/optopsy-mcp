@@ -42,7 +42,7 @@ struct TradeMetrics {
 }
 
 /// Calculate performance metrics from equity curve and trade log
-#[allow(clippy::unnecessary_wraps, clippy::cast_precision_loss)]
+#[allow(clippy::unnecessary_wraps)]
 pub fn calculate_metrics(
     equity_curve: &[EquityPoint],
     trade_log: &[TradeRecord],
@@ -84,7 +84,6 @@ pub fn calculate_metrics(
 
 /// Compute equity-curve-derived metrics (Sharpe, Sortino, max DD, `VaR`, total return, CAGR, Calmar).
 /// Assumes `equity_curve.len() >= 2`.
-#[allow(clippy::cast_precision_loss)]
 fn compute_equity_metrics(
     equity_curve: &[EquityPoint],
     initial_capital: f64,
@@ -160,7 +159,6 @@ fn compute_equity_metrics(
     )
 }
 
-#[allow(clippy::cast_precision_loss)]
 fn compute_trade_metrics(trade_log: &[TradeRecord]) -> TradeMetrics {
     if trade_log.is_empty() {
         return TradeMetrics {
@@ -244,7 +242,6 @@ fn compute_trade_metrics(trade_log: &[TradeRecord]) -> TradeMetrics {
     }
 }
 
-#[allow(clippy::cast_precision_loss)]
 fn std_dev(data: &[f64]) -> f64 {
     if data.len() < 2 {
         return 0.0;
@@ -254,7 +251,6 @@ fn std_dev(data: &[f64]) -> f64 {
     variance.sqrt()
 }
 
-#[allow(clippy::cast_precision_loss)]
 fn downside_deviation(returns: &[f64]) -> f64 {
     if returns.len() < 2 {
         return 0.0;
@@ -314,11 +310,7 @@ mod tests {
                     .unwrap()
                     .and_hms_opt(0, 0, 0)
                     .unwrap()
-                    + chrono::Duration::days({
-                        #[allow(clippy::cast_possible_wrap)]
-                        let days = i as i64;
-                        days
-                    }),
+                    + chrono::Duration::days(i as i64),
                 equity: eq,
             })
             .collect()
