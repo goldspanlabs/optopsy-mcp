@@ -168,7 +168,9 @@ impl OptopsyServer {
         &self,
         Parameters(params): Parameters<LoadDataParams>,
     ) -> Result<Json<LoadDataResponse>, String> {
-        params.validate().map_err(|e| format!("Validation error: {e}"))?;
+        params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
         tools::load_data::execute(
             &self.data,
             &self.cache,
@@ -193,7 +195,9 @@ impl OptopsyServer {
         &self,
         Parameters(params): Parameters<EvaluateStrategyParams>,
     ) -> Result<Json<EvaluateResponse>, String> {
-        params.validate().map_err(|e| format!("Validation error: {e}"))?;
+        params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
         let data = self.data.read().await;
         let Some(df) = data.as_ref() else {
             return Err("Error: No data loaded. Call load_data first.".to_string());
@@ -221,7 +225,9 @@ impl OptopsyServer {
         &self,
         Parameters(params): Parameters<RunBacktestParams>,
     ) -> Result<Json<BacktestResponse>, String> {
-        params.validate().map_err(|e| format!("Validation error: {e}"))?;
+        params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
         let data = self.data.read().await;
         let Some(df) = data.as_ref() else {
             return Err("Error: No data loaded. Call load_data first.".to_string());
@@ -256,7 +262,9 @@ impl OptopsyServer {
         &self,
         Parameters(params): Parameters<CompareStrategiesParams>,
     ) -> Result<Json<CompareResponse>, String> {
-        params.validate().map_err(|e| format!("Validation error: {e}"))?;
+        params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
         let data = self.data.read().await;
         let Some(df) = data.as_ref() else {
             return Err("Error: No data loaded. Call load_data first.".to_string());
@@ -278,7 +286,9 @@ impl OptopsyServer {
         &self,
         Parameters(params): Parameters<CheckCacheParams>,
     ) -> Result<Json<CheckCacheResponse>, String> {
-        params.validate().map_err(|e| format!("Validation error: {e}"))?;
+        params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
         tools::cache_status::execute(&self.cache, &params.symbol, &params.category)
             .map(Json)
             .map_err(|e| format!("Error: {e}"))
@@ -290,7 +300,9 @@ impl OptopsyServer {
         &self,
         Parameters(params): Parameters<FetchToParquetParams>,
     ) -> Result<Json<FetchResponse>, String> {
-        params.validate().map_err(|e| format!("Validation error: {e}"))?;
+        params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
         let period = params.period.as_deref().unwrap_or("6mo");
         tools::fetch::execute(&self.cache, &params.symbol, &params.category, period)
             .await
