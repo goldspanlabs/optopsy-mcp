@@ -100,7 +100,8 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
 
     // Apply strike ordering rules
     let num_legs = strategy_def.legs.len();
-    let combined = rules::filter_strike_order(&combined, num_legs)?;
+    let combined =
+        rules::filter_strike_order(&combined, num_legs, strategy_def.strict_strike_order)?;
 
     // Calculate P&L for each trade
     let mut pnl_values = Vec::with_capacity(combined.height());

@@ -21,9 +21,13 @@ pub fn validate_strike_order(strikes: &[f64]) -> Result<()> {
     Ok(())
 }
 
-/// Filter a multi-leg `DataFrame` to ensure strike ordering constraints
+/// Filter a multi-leg `DataFrame` to ensure strike ordering constraints.
 /// Assumes legs are joined and strikes are in columns like `strike_0`, `strike_1`, etc.
-pub fn filter_strike_order(df: &DataFrame, num_legs: usize) -> Result<DataFrame> {
+///
+/// When `strict` is `true`, requires `strike_0 < strike_1 < ...` (for spreads, condors).
+/// When `strict` is `false`, requires `strike_0 <= strike_1 <= ...` (for straddles,
+/// iron butterflies, and other strategies where adjacent legs may share a strike).
+pub fn filter_strike_order(df: &DataFrame, num_legs: usize, strict: bool) -> Result<DataFrame> {
     if num_legs <= 1 {
         return Ok(df.clone());
     }
@@ -33,7 +37,11 @@ pub fn filter_strike_order(df: &DataFrame, num_legs: usize) -> Result<DataFrame>
     for i in 1..num_legs {
         let prev_col = format!("strike_{}", i - 1);
         let curr_col = format!("strike_{i}");
-        lazy = lazy.filter(col(&curr_col).gt(col(&prev_col)));
+        if strict {
+            lazy = lazy.filter(col(&curr_col).gt(col(&prev_col)));
+        } else {
+            lazy = lazy.filter(col(&curr_col).gt_eq(col(&prev_col)));
+        }
     }
 
     Ok(lazy.collect()?)
@@ -80,7 +88,7 @@ mod tests {
             "value" => &[1, 2],
         }
         .unwrap();
-        let result = filter_strike_order(&df, 1).unwrap();
+        let result = filter_strike_order(&df, 1, true).unwrap();
         assert_eq!(result.height(), 2);
     }
 
@@ -91,7 +99,7 @@ mod tests {
             "strike_1" => &[110.0, 100.0, 100.0],
         }
         .unwrap();
-        let result = filter_strike_order(&df, 2).unwrap();
+        let result = filter_strike_order(&df, 2, true).unwrap();
         // Only first row has strike_0 < strike_1
         assert_eq!(result.height(), 1);
         assert_eq!(
@@ -107,6 +115,18 @@ mod tests {
     }
 
     #[test]
+    fn filter_strike_order_two_legs_relaxed() {
+        let df = df! {
+            "strike_0" => &[100.0, 110.0, 100.0],
+            "strike_1" => &[110.0, 100.0, 100.0],
+        }
+        .unwrap();
+        let result = filter_strike_order(&df, 2, false).unwrap();
+        // First row (100 < 110) and third row (100 == 100) pass with <=
+        assert_eq!(result.height(), 2);
+    }
+
+    #[test]
     fn filter_strike_order_four_legs() {
         let df = df! {
             "strike_0" => &[100.0, 100.0],
@@ -115,7 +135,7 @@ mod tests {
             "strike_3" => &[115.0, 115.0],
         }
         .unwrap();
-        let result = filter_strike_order(&df, 4).unwrap();
+        let result = filter_strike_order(&df, 4, true).unwrap();
         // Only first row is strictly ascending
         assert_eq!(result.height(), 1);
     }

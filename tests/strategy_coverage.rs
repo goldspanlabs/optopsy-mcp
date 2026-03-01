@@ -256,18 +256,20 @@ fn backtest_bear_put_spread() {
 
 #[test]
 fn backtest_long_straddle() {
-    // L Call@100 (δ0.50) + L Put@105 (δ0.55)
+    // True ATM straddle: both legs at strike 100 (same strike, allowed by relaxed ordering).
+    // L Call@100 (δ0.50) + L Put@100 (δ0.40)
     // Call: (2.25-5.25)×1×100 = -300
-    // Put:  (2.75-4.75)×1×100 = -200
-    // Total: -500
-    assert_backtest("long_straddle", vec![delta(0.50), delta(0.55)], -500.0);
+    // Put:  (1.25-2.75)×1×100 = -150
+    // Total: -450
+    assert_backtest("long_straddle", vec![delta(0.50), delta(0.40)], -450.0);
 }
 
 #[test]
 fn backtest_short_straddle() {
-    // S Call@100 (δ0.50) + S Put@105 (δ0.55)
-    // Call: +300, Put: +200 = +500
-    assert_backtest("short_straddle", vec![delta(0.50), delta(0.55)], 500.0);
+    // True ATM straddle: both legs at strike 100 (same strike, allowed by relaxed ordering).
+    // S Call@100 (δ0.50) + S Put@100 (δ0.40)
+    // Call: +300, Put: +150 = +450
+    assert_backtest("short_straddle", vec![delta(0.50), delta(0.40)], 450.0);
 }
 
 #[test]
@@ -386,14 +388,8 @@ fn backtest_short_put_condor() {
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // BACKTEST TESTS — Iron (4)
-// 4 legs: [Put, Put, Call, Call] at strikes 95/100/105/110
-//
-// Note: iron_butterfly and iron_condor have identical leg type patterns
-// ([L Put, S Put, S Call, L Call]) and the strict ascending strike constraint
-// forces both to use 4 distinct strikes, so with the same delta targets they
-// produce identical PnL. The difference (same vs different middle strikes)
-// only manifests with 5+ strike choices. This is acceptable — the tests still
-// verify each strategy's leg wiring is correct.
+// Iron condor: 4 distinct strikes (strict ordering)
+// Iron butterfly: middle legs share a strike (relaxed ordering, strike_1 == strike_2)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
@@ -420,23 +416,25 @@ fn backtest_reverse_iron_condor() {
 
 #[test]
 fn backtest_iron_butterfly() {
-    // L Put@95 (δ0.20), S Put@100 (δ0.40), S Call@105 (δ0.35), L Call@110 (δ0.20)
-    // Same strikes as iron_condor → same PnL: 150
+    // Middle legs share strike 100 (relaxed ordering allows strike_1 == strike_2).
+    // L Put@95 (δ0.20), S Put@100 (δ0.40), S Call@100 (δ0.50), L Call@105 (δ0.35)
+    // -80 + 150 + 300 - 200 = 170
     assert_backtest(
         "iron_butterfly",
-        vec![delta(0.20), delta(0.40), delta(0.35), delta(0.20)],
-        150.0,
+        vec![delta(0.20), delta(0.40), delta(0.50), delta(0.35)],
+        170.0,
     );
 }
 
 #[test]
 fn backtest_reverse_iron_butterfly() {
-    // S Put@95, L Put@100, L Call@105, S Call@110
-    // Same as reverse_iron_condor: -150
+    // Middle legs share strike 100 (relaxed ordering allows strike_1 == strike_2).
+    // S Put@95 (δ0.20), L Put@100 (δ0.40), L Call@100 (δ0.50), S Call@105 (δ0.35)
+    // +80 - 150 - 300 + 200 = -170
     assert_backtest(
         "reverse_iron_butterfly",
-        vec![delta(0.20), delta(0.40), delta(0.35), delta(0.20)],
-        -150.0,
+        vec![delta(0.20), delta(0.40), delta(0.50), delta(0.35)],
+        -170.0,
     );
 }
 

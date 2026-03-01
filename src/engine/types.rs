@@ -106,6 +106,9 @@ pub struct StrategyDef {
     pub category: String,
     pub description: String,
     pub legs: Vec<LegDef>,
+    /// When `false`, adjacent legs may share the same strike (e.g. straddles,
+    /// iron butterflies). When `true` (default), strikes must be strictly ascending.
+    pub strict_strike_order: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

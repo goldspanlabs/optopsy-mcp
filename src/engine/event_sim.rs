@@ -166,7 +166,8 @@ pub fn find_entry_candidates(
     }
 
     // Apply strike ordering rules for multi-leg strategies
-    let combined = rules::filter_strike_order(&combined, num_legs)?;
+    let combined =
+        rules::filter_strike_order(&combined, num_legs, strategy_def.strict_strike_order)?;
 
     if combined.height() == 0 {
         return Ok(BTreeMap::new());
