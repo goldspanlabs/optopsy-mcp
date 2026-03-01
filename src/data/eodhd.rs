@@ -259,8 +259,7 @@ impl EodhdProvider {
             {
                 let mut last = self.last_request_time.lock().await;
                 let elapsed = last.elapsed();
-                let min_interval =
-                    std::time::Duration::from_millis(MIN_REQUEST_INTERVAL_MS);
+                let min_interval = std::time::Duration::from_millis(MIN_REQUEST_INTERVAL_MS);
                 if let Some(remaining) = min_interval.checked_sub(elapsed) {
                     sleep(remaining).await;
                 }
@@ -398,11 +397,7 @@ impl EodhdProvider {
             }
 
             if !resp.status().is_success() {
-                return (
-                    vec![],
-                    false,
-                    Some(format!("Unexpected status: {status}")),
-                );
+                return (vec![], false, Some(format!("Unexpected status: {status}")));
             }
 
             let body: ApiResponse = match resp.json().await {
@@ -520,9 +515,7 @@ impl EodhdProvider {
             }
 
             if let Some(ref err_msg) = error {
-                tracing::warn!(
-                    "Error {win_from}–{win_to} ({option_type}): {err_msg} — skipping"
-                );
+                tracing::warn!("Error {win_from}–{win_to} ({option_type}): {err_msg} — skipping");
                 return (rows_fetched, None);
             }
 
@@ -681,7 +674,6 @@ impl EodhdProvider {
             errors,
         })
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -689,10 +681,7 @@ impl EodhdProvider {
 // ---------------------------------------------------------------------------
 
 /// Parse compact API rows (array of arrays + field names) into row dicts.
-fn parse_compact_rows(
-    fields: &[String],
-    data: &serde_json::Value,
-) -> Vec<HashMap<String, String>> {
+fn parse_compact_rows(fields: &[String], data: &serde_json::Value) -> Vec<HashMap<String, String>> {
     let Some(arr) = data.as_array() else {
         return vec![];
     };
@@ -771,9 +760,7 @@ fn normalize_rows(rows: &[HashMap<String, String>]) -> Result<DataFrame> {
         .iter()
         .map(|api_name| {
             let fallback = api_name.as_str();
-            let internal_name = column_map
-                .get(api_name.as_str())
-                .unwrap_or(&fallback);
+            let internal_name = column_map.get(api_name.as_str()).unwrap_or(&fallback);
             let values: Vec<Option<&str>> = rows
                 .iter()
                 .map(|row| row.get(api_name).map(String::as_str))
@@ -804,7 +791,8 @@ fn normalize_rows(rows: &[HashMap<String, String>]) -> Result<DataFrame> {
         lf = lf.with_columns(numeric_exprs);
     }
 
-    lf.collect().context("Failed to normalize DataFrame columns")
+    lf.collect()
+        .context("Failed to normalize DataFrame columns")
 }
 
 /// Find the latest `quote_date` for a given `option_type` to determine resume point.
@@ -845,10 +833,8 @@ fn extract_date_range(df: &DataFrame) -> (Option<String>, Option<String>) {
 
     let format_scalar = |s: Scalar| -> Option<String> {
         match s.value() {
-            AnyValue::Date(days) => {
-                NaiveDate::from_num_days_from_ce_opt(days + 719_163)
-                    .map(|d| d.format("%Y-%m-%d").to_string())
-            }
+            AnyValue::Date(days) => NaiveDate::from_num_days_from_ce_opt(days + 719_163)
+                .map(|d| d.format("%Y-%m-%d").to_string()),
             AnyValue::Null => None,
             other => Some(format!("{other}")),
         }
@@ -888,10 +874,7 @@ mod tests {
     #[test]
     fn parse_compact_rows_basic() {
         let fields = vec!["strike".to_string(), "bid".to_string()];
-        let data = serde_json::json!([
-            ["100.0", "1.50"],
-            ["105.0", "2.00"]
-        ]);
+        let data = serde_json::json!([["100.0", "1.50"], ["105.0", "2.00"]]);
         let rows = parse_compact_rows(&fields, &data);
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0]["strike"], "100.0");
@@ -912,20 +895,18 @@ mod tests {
 
     #[test]
     fn normalize_rows_applies_column_map() {
-        let rows = vec![
-            {
-                let mut m = HashMap::new();
-                m.insert("underlying_symbol".to_string(), "SPY".to_string());
-                m.insert("type".to_string(), "Call".to_string());
-                m.insert("exp_date".to_string(), "2024-03-15".to_string());
-                m.insert("tradetime".to_string(), "2024-01-15".to_string());
-                m.insert("strike".to_string(), "500.0".to_string());
-                m.insert("bid".to_string(), "5.20".to_string());
-                m.insert("ask".to_string(), "5.40".to_string());
-                m.insert("delta".to_string(), "0.45".to_string());
-                m
-            },
-        ];
+        let rows = vec![{
+            let mut m = HashMap::new();
+            m.insert("underlying_symbol".to_string(), "SPY".to_string());
+            m.insert("type".to_string(), "Call".to_string());
+            m.insert("exp_date".to_string(), "2024-03-15".to_string());
+            m.insert("tradetime".to_string(), "2024-01-15".to_string());
+            m.insert("strike".to_string(), "500.0".to_string());
+            m.insert("bid".to_string(), "5.20".to_string());
+            m.insert("ask".to_string(), "5.40".to_string());
+            m.insert("delta".to_string(), "0.45".to_string());
+            m
+        }];
         let df = normalize_rows(&rows).unwrap();
 
         // Column renames applied
@@ -937,23 +918,11 @@ mod tests {
         assert!(!df.schema().contains("tradetime"));
 
         // Numeric columns cast to f64
-        assert_eq!(
-            *df.column("strike").unwrap().dtype(),
-            DataType::Float64
-        );
-        assert_eq!(
-            *df.column("delta").unwrap().dtype(),
-            DataType::Float64
-        );
+        assert_eq!(*df.column("strike").unwrap().dtype(), DataType::Float64);
+        assert_eq!(*df.column("delta").unwrap().dtype(), DataType::Float64);
 
         // Date columns cast to Date
-        assert_eq!(
-            *df.column("expiration").unwrap().dtype(),
-            DataType::Date
-        );
-        assert_eq!(
-            *df.column("quote_date").unwrap().dtype(),
-            DataType::Date
-        );
+        assert_eq!(*df.column("expiration").unwrap().dtype(), DataType::Date);
+        assert_eq!(*df.column("quote_date").unwrap().dtype(), DataType::Date);
     }
 }

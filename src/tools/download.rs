@@ -6,10 +6,7 @@ use crate::data::eodhd::EodhdProvider;
 use super::ai_format;
 use super::response_types::DownloadResponse;
 
-pub async fn execute(
-    eodhd: Option<&Arc<EodhdProvider>>,
-    symbol: &str,
-) -> Result<DownloadResponse> {
+pub async fn execute(eodhd: Option<&Arc<EodhdProvider>>, symbol: &str) -> Result<DownloadResponse> {
     let Some(provider) = eodhd else {
         bail!(
             "EODHD_API_KEY not configured. \
