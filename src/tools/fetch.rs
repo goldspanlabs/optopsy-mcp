@@ -24,8 +24,8 @@ pub async fn execute(
     }
 
     // Fetch OHLCV data from Yahoo Finance
-    let provider = yahoo::YahooConnector::new()
-        .context("Failed to create Yahoo Finance connector")?;
+    let provider =
+        yahoo::YahooConnector::new().context("Failed to create Yahoo Finance connector")?;
 
     let resp = provider
         .get_quote_range(&upper, "1d", period)
@@ -44,8 +44,10 @@ pub async fn execute(
     let dates: Vec<NaiveDate> = quotes
         .iter()
         .map(|q| {
-            chrono::DateTime::from_timestamp(q.timestamp, 0)
-                .map_or_else(|| chrono::Utc::now().naive_utc().date(), |dt| dt.naive_utc().date())
+            chrono::DateTime::from_timestamp(q.timestamp, 0).map_or_else(
+                || chrono::Utc::now().naive_utc().date(),
+                |dt| dt.naive_utc().date(),
+            )
         })
         .collect();
 
