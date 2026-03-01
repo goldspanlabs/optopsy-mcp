@@ -8,7 +8,9 @@
 //! Calendar/diagonal strategies use both expirations; all others use near-term only.
 
 use optopsy_mcp::engine::core::{evaluate_strategy, run_backtest};
-use optopsy_mcp::engine::types::{BacktestParams, EvaluateParams, Slippage, TargetRange, TradeSelector};
+use optopsy_mcp::engine::types::{
+    BacktestParams, EvaluateParams, Slippage, TargetRange, TradeSelector,
+};
 
 mod common;
 use common::{delta, make_multi_strike_df};

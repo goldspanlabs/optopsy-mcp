@@ -145,12 +145,7 @@ async fn list_strategies_returns_all_32() {
     assert_eq!(resp["total"], 32);
     let categories = resp["categories"].as_object().unwrap();
     assert!(categories.len() >= 6, "Expected at least 6 categories");
-    assert!(
-        !resp["suggested_next_steps"]
-            .as_array()
-            .unwrap()
-            .is_empty()
-    );
+    assert!(!resp["suggested_next_steps"].as_array().unwrap().is_empty());
 
     client.cancel().await.unwrap();
 }
@@ -924,28 +919,19 @@ async fn backtest_golden_path_output_shape() {
         "trade_log",
         "suggested_next_steps",
     ] {
-        assert!(
-            resp.get(key).is_some(),
-            "Missing top-level key: {key}"
-        );
+        assert!(resp.get(key).is_some(), "Missing top-level key: {key}");
     }
 
     // Metrics sub-object
     let metrics = &resp["metrics"];
     for key in ["sharpe", "sortino", "cagr", "max_drawdown", "var_95"] {
-        assert!(
-            metrics.get(key).is_some(),
-            "Missing metrics key: {key}"
-        );
+        assert!(metrics.get(key).is_some(), "Missing metrics key: {key}");
     }
 
     // Trade summary
     let ts = &resp["trade_summary"];
     for key in ["total", "winners", "losers", "exit_breakdown"] {
-        assert!(
-            ts.get(key).is_some(),
-            "Missing trade_summary key: {key}"
-        );
+        assert!(ts.get(key).is_some(), "Missing trade_summary key: {key}");
     }
 
     // Equity curve summary
@@ -959,11 +945,14 @@ async fn backtest_golden_path_output_shape() {
 
     // Trade log entry shape
     let trade = &resp["trade_log"][0];
-    for key in ["entry_datetime", "exit_datetime", "pnl", "exit_type", "days_held"] {
-        assert!(
-            trade.get(key).is_some(),
-            "Missing trade_log[0] key: {key}"
-        );
+    for key in [
+        "entry_datetime",
+        "exit_datetime",
+        "pnl",
+        "exit_type",
+        "days_held",
+    ] {
+        assert!(trade.get(key).is_some(), "Missing trade_log[0] key: {key}");
     }
 
     // Suggested next steps
@@ -997,7 +986,8 @@ async fn check_cache_reports_missing_file() {
             meta: None,
             name: "check_cache_status".into(),
             arguments: Some(
-                serde_json::from_value(json!({"symbol": "MISSING", "category": "options"})).unwrap(),
+                serde_json::from_value(json!({"symbol": "MISSING", "category": "options"}))
+                    .unwrap(),
             ),
             task: None,
         })
@@ -1080,9 +1070,7 @@ async fn download_options_data_fails_without_eodhd() {
         .call_tool(CallToolRequestParams {
             meta: None,
             name: "download_options_data".into(),
-            arguments: Some(
-                serde_json::from_value(json!({"symbol": "SPY"})).unwrap(),
-            ),
+            arguments: Some(serde_json::from_value(json!({"symbol": "SPY"})).unwrap()),
             task: None,
         })
         .await
