@@ -311,7 +311,7 @@ impl OptopsyServer {
     /// **When to use**: After `list_strategies`, to understand available signal options for filtering
     /// **Prerequisites**: None (informational, no data required)
     /// **Categories**: momentum (RSI, MACD, Stoch), trend (SMA, EMA, ADX),
-    ///   volatility (`BBands`, ATR), overlap, price, volume
+    ///   volatility (`BBands`, `ATR`), overlap, price, volume
     /// **Next tool**: `construct_signal()` (if you want to use signals in backtest)
     /// **Note**: Signals are optional — only needed if you want signal-filtered entry/exit
     #[tool(name = "list_signals")]
@@ -591,7 +591,7 @@ impl OptopsyServer {
     ///   - `leg_deltas` array (optimized delta targets/ranges per leg)
     ///   - `max_entry_dte` (maximum viable entry DTE from data)
     ///   - `exit_dte` (recommended exit DTE)
-    ///   - `slippage` model recommendation (Mid/Spread/Liquidity)
+    ///   - slippage model recommendation (Mid/Spread/Liquidity)
     ///   - Confidence score (combines data coverage and calendar quality)
     /// **Saves time**: No need to guess parameters; use market-driven recommendations
     #[tool(name = "suggest_parameters")]

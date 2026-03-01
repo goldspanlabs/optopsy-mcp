@@ -89,9 +89,15 @@ impl DataStore for ParquetStore {
         end_date: Option<NaiveDate>,
     ) -> Result<DataFrame> {
         let path_str = self.path.to_string_lossy().to_string();
-        let df = LazyFrame::scan_parquet(path_str.as_str().into(), ScanArgsParquet::default())?
-            .collect()
-            .context("Failed to read Parquet file")?;
+
+        // Parquet I/O is synchronous and blocking, so run it on a blocking thread pool
+        let df = tokio::task::spawn_blocking(move || {
+            LazyFrame::scan_parquet(path_str.as_str().into(), ScanArgsParquet::default())?
+                .collect()
+                .context("Failed to read Parquet file")
+        })
+        .await
+        .context("Parquet read task panicked")??;
 
         // Normalize to quote_datetime
         let mut df = normalize_quote_datetime(df)?;
@@ -100,17 +106,23 @@ impl DataStore for ParquetStore {
         if df.schema().contains(QUOTE_DATETIME_COL) {
             if let Some(start) = start_date {
                 let start_dt = start.and_hms_opt(0, 0, 0).unwrap();
-                df = df
-                    .lazy()
-                    .filter(col(QUOTE_DATETIME_COL).gt_eq(lit(start_dt)))
-                    .collect()?;
+                df = tokio::task::spawn_blocking(move || {
+                    df.lazy()
+                        .filter(col(QUOTE_DATETIME_COL).gt_eq(lit(start_dt)))
+                        .collect()
+                })
+                .await
+                .context("Parquet filter (start) task panicked")??;
             }
             if let Some(end) = end_date {
                 let end_dt = end.and_hms_opt(23, 59, 59).unwrap();
-                df = df
-                    .lazy()
-                    .filter(col(QUOTE_DATETIME_COL).lt_eq(lit(end_dt)))
-                    .collect()?;
+                df = tokio::task::spawn_blocking(move || {
+                    df.lazy()
+                        .filter(col(QUOTE_DATETIME_COL).lt_eq(lit(end_dt)))
+                        .collect()
+                })
+                .await
+                .context("Parquet filter (end) task panicked")??;
             }
         }
 
