@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 // Momentum signals: RSI, MACD, Stochastic
 
 use super::helpers::{column_to_f64, pad_and_compare, pad_series, SignalFn};
@@ -7,6 +6,7 @@ use rust_ti::standard_indicators::bulk as sti;
 
 /// Signal: RSI is below a threshold (oversold condition).
 /// Uses the standard 14-period RSI.
+#[allow(dead_code)]
 pub struct RsiOversold {
     pub column: String,
     pub threshold: f64,
@@ -33,6 +33,7 @@ impl SignalFn for RsiOversold {
 }
 
 /// Signal: RSI is above a threshold (overbought condition).
+#[allow(dead_code)]
 pub struct RsiOverbought {
     pub column: String,
     pub threshold: f64,
@@ -60,6 +61,7 @@ impl SignalFn for RsiOverbought {
 
 /// Signal: MACD histogram is positive (bullish momentum).
 /// Requires at least 34 data points.
+#[allow(dead_code)]
 pub struct MacdBullish {
     pub column: String,
 }
@@ -81,6 +83,7 @@ impl SignalFn for MacdBullish {
 }
 
 /// Signal: MACD histogram is negative (bearish momentum).
+#[allow(dead_code)]
 pub struct MacdBearish {
     pub column: String,
 }
@@ -102,6 +105,7 @@ impl SignalFn for MacdBearish {
 }
 
 /// Signal: MACD histogram crosses from negative to positive (bullish crossover).
+#[allow(dead_code)]
 pub struct MacdCrossover {
     pub column: String,
 }
@@ -130,24 +134,42 @@ impl SignalFn for MacdCrossover {
 }
 
 /// Signal: Stochastic oscillator is below threshold (oversold).
+/// Uses the standard formula: (close - `lowest_low`) / (`highest_high` - `lowest_low`) * 100.
+#[allow(dead_code)]
 pub struct StochasticOversold {
-    pub column: String,
+    pub close_col: String,
+    pub high_col: String,
+    pub low_col: String,
     pub period: usize,
     pub threshold: f64,
 }
 
 impl SignalFn for StochasticOversold {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
-        let prices = column_to_f64(df, &self.column)?;
-        let n = prices.len();
+        let close = column_to_f64(df, &self.close_col)?;
+        let high = column_to_f64(df, &self.high_col)?;
+        let low = column_to_f64(df, &self.low_col)?;
+        let n = close.len();
         if n < self.period {
             return Ok(
                 BooleanChunked::new("stochastic_oversold".into(), vec![false; n]).into_series(),
             );
         }
-        let stoch_values: Vec<f64> = prices
-            .windows(self.period)
-            .map(rust_ti::momentum_indicators::single::stochastic_oscillator)
+        let stoch_values: Vec<f64> = (0..=n.saturating_sub(self.period))
+            .map(|i| {
+                let end = i + self.period;
+                let close_last = close[end - 1];
+                let lowest_low = low[i..end].iter().copied().fold(f64::INFINITY, f64::min);
+                let highest_high = high[i..end]
+                    .iter()
+                    .copied()
+                    .fold(f64::NEG_INFINITY, f64::max);
+                if (highest_high - lowest_low).abs() < f64::EPSILON {
+                    0.0
+                } else {
+                    100.0 * (close_last - lowest_low) / (highest_high - lowest_low)
+                }
+            })
             .collect();
         Ok(pad_and_compare(
             &stoch_values,
@@ -162,24 +184,42 @@ impl SignalFn for StochasticOversold {
 }
 
 /// Signal: Stochastic oscillator is above threshold (overbought).
+/// Uses the standard formula: (close - `lowest_low`) / (`highest_high` - `lowest_low`) * 100.
+#[allow(dead_code)]
 pub struct StochasticOverbought {
-    pub column: String,
+    pub close_col: String,
+    pub high_col: String,
+    pub low_col: String,
     pub period: usize,
     pub threshold: f64,
 }
 
 impl SignalFn for StochasticOverbought {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
-        let prices = column_to_f64(df, &self.column)?;
-        let n = prices.len();
+        let close = column_to_f64(df, &self.close_col)?;
+        let high = column_to_f64(df, &self.high_col)?;
+        let low = column_to_f64(df, &self.low_col)?;
+        let n = close.len();
         if n < self.period {
             return Ok(
                 BooleanChunked::new("stochastic_overbought".into(), vec![false; n]).into_series(),
             );
         }
-        let stoch_values: Vec<f64> = prices
-            .windows(self.period)
-            .map(rust_ti::momentum_indicators::single::stochastic_oscillator)
+        let stoch_values: Vec<f64> = (0..=n.saturating_sub(self.period))
+            .map(|i| {
+                let end = i + self.period;
+                let close_last = close[end - 1];
+                let lowest_low = low[i..end].iter().copied().fold(f64::INFINITY, f64::min);
+                let highest_high = high[i..end]
+                    .iter()
+                    .copied()
+                    .fold(f64::NEG_INFINITY, f64::max);
+                if (highest_high - lowest_low).abs() < f64::EPSILON {
+                    0.0
+                } else {
+                    100.0 * (close_last - lowest_low) / (highest_high - lowest_low)
+                }
+            })
             .collect();
         Ok(pad_and_compare(
             &stoch_values,
@@ -220,9 +260,16 @@ mod tests {
 
     #[test]
     fn stochastic_insufficient_data() {
-        let df = df! { "close" => &[100.0, 102.0] }.unwrap();
+        let df = df! {
+            "close" => &[100.0, 102.0],
+            "high" => &[103.0, 104.0],
+            "low" => &[99.0, 101.0],
+        }
+        .unwrap();
         let signal = StochasticOversold {
-            column: "close".into(),
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
             period: 14,
             threshold: 20.0,
         };
