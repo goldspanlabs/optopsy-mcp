@@ -193,8 +193,100 @@ fn most_common_exit(trade_log: &[TradeRecord]) -> String {
         .map_or_else(|| "N/A".to_string(), |(name, _)| name.to_string())
 }
 
+fn backtest_key_findings(
+    m: &crate::engine::types::PerformanceMetrics,
+    trade_summary: &TradeSummary,
+    trade_log: &[TradeRecord],
+) -> Vec<String> {
+    let mut findings = Vec::new();
+
+    // Win rate + profit factor
+    let win_pct = m.win_rate * 100.0;
+    if m.profit_factor.is_finite() {
+        findings.push(format!(
+            "Win rate of {win_pct:.0}% with profit factor {:.2}{}",
+            m.profit_factor,
+            if m.profit_factor >= 1.5 {
+                " — consistently profitable"
+            } else if m.profit_factor >= 1.0 {
+                " — marginally profitable"
+            } else {
+                " — losses exceed wins"
+            }
+        ));
+    } else {
+        findings.push(format!("Win rate of {win_pct:.0}% with no losing trades"));
+    }
+
+    // Drawdown
+    let dd_pct = m.max_drawdown * 100.0;
+    findings.push(format!(
+        "Max drawdown of {dd_pct:.1}%{}",
+        if m.calmar > 1.0 {
+            format!(" is moderate relative to returns (Calmar {:.2})", m.calmar)
+        } else if m.calmar > 0.0 {
+            format!(" is high relative to returns (Calmar {:.2})", m.calmar)
+        } else {
+            " with negative or zero returns".to_string()
+        }
+    ));
+
+    // VaR
+    let var_pct = m.var_95 * 100.0;
+    findings.push(format!(
+        "VaR 95% of {var_pct:.1}% — daily risk is {}",
+        if var_pct < 2.0 {
+            "contained"
+        } else if var_pct < 5.0 {
+            "moderate"
+        } else {
+            "elevated"
+        }
+    ));
+
+    // Trade behavior
+    let common_exit = most_common_exit(trade_log);
+    findings.push(format!(
+        "Average hold of {:.1} days, most common exit: {}",
+        trade_summary.avg_days_held, common_exit
+    ));
+
+    findings
+}
+
 pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> BacktestResponse {
     let m = &result.metrics;
+    let trade_summary = compute_trade_summary(&result.trade_log);
+    let equity_curve_summary = compute_equity_summary(&result.equity_curve, params.capital);
+
+    // Zero-trade early branch: metrics are not meaningful
+    if result.trade_log.is_empty() {
+        return BacktestResponse {
+            summary: format!(
+                "Backtest of {}: no trades were executed. \
+                 Check entry filters (DTE, delta) and data coverage.",
+                params.strategy,
+            ),
+            assessment: "N/A".to_string(),
+            key_findings: vec![
+                "No trades matched the entry criteria during the backtest period".to_string(),
+            ],
+            metrics: result.metrics,
+            trade_summary,
+            equity_curve_summary,
+            equity_curve: result.equity_curve,
+            trade_log: result.trade_log,
+            suggested_next_steps: vec![
+                "Widen DTE range or delta targets to capture more entry opportunities".to_string(),
+                format!(
+                    "Use evaluate_strategy to explore which DTE/delta buckets have data for {}",
+                    params.strategy
+                ),
+                "Verify the loaded dataset covers the expected date range and symbols".to_string(),
+            ],
+        };
+    }
+
     let assessment = assess_sharpe(m.sharpe);
     let return_pct = if params.capital > 0.0 {
         result.total_pnl / params.capital * 100.0
@@ -214,61 +306,7 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
         assessment,
     );
 
-    let mut key_findings = Vec::new();
-
-    // Win rate + profit factor
-    let win_pct = m.win_rate * 100.0;
-    if m.profit_factor.is_finite() {
-        key_findings.push(format!(
-            "Win rate of {win_pct:.0}% with profit factor {:.2}{}",
-            m.profit_factor,
-            if m.profit_factor >= 1.5 {
-                " — consistently profitable"
-            } else if m.profit_factor >= 1.0 {
-                " — marginally profitable"
-            } else {
-                " — losses exceed wins"
-            }
-        ));
-    } else {
-        key_findings.push(format!("Win rate of {win_pct:.0}% with no losing trades"));
-    }
-
-    // Drawdown
-    let dd_pct = m.max_drawdown * 100.0;
-    key_findings.push(format!(
-        "Max drawdown of {dd_pct:.1}%{}",
-        if m.calmar > 1.0 {
-            format!(" is moderate relative to returns (Calmar {:.2})", m.calmar)
-        } else if m.calmar > 0.0 {
-            format!(" is high relative to returns (Calmar {:.2})", m.calmar)
-        } else {
-            " with negative or zero returns".to_string()
-        }
-    ));
-
-    // VaR
-    let var_pct = m.var_95 * 100.0;
-    key_findings.push(format!(
-        "VaR 95% of {var_pct:.1}% — daily risk is {}",
-        if var_pct < 2.0 {
-            "contained"
-        } else if var_pct < 5.0 {
-            "moderate"
-        } else {
-            "elevated"
-        }
-    ));
-
-    // Trade behavior
-    let trade_summary = compute_trade_summary(&result.trade_log);
-    let common_exit = most_common_exit(&result.trade_log);
-    key_findings.push(format!(
-        "Average hold of {:.1} days, most common exit: {}",
-        trade_summary.avg_days_held, common_exit
-    ));
-
-    let equity_curve_summary = compute_equity_summary(&result.equity_curve, params.capital);
+    let key_findings = backtest_key_findings(m, &trade_summary, &result.trade_log);
 
     let mut suggested_next_steps = vec![
         format!(
@@ -360,7 +398,7 @@ pub fn format_evaluate(groups: Vec<GroupStats>, params: &EvaluateParams) -> Eval
     let mut suggested_next_steps = Vec::new();
     if let Some(ref best) = best_bucket {
         suggested_next_steps.push(format!(
-            "Run run_backtest targeting DTE {} and delta {} for a full simulation",
+            "Use run_backtest targeting DTE {} and delta {} for a full simulation",
             best.dte_range, best.delta_range,
         ));
     }
@@ -431,7 +469,7 @@ pub fn format_compare(results: Vec<CompareResult>) -> CompareResponse {
     let mut suggested_next_steps = Vec::new();
     if let Some(ref best) = best_overall {
         suggested_next_steps.push(format!(
-            "Run run_backtest on {best} for detailed trade-level analysis",
+            "Use run_backtest on {best} for detailed trade-level analysis",
         ));
         suggested_next_steps.push(format!(
             "Use evaluate_strategy on {best} to find optimal DTE/delta parameters",
@@ -948,5 +986,29 @@ mod tests {
         assert_eq!(response.equity_curve_summary.peak_equity, 110_000.0);
         assert_eq!(response.equity_curve_summary.trough_equity, 95_000.0);
         assert_eq!(response.equity_curve_summary.num_points, 3);
+    }
+
+    #[test]
+    fn format_backtest_zero_trades() {
+        let result = make_backtest_result(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, vec![], vec![]);
+        let params = make_backtest_params("iron_condor", 100_000.0);
+        let response = format_backtest(result, &params);
+
+        assert!(response.summary.contains("no trades"));
+        assert_eq!(response.assessment, "N/A");
+        assert!(response
+            .key_findings
+            .iter()
+            .any(|f| f.contains("No trades matched")));
+        // Should not contain misleading metric findings
+        assert!(!response
+            .key_findings
+            .iter()
+            .any(|f| f.contains("Win rate") || f.contains("drawdown")));
+        // Suggested steps should guide toward fixing entry criteria
+        assert!(response
+            .suggested_next_steps
+            .iter()
+            .any(|s| s.contains("Widen") || s.contains("DTE")));
     }
 }
