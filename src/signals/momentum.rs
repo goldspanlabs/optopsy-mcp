@@ -134,7 +134,7 @@ impl SignalFn for MacdCrossover {
 }
 
 /// Signal: Stochastic oscillator is below threshold (oversold).
-/// Uses the standard formula: (close - lowest_low) / (highest_high - lowest_low) * 100.
+/// Uses the standard formula: (close - `lowest_low`) / (`highest_high` - `lowest_low`) * 100.
 #[allow(dead_code)]
 pub struct StochasticOversold {
     pub close_col: String,
@@ -159,10 +159,10 @@ impl SignalFn for StochasticOversold {
             .map(|i| {
                 let end = i + self.period;
                 let close_last = close[end - 1];
-                let lowest_low = low[i..end].iter().cloned().fold(f64::INFINITY, f64::min);
+                let lowest_low = low[i..end].iter().copied().fold(f64::INFINITY, f64::min);
                 let highest_high = high[i..end]
                     .iter()
-                    .cloned()
+                    .copied()
                     .fold(f64::NEG_INFINITY, f64::max);
                 if (highest_high - lowest_low).abs() < f64::EPSILON {
                     0.0
@@ -184,7 +184,7 @@ impl SignalFn for StochasticOversold {
 }
 
 /// Signal: Stochastic oscillator is above threshold (overbought).
-/// Uses the standard formula: (close - lowest_low) / (highest_high - lowest_low) * 100.
+/// Uses the standard formula: (close - `lowest_low`) / (`highest_high` - `lowest_low`) * 100.
 #[allow(dead_code)]
 pub struct StochasticOverbought {
     pub close_col: String,
@@ -209,10 +209,10 @@ impl SignalFn for StochasticOverbought {
             .map(|i| {
                 let end = i + self.period;
                 let close_last = close[end - 1];
-                let lowest_low = low[i..end].iter().cloned().fold(f64::INFINITY, f64::min);
+                let lowest_low = low[i..end].iter().copied().fold(f64::INFINITY, f64::min);
                 let highest_high = high[i..end]
                     .iter()
-                    .cloned()
+                    .copied()
                     .fold(f64::NEG_INFINITY, f64::max);
                 if (highest_high - lowest_low).abs() < f64::EPSILON {
                     0.0
