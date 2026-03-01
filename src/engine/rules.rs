@@ -203,4 +203,92 @@ mod tests {
         // Only first row is strictly ascending
         assert_eq!(result.height(), 1);
     }
+
+    /// Helper to build a `StrategyDef` with given cycles per leg.
+    fn make_strategy_def(cycles: &[ExpirationCycle], strict: bool) -> StrategyDef {
+        use crate::engine::types::{LegDef, OptionType, Side, TargetRange};
+        let legs = cycles
+            .iter()
+            .map(|&c| LegDef {
+                side: Side::Long,
+                option_type: OptionType::Call,
+                delta: TargetRange {
+                    target: 0.5,
+                    min: 0.2,
+                    max: 0.8,
+                },
+                qty: 1,
+                expiration_cycle: c,
+            })
+            .collect();
+        StrategyDef {
+            name: "test".to_string(),
+            category: "test".to_string(),
+            description: "test".to_string(),
+            legs,
+            strict_strike_order: strict,
+        }
+    }
+
+    #[test]
+    fn filter_strike_order_by_cycle_two_leg_calendar() {
+        // Calendar spread: 1 primary leg, 1 secondary leg — no intra-cycle ordering needed
+        let df = df! {
+            "strike_0" => &[100.0, 105.0],
+            "strike_1" => &[100.0, 100.0],
+        }
+        .unwrap();
+        let sdef = make_strategy_def(
+            &[ExpirationCycle::Primary, ExpirationCycle::Secondary],
+            false,
+        );
+        // Both rows should pass since each cycle has only 1 leg (no ordering to enforce)
+        let result = filter_strike_order(&df, 2, false, Some(&sdef)).unwrap();
+        assert_eq!(result.height(), 2);
+    }
+
+    #[test]
+    fn filter_strike_order_by_cycle_four_leg_double_calendar() {
+        // Double calendar: primary legs [0, 2], secondary legs [1, 3]
+        // Primary: strike_0=100 (call), strike_2=95 (put) — relaxed, 95 < 100 ✓
+        // Secondary: strike_1=100 (call), strike_3=95 (put) — relaxed, 95 < 100 ✓
+        let df = df! {
+            "strike_0" => &[100.0, 100.0],
+            "strike_1" => &[100.0, 100.0],
+            "strike_2" => &[95.0,  110.0],
+            "strike_3" => &[95.0,  110.0],
+        }
+        .unwrap();
+        let sdef = make_strategy_def(
+            &[
+                ExpirationCycle::Primary,
+                ExpirationCycle::Secondary,
+                ExpirationCycle::Primary,
+                ExpirationCycle::Secondary,
+            ],
+            false,
+        );
+        // Row 1: primary [0]=100, [2]=95 → 95 < 100 ✓ (relaxed >=)? No: 95 < 100 means
+        // strike_2 >= strike_0 fails (95 >= 100 is false). So row 1 is filtered.
+        // Row 2: primary [0]=100, [2]=110 → 110 >= 100 ✓
+        let result = filter_strike_order(&df, 4, false, Some(&sdef)).unwrap();
+        assert_eq!(result.height(), 1);
+    }
+
+    #[test]
+    fn filter_strike_order_by_cycle_strict_diagonal() {
+        // Diagonal spread: 1 primary, 1 secondary — single leg per cycle, no filtering
+        let df = df! {
+            "strike_0" => &[100.0, 100.0],
+            "strike_1" => &[100.0, 105.0],
+        }
+        .unwrap();
+        let sdef = make_strategy_def(
+            &[ExpirationCycle::Primary, ExpirationCycle::Secondary],
+            true,
+        );
+        // Single leg per cycle means windows(2) is empty — all rows pass
+        let result = filter_strike_order(&df, 2, true, Some(&sdef)).unwrap();
+        assert_eq!(result.height(), 2);
+    }
 }

@@ -1,9 +1,11 @@
 //! Integration tests verifying `PnL` correctness for all 32 option strategies.
 //!
 //! Each test uses a synthetic `DataFrame` with 4 strikes (95/100/105/110),
-//! both calls and puts, 3 quote dates (Jan 15, Jan 22, Feb 11), and a
-//! single expiration (Feb 16, 2024). Prices decay over time so that a
-//! DTE-based exit on Feb 11 (DTE=5) produces deterministic, hand-calculated `PnL`.
+//! both calls and puts, 3 quote dates (Jan 15, Jan 22, Feb 11), and two
+//! expirations: near-term (Feb 16, 2024, DTE=32) and far-term (Mar 15, 2024,
+//! DTE=60). Prices decay over time so that a DTE-based exit on Feb 11 (DTE=5
+//! for near-term) produces deterministic, hand-calculated `PnL`.
+//! Calendar/diagonal strategies use both expirations; all others use near-term only.
 
 use chrono::NaiveDate;
 use optopsy_mcp::data::parquet::QUOTE_DATETIME_COL;
@@ -15,9 +17,10 @@ use polars::prelude::*;
 
 // ─── Synthetic DataFrame Builder ─────────────────────────────────────────────
 
-/// Build a rich synthetic options `DataFrame` with calls+puts at 4 strikes across 3 dates.
+/// Build a rich synthetic options `DataFrame` with calls+puts at 4 strikes across 3 dates,
+/// with two expirations: near-term (Feb 16, DTE=32) and far-term (Mar 15, DTE=60).
 ///
-/// Calls (strikes 95/100/105/110):
+/// Near-term calls (strikes 95/100/105/110):
 ///   | Strike | Jan 15 bid/ask | Jan 22 bid/ask | Feb 11 bid/ask | Delta |
 ///   |--------|---------------|---------------|---------------|-------|
 ///   | 95     | 8.00/8.50     | 7.00/7.50     | 5.00/5.50     | 0.70  |
@@ -25,13 +28,16 @@ use polars::prelude::*;
 ///   | 105    | 3.00/3.50     | 2.20/2.70     | 1.00/1.50     | 0.35  |
 ///   | 110    | 1.50/2.00     | 1.00/1.50     | 0.30/0.80     | 0.20  |
 ///
-/// Puts (strikes 95/100/105/110):
+/// Near-term puts (strikes 95/100/105/110):
 ///   | Strike | Jan 15 bid/ask | Jan 22 bid/ask | Feb 11 bid/ask | Delta  |
 ///   |--------|---------------|---------------|---------------|--------|
 ///   | 95     | 1.00/1.50     | 0.80/1.30     | 0.20/0.70     | -0.20  |
 ///   | 100    | 2.50/3.00     | 2.00/2.50     | 1.00/1.50     | -0.40  |
 ///   | 105    | 4.50/5.00     | 3.80/4.30     | 2.50/3.00     | -0.55  |
 ///   | 110    | 7.00/7.50     | 6.20/6.70     | 4.50/5.00     | -0.70  |
+///
+/// Far-term options have higher prices (more time value) and slower decay.
+/// See source for exact far-term pricing data.
 fn make_multi_strike_df() -> DataFrame {
     let exp_near = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap(); // DTE=32 from Jan 15
     let exp_far = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap(); // DTE=60 from Jan 15

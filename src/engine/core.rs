@@ -87,7 +87,7 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
 
     // Join all legs
     let combined = if is_multi_exp {
-        join_multi_expiration_legs(&leg_dfs)?
+        filters::join_multi_expiration_legs(&leg_dfs)?
     } else {
         let mut combined = leg_dfs[0].0.clone();
         for (leg_df, _) in leg_dfs.iter().skip(1) {
@@ -297,67 +297,6 @@ pub fn compare_strategies(df: &DataFrame, params: &CompareParams) -> Result<Vec<
     }
 
     Ok(results)
-}
-
-/// Join legs for multi-expiration strategies (calendar/diagonal).
-///
-/// Primary and secondary legs are joined separately within their groups on
-/// `(quote_datetime, expiration_<cycle>)`, then cross-joined on `quote_datetime`
-/// with a filter ensuring `expiration_secondary > expiration_primary`.
-fn join_multi_expiration_legs(leg_dfs: &[(DataFrame, ExpirationCycle)]) -> Result<DataFrame> {
-    let mut primary_dfs: Vec<&DataFrame> = Vec::new();
-    let mut secondary_dfs: Vec<&DataFrame> = Vec::new();
-
-    for (df, cycle) in leg_dfs {
-        match cycle {
-            ExpirationCycle::Primary => primary_dfs.push(df),
-            ExpirationCycle::Secondary => secondary_dfs.push(df),
-        }
-    }
-
-    // Join within primary group
-    let mut primary = primary_dfs[0].clone();
-    for df in primary_dfs.iter().skip(1) {
-        let join_cols: Vec<&str> = vec![QUOTE_DATETIME_COL, "expiration_primary"];
-        primary = primary
-            .lazy()
-            .join(
-                (*df).clone().lazy(),
-                join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
-                join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
-                JoinArgs::new(JoinType::Inner),
-            )
-            .collect()?;
-    }
-
-    // Join within secondary group
-    let mut secondary = secondary_dfs[0].clone();
-    for df in secondary_dfs.iter().skip(1) {
-        let join_cols: Vec<&str> = vec![QUOTE_DATETIME_COL, "expiration_secondary"];
-        secondary = secondary
-            .lazy()
-            .join(
-                (*df).clone().lazy(),
-                join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
-                join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
-                JoinArgs::new(JoinType::Inner),
-            )
-            .collect()?;
-    }
-
-    // Cross-join on quote_datetime, then filter expiration_secondary > expiration_primary
-    let combined = primary
-        .lazy()
-        .join(
-            secondary.lazy(),
-            vec![col(QUOTE_DATETIME_COL)],
-            vec![col(QUOTE_DATETIME_COL)],
-            JoinArgs::new(JoinType::Inner),
-        )
-        .filter(col("expiration_secondary").gt(col("expiration_primary")))
-        .collect()?;
-
-    Ok(combined)
 }
 
 /// Intermediate trade representation used by legacy exits/simulator modules

@@ -66,7 +66,7 @@ pub fn double_calendar() -> StrategyDef {
 }
 
 pub fn double_diagonal() -> StrategyDef {
-    strategy_relaxed(
+    strategy(
         "double_diagonal",
         "Calendar",
         "Call diagonal + put diagonal at different strikes",
