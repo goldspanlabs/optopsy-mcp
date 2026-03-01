@@ -2139,6 +2139,7 @@ name = "optopsy-mcp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "blackscholes",
  "cargo-husky",
