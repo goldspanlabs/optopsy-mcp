@@ -1,4 +1,5 @@
 use chrono::{NaiveDate, NaiveDateTime};
+use garde::Validate;
 use ordered_float::OrderedFloat;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -34,17 +35,34 @@ pub enum ExpirationCycle {
     Secondary, // Far-term (calendar/diagonal only)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct TargetRange {
+    #[garde(range(min = 0.0, max = 1.0))]
     pub target: f64,
+    #[garde(range(min = 0.0, max = 1.0))]
     pub min: f64,
+    #[garde(range(min = 0.0, max = 1.0), custom(validate_max_gte_min(&self.min)))]
     pub max: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+fn validate_max_gte_min(min: &f64) -> impl FnOnce(&f64, &()) -> garde::Result + '_ {
+    move |max: &f64, (): &()| {
+        if min > max {
+            return Err(garde::Error::new(format!(
+                "min ({min}) must be <= max ({max})"
+            )));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct Commission {
+    #[garde(range(min = 0.0))]
     pub per_contract: f64,
+    #[garde(range(min = 0.0))]
     pub base_fee: f64,
+    #[garde(range(min = 0.0))]
     pub min_fee: f64,
 }
 
@@ -65,7 +83,7 @@ impl Commission {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 #[serde(tag = "type")]
 #[derive(Default)]
 pub enum Slippage {
@@ -73,10 +91,13 @@ pub enum Slippage {
     Mid,
     Spread,
     Liquidity {
+        #[garde(range(min = 0.0, max = 1.0))]
         fill_ratio: f64,
+        #[garde(skip)]
         ref_volume: u64,
     },
     PerLeg {
+        #[garde(range(min = 0.0))]
         per_leg: f64,
     },
 }
@@ -131,48 +152,85 @@ impl StrategyDef {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+fn validate_exit_dte_lt_max(max_entry_dte: &i32) -> impl FnOnce(&i32, &()) -> garde::Result + '_ {
+    move |exit_dte: &i32, (): &()| {
+        if exit_dte >= max_entry_dte {
+            return Err(garde::Error::new(format!(
+                "exit_dte ({exit_dte}) must be less than max_entry_dte ({max_entry_dte})"
+            )));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct EvaluateParams {
+    #[garde(length(min = 1))]
     pub strategy: String,
+    #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
+    #[garde(range(min = 1))]
     pub max_entry_dte: i32,
+    #[garde(range(min = 0), custom(validate_exit_dte_lt_max(&self.max_entry_dte)))]
     pub exit_dte: i32,
+    #[garde(range(min = 1))]
     pub dte_interval: i32,
+    #[garde(range(min = 0.001, max = 1.0))]
     pub delta_interval: f64,
+    #[garde(dive)]
     pub slippage: Slippage,
     #[serde(default)]
+    #[garde(dive)]
     pub commission: Option<Commission>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct BacktestParams {
+    #[garde(length(min = 1))]
     pub strategy: String,
+    #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
+    #[garde(range(min = 1))]
     pub max_entry_dte: i32,
+    #[garde(range(min = 0), custom(validate_exit_dte_lt_max(&self.max_entry_dte)))]
     pub exit_dte: i32,
+    #[garde(dive)]
     pub slippage: Slippage,
     #[serde(default)]
+    #[garde(dive)]
     pub commission: Option<Commission>,
+    #[garde(inner(range(min = 0.0)))]
     pub stop_loss: Option<f64>,
+    #[garde(inner(range(min = 0.0)))]
     pub take_profit: Option<f64>,
+    #[garde(inner(range(min = 1)))]
     pub max_hold_days: Option<i32>,
+    #[garde(range(min = 0.01))]
     pub capital: f64,
+    #[garde(range(min = 1))]
     pub quantity: i32,
     #[serde(default = "default_multiplier")]
+    #[garde(range(min = 1))]
     pub multiplier: i32,
+    #[garde(range(min = 1))]
     pub max_positions: i32,
     #[serde(default)]
+    #[garde(skip)]
     pub selector: TradeSelector,
     #[serde(default)]
+    #[garde(skip)]
     pub adjustment_rules: Vec<AdjustmentRule>,
     /// Optional entry signal — only enter trades on dates where this signal is active
     #[serde(default)]
+    #[garde(skip)]
     pub entry_signal: Option<SignalSpec>,
     /// Optional exit signal — close open positions on dates where this signal is active
     #[serde(default)]
+    #[garde(skip)]
     pub exit_signal: Option<SignalSpec>,
     /// Path to OHLCV parquet file (auto-resolved by server from cached price data)
     #[serde(default)]
+    #[garde(skip)]
     pub ohlcv_path: Option<String>,
 }
 
@@ -180,34 +238,50 @@ fn default_multiplier() -> i32 {
     100
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct CompareParams {
+    #[garde(length(min = 2), dive)]
     pub strategies: Vec<CompareEntry>,
+    #[garde(dive)]
     pub sim_params: SimParams,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct CompareEntry {
+    #[garde(length(min = 1))]
     pub name: String,
+    #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
+    #[garde(range(min = 1))]
     pub max_entry_dte: i32,
+    #[garde(range(min = 0), custom(validate_exit_dte_lt_max(&self.max_entry_dte)))]
     pub exit_dte: i32,
+    #[garde(dive)]
     pub slippage: Slippage,
     #[serde(default)]
+    #[garde(dive)]
     pub commission: Option<Commission>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct SimParams {
+    #[garde(range(min = 0.01))]
     pub capital: f64,
+    #[garde(range(min = 1))]
     pub quantity: i32,
     #[serde(default = "default_multiplier")]
+    #[garde(range(min = 1))]
     pub multiplier: i32,
+    #[garde(range(min = 1))]
     pub max_positions: i32,
     #[serde(default)]
+    #[garde(skip)]
     pub selector: TradeSelector,
+    #[garde(inner(range(min = 0.0)))]
     pub stop_loss: Option<f64>,
+    #[garde(inner(range(min = 0.0)))]
     pub take_profit: Option<f64>,
+    #[garde(inner(range(min = 1)))]
     pub max_hold_days: Option<i32>,
 }
 
@@ -464,5 +538,216 @@ mod tests {
             min_fee: 0.0,
         };
         assert!((c.calculate(-10) - 6.50).abs() < 1e-10);
+    }
+
+    // --- Validation tests ---
+
+    #[test]
+    fn target_range_valid() {
+        let tr = TargetRange {
+            target: 0.5,
+            min: 0.2,
+            max: 0.8,
+        };
+        assert!(tr.validate().is_ok());
+    }
+
+    #[test]
+    fn target_range_rejects_negative() {
+        let tr = TargetRange {
+            target: -0.5,
+            min: 0.2,
+            max: 0.8,
+        };
+        assert!(tr.validate().is_err());
+    }
+
+    #[test]
+    fn target_range_rejects_over_one() {
+        let tr = TargetRange {
+            target: 0.5,
+            min: 0.2,
+            max: 1.1,
+        };
+        assert!(tr.validate().is_err());
+    }
+
+    #[test]
+    fn commission_rejects_negative_fee() {
+        let c = Commission {
+            per_contract: -0.65,
+            base_fee: 0.0,
+            min_fee: 0.0,
+        };
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn slippage_liquidity_rejects_fill_ratio_over_one() {
+        let s = Slippage::Liquidity {
+            fill_ratio: 1.5,
+            ref_volume: 1000,
+        };
+        assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn backtest_params_rejects_negative_capital() {
+        let p = BacktestParams {
+            strategy: "long_call".to_string(),
+            leg_deltas: vec![TargetRange {
+                target: 0.5,
+                min: 0.2,
+                max: 0.8,
+            }],
+            max_entry_dte: 45,
+            exit_dte: 0,
+            slippage: Slippage::Mid,
+            commission: None,
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            capital: -1000.0,
+            quantity: 1,
+            multiplier: 100,
+            max_positions: 1,
+            selector: TradeSelector::default(),
+            adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn backtest_params_rejects_zero_quantity() {
+        let p = BacktestParams {
+            strategy: "long_call".to_string(),
+            leg_deltas: vec![TargetRange {
+                target: 0.5,
+                min: 0.2,
+                max: 0.8,
+            }],
+            max_entry_dte: 45,
+            exit_dte: 0,
+            slippage: Slippage::Mid,
+            commission: None,
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            capital: 10_000.0,
+            quantity: 0,
+            multiplier: 100,
+            max_positions: 1,
+            selector: TradeSelector::default(),
+            adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn backtest_params_accepts_stop_loss_above_one() {
+        let p = BacktestParams {
+            strategy: "long_call".to_string(),
+            leg_deltas: vec![TargetRange {
+                target: 0.5,
+                min: 0.2,
+                max: 0.8,
+            }],
+            max_entry_dte: 45,
+            exit_dte: 0,
+            slippage: Slippage::Mid,
+            commission: None,
+            stop_loss: Some(2.0),
+            take_profit: None,
+            max_hold_days: None,
+            capital: 10_000.0,
+            quantity: 1,
+            multiplier: 100,
+            max_positions: 1,
+            selector: TradeSelector::default(),
+            adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
+        };
+        assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn sim_params_rejects_zero_max_positions() {
+        let p = SimParams {
+            capital: 10_000.0,
+            quantity: 1,
+            multiplier: 100,
+            max_positions: 0,
+            selector: TradeSelector::default(),
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn backtest_params_rejects_empty_strategy() {
+        let p = BacktestParams {
+            strategy: String::new(),
+            leg_deltas: vec![TargetRange {
+                target: 0.5,
+                min: 0.2,
+                max: 0.8,
+            }],
+            max_entry_dte: 45,
+            exit_dte: 0,
+            slippage: Slippage::Mid,
+            commission: None,
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            capital: 10_000.0,
+            quantity: 1,
+            multiplier: 100,
+            max_positions: 1,
+            selector: TradeSelector::default(),
+            adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn target_range_rejects_min_gt_max() {
+        let tr = TargetRange {
+            target: 0.5,
+            min: 0.8,
+            max: 0.2,
+        };
+        assert!(tr.validate().is_err());
+    }
+
+    #[test]
+    fn evaluate_params_rejects_exit_dte_gte_max_entry_dte() {
+        let p = EvaluateParams {
+            strategy: "long_call".to_string(),
+            leg_deltas: vec![TargetRange {
+                target: 0.5,
+                min: 0.2,
+                max: 0.8,
+            }],
+            max_entry_dte: 30,
+            exit_dte: 45,
+            dte_interval: 7,
+            delta_interval: 0.05,
+            slippage: Slippage::Mid,
+            commission: None,
+        };
+        assert!(p.validate().is_err());
     }
 }
