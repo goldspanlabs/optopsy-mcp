@@ -4,6 +4,14 @@ use super::helpers::{column_to_f64, pad_and_compare, pad_series, SignalFn};
 use polars::prelude::*;
 use rust_ti::standard_indicators::bulk as sti;
 
+/// Standard RSI lookback period.
+#[allow(dead_code)]
+const RSI_PERIOD: usize = 14;
+
+/// Minimum number of data points required to compute MACD (slow EMA + signal line).
+#[allow(dead_code)]
+const MACD_MIN_PERIODS: usize = 34;
+
 /// Signal: RSI is below a threshold (oversold condition).
 /// Uses the standard 14-period RSI.
 #[allow(dead_code)]
@@ -16,7 +24,7 @@ impl SignalFn for RsiOversold {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
         let prices = column_to_f64(df, &self.column)?;
         let n = prices.len();
-        if n < 14 {
+        if n < RSI_PERIOD {
             return Ok(BooleanChunked::new("rsi_oversold".into(), vec![false; n]).into_series());
         }
         let rsi_values = sti::rsi(&prices);
@@ -43,7 +51,7 @@ impl SignalFn for RsiOverbought {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
         let prices = column_to_f64(df, &self.column)?;
         let n = prices.len();
-        if n < 14 {
+        if n < RSI_PERIOD {
             return Ok(BooleanChunked::new("rsi_overbought".into(), vec![false; n]).into_series());
         }
         let rsi_values = sti::rsi(&prices);
@@ -70,7 +78,7 @@ impl SignalFn for MacdBullish {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
         let prices = column_to_f64(df, &self.column)?;
         let n = prices.len();
-        if n < 34 {
+        if n < MACD_MIN_PERIODS {
             return Ok(BooleanChunked::new("macd_bullish".into(), vec![false; n]).into_series());
         }
         let macd_values = sti::macd(&prices);
@@ -92,7 +100,7 @@ impl SignalFn for MacdBearish {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
         let prices = column_to_f64(df, &self.column)?;
         let n = prices.len();
-        if n < 34 {
+        if n < MACD_MIN_PERIODS {
             return Ok(BooleanChunked::new("macd_bearish".into(), vec![false; n]).into_series());
         }
         let macd_values = sti::macd(&prices);
@@ -114,7 +122,7 @@ impl SignalFn for MacdCrossover {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
         let prices = column_to_f64(df, &self.column)?;
         let n = prices.len();
-        if n < 34 {
+        if n < MACD_MIN_PERIODS {
             return Ok(BooleanChunked::new("macd_crossover".into(), vec![false; n]).into_series());
         }
         let macd_values = sti::macd(&prices);
@@ -131,6 +139,32 @@ impl SignalFn for MacdCrossover {
     fn name(&self) -> &'static str {
         "macd_crossover"
     }
+}
+
+/// Computes the stochastic oscillator values over a rolling window.
+/// Formula: (close - lowest_low) / (highest_high - lowest_low) * 100
+#[allow(dead_code)]
+fn compute_stochastic(close: &[f64], high: &[f64], low: &[f64], period: usize) -> Vec<f64> {
+    let n = close.len();
+    if n < period {
+        return vec![];
+    }
+    (0..=n.saturating_sub(period))
+        .map(|i| {
+            let end = i + period;
+            let close_last = close[end - 1];
+            let lowest_low = low[i..end].iter().copied().fold(f64::INFINITY, f64::min);
+            let highest_high = high[i..end]
+                .iter()
+                .copied()
+                .fold(f64::NEG_INFINITY, f64::max);
+            if (highest_high - lowest_low).abs() < f64::EPSILON {
+                0.0
+            } else {
+                100.0 * (close_last - lowest_low) / (highest_high - lowest_low)
+            }
+        })
+        .collect()
 }
 
 /// Signal: Stochastic oscillator is below threshold (oversold).
@@ -155,22 +189,7 @@ impl SignalFn for StochasticOversold {
                 BooleanChunked::new("stochastic_oversold".into(), vec![false; n]).into_series(),
             );
         }
-        let stoch_values: Vec<f64> = (0..=n.saturating_sub(self.period))
-            .map(|i| {
-                let end = i + self.period;
-                let close_last = close[end - 1];
-                let lowest_low = low[i..end].iter().copied().fold(f64::INFINITY, f64::min);
-                let highest_high = high[i..end]
-                    .iter()
-                    .copied()
-                    .fold(f64::NEG_INFINITY, f64::max);
-                if (highest_high - lowest_low).abs() < f64::EPSILON {
-                    0.0
-                } else {
-                    100.0 * (close_last - lowest_low) / (highest_high - lowest_low)
-                }
-            })
-            .collect();
+        let stoch_values = compute_stochastic(&close, &high, &low, self.period);
         Ok(pad_and_compare(
             &stoch_values,
             n,
@@ -205,22 +224,7 @@ impl SignalFn for StochasticOverbought {
                 BooleanChunked::new("stochastic_overbought".into(), vec![false; n]).into_series(),
             );
         }
-        let stoch_values: Vec<f64> = (0..=n.saturating_sub(self.period))
-            .map(|i| {
-                let end = i + self.period;
-                let close_last = close[end - 1];
-                let lowest_low = low[i..end].iter().copied().fold(f64::INFINITY, f64::min);
-                let highest_high = high[i..end]
-                    .iter()
-                    .copied()
-                    .fold(f64::NEG_INFINITY, f64::max);
-                if (highest_high - lowest_low).abs() < f64::EPSILON {
-                    0.0
-                } else {
-                    100.0 * (close_last - lowest_low) / (highest_high - lowest_low)
-                }
-            })
-            .collect();
+        let stoch_values = compute_stochastic(&close, &high, &low, self.period);
         Ok(pad_and_compare(
             &stoch_values,
             n,

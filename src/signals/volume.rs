@@ -3,10 +3,23 @@
 use super::helpers::{column_to_f64, pad_and_compare, pad_series, SignalFn};
 use polars::prelude::*;
 
+/// Computes typical price as `(high + low + close) / 3` for each row.
+#[allow(dead_code)]
+fn compute_typical_price(high: &[f64], low: &[f64], close: &[f64]) -> Vec<f64> {
+    high.iter()
+        .zip(low.iter())
+        .zip(close.iter())
+        .map(|((h, l), c)| (h + l + c) / 3.0)
+        .collect()
+}
+
 /// Signal: Money Flow Index is below a threshold (oversold by volume-weighted momentum).
+/// Typical price is computed internally as `(high + low + close) / 3`.
 #[allow(dead_code)]
 pub struct MfiOversold {
-    pub price_col: String,
+    pub high_col: String,
+    pub low_col: String,
+    pub close_col: String,
     pub volume_col: String,
     pub period: usize,
     pub threshold: f64,
@@ -14,14 +27,17 @@ pub struct MfiOversold {
 
 impl SignalFn for MfiOversold {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
-        let prices = column_to_f64(df, &self.price_col)?;
+        let high = column_to_f64(df, &self.high_col)?;
+        let low = column_to_f64(df, &self.low_col)?;
+        let close = column_to_f64(df, &self.close_col)?;
         let volume = column_to_f64(df, &self.volume_col)?;
-        let n = prices.len();
+        let typical = compute_typical_price(&high, &low, &close);
+        let n = typical.len();
         if n < self.period {
             return Ok(BooleanChunked::new("mfi_oversold".into(), vec![false; n]).into_series());
         }
         let mfi_values =
-            rust_ti::momentum_indicators::bulk::money_flow_index(&prices, &volume, self.period);
+            rust_ti::momentum_indicators::bulk::money_flow_index(&typical, &volume, self.period);
         Ok(pad_and_compare(
             &mfi_values,
             n,
@@ -35,9 +51,12 @@ impl SignalFn for MfiOversold {
 }
 
 /// Signal: Money Flow Index is above a threshold (overbought).
+/// Typical price is computed internally as `(high + low + close) / 3`.
 #[allow(dead_code)]
 pub struct MfiOverbought {
-    pub price_col: String,
+    pub high_col: String,
+    pub low_col: String,
+    pub close_col: String,
     pub volume_col: String,
     pub period: usize,
     pub threshold: f64,
@@ -45,14 +64,17 @@ pub struct MfiOverbought {
 
 impl SignalFn for MfiOverbought {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
-        let prices = column_to_f64(df, &self.price_col)?;
+        let high = column_to_f64(df, &self.high_col)?;
+        let low = column_to_f64(df, &self.low_col)?;
+        let close = column_to_f64(df, &self.close_col)?;
         let volume = column_to_f64(df, &self.volume_col)?;
-        let n = prices.len();
+        let typical = compute_typical_price(&high, &low, &close);
+        let n = typical.len();
         if n < self.period {
             return Ok(BooleanChunked::new("mfi_overbought".into(), vec![false; n]).into_series());
         }
         let mfi_values =
-            rust_ti::momentum_indicators::bulk::money_flow_index(&prices, &volume, self.period);
+            rust_ti::momentum_indicators::bulk::money_flow_index(&typical, &volume, self.period);
         Ok(pad_and_compare(
             &mfi_values,
             n,
@@ -144,7 +166,7 @@ fn compute_cmf(
     let mfv: Vec<f64> = (0..n)
         .map(|i| {
             let range = high[i] - low[i];
-            if range == 0.0 {
+            if range.abs() < f64::EPSILON {
                 0.0
             } else {
                 ((close[i] - low[i]) - (high[i] - close[i])) / range * volume[i]
