@@ -122,16 +122,10 @@ fn compute_trade_summary(trade_log: &[TradeRecord]) -> TradeSummary {
     };
 
     let to_trade_stat = |t: Option<&TradeRecord>| {
-        t.map_or(
-            TradeStat {
-                pnl: 0.0,
-                date: String::new(),
-            },
-            |t| TradeStat {
-                pnl: t.pnl,
-                date: t.entry_datetime.format("%Y-%m-%d").to_string(),
-            },
-        )
+        t.map(|t| TradeStat {
+            pnl: t.pnl,
+            date: t.entry_datetime.format("%Y-%m-%d").to_string(),
+        })
     };
 
     TradeSummary {
@@ -403,7 +397,7 @@ pub fn format_compare(results: Vec<CompareResult>) -> CompareResponse {
         .map(|&i| results[i].strategy.clone())
         .collect();
 
-    let best_overall = ranking_by_sharpe.first().cloned().unwrap_or_default();
+    let best_overall = ranking_by_sharpe.first().cloned();
 
     let summary = if results.is_empty() {
         "No strategies to compare.".to_string()
@@ -421,12 +415,12 @@ pub fn format_compare(results: Vec<CompareResult>) -> CompareResponse {
     };
 
     let mut suggested_next_steps = Vec::new();
-    if !best_overall.is_empty() {
+    if let Some(ref best) = best_overall {
         suggested_next_steps.push(format!(
-            "Run run_backtest on {best_overall} for detailed trade-level analysis",
+            "Run run_backtest on {best} for detailed trade-level analysis",
         ));
         suggested_next_steps.push(format!(
-            "Use evaluate_strategy on {best_overall} to find optimal DTE/delta parameters",
+            "Use evaluate_strategy on {best} to find optimal DTE/delta parameters",
         ));
     }
 
@@ -554,6 +548,8 @@ mod tests {
         assert_eq!(summary.avg_winner, 0.0);
         assert_eq!(summary.avg_loser, 0.0);
         assert_eq!(summary.avg_days_held, 0.0);
+        assert!(summary.best_trade.is_none());
+        assert!(summary.worst_trade.is_none());
     }
 
     #[test]
@@ -570,8 +566,8 @@ mod tests {
         assert!((summary.avg_pnl - 250.0 / 3.0).abs() < 1e-10);
         assert!((summary.avg_winner - 150.0).abs() < 1e-10);
         assert!((summary.avg_loser - -50.0).abs() < 1e-10);
-        assert!((summary.best_trade.pnl - 200.0).abs() < 1e-10);
-        assert!((summary.worst_trade.pnl - -50.0).abs() < 1e-10);
+        assert!((summary.best_trade.unwrap().pnl - 200.0).abs() < 1e-10);
+        assert!((summary.worst_trade.unwrap().pnl - -50.0).abs() < 1e-10);
         assert_eq!(summary.exit_breakdown["Expiration"], 1);
         assert_eq!(summary.exit_breakdown["StopLoss"], 1);
         assert_eq!(summary.exit_breakdown["TakeProfit"], 1);
@@ -628,7 +624,7 @@ mod tests {
         assert_eq!(response.summary, "No strategies to compare.");
         assert!(response.ranking_by_sharpe.is_empty());
         assert!(response.ranking_by_pnl.is_empty());
-        assert!(response.best_overall.is_empty());
+        assert!(response.best_overall.is_none());
     }
 
     #[test]
@@ -662,7 +658,7 @@ mod tests {
         let response = format_compare(results);
         assert_eq!(response.ranking_by_sharpe, vec!["beta", "gamma", "alpha"]);
         assert_eq!(response.ranking_by_pnl, vec!["gamma", "alpha", "beta"]);
-        assert_eq!(response.best_overall, "beta");
+        assert_eq!(response.best_overall, Some("beta".to_string()));
         assert!(response.summary.contains("beta"));
         assert!(response.summary.contains("gamma"));
     }

@@ -30,8 +30,8 @@ pub struct TradeSummary {
     pub avg_loser: f64,
     pub avg_days_held: f64,
     pub exit_breakdown: HashMap<String, usize>,
-    pub best_trade: TradeStat,
-    pub worst_trade: TradeStat,
+    pub best_trade: Option<TradeStat>,
+    pub worst_trade: Option<TradeStat>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -70,7 +70,7 @@ pub struct CompareResponse {
     pub summary: String,
     pub ranking_by_sharpe: Vec<String>,
     pub ranking_by_pnl: Vec<String>,
-    pub best_overall: String,
+    pub best_overall: Option<String>,
     pub results: Vec<CompareResult>,
     pub suggested_next_steps: Vec<String>,
 }
