@@ -33,7 +33,7 @@ fn validate_exit_dte_lt_max_dte(
 use crate::tools;
 use crate::tools::response_types::{
     BacktestResponse, CheckCacheResponse, CompareResponse, DownloadResponse, EvaluateResponse,
-    FetchResponse, LoadDataResponse, StrategiesResponse,
+    FetchResponse, LoadDataResponse, StrategiesResponse, SuggestResponse,
 };
 use crate::tools::signals::SignalsResponse;
 
@@ -192,6 +192,22 @@ pub struct FetchToParquetParams {
     /// Time period to fetch (e.g. "6mo", "1y", "5y", "max"). Defaults to "6mo".
     #[garde(inner(length(min = 1)))]
     pub period: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+pub struct SuggestParametersParams {
+    /// Strategy name (e.g. '`iron_condor`')
+    #[garde(length(min = 1))]
+    pub strategy: String,
+    /// Risk preference: conservative (tight filters), moderate (balanced), or aggressive (loose filters)
+    #[garde(skip)]
+    pub risk_preference: String, // "conservative" | "moderate" | "aggressive"
+    /// Target win rate (0.0-1.0), informational only
+    #[garde(inner(range(min = 0.0, max = 1.0)))]
+    pub target_win_rate: Option<f64>,
+    /// Target Sharpe ratio, informational only
+    #[garde(skip)]
+    pub target_sharpe: Option<f64>,
 }
 
 use rmcp::handler::server::wrapper::Parameters;
@@ -398,6 +414,45 @@ impl OptopsyServer {
         let period = params.period.as_deref().unwrap_or("6mo");
         tools::fetch::execute(&self.cache, &params.symbol, &params.category, period)
             .await
+            .map(Json)
+            .map_err(|e| format!("Error: {e}"))
+    }
+
+    /// Analyze the loaded options chain and suggest optimal parameters for a strategy
+    /// based on DTE coverage, bid/ask spread quality, and delta distribution.
+    #[tool(name = "suggest_parameters")]
+    async fn suggest_parameters(
+        &self,
+        Parameters(params): Parameters<SuggestParametersParams>,
+    ) -> Result<Json<SuggestResponse>, String> {
+        params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
+
+        let risk_pref =
+            match params.risk_preference.to_lowercase().as_str() {
+                "conservative" => crate::engine::suggest::RiskPreference::Conservative,
+                "moderate" => crate::engine::suggest::RiskPreference::Moderate,
+                "aggressive" => crate::engine::suggest::RiskPreference::Aggressive,
+                _ => return Err(
+                    "Invalid risk_preference. Must be 'conservative', 'moderate', or 'aggressive'."
+                        .to_string(),
+                ),
+            };
+
+        let suggest_params = crate::engine::suggest::SuggestParams {
+            strategy: params.strategy,
+            risk_preference: risk_pref,
+            target_win_rate: params.target_win_rate,
+            target_sharpe: params.target_sharpe,
+        };
+
+        let data = self.data.read().await;
+        let Some((_, df)) = data.as_ref() else {
+            return Err("Error: No data loaded. Call load_data first.".to_string());
+        };
+
+        tools::suggest::execute(df, &suggest_params)
             .map(Json)
             .map_err(|e| format!("Error: {e}"))
     }
