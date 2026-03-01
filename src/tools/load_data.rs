@@ -20,6 +20,7 @@ pub async fn execute(
     start_date: Option<&str>,
     end_date: Option<&str>,
 ) -> Result<LoadDataResponse> {
+    let symbol = symbol.to_uppercase();
     let start = start_date
         .map(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d"))
         .transpose()?;
@@ -29,7 +30,7 @@ pub async fn execute(
 
     // Try loading from cache (local parquet + S3 fallback).
     // On cache miss, attempt EODHD download if configured.
-    let df = match cache.load_options(symbol, start, end) {
+    let df = match cache.load_options(&symbol, start, end) {
         Ok(df) => df,
         Err(cache_err) => {
             if let Some(provider) = eodhd {
@@ -37,9 +38,9 @@ pub async fn execute(
                     %symbol,
                     "Cache miss, downloading from EODHD…"
                 );
-                provider.download_options(symbol).await?;
+                provider.download_options(&symbol).await?;
                 // Retry from cache now that the file has been written
-                cache.load_options(symbol, start, end).map_err(|e| {
+                cache.load_options(&symbol, start, end).map_err(|e| {
                     anyhow::anyhow!(
                         "Downloaded from EODHD but failed to load: {e} (original: {cache_err})"
                     )

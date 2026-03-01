@@ -138,11 +138,10 @@ use rmcp::handler::server::wrapper::Parameters;
 
 #[tool_router]
 impl OptopsyServer {
-    /// Download ALL historical options data for a US stock symbol from EODHD
-    /// and store locally. This is a bulk download that fetches the complete
-    /// history (calls + puts, weekly + monthly expirations). Supports
-    /// resumable downloads — re-running will only fetch new data.
-    /// Requires `EODHD_API_KEY` environment variable.
+    /// Download up to ~2 years of historical options data for a US stock symbol
+    /// from EODHD and store locally. Fetches calls + puts, weekly + monthly
+    /// expirations. Supports resumable downloads — re-running will only fetch
+    /// new data. Requires `EODHD_API_KEY` environment variable.
     #[tool(name = "download_options_data")]
     async fn download_options_data(
         &self,

@@ -2,8 +2,8 @@
 //!
 //! Ports the Python `EODHDProvider` to Rust.  Key features:
 //!
-//! - **Bulk download** — fetches the complete historical options chain for a
-//!   symbol, split by option type and paginated in ~30-day windows to stay
+//! - **Bulk download** — fetches up to ~2 years of historical options chain for
+//!   a symbol, split by option type and paginated in ~30-day windows to stay
 //!   within the 10K-offset API cap.  Supports resumable downloads.
 //! - **Rate limiting** — adaptive throttle based on `X-RateLimit-Remaining`
 //!   header, with exponential backoff on 429 and 5xx errors.
@@ -455,7 +455,7 @@ impl EodhdProvider {
     // -- window management --------------------------------------------------
 
     /// Generate (`from_date`, `to_date`) ~30-day windows, newest first.
-    fn quarter_windows(start: NaiveDate, end: NaiveDate) -> Vec<(NaiveDate, NaiveDate)> {
+    fn monthly_windows(start: NaiveDate, end: NaiveDate) -> Vec<(NaiveDate, NaiveDate)> {
         let mut windows = Vec::new();
         let mut cur = end;
         while cur > start {
@@ -517,7 +517,7 @@ impl EodhdProvider {
 
             if let Some(ref err_msg) = error {
                 tracing::warn!("Error {win_from}–{win_to} ({option_type}): {err_msg} — skipping");
-                return (rows_fetched, None);
+                return (rows_fetched, error);
             }
 
             if hit_cap && span_days > MIN_WINDOW_DAYS {
@@ -532,13 +532,13 @@ impl EodhdProvider {
                 let mid = win_from + Duration::days(span_days / 2);
 
                 // First half
-                let (fetched, _) = self
+                let (fetched, first_err) = self
                     .fetch_window_recursive(symbol, option_type, win_from, mid, rows_fetched)
                     .await;
                 rows_fetched = fetched;
 
                 // Second half
-                let (fetched, _) = self
+                let (fetched, second_err) = self
                     .fetch_window_recursive(
                         symbol,
                         option_type,
@@ -548,6 +548,9 @@ impl EodhdProvider {
                     )
                     .await;
                 rows_fetched = fetched;
+
+                // Propagate the first error encountered
+                return (rows_fetched, first_err.or(second_err));
             }
 
             (rows_fetched, None)
@@ -571,27 +574,31 @@ impl EodhdProvider {
             return (0, None);
         }
 
-        let windows = Self::quarter_windows(start, end);
+        let windows = Self::monthly_windows(start, end);
         pb.set_length(windows.len() as u64);
         let mut rows_fetched: usize = 0;
+        let mut last_error: Option<String> = None;
 
         for (win_from, win_to) in &windows {
             pb.set_message(format!("{win_from} → {win_to}"));
 
-            let (fetched, _) = self
+            let (fetched, error) = self
                 .fetch_window_recursive(symbol, option_type, *win_from, *win_to, rows_fetched)
                 .await;
             rows_fetched = fetched;
+            if error.is_some() {
+                last_error = error;
+            }
             pb.inc(1);
         }
 
         pb.finish_with_message(format!("{rows_fetched} rows"));
-        (rows_fetched, None)
+        (rows_fetched, last_error)
     }
 
     // -- public API ---------------------------------------------------------
 
-    /// Download ALL historical options data for a symbol from EODHD.
+    /// Download up to ~2 years of historical options data for a symbol from EODHD.
     ///
     /// Splits by option type (call/put), uses ~30-day windows with recursive
     /// subdivision, and saves incrementally to the local parquet cache.
@@ -765,18 +772,27 @@ fn normalize_rows(rows: &[HashMap<String, String>]) -> Result<DataFrame> {
         }
     }
 
-    // Build string columns, using the internal name
+    // Build string columns, using the internal name.
+    // Normalize option_type to lowercase ("call"/"put") during construction.
     let n = rows.len();
     let columns: Vec<Column> = api_fields
         .iter()
         .map(|api_name| {
             let fallback = api_name.as_str();
-            let internal_name = column_map.get(api_name.as_str()).unwrap_or(&fallback);
-            let values: Vec<Option<&str>> = rows
-                .iter()
-                .map(|row| row.get(api_name).map(String::as_str))
-                .collect();
-            Column::new((*internal_name).into(), values)
+            let internal_name = *column_map.get(api_name.as_str()).unwrap_or(&fallback);
+            if internal_name == "option_type" {
+                let values: Vec<Option<String>> = rows
+                    .iter()
+                    .map(|row| row.get(api_name).map(|s| s.to_lowercase()))
+                    .collect();
+                Column::new(internal_name.into(), values)
+            } else {
+                let values: Vec<Option<&str>> = rows
+                    .iter()
+                    .map(|row| row.get(api_name).map(String::as_str))
+                    .collect();
+                Column::new(internal_name.into(), values)
+            }
         })
         .collect();
 
@@ -861,10 +877,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn quarter_windows_generates_correct_ranges() {
+    fn monthly_windows_generates_correct_ranges() {
         let start = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
         let end = NaiveDate::from_ymd_opt(2024, 3, 1).unwrap();
-        let windows = EodhdProvider::quarter_windows(start, end);
+        let windows = EodhdProvider::monthly_windows(start, end);
 
         // Should be newest-first
         assert!(!windows.is_empty());
@@ -935,5 +951,9 @@ mod tests {
         // Date columns cast to Date
         assert_eq!(*df.column("expiration").unwrap().dtype(), DataType::Date);
         assert_eq!(*df.column("quote_date").unwrap().dtype(), DataType::Date);
+
+        // option_type normalized to lowercase
+        let ot = df.column("option_type").unwrap();
+        assert_eq!(ot.str().unwrap().get(0).unwrap(), "call");
     }
 }
