@@ -47,39 +47,33 @@ impl Default for Commission {
 
 impl Commission {
     pub fn calculate(&self, num_contracts: i32) -> f64 {
-        let fee = self.base_fee + self.per_contract * num_contracts.abs() as f64;
+        let fee = self.base_fee + self.per_contract * f64::from(num_contracts.abs());
         fee.max(self.min_fee)
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type")]
+#[derive(Default)]
 pub enum Slippage {
+    #[default]
     Mid,
     Spread,
     Liquidity { fill_ratio: f64, ref_volume: u64 },
     PerLeg { per_leg: f64 },
 }
 
-impl Default for Slippage {
-    fn default() -> Self {
-        Self::Mid
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Default)]
 pub enum TradeSelector {
+    #[default]
     Nearest,
     HighestPremium,
     LowestPremium,
     First,
 }
 
-impl Default for TradeSelector {
-    fn default() -> Self {
-        Self::Nearest
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum ExitType {
@@ -243,13 +237,14 @@ pub struct CompareResult {
 
 // --- Event-driven simulation types ---
 
-/// Key for looking up option quotes: (quote_date, expiration, strike, option_type)
+/// Key for looking up option quotes: (`quote_date`, expiration, strike, `option_type`)
 pub type PriceKey = (NaiveDate, NaiveDate, OrderedFloat<f64>, OptionType);
 
-/// Lookup table mapping PriceKey to quote snapshot
+/// Lookup table mapping `PriceKey` to quote snapshot
 pub type PriceTable = HashMap<PriceKey, QuoteSnapshot>;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct QuoteSnapshot {
     pub bid: f64,
     pub ask: f64,
@@ -257,6 +252,7 @@ pub struct QuoteSnapshot {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Position {
     pub id: usize,
     pub entry_date: NaiveDate,
@@ -269,6 +265,7 @@ pub struct Position {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct PositionLeg {
     pub leg_index: usize,
     pub side: Side,
@@ -283,12 +280,14 @@ pub struct PositionLeg {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum PositionStatus {
     Open,
     Closed(ExitType),
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct EntryCandidate {
     pub entry_date: NaiveDate,
     pub expiration: NaiveDate,
@@ -308,9 +307,9 @@ pub struct CandidateLeg {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum AdjustmentAction {
-    CloseLeg { position_id: usize, leg_index: usize },
-    RollLeg { position_id: usize, leg_index: usize, new_strike: f64, new_expiration: NaiveDate },
-    AddLeg { position_id: usize, leg: CandidateLeg, side: Side, qty: i32 },
+    Close { position_id: usize, leg_index: usize },
+    Roll { position_id: usize, leg_index: usize, new_strike: f64, new_expiration: NaiveDate },
+    Add { position_id: usize, leg: CandidateLeg, side: Side, qty: i32 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

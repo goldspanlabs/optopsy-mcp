@@ -11,7 +11,7 @@ use super::rules;
 use super::types::*;
 use crate::data::parquet::QUOTE_DATETIME_COL;
 
-/// Build a price lookup table from the raw options DataFrame.
+/// Build a price lookup table from the raw options `DataFrame`.
 /// Returns the table and a sorted list of unique trading dates.
 pub fn build_price_table(df: &DataFrame) -> Result<(PriceTable, Vec<NaiveDate>)> {
     let quote_dates = df.column(QUOTE_DATETIME_COL)?;
@@ -48,7 +48,7 @@ pub fn build_price_table(df: &DataFrame) -> Result<(PriceTable, Vec<NaiveDate>)>
     Ok((table, trading_days))
 }
 
-/// Extract a NaiveDate from a column value at a given index.
+/// Extract a `NaiveDate` from a column value at a given index.
 /// Handles both Date and Datetime column types.
 fn extract_date_from_column(col: &Column, idx: usize) -> Result<NaiveDate> {
     match col.dtype() {
@@ -59,10 +59,10 @@ fn extract_date_from_column(col: &Column, idx: usize) -> Result<NaiveDate> {
                     let date = chrono::NaiveDate::from_num_days_from_ce_opt(
                         d + 719_163, // epoch offset: days from CE to 1970-01-01
                     )
-                    .ok_or_else(|| anyhow::anyhow!("Invalid date at index {}", idx))?;
+                    .ok_or_else(|| anyhow::anyhow!("Invalid date at index {idx}"))?;
                     Ok(date)
                 }
-                None => bail!("Null date at index {}", idx),
+                None => bail!("Null date at index {idx}"),
             }
         }
         DataType::Datetime(tu, _) => {
@@ -80,6 +80,7 @@ fn extract_date_from_column(col: &Column, idx: usize) -> Result<NaiveDate> {
                         }
                         TimeUnit::Nanoseconds => {
                             let secs = v / 1_000_000_000;
+                            #[allow(clippy::cast_sign_loss)]
                             let nsecs = (v % 1_000_000_000) as u32;
                             chrono::DateTime::from_timestamp(secs, nsecs)
                                 .map(|dt| dt.naive_utc())
@@ -87,18 +88,19 @@ fn extract_date_from_column(col: &Column, idx: usize) -> Result<NaiveDate> {
                     };
                     match ndt {
                         Some(dt) => Ok(dt.date()),
-                        None => bail!("Invalid datetime value at index {}", idx),
+                        None => bail!("Invalid datetime value at index {idx}"),
                     }
                 }
-                None => bail!("Null datetime at index {}", idx),
+                None => bail!("Null datetime at index {idx}"),
             }
         }
-        other => bail!("Unsupported column type for date extraction: {:?}", other),
+        other => bail!("Unsupported column type for date extraction: {other:?}"),
     }
 }
 
 /// Find entry candidates from the options data, grouped by date.
-/// Reuses existing Polars filter pipeline but does NOT call match_entry_exit.
+/// Reuses existing Polars filter pipeline but does NOT call `match_entry_exit`.
+#[allow(clippy::too_many_lines)]
 pub fn find_entry_candidates(
     df: &DataFrame,
     strategy_def: &StrategyDef,
@@ -144,10 +146,10 @@ pub fn find_entry_candidates(
             .rename(
                 ["strike", "bid", "ask", "delta"],
                 [
-                    format!("strike_{}", i),
-                    format!("bid_{}", i),
-                    format!("ask_{}", i),
-                    format!("delta_{}", i),
+                    format!("strike_{i}"),
+                    format!("bid_{i}"),
+                    format!("ask_{i}"),
+                    format!("delta_{i}"),
                 ],
                 true,
             )
@@ -197,29 +199,29 @@ pub fn find_entry_candidates(
 
         for (i, leg_def) in strategy_def.legs.iter().enumerate() {
             let strike = combined
-                .column(&format!("strike_{}", i))?
+                .column(&format!("strike_{i}"))?
                 .f64()?
                 .get(row_idx)
                 .unwrap_or(0.0);
             let bid = combined
-                .column(&format!("bid_{}", i))?
+                .column(&format!("bid_{i}"))?
                 .f64()?
                 .get(row_idx)
                 .unwrap_or(0.0);
             let ask = combined
-                .column(&format!("ask_{}", i))?
+                .column(&format!("ask_{i}"))?
                 .f64()?
                 .get(row_idx)
                 .unwrap_or(0.0);
             let delta = combined
-                .column(&format!("delta_{}", i))?
+                .column(&format!("delta_{i}"))?
                 .f64()?
                 .get(row_idx)
                 .unwrap_or(0.0);
 
-            let mid = (bid + ask) / 2.0;
+            let mid = f64::midpoint(bid, ask);
             // Long pays mid, short receives mid
-            net_premium += mid * leg_def.side.multiplier() * leg_def.qty as f64;
+            net_premium += mid * leg_def.side.multiplier() * f64::from(leg_def.qty);
 
             legs.push(CandidateLeg {
                 option_type: leg_def.option_type,
@@ -249,7 +251,7 @@ pub fn run_event_loop(
     trading_days: &[NaiveDate],
     params: &BacktestParams,
     strategy_def: &StrategyDef,
-) -> Result<(Vec<TradeRecord>, Vec<EquityPoint>)> {
+) -> (Vec<TradeRecord>, Vec<EquityPoint>) {
     let mut positions: Vec<Position> = Vec::new();
     let mut trade_log: Vec<TradeRecord> = Vec::new();
     let mut equity_curve: Vec<EquityPoint> = Vec::new();
@@ -318,6 +320,7 @@ pub fn run_event_loop(
 
         // Phase 2: Enter new positions
         let open_count = positions.len();
+        #[allow(clippy::cast_sign_loss)]
         if open_count < params.max_positions as usize {
             if let Some(day_candidates) = candidates.get(&today) {
                 // Filter out candidates with expirations we already hold
@@ -369,7 +372,7 @@ pub fn run_event_loop(
         });
     }
 
-    Ok((trade_log, equity_curve))
+    (trade_log, equity_curve)
 }
 
 /// Check if any exit trigger fires for a position on the given day.
@@ -387,14 +390,14 @@ fn check_exit_triggers(
 
     // DTE exit check
     let dte = (position.expiration - today).num_days();
-    if dte <= params.exit_dte as i64 {
+    if dte <= i64::from(params.exit_dte) {
         return Some(ExitType::DteExit);
     }
 
     // Max hold days check
     if let Some(max_days) = params.max_hold_days {
         let days_held = (today - position.entry_date).num_days();
-        if days_held >= max_days as i64 {
+        if days_held >= i64::from(max_days) {
             return Some(ExitType::MaxHold);
         }
     }
@@ -446,7 +449,7 @@ pub fn mark_to_market(
                     Side::Short => Side::Long,
                 };
                 let direction = leg.side.multiplier();
-                mtm += (close_price - leg.entry_price) * direction * leg.qty as f64 * multiplier as f64;
+                mtm += (close_price - leg.entry_price) * direction * f64::from(leg.qty) * f64::from(multiplier);
                 let _ = exit_side; // side used for fill price was already applied
             }
             continue;
@@ -473,8 +476,8 @@ pub fn mark_to_market(
             let direction = leg.side.multiplier();
             mtm += (current_price - leg.entry_price)
                 * direction
-                * leg.qty as f64
-                * multiplier as f64;
+                * f64::from(leg.qty)
+                * f64::from(multiplier);
         }
         // If no price found, MTM contribution is 0 (conservative)
     }
@@ -527,8 +530,8 @@ fn close_position(
         let direction = leg.side.multiplier();
         pnl += (close_price - leg.entry_price)
             * direction
-            * leg.qty as f64
-            * position.multiplier as f64;
+            * f64::from(leg.qty)
+            * f64::from(position.multiplier);
         total_contracts += leg.qty.abs();
 
         leg.closed = true;
@@ -569,8 +572,8 @@ fn open_position(
 
         let contracts = leg_def.qty * params.quantity;
         entry_cost += entry_price
-            * contracts as f64
-            * params.multiplier as f64
+            * f64::from(contracts)
+            * f64::from(params.multiplier)
             * leg_def.side.multiplier();
 
         legs.push(PositionLeg {
@@ -599,7 +602,7 @@ fn open_position(
     }
 }
 
-/// Select the best candidate based on TradeSelector.
+/// Select the best candidate based on `TradeSelector`.
 fn select_candidate<'a>(
     candidates: &[&'a EntryCandidate],
     selector: &TradeSelector,
@@ -862,7 +865,7 @@ mod tests {
         };
 
         let (_trade_log, equity_curve) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def).unwrap();
+            run_event_loop(&table, &candidates, &days, &params, &strategy_def);
 
         // Should have 1 trade, closed by DTE exit on day 3 (DTE = 18, which is > 15, so no DTE exit)
         // Actually DTE on Jan 29 = Feb 16 - Jan 29 = 18 days, exit_dte=15, so 18 > 15 → no DTE exit
@@ -932,7 +935,7 @@ mod tests {
         };
 
         let (trade_log, _) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def).unwrap();
+            run_event_loop(&table, &candidates, &days, &params, &strategy_def);
 
         // Stop loss: entry_cost = 5.25 * 100 = 525, threshold = 525 * 0.5 = 262.5
         // Day 2 MTM: (4.25 - 5.25) * 100 = -100 → no trigger
@@ -1004,7 +1007,7 @@ mod tests {
         };
 
         let (trade_log, _) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def).unwrap();
+            run_event_loop(&table, &candidates, &days, &params, &strategy_def);
 
         // Take profit: entry_cost = 525, threshold = 525 * 0.5 = 262.5
         // Day 2 MTM: (6.25 - 5.25) * 100 = 100 → no trigger
@@ -1079,7 +1082,7 @@ mod tests {
         };
 
         let (trade_log, _) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def).unwrap();
+            run_event_loop(&table, &candidates, &days, &params, &strategy_def);
 
         // Max positions = 1, first position stays open, second rejected
         assert_eq!(trade_log.len(), 0, "No trades should close in 2 days");
@@ -1127,7 +1130,7 @@ mod tests {
         };
 
         let (_, equity_curve) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def).unwrap();
+            run_event_loop(&table, &candidates, &days, &params, &strategy_def);
 
         // Should have one equity point per trading day
         assert_eq!(equity_curve.len(), days.len(), "One equity point per trading day");

@@ -69,12 +69,12 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
                     "strike", "bid", "ask", "delta", "exit_bid", "exit_ask",
                 ],
                 [
-                    format!("strike_{}", i),
-                    format!("bid_{}", i),
-                    format!("ask_{}", i),
-                    format!("delta_{}", i),
-                    format!("exit_bid_{}", i),
-                    format!("exit_ask_{}", i),
+                    format!("strike_{i}"),
+                    format!("bid_{i}"),
+                    format!("ask_{i}"),
+                    format!("delta_{i}"),
+                    format!("exit_bid_{i}"),
+                    format!("exit_ask_{i}"),
                 ],
                 true,
             )
@@ -116,22 +116,22 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
 
         for (i, leg) in strategy_def.legs.iter().enumerate() {
             let bid = combined
-                .column(&format!("bid_{}", i))?
+                .column(&format!("bid_{i}"))?
                 .f64()?
                 .get(row_idx)
                 .unwrap_or(0.0);
             let ask = combined
-                .column(&format!("ask_{}", i))?
+                .column(&format!("ask_{i}"))?
                 .f64()?
                 .get(row_idx)
                 .unwrap_or(0.0);
             let exit_bid = combined
-                .column(&format!("exit_bid_{}", i))?
+                .column(&format!("exit_bid_{i}"))?
                 .f64()?
                 .get(row_idx)
                 .unwrap_or(0.0);
             let exit_ask = combined
-                .column(&format!("exit_ask_{}", i))?
+                .column(&format!("exit_ask_{i}"))?
                 .f64()?
                 .get(row_idx)
                 .unwrap_or(0.0);
@@ -204,7 +204,7 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
         &trading_days,
         params,
         &strategy_def,
-    )?;
+    );
 
     let perf_metrics = metrics::calculate_metrics(&equity_curve, params.capital)?;
 
@@ -270,6 +270,7 @@ pub fn compare_strategies(df: &DataFrame, params: &CompareParams) -> Result<Vec<
 
 /// Intermediate trade representation used by legacy exits/simulator modules
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct RawTrade {
     pub entry_datetime: chrono::NaiveDateTime,
     pub exit_datetime: chrono::NaiveDateTime,
