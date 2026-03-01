@@ -49,6 +49,12 @@ fn exit_type_name(exit_type: &ExitType) -> &'static str {
     clippy::cast_sign_loss
 )]
 fn sample_equity_curve(curve: &[EquityPoint], max_points: usize) -> Vec<EquityPoint> {
+    if max_points == 0 {
+        return vec![];
+    }
+    if max_points == 1 {
+        return curve.last().cloned().into_iter().collect();
+    }
     if curve.len() <= max_points {
         return curve.to_vec();
     }
