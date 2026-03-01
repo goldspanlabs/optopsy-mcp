@@ -1,7 +1,7 @@
 use anyhow::Result;
 use polars::prelude::*;
 
-use super::types::TargetRange;
+use super::types::{ExpirationCycle, TargetRange};
 use crate::data::parquet::QUOTE_DATETIME_COL;
 
 /// Compute DTE (days to expiration) from `quote_datetime` and expiration columns.
@@ -106,6 +106,40 @@ pub fn prepare_leg_for_join(
         .iter()
         .map(|s| format!("{s}_{leg_index}"))
         .collect();
+
+    let result = selected
+        .lazy()
+        .rename(old_names, new_names, true)
+        .collect()?;
+
+    Ok(result)
+}
+
+/// Like `prepare_leg_for_join`, but renames `expiration` to a cycle-specific
+/// column (`expiration_primary` or `expiration_secondary`) so that legs from
+/// different expiration cycles can be joined on `quote_datetime` alone and
+/// then cross-filtered by `expiration_secondary > expiration_primary`.
+pub fn prepare_leg_for_join_multi_exp(
+    df: &DataFrame,
+    leg_index: usize,
+    base_cols: &[&str],
+    cycle: ExpirationCycle,
+) -> Result<DataFrame> {
+    let exp_col_name = match cycle {
+        ExpirationCycle::Primary => "expiration_primary",
+        ExpirationCycle::Secondary => "expiration_secondary",
+    };
+
+    let mut select_cols: Vec<&str> = vec![QUOTE_DATETIME_COL, "expiration"];
+    select_cols.extend_from_slice(base_cols);
+
+    let selected = df.select(select_cols)?;
+
+    let mut old_names: Vec<String> = vec!["expiration".to_string()];
+    old_names.extend(base_cols.iter().map(|s| (*s).to_string()));
+
+    let mut new_names: Vec<String> = vec![exp_col_name.to_string()];
+    new_names.extend(base_cols.iter().map(|s| format!("{s}_{leg_index}")));
 
     let result = selected
         .lazy()

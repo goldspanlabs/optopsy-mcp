@@ -105,6 +105,8 @@ pub fn find_entry_candidates(
     params: &BacktestParams,
 ) -> Result<BTreeMap<NaiveDate, Vec<EntryCandidate>>> {
     let num_legs = strategy_def.legs.len();
+    let is_multi_exp = strategy_def.is_multi_expiration();
+    let base_cols: &[&str] = &["strike", "bid", "ask", "delta"];
 
     // Process each leg through the existing filter pipeline
     let mut leg_dfs = Vec::new();
@@ -125,8 +127,13 @@ pub fn find_entry_candidates(
         // The event loop handles exits via DTE check, so we don't need exit-range rows.
         // Use exit_dte + 1 as minimum to avoid entering trades that would immediately exit.
         let min_entry_dte = params.exit_dte + 1;
-        let dte_filtered =
-            filters::filter_dte_range(&with_dte, params.max_entry_dte, min_entry_dte)?;
+        // Secondary legs get wider DTE range to find far-term expirations
+        let max_dte = if leg.expiration_cycle == ExpirationCycle::Secondary {
+            params.max_entry_dte * 2
+        } else {
+            params.max_entry_dte
+        };
+        let dte_filtered = filters::filter_dte_range(&with_dte, max_dte, min_entry_dte)?;
         let valid = filters::filter_valid_quotes(&dte_filtered)?;
         let selected = filters::select_closest_delta(&valid, delta_target)?;
 
@@ -138,36 +145,56 @@ pub fn find_entry_candidates(
             );
         }
 
-        // Select only needed columns and rename with leg index to avoid
-        // duplicate column errors (e.g. `option_type_right`) when joining 3+ legs.
-        let prepared =
-            filters::prepare_leg_for_join(&selected, i, &["strike", "bid", "ask", "delta"])?;
+        // Select only needed columns and rename with leg index
+        let prepared = if is_multi_exp {
+            filters::prepare_leg_for_join_multi_exp(
+                &selected,
+                i,
+                base_cols,
+                leg.expiration_cycle,
+            )?
+        } else {
+            filters::prepare_leg_for_join(&selected, i, base_cols)?
+        };
 
-        leg_dfs.push(prepared);
+        leg_dfs.push((prepared, leg.expiration_cycle));
     }
 
-    // Join all legs on (quote_datetime, expiration)
-    let mut combined = leg_dfs[0].clone();
-    for leg_df in leg_dfs.iter().skip(1) {
-        let join_cols: Vec<&str> = vec![QUOTE_DATETIME_COL, "expiration"];
-        combined = combined
-            .lazy()
-            .join(
-                leg_df.clone().lazy(),
-                join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
-                join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
-                JoinArgs::new(JoinType::Inner),
-            )
-            .collect()?;
-    }
+    // Join all legs
+    let combined = if is_multi_exp {
+        join_multi_exp_legs(&leg_dfs)?
+    } else {
+        let mut combined = leg_dfs[0].0.clone();
+        for (leg_df, _) in leg_dfs.iter().skip(1) {
+            let join_cols: Vec<&str> = vec![QUOTE_DATETIME_COL, "expiration"];
+            combined = combined
+                .lazy()
+                .join(
+                    leg_df.clone().lazy(),
+                    join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
+                    join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
+                    JoinArgs::new(JoinType::Inner),
+                )
+                .collect()?;
+        }
+        combined
+    };
 
     if combined.height() == 0 {
         return Ok(BTreeMap::new());
     }
 
     // Apply strike ordering rules for multi-leg strategies
-    let combined =
-        rules::filter_strike_order(&combined, num_legs, strategy_def.strict_strike_order)?;
+    let combined = rules::filter_strike_order(
+        &combined,
+        num_legs,
+        strategy_def.strict_strike_order,
+        if is_multi_exp {
+            Some(strategy_def)
+        } else {
+            None
+        },
+    )?;
 
     if combined.height() == 0 {
         return Ok(BTreeMap::new());
@@ -175,13 +202,30 @@ pub fn find_entry_candidates(
 
     // Convert to EntryCandidate structs grouped by date
     let quote_dates = combined.column(QUOTE_DATETIME_COL)?;
-    let expirations = combined.column("expiration")?;
 
     let mut candidates: BTreeMap<NaiveDate, Vec<EntryCandidate>> = BTreeMap::new();
 
     for row_idx in 0..combined.height() {
         let entry_date = extract_date_from_column(quote_dates, row_idx)?;
-        let exp_date = extract_date_from_column(expirations, row_idx)?;
+
+        // Extract expiration dates
+        let (primary_exp, secondary_exp) = if is_multi_exp {
+            let prim = extract_date_from_column(
+                combined.column("expiration_primary")?,
+                row_idx,
+            )?;
+            let sec = extract_date_from_column(
+                combined.column("expiration_secondary")?,
+                row_idx,
+            )?;
+            (prim, Some(sec))
+        } else {
+            let exp = extract_date_from_column(
+                combined.column("expiration")?,
+                row_idx,
+            )?;
+            (exp, None)
+        };
 
         let mut legs = Vec::new();
         let mut net_premium = 0.0;
@@ -212,10 +256,16 @@ pub fn find_entry_candidates(
             // Long pays mid, short receives mid
             net_premium += mid * leg_def.side.multiplier() * f64::from(leg_def.qty);
 
+            // Set each leg's expiration based on its cycle
+            let leg_exp = match leg_def.expiration_cycle {
+                ExpirationCycle::Primary => primary_exp,
+                ExpirationCycle::Secondary => secondary_exp.unwrap_or(primary_exp),
+            };
+
             legs.push(CandidateLeg {
                 option_type: leg_def.option_type,
                 strike,
-                expiration: exp_date,
+                expiration: leg_exp,
                 bid,
                 ask,
                 delta,
@@ -227,13 +277,73 @@ pub fn find_entry_candidates(
             .or_default()
             .push(EntryCandidate {
                 entry_date,
-                expiration: exp_date,
+                expiration: primary_exp,
+                secondary_expiration: secondary_exp,
                 legs,
                 net_premium,
             });
     }
 
     Ok(candidates)
+}
+
+/// Join legs for multi-expiration strategies in the backtest pipeline.
+fn join_multi_exp_legs(
+    leg_dfs: &[(DataFrame, ExpirationCycle)],
+) -> Result<DataFrame> {
+    let mut primary_dfs: Vec<&DataFrame> = Vec::new();
+    let mut secondary_dfs: Vec<&DataFrame> = Vec::new();
+
+    for (df, cycle) in leg_dfs {
+        match cycle {
+            ExpirationCycle::Primary => primary_dfs.push(df),
+            ExpirationCycle::Secondary => secondary_dfs.push(df),
+        }
+    }
+
+    // Join within primary group
+    let mut primary = primary_dfs[0].clone();
+    for df in primary_dfs.iter().skip(1) {
+        let join_cols: Vec<&str> = vec![QUOTE_DATETIME_COL, "expiration_primary"];
+        primary = primary
+            .lazy()
+            .join(
+                (*df).clone().lazy(),
+                join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
+                join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
+                JoinArgs::new(JoinType::Inner),
+            )
+            .collect()?;
+    }
+
+    // Join within secondary group
+    let mut secondary = secondary_dfs[0].clone();
+    for df in secondary_dfs.iter().skip(1) {
+        let join_cols: Vec<&str> = vec![QUOTE_DATETIME_COL, "expiration_secondary"];
+        secondary = secondary
+            .lazy()
+            .join(
+                (*df).clone().lazy(),
+                join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
+                join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
+                JoinArgs::new(JoinType::Inner),
+            )
+            .collect()?;
+    }
+
+    // Cross-join on quote_datetime, then filter expiration_secondary > expiration_primary
+    let combined = primary
+        .lazy()
+        .join(
+            secondary.lazy(),
+            vec![col(QUOTE_DATETIME_COL)],
+            vec![col(QUOTE_DATETIME_COL)],
+            JoinArgs::new(JoinType::Inner),
+        )
+        .filter(col("expiration_secondary").gt(col("expiration_primary")))
+        .collect()?;
+
+    Ok(combined)
 }
 
 /// Run the event-driven simulation loop.
@@ -313,7 +423,9 @@ pub fn run_event_loop(
                     .iter()
                     .filter(|c| {
                         !positions.iter().any(|p| {
-                            matches!(p.status, PositionStatus::Open) && p.expiration == c.expiration
+                            matches!(p.status, PositionStatus::Open)
+                                && p.expiration == c.expiration
+                                && p.secondary_expiration == c.secondary_expiration
                         })
                     })
                     .collect();
@@ -572,6 +684,7 @@ fn open_position(
         id,
         entry_date: date,
         expiration: candidate.expiration,
+        secondary_expiration: candidate.secondary_expiration,
         legs,
         entry_cost,
         quantity: params.quantity,
@@ -696,6 +809,7 @@ mod tests {
             id: 1,
             entry_date: NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
             expiration: exp,
+            secondary_expiration: None,
             legs: vec![PositionLeg {
                 leg_index: 0,
                 side: Side::Long,
@@ -749,6 +863,7 @@ mod tests {
             id: 1,
             entry_date: d1,
             expiration: exp,
+            secondary_expiration: None,
             legs: vec![PositionLeg {
                 leg_index: 0,
                 side: Side::Short,
@@ -785,6 +900,7 @@ mod tests {
             id: 1,
             entry_date: NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
             expiration: exp,
+            secondary_expiration: None,
             legs: vec![PositionLeg {
                 leg_index: 0,
                 side: Side::Long,
@@ -833,6 +949,7 @@ mod tests {
             vec![EntryCandidate {
                 entry_date: d1,
                 expiration: exp,
+                secondary_expiration: None,
                 legs: vec![CandidateLeg {
                     option_type: OptionType::Call,
                     strike: 100.0,
@@ -922,6 +1039,7 @@ mod tests {
             vec![EntryCandidate {
                 entry_date: d1,
                 expiration: exp,
+                secondary_expiration: None,
                 legs: vec![CandidateLeg {
                     option_type: OptionType::Call,
                     strike: 100.0,
@@ -1012,6 +1130,7 @@ mod tests {
             vec![EntryCandidate {
                 entry_date: d1,
                 expiration: exp,
+                secondary_expiration: None,
                 legs: vec![CandidateLeg {
                     option_type: OptionType::Call,
                     strike: 100.0,
@@ -1094,6 +1213,7 @@ mod tests {
             EntryCandidate {
                 entry_date: date,
                 expiration: exp,
+                secondary_expiration: None,
                 legs: vec![CandidateLeg {
                     option_type: OptionType::Call,
                     strike,
@@ -1152,6 +1272,7 @@ mod tests {
             vec![EntryCandidate {
                 entry_date: d1,
                 expiration: exp,
+                secondary_expiration: None,
                 legs: vec![CandidateLeg {
                     option_type: OptionType::Call,
                     strike: 100.0,
