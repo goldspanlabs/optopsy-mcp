@@ -23,6 +23,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rust_ti = "2.2"
 blackscholes = "0.24"
+garde = { version = "0.22", features = ["derive", "regex"] }
 ordered-float = "4"
 rust-s3 = { version = "0.37", default-features = false, features = ["tokio-rustls-tls", "fail-on-err"] }
 shellexpand = "3"

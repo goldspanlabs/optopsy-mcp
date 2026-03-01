@@ -299,19 +299,6 @@ pub fn compare_strategies(df: &DataFrame, params: &CompareParams) -> Result<Vec<
     Ok(results)
 }
 
-/// Intermediate trade representation used by legacy exits/simulator modules
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct RawTrade {
-    pub entry_datetime: chrono::NaiveDateTime,
-    pub exit_datetime: chrono::NaiveDateTime,
-    pub entry_cost: f64,
-    pub exit_proceeds: f64,
-    pub pnl: f64,
-    pub days_held: i64,
-    pub exit_type: ExitType,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
