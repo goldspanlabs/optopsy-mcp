@@ -149,8 +149,16 @@ fn compute_equity_summary(curve: &[EquityPoint], capital: f64) -> EquityCurveSum
         curve[0].equity
     };
     let end_equity = curve.last().map_or(capital, |p| p.equity);
-    let peak_equity = curve.iter().map(|p| p.equity).fold(capital, f64::max);
-    let trough_equity = curve.iter().map(|p| p.equity).fold(capital, f64::min);
+    let peak_equity = curve
+        .iter()
+        .map(|p| p.equity)
+        .fold(f64::NEG_INFINITY, f64::max)
+        .max(capital);
+    let trough_equity = curve
+        .iter()
+        .map(|p| p.equity)
+        .fold(f64::INFINITY, f64::min)
+        .min(capital);
     let total_return_pct = if capital > 0.0 {
         (end_equity - capital) / capital * 100.0
     } else {
@@ -793,5 +801,126 @@ mod tests {
         assert!(response.summary.contains("SPY, QQQ"));
         assert!(response.summary.contains("2024-01-01"));
         assert!(response.summary.contains("2024-12-31"));
+    }
+
+    fn make_backtest_params(strategy: &str, capital: f64) -> BacktestParams {
+        BacktestParams {
+            strategy: strategy.to_string(),
+            leg_deltas: vec![],
+            max_entry_dte: 45,
+            exit_dte: 0,
+            slippage: crate::engine::types::Slippage::Mid,
+            commission: None,
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            capital,
+            quantity: 1,
+            multiplier: 100,
+            max_positions: 1,
+            selector: crate::engine::types::TradeSelector::default(),
+            adjustment_rules: vec![],
+        }
+    }
+
+    fn make_backtest_result(
+        total_pnl: f64,
+        sharpe: f64,
+        max_drawdown: f64,
+        win_rate: f64,
+        profit_factor: f64,
+        calmar: f64,
+        trades: Vec<TradeRecord>,
+        equity: Vec<EquityPoint>,
+    ) -> BacktestResult {
+        BacktestResult {
+            trade_count: trades.len(),
+            total_pnl,
+            metrics: crate::engine::types::PerformanceMetrics {
+                sharpe,
+                sortino: sharpe * 1.2,
+                max_drawdown,
+                win_rate,
+                profit_factor,
+                calmar,
+                var_95: 0.03,
+            },
+            equity_curve: equity,
+            trade_log: trades,
+        }
+    }
+
+    #[test]
+    fn format_backtest_excellent_sharpe() {
+        let trades = vec![
+            make_trade(200.0, 10, ExitType::Expiration),
+            make_trade(150.0, 5, ExitType::TakeProfit),
+        ];
+        let result = make_backtest_result(350.0, 1.8, 0.05, 0.9, 3.0, 2.0, trades, vec![]);
+        let params = make_backtest_params("short_put", 100_000.0);
+        let response = format_backtest(result, &params);
+
+        assert!(response.summary.contains("excellent"));
+        assert_eq!(response.assessment, "excellent");
+        assert!(response.summary.contains("short_put"));
+        assert!(response.summary.contains("2 trades"));
+        // Low drawdown + high sharpe means no risk warnings
+        assert!(!response.suggested_next_steps.iter().any(|s| s.contains("drawdown")));
+        assert!(!response.suggested_next_steps.iter().any(|s| s.contains("stop_loss")));
+    }
+
+    #[test]
+    fn format_backtest_poor_sharpe_high_drawdown() {
+        let trades = vec![
+            make_trade(-100.0, 30, ExitType::StopLoss),
+            make_trade(-200.0, 20, ExitType::Expiration),
+            make_trade(50.0, 10, ExitType::Expiration),
+        ];
+        let result = make_backtest_result(-250.0, -0.5, 0.25, 0.33, 0.3, -0.2, trades, vec![]);
+        let params = make_backtest_params("long_call", 10_000.0);
+        let response = format_backtest(result, &params);
+
+        assert!(response.summary.contains("poor"));
+        assert_eq!(response.assessment, "poor");
+        // Should suggest risk improvements
+        assert!(response.suggested_next_steps.iter().any(|s| s.contains("stop_loss") || s.contains("risk")));
+        assert!(response.suggested_next_steps.iter().any(|s| s.contains("drawdown") || s.contains("risk management")));
+        // Key findings should mention losses exceed wins
+        assert!(response.key_findings.iter().any(|f| f.contains("losses exceed wins")));
+    }
+
+    #[test]
+    fn format_backtest_all_wins_infinite_profit_factor() {
+        let trades = vec![
+            make_trade(100.0, 5, ExitType::TakeProfit),
+            make_trade(200.0, 7, ExitType::TakeProfit),
+        ];
+        let result = make_backtest_result(300.0, 1.2, 0.02, 1.0, f64::INFINITY, 5.0, trades, vec![]);
+        let params = make_backtest_params("bull_call_spread", 50_000.0);
+        let response = format_backtest(result, &params);
+
+        assert_eq!(response.assessment, "strong");
+        // Infinite profit factor branch
+        assert!(response.key_findings.iter().any(|f| f.contains("no losing trades")));
+        // Trade summary should have 0 losers
+        assert_eq!(response.trade_summary.losers, 0);
+        assert_eq!(response.trade_summary.winners, 2);
+    }
+
+    #[test]
+    fn format_backtest_equity_peak_trough_from_curve() {
+        let curve = vec![
+            make_equity_point(0, 100_000.0),
+            make_equity_point(1, 95_000.0),
+            make_equity_point(2, 110_000.0),
+        ];
+        let trades = vec![make_trade(10_000.0, 2, ExitType::Expiration)];
+        let result = make_backtest_result(10_000.0, 1.0, 0.05, 1.0, f64::INFINITY, 2.0, trades, curve);
+        let params = make_backtest_params("test", 100_000.0);
+        let response = format_backtest(result, &params);
+
+        assert_eq!(response.equity_curve_summary.peak_equity, 110_000.0);
+        assert_eq!(response.equity_curve_summary.trough_equity, 95_000.0);
+        assert_eq!(response.equity_curve_summary.num_points, 3);
     }
 }
