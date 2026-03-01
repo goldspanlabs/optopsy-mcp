@@ -180,7 +180,7 @@ pub struct SimParams {
 }
 
 // Output types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GroupStats {
     pub dte_range: String,
     pub delta_range: String,
@@ -196,7 +196,7 @@ pub struct GroupStats {
     pub profit_factor: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BacktestResult {
     pub trade_count: usize,
     pub total_pnl: f64,
@@ -205,7 +205,7 @@ pub struct BacktestResult {
     pub trade_log: Vec<TradeRecord>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PerformanceMetrics {
     pub sharpe: f64,
     pub sortino: f64,
@@ -216,13 +216,13 @@ pub struct PerformanceMetrics {
     pub var_95: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EquityPoint {
     pub datetime: NaiveDateTime,
     pub equity: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TradeRecord {
     pub trade_id: usize,
     pub entry_datetime: NaiveDateTime,
@@ -234,7 +234,7 @@ pub struct TradeRecord {
     pub exit_type: ExitType,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CompareResult {
     pub strategy: String,
     pub trades: usize,

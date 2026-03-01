@@ -3,7 +3,10 @@ use polars::prelude::*;
 
 use crate::engine::types::BacktestParams;
 
-pub fn execute(df: &DataFrame, params: &BacktestParams) -> Result<String> {
+use super::ai_format;
+use super::response_types::BacktestResponse;
+
+pub fn execute(df: &DataFrame, params: &BacktestParams) -> Result<BacktestResponse> {
     let result = crate::engine::core::run_backtest(df, params)?;
-    Ok(serde_json::to_string_pretty(&result)?)
+    Ok(ai_format::format_backtest(result, params))
 }

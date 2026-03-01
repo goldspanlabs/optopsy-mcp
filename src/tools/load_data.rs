@@ -1,7 +1,6 @@
 use anyhow::Result;
 use chrono::NaiveDate;
 use polars::prelude::*;
-use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -9,13 +8,16 @@ use crate::data::cache::CachedStore;
 use crate::data::parquet::QUOTE_DATETIME_COL;
 use crate::data::DataStore;
 
+use super::ai_format;
+use super::response_types::{DateRange, LoadDataResponse};
+
 pub async fn execute(
     data: &Arc<RwLock<Option<DataFrame>>>,
     cache: &Arc<CachedStore>,
     symbol: &str,
     start_date: Option<&str>,
     end_date: Option<&str>,
-) -> Result<String> {
+) -> Result<LoadDataResponse> {
     let start = start_date
         .map(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d"))
         .transpose()?;
@@ -49,22 +51,46 @@ pub async fn execute(
         let date_col = df.column(QUOTE_DATETIME_COL)?;
         let min_scalar = date_col.min_reduce()?;
         let max_scalar = date_col.max_reduce()?;
-        let min_val = format!("{:?}", min_scalar.value());
-        let max_val = format!("{:?}", max_scalar.value());
-        json!({ "start": min_val, "end": max_val })
+
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+        let format_scalar = |s: polars::prelude::Scalar| -> Option<String> {
+            match s.value() {
+                AnyValue::Null => None,
+                AnyValue::Datetime(v, tu, _) => {
+                    let us = match tu {
+                        TimeUnit::Nanoseconds => v / 1_000,
+                        TimeUnit::Microseconds => *v,
+                        TimeUnit::Milliseconds => v * 1_000,
+                    };
+                    let secs = us / 1_000_000;
+                    let nanos = (us.rem_euclid(1_000_000) * 1_000) as u32;
+                    chrono::DateTime::from_timestamp(secs, nanos)
+                        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S").to_string())
+                }
+                AnyValue::Date(days) => {
+                    // 719_163 = days between 0001-01-01 (CE) and 1970-01-01 (Unix epoch)
+                    chrono::NaiveDate::from_num_days_from_ce_opt(days + 719_163)
+                        .map(|d| d.format("%Y-%m-%d").to_string())
+                }
+                other => Some(format!("{other}")),
+            }
+        };
+
+        DateRange {
+            start: format_scalar(min_scalar),
+            end: format_scalar(max_scalar),
+        }
     } else {
-        json!({ "start": null, "end": null })
+        DateRange {
+            start: start_date.map(std::string::ToString::to_string),
+            end: end_date.map(std::string::ToString::to_string),
+        }
     };
 
     let mut guard = data.write().await;
     *guard = Some(df);
 
-    let result = json!({
-        "rows": rows,
-        "symbols": symbols,
-        "date_range": date_range,
-        "columns": columns,
-    });
-
-    Ok(serde_json::to_string_pretty(&result)?)
+    Ok(ai_format::format_load_data(
+        rows, symbols, date_range, columns,
+    ))
 }
