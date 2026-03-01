@@ -302,6 +302,16 @@ pub struct GroupStats {
     pub profit_factor: f64,
 }
 
+/// Internal quality stats collected during backtest simulation
+#[derive(Debug, Clone, Default)]
+pub struct BacktestQualityStats {
+    pub trading_days_total: usize,
+    pub trading_days_with_data: usize,
+    pub total_candidates: usize,
+    pub positions_opened: usize,
+    pub entry_spread_pcts: Vec<f64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BacktestResult {
     pub trade_count: usize,
@@ -309,6 +319,8 @@ pub struct BacktestResult {
     pub metrics: PerformanceMetrics,
     pub equity_curve: Vec<EquityPoint>,
     pub trade_log: Vec<TradeRecord>,
+    #[serde(skip)]
+    pub quality: BacktestQualityStats,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

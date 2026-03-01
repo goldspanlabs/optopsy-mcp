@@ -270,7 +270,7 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
         candidates.retain(|date, _| allowed_dates.contains(date));
     }
 
-    let (trade_log, equity_curve) = event_sim::run_event_loop(
+    let (trade_log, equity_curve, quality) = event_sim::run_event_loop(
         &price_table,
         &candidates,
         &trading_days,
@@ -287,6 +287,7 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
         metrics: perf_metrics,
         equity_curve,
         trade_log,
+        quality,
     })
 }
 

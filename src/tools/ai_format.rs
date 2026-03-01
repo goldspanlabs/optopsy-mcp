@@ -1,15 +1,16 @@
 use std::collections::HashMap;
 
 use crate::engine::types::{
-    BacktestParams, BacktestResult, CompareResult, EquityPoint, EvaluateParams, ExitType,
-    GroupStats, TradeRecord,
+    BacktestParams, BacktestQualityStats, BacktestResult, CompareResult, EquityPoint,
+    EvaluateParams, ExitType, GroupStats, TradeRecord,
 };
 
 use crate::data::eodhd::DownloadSummary;
 
 use super::response_types::{
-    BacktestResponse, CompareResponse, DateRange, DownloadResponse, EquityCurveSummary,
-    EvaluateResponse, LoadDataResponse, StrategiesResponse, StrategyInfo, TradeStat, TradeSummary,
+    BacktestDataQuality, BacktestResponse, CompareResponse, DataQualityReport, DateRange,
+    DownloadResponse, EquityCurveSummary, EvaluateResponse, LoadDataResponse, StrategiesResponse,
+    StrategyInfo, TradeStat, TradeSummary,
 };
 
 fn assess_sharpe(sharpe: f64) -> &'static str {
@@ -169,6 +170,121 @@ fn most_common_exit(trade_log: &[TradeRecord]) -> String {
         .map_or_else(|| "N/A".to_string(), |(name, _)| name.to_string())
 }
 
+fn build_evaluate_quality(
+    groups: &[GroupStats],
+    params: &EvaluateParams,
+    median_spread: Option<f64>,
+) -> DataQualityReport {
+    let dte_steps = {
+        let diff = params.max_entry_dte - params.exit_dte;
+        ((f64::from(diff)) / f64::from(params.dte_interval)).ceil() as usize
+    };
+    let delta_steps = {
+        let min_range = params
+            .leg_deltas
+            .iter()
+            .map(|d| d.max - d.min)
+            .fold(f64::NEG_INFINITY, f64::max);
+        (min_range / params.delta_interval).ceil() as usize
+    };
+    let total_expected_buckets = dte_steps * delta_steps;
+    let buckets_with_data = groups.len();
+    let sufficient_buckets = groups.iter().filter(|g| g.count >= 10).count();
+    let sparse_buckets = groups
+        .iter()
+        .filter(|g| g.count >= 1 && g.count < 10)
+        .count();
+    let empty_buckets = total_expected_buckets.saturating_sub(buckets_with_data);
+    let coverage_pct = if total_expected_buckets > 0 {
+        (buckets_with_data as f64 / total_expected_buckets as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    let mut warnings = Vec::new();
+    if coverage_pct < 80.0 {
+        warnings.push(
+            "More than 20% of the DTE×delta parameter space has no data. Consider widening your delta/DTE ranges."
+                .to_string(),
+        );
+    }
+    if sparse_buckets > sufficient_buckets {
+        warnings.push(
+            "Most buckets have fewer than 10 trades. Statistical estimates may be unreliable."
+                .to_string(),
+        );
+    }
+    if let Some(spread) = median_spread {
+        if spread > 15.0 {
+            warnings.push(format!(
+                "Median bid-ask spread is {spread:.1}%. Slippage costs may significantly impact actual P&L."
+            ));
+        }
+    }
+
+    DataQualityReport {
+        total_expected_buckets,
+        buckets_with_data,
+        sufficient_buckets,
+        sparse_buckets,
+        empty_buckets,
+        coverage_pct,
+        median_spread_pct: median_spread,
+        warnings,
+    }
+}
+
+fn build_backtest_quality(quality: &BacktestQualityStats) -> BacktestDataQuality {
+    let price_data_coverage_pct = if quality.trading_days_total > 0 {
+        (quality.trading_days_with_data as f64 / quality.trading_days_total as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    let fill_rate_pct = if quality.total_candidates > 0 {
+        (quality.positions_opened as f64 / quality.total_candidates as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    let median_entry_spread_pct = if quality.entry_spread_pcts.is_empty() {
+        None
+    } else {
+        let mut sorted = quality.entry_spread_pcts.clone();
+        sorted.sort_by(|a: &f64, b: &f64| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let median_idx = sorted.len() / 2;
+        Some(if sorted.len().is_multiple_of(2) {
+            f64::midpoint(sorted[median_idx - 1], sorted[median_idx])
+        } else {
+            sorted[median_idx]
+        })
+    };
+
+    let mut warnings = Vec::new();
+    if price_data_coverage_pct < 80.0 {
+        warnings.push(format!(
+            "Price data missing for {:.0}% of trading days. Mark-to-market accuracy may be reduced.",
+            100.0 - price_data_coverage_pct
+        ));
+    }
+    if quality.total_candidates > 0 && fill_rate_pct < 50.0 {
+        warnings.push(format!(
+            "Only {fill_rate_pct:.0}% of entry candidates were opened. Consider increasing max_positions."
+        ));
+    }
+
+    BacktestDataQuality {
+        trading_days_total: quality.trading_days_total,
+        trading_days_with_price_data: quality.trading_days_with_data,
+        price_data_coverage_pct,
+        total_entry_candidates: quality.total_candidates,
+        total_positions_opened: quality.positions_opened,
+        fill_rate_pct,
+        median_entry_spread_pct,
+        warnings,
+    }
+}
+
 fn backtest_key_findings(
     m: &crate::engine::types::PerformanceMetrics,
     trade_log: &[TradeRecord],
@@ -243,6 +359,7 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
     let m = &result.metrics;
     let trade_summary = compute_trade_summary(&result.trade_log, m);
     let equity_curve_summary = compute_equity_summary(&result.equity_curve, params.capital, m);
+    let data_quality = build_backtest_quality(&result.quality);
 
     // Zero-trade early branch: metrics are not meaningful
     if result.trade_log.is_empty() {
@@ -261,6 +378,7 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
             equity_curve_summary,
             equity_curve: result.equity_curve,
             trade_log: result.trade_log,
+            data_quality,
             suggested_next_steps: vec![
                 "Widen DTE range or delta targets to capture more entry opportunities".to_string(),
                 format!(
@@ -326,11 +444,16 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
         equity_curve_summary,
         equity_curve: result.equity_curve,
         trade_log: result.trade_log,
+        data_quality,
         suggested_next_steps,
     }
 }
 
-pub fn format_evaluate(groups: Vec<GroupStats>, params: &EvaluateParams) -> EvaluateResponse {
+pub fn format_evaluate(
+    groups: Vec<GroupStats>,
+    params: &EvaluateParams,
+    median_spread: Option<f64>,
+) -> EvaluateResponse {
     let total_buckets = groups.len();
     let total_trades: usize = groups.iter().map(|g| g.count).sum();
 
@@ -396,6 +519,8 @@ pub fn format_evaluate(groups: Vec<GroupStats>, params: &EvaluateParams) -> Eval
         params.strategy,
     ));
 
+    let data_quality = build_evaluate_quality(&groups, params, median_spread);
+
     EvaluateResponse {
         summary,
         total_buckets,
@@ -404,6 +529,7 @@ pub fn format_evaluate(groups: Vec<GroupStats>, params: &EvaluateParams) -> Eval
         worst_bucket,
         highest_win_rate_bucket,
         groups,
+        data_quality,
         suggested_next_steps,
     }
 }
@@ -820,7 +946,7 @@ mod tests {
             slippage: crate::engine::types::Slippage::Mid,
             commission: None,
         };
-        let response = format_evaluate(vec![], &params);
+        let response = format_evaluate(vec![], &params, None);
         assert_eq!(response.total_buckets, 0);
         assert_eq!(response.total_trades, 0);
         assert!(response.best_bucket.is_none());
@@ -870,7 +996,7 @@ mod tests {
                 profit_factor: 0.5,
             },
         ];
-        let response = format_evaluate(groups, &params);
+        let response = format_evaluate(groups, &params, None);
         assert_eq!(response.total_buckets, 2);
         assert_eq!(response.total_trades, 15);
         let best = response.best_bucket.unwrap();
@@ -1075,6 +1201,7 @@ mod tests {
             },
             equity_curve: equity,
             trade_log: trades,
+            quality: crate::engine::types::BacktestQualityStats::default(),
         }
     }
 

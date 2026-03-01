@@ -285,7 +285,7 @@ pub fn find_entry_candidates(
 }
 
 /// Run the event-driven simulation loop.
-#[allow(clippy::implicit_hasher)]
+#[allow(clippy::implicit_hasher, clippy::too_many_lines)]
 pub fn run_event_loop(
     price_table: &PriceTable,
     candidates: &BTreeMap<NaiveDate, Vec<EntryCandidate>>,
@@ -293,7 +293,7 @@ pub fn run_event_loop(
     params: &BacktestParams,
     strategy_def: &StrategyDef,
     exit_dates: Option<&std::collections::HashSet<NaiveDate>>,
-) -> (Vec<TradeRecord>, Vec<EquityPoint>) {
+) -> (Vec<TradeRecord>, Vec<EquityPoint>, BacktestQualityStats) {
     let mut positions: Vec<Position> = Vec::new();
     let mut trade_log: Vec<TradeRecord> = Vec::new();
     let mut equity_curve: Vec<EquityPoint> = Vec::new();
@@ -301,6 +301,18 @@ pub fn run_event_loop(
     let mut realized_equity = params.capital;
     let mut next_id = 1usize;
     let mut trade_id = 0usize;
+
+    // Quality tracking
+    let trading_days_total = trading_days.len();
+    let mut trading_days_with_data = std::collections::HashSet::new();
+    let mut total_candidates = 0usize;
+    let mut positions_opened = 0usize;
+    let mut entry_spread_pcts = Vec::new();
+
+    // Count unique trading dates in price table
+    for (quote_date, _, _, _) in price_table.keys() {
+        trading_days_with_data.insert(*quote_date);
+    }
 
     // Last known prices for carry-forward on gaps
     let mut last_known: HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot> =
@@ -363,6 +375,9 @@ pub fn run_event_loop(
         let open_count = positions.len();
         if open_count < params.max_positions as usize {
             if let Some(day_candidates) = candidates.get(&today) {
+                // Track candidates
+                total_candidates += day_candidates.len();
+
                 // Filter out candidates with expirations we already hold
                 let available: Vec<&EntryCandidate> = day_candidates
                     .iter()
@@ -375,9 +390,19 @@ pub fn run_event_loop(
                     })
                     .collect();
                 if let Some(candidate) = select_candidate(&available, &params.selector) {
+                    // Collect entry spread percentages
+                    for leg in &candidate.legs {
+                        if leg.bid > 0.0 && leg.ask > 0.0 {
+                            let mid = f64::midpoint(leg.bid, leg.ask);
+                            let spread_pct = (leg.ask - leg.bid) / mid * 100.0;
+                            entry_spread_pcts.push(spread_pct);
+                        }
+                    }
+
                     let position = open_position(candidate, today, strategy_def, params, next_id);
                     next_id += 1;
                     positions.push(position);
+                    positions_opened += 1;
                 }
             }
         }
@@ -407,7 +432,15 @@ pub fn run_event_loop(
         });
     }
 
-    (trade_log, equity_curve)
+    let quality = BacktestQualityStats {
+        trading_days_total,
+        trading_days_with_data: trading_days_with_data.len(),
+        total_candidates,
+        positions_opened,
+        entry_spread_pcts,
+    };
+
+    (trade_log, equity_curve, quality)
 }
 
 /// Check if any exit trigger fires for a position on the given day.
@@ -934,7 +967,7 @@ mod tests {
             ohlcv_path: None,
         };
 
-        let (_trade_log, equity_curve) =
+        let (_trade_log, equity_curve, _) =
             run_event_loop(&table, &candidates, &days, &params, &strategy_def, None);
 
         // Should have 1 trade, closed by DTE exit on day 3 (DTE = 18, which is > 15, so no DTE exit)
@@ -1027,7 +1060,7 @@ mod tests {
             ohlcv_path: None,
         };
 
-        let (trade_log, _) =
+        let (trade_log, _, _) =
             run_event_loop(&table, &candidates, &days, &params, &strategy_def, None);
 
         // Stop loss: entry_cost = 5.25 * 100 = 525, threshold = 525 * 0.5 = 262.5
@@ -1122,7 +1155,7 @@ mod tests {
             ohlcv_path: None,
         };
 
-        let (trade_log, _) =
+        let (trade_log, _, _) =
             run_event_loop(&table, &candidates, &days, &params, &strategy_def, None);
 
         // Take profit: entry_cost = 525, threshold = 525 * 0.5 = 262.5
@@ -1213,7 +1246,7 @@ mod tests {
             ohlcv_path: None,
         };
 
-        let (trade_log, _) =
+        let (trade_log, _, _) =
             run_event_loop(&table, &candidates, &days, &params, &strategy_def, None);
 
         // Max positions = 1, first position stays open, second rejected
@@ -1272,7 +1305,7 @@ mod tests {
             ohlcv_path: None,
         };
 
-        let (_, equity_curve) =
+        let (_, equity_curve, _) =
             run_event_loop(&table, &candidates, &days, &params, &strategy_def, None);
 
         // Should have one equity point per trading day

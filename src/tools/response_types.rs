@@ -6,6 +6,32 @@ use crate::engine::types::{
     CompareResult, EquityPoint, GroupStats, PerformanceMetrics, Slippage, TargetRange, TradeRecord,
 };
 
+/// Data quality report for `evaluate_strategy`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DataQualityReport {
+    pub total_expected_buckets: usize,
+    pub buckets_with_data: usize,
+    pub sufficient_buckets: usize,
+    pub sparse_buckets: usize,
+    pub empty_buckets: usize,
+    pub coverage_pct: f64,
+    pub median_spread_pct: Option<f64>,
+    pub warnings: Vec<String>,
+}
+
+/// Data quality report for `run_backtest`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct BacktestDataQuality {
+    pub trading_days_total: usize,
+    pub trading_days_with_price_data: usize,
+    pub price_data_coverage_pct: f64,
+    pub total_entry_candidates: usize,
+    pub total_positions_opened: usize,
+    pub fill_rate_pct: f64,
+    pub median_entry_spread_pct: Option<f64>,
+    pub warnings: Vec<String>,
+}
+
 /// AI-enriched response for `run_backtest`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BacktestResponse {
@@ -17,6 +43,7 @@ pub struct BacktestResponse {
     pub equity_curve_summary: EquityCurveSummary,
     pub equity_curve: Vec<EquityPoint>,
     pub trade_log: Vec<TradeRecord>,
+    pub data_quality: BacktestDataQuality,
     pub suggested_next_steps: Vec<String>,
 }
 
@@ -61,6 +88,7 @@ pub struct EvaluateResponse {
     pub worst_bucket: Option<GroupStats>,
     pub highest_win_rate_bucket: Option<GroupStats>,
     pub groups: Vec<GroupStats>,
+    pub data_quality: DataQualityReport,
     pub suggested_next_steps: Vec<String>,
 }
 
