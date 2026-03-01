@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::NaiveDate;
 use polars::prelude::*;
+use std::path::PathBuf;
 use std::sync::Arc;
 use yahoo_finance_api as yahoo;
 
@@ -15,15 +16,9 @@ pub async fn execute(
     period: &str,
 ) -> Result<FetchResponse> {
     let upper = symbol.to_uppercase();
-    let path = cache.cache_path(&upper, category);
+    let path = cache.cache_path(&upper, category)?;
 
-    // Ensure parent directory exists
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
-    }
-
-    // Fetch OHLCV data from Yahoo Finance
+    // Fetch OHLCV data from Yahoo Finance (async network call)
     let provider =
         yahoo::YahooConnector::new().context("Failed to create Yahoo Finance connector")?;
 
@@ -40,23 +35,35 @@ pub async fn execute(
         anyhow::bail!("No data returned from Yahoo Finance for {upper} (period: {period})");
     }
 
-    // Build a polars DataFrame from the quotes
-    let dates: Vec<NaiveDate> = quotes
-        .iter()
-        .map(|q| {
-            chrono::DateTime::from_timestamp(q.timestamp, 0).map_or_else(
-                || chrono::Utc::now().naive_utc().date(),
-                |dt| dt.naive_utc().date(),
-            )
-        })
-        .collect();
+    // Build a polars DataFrame from the quotes, rejecting rows with invalid timestamps
+    let mut dates: Vec<NaiveDate> = Vec::with_capacity(quotes.len());
+    let mut open: Vec<f64> = Vec::with_capacity(quotes.len());
+    let mut high: Vec<f64> = Vec::with_capacity(quotes.len());
+    let mut low: Vec<f64> = Vec::with_capacity(quotes.len());
+    let mut close: Vec<f64> = Vec::with_capacity(quotes.len());
+    let mut adjclose: Vec<f64> = Vec::with_capacity(quotes.len());
+    let mut volume: Vec<u64> = Vec::with_capacity(quotes.len());
 
-    let open: Vec<f64> = quotes.iter().map(|q| q.open).collect();
-    let high: Vec<f64> = quotes.iter().map(|q| q.high).collect();
-    let low: Vec<f64> = quotes.iter().map(|q| q.low).collect();
-    let close: Vec<f64> = quotes.iter().map(|q| q.close).collect();
-    let adjclose: Vec<f64> = quotes.iter().map(|q| q.adjclose).collect();
-    let volume: Vec<u64> = quotes.iter().map(|q| q.volume).collect();
+    for q in &quotes {
+        let Some(dt) = chrono::DateTime::from_timestamp(q.timestamp, 0) else {
+            tracing::warn!(
+                timestamp = q.timestamp,
+                "Skipping quote with invalid timestamp"
+            );
+            continue;
+        };
+        dates.push(dt.naive_utc().date());
+        open.push(q.open);
+        high.push(q.high);
+        low.push(q.low);
+        close.push(q.close);
+        adjclose.push(q.adjclose);
+        volume.push(q.volume);
+    }
+
+    if dates.is_empty() {
+        anyhow::bail!("All quotes for {upper} had invalid timestamps");
+    }
 
     let date_col = Column::new_scalar(
         PlSmallStr::from("date"),
@@ -92,14 +99,9 @@ pub async fn execute(
     let first_date = dates.first().map(|d| d.format("%Y-%m-%d").to_string());
     let last_date = dates.last().map(|d| d.format("%Y-%m-%d").to_string());
 
-    // Write to parquet
-    let file = std::fs::File::create(&path)
-        .with_context(|| format!("Failed to create file: {}", path.display()))?;
-    ParquetWriter::new(file)
-        .finish(&mut df)
-        .with_context(|| format!("Failed to write parquet: {}", path.display()))?;
+    // Perform blocking filesystem work off the async executor thread
+    let file_path = write_parquet(path, df).await?;
 
-    let file_path = path.display().to_string();
     let summary = format!(
         "Fetched {rows} bars of OHLCV data for {upper} ({period}) and saved to {file_path}."
     );
@@ -108,15 +110,36 @@ pub async fn execute(
         summary,
         rows,
         symbol: upper.clone(),
-        file_path,
+        file_path: file_path.clone(),
         date_range: DateRange {
             start: first_date,
             end: last_date,
         },
         columns,
         suggested_next_steps: vec![
-            format!("Call load_data with symbol '{upper}' to load this data into memory."),
+            format!(
+                "Use the returned file_path ('{file_path}') to load this OHLCV parquet into memory with your preferred data analysis tools."
+            ),
             format!("Call check_cache_status to verify the cached file for {upper}."),
         ],
     })
+}
+
+/// Write `df` as Parquet to `path` using a blocking thread pool so the async
+/// executor is not stalled by filesystem I/O.
+async fn write_parquet(path: PathBuf, mut df: DataFrame) -> Result<String> {
+    tokio::task::spawn_blocking(move || {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+        }
+        let file = std::fs::File::create(&path)
+            .with_context(|| format!("Failed to create file: {}", path.display()))?;
+        ParquetWriter::new(file)
+            .finish(&mut df)
+            .with_context(|| format!("Failed to write parquet: {}", path.display()))?;
+        Ok(path.display().to_string())
+    })
+    .await
+    .context("Parquet write task panicked")?
 }

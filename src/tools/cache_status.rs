@@ -10,7 +10,7 @@ pub fn execute(
     symbol: &str,
     category: &str,
 ) -> Result<CheckCacheResponse> {
-    let path = cache.cache_path(symbol, category);
+    let path = cache.cache_path(symbol, category)?;
     let file_path = path.display().to_string();
 
     let (exists, last_updated) = if path.exists() {
@@ -34,7 +34,9 @@ pub fn execute(
 
     let suggested_next_steps = if exists {
         vec![
-            format!("Call load_data to load {upper} into memory for analysis."),
+            format!(
+                "Load {upper} from the cached file into memory for analysis using the appropriate loader or tool."
+            ),
             "Check last_updated to decide if data should be refreshed with fetch_to_parquet."
                 .to_string(),
         ]
@@ -58,10 +60,14 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    fn test_cache_dir() -> PathBuf {
+        std::env::temp_dir().join("optopsy_test_cache_nonexistent")
+    }
+
     #[test]
     fn cache_status_nonexistent_file() {
         let cache = Arc::new(CachedStore::new(
-            PathBuf::from("/tmp/optopsy_test_cache_nonexistent"),
+            test_cache_dir(),
             "options".to_string(),
             None,
         ));
@@ -75,7 +81,7 @@ mod tests {
     #[test]
     fn cache_status_symbol_uppercased() {
         let cache = Arc::new(CachedStore::new(
-            PathBuf::from("/tmp/optopsy_test_cache_nonexistent"),
+            test_cache_dir(),
             "options".to_string(),
             None,
         ));
