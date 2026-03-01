@@ -1,3 +1,15 @@
+// Allow pedantic clippy lints that are too noisy for this codebase.
+// float_cmp: assert_eq! on f64 in tests is intentional for exact-zero and known-value checks.
+// cast_possible_truncation/sign_loss/wrap: controlled casts in safe numeric contexts.
+// cast_precision_loss: i64→f64 for day counts is acceptable precision.
+#![allow(
+    clippy::float_cmp,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 use anyhow::Result;
 use rmcp::ServiceExt;
 use std::sync::Arc;

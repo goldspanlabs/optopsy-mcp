@@ -59,7 +59,7 @@ mod tests {
         let strategies = all_strategies();
         let mut names: Vec<&str> = strategies.iter().map(|s| s.name.as_str()).collect();
         let total = names.len();
-        names.sort();
+        names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), total, "Duplicate strategy names found");
     }

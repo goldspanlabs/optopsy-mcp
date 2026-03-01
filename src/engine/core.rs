@@ -296,8 +296,8 @@ mod tests {
     use super::*;
     use chrono::NaiveDate;
 
-    /// Build a synthetic options DataFrame with 2 rows for evaluate_strategy tests
-    /// (which still use the old match_entry_exit pipeline).
+    /// Build a synthetic options `DataFrame` with 2 rows for `evaluate_strategy` tests
+    /// (which still use the old `match_entry_exit` pipeline).
     fn make_synthetic_options_df() -> DataFrame {
         let quote_dates = vec![
             NaiveDate::from_ymd_opt(2024, 1, 15)
@@ -330,7 +330,7 @@ mod tests {
         df
     }
 
-    /// Build a daily options DataFrame with intermediate dates for event-driven backtest.
+    /// Build a daily options `DataFrame` with intermediate dates for event-driven backtest.
     /// Shows price decay from entry to exit for a long call.
     fn make_daily_options_df() -> DataFrame {
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
@@ -557,7 +557,7 @@ mod tests {
     fn run_backtest_spread_strategy() {
         // Build data for a bull call spread: long call at lower strike, short call at higher
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
-        let dates = vec![
+        let dates = [
             NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
             NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(),
             NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(),

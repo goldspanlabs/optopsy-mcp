@@ -401,7 +401,7 @@ mod tests {
         // 366 points = 365 calendar days = 1 year, so CAGR should equal total return
         let mut values = vec![10000.0];
         for i in 1..=365 {
-            values.push(10000.0 + i as f64 * 2.76); // end at ~11008
+            values.push(10000.0 + f64::from(i) * 2.76); // end at ~11008
         }
         let curve = make_equity_curve(&values);
         let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
@@ -419,7 +419,7 @@ mod tests {
         // 10 trading days — below MIN_CALENDAR_DAYS_FOR_ANNUALIZED threshold
         let mut values = vec![10000.0];
         for i in 1..=10 {
-            values.push(10000.0 + i as f64 * 50.0);
+            values.push(10000.0 + f64::from(i) * 50.0);
         }
         let curve = make_equity_curve(&values);
         let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
@@ -435,7 +435,7 @@ mod tests {
         let mut values = Vec::new();
         for i in 0..127 {
             // 127 points = 126 calendar day span
-            values.push(10000.0 + i as f64 * 10.0);
+            values.push(10000.0 + f64::from(i) * 10.0);
         }
         // Add a dip for drawdown
         values[63] = 9500.0;

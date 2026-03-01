@@ -94,8 +94,8 @@ pub fn filter_valid_quotes(df: &DataFrame) -> Result<DataFrame> {
 mod tests {
     use super::*;
     use chrono::NaiveDate;
-    /// Build a minimal options DataFrame for testing filters.
-    /// Uses Datetime for quote_datetime and Date for expiration to match production data.
+    /// Build a minimal options `DataFrame` for testing filters.
+    /// Uses Datetime for `quote_datetime` and Date for expiration to match production data.
     fn make_options_df() -> DataFrame {
         let dates = vec![
             NaiveDate::from_ymd_opt(2024, 1, 15)
