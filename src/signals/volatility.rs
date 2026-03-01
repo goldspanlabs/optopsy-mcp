@@ -98,7 +98,7 @@ impl SignalFn for BollingerLowerTouch {
         let n = prices.len();
         if n < 20 {
             return Ok(
-                BooleanChunked::new("bollinger_lower_touch".into(), vec![false; n]).into_series()
+                BooleanChunked::new("bollinger_lower_touch".into(), vec![false; n]).into_series(),
             );
         }
         let bbands = rust_ti::standard_indicators::bulk::bollinger_bands(&prices);
@@ -127,7 +127,7 @@ impl SignalFn for BollingerUpperTouch {
         let n = prices.len();
         if n < 20 {
             return Ok(
-                BooleanChunked::new("bollinger_upper_touch".into(), vec![false; n]).into_series()
+                BooleanChunked::new("bollinger_upper_touch".into(), vec![false; n]).into_series(),
             );
         }
         let bbands = rust_ti::standard_indicators::bulk::bollinger_bands(&prices);
@@ -163,7 +163,7 @@ impl SignalFn for KeltnerLowerBreak {
         let n = close.len();
         if n < self.period {
             return Ok(
-                BooleanChunked::new("keltner_lower_break".into(), vec![false; n]).into_series()
+                BooleanChunked::new("keltner_lower_break".into(), vec![false; n]).into_series(),
             );
         }
         let kc = rust_ti::candle_indicators::bulk::keltner_channel(
@@ -206,7 +206,7 @@ impl SignalFn for KeltnerUpperBreak {
         let n = close.len();
         if n < self.period {
             return Ok(
-                BooleanChunked::new("keltner_upper_break".into(), vec![false; n]).into_series()
+                BooleanChunked::new("keltner_upper_break".into(), vec![false; n]).into_series(),
             );
         }
         let kc = rust_ti::candle_indicators::bulk::keltner_channel(

@@ -19,11 +19,8 @@ impl SignalFn for MfiOversold {
         if n < self.period {
             return Ok(BooleanChunked::new("mfi_oversold".into(), vec![false; n]).into_series());
         }
-        let mfi_values = rust_ti::momentum_indicators::bulk::money_flow_index(
-            &prices,
-            &volume,
-            self.period,
-        );
+        let mfi_values =
+            rust_ti::momentum_indicators::bulk::money_flow_index(&prices, &volume, self.period);
         Ok(pad_and_compare(
             &mfi_values,
             n,
@@ -52,11 +49,8 @@ impl SignalFn for MfiOverbought {
         if n < self.period {
             return Ok(BooleanChunked::new("mfi_overbought".into(), vec![false; n]).into_series());
         }
-        let mfi_values = rust_ti::momentum_indicators::bulk::money_flow_index(
-            &prices,
-            &volume,
-            self.period,
-        );
+        let mfi_values =
+            rust_ti::momentum_indicators::bulk::money_flow_index(&prices, &volume, self.period);
         Ok(pad_and_compare(
             &mfi_values,
             n,

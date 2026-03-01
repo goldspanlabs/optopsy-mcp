@@ -72,12 +72,7 @@ impl SignalFn for MacdBullish {
         }
         let macd_values = sti::macd(&prices);
         let histograms: Vec<f64> = macd_values.iter().map(|t| t.2).collect();
-        Ok(pad_and_compare(
-            &histograms,
-            n,
-            |v| v > 0.0,
-            "macd_bullish",
-        ))
+        Ok(pad_and_compare(&histograms, n, |v| v > 0.0, "macd_bullish"))
     }
     fn name(&self) -> &str {
         "macd_bullish"
@@ -98,12 +93,7 @@ impl SignalFn for MacdBearish {
         }
         let macd_values = sti::macd(&prices);
         let histograms: Vec<f64> = macd_values.iter().map(|t| t.2).collect();
-        Ok(pad_and_compare(
-            &histograms,
-            n,
-            |v| v < 0.0,
-            "macd_bearish",
-        ))
+        Ok(pad_and_compare(&histograms, n, |v| v < 0.0, "macd_bearish"))
     }
     fn name(&self) -> &str {
         "macd_bearish"
@@ -151,7 +141,7 @@ impl SignalFn for StochasticOversold {
         let n = prices.len();
         if n < self.period {
             return Ok(
-                BooleanChunked::new("stochastic_oversold".into(), vec![false; n]).into_series()
+                BooleanChunked::new("stochastic_oversold".into(), vec![false; n]).into_series(),
             );
         }
         let stoch_values: Vec<f64> = prices
@@ -183,7 +173,7 @@ impl SignalFn for StochasticOverbought {
         let n = prices.len();
         if n < self.period {
             return Ok(
-                BooleanChunked::new("stochastic_overbought".into(), vec![false; n]).into_series()
+                BooleanChunked::new("stochastic_overbought".into(), vec![false; n]).into_series(),
             );
         }
         let stoch_values: Vec<f64> = prices

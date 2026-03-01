@@ -158,9 +158,7 @@ impl SignalFn for SmaCrossunder {
         let n = prices.len();
         let min_period = self.fast_period.max(self.slow_period);
         if n < min_period {
-            return Ok(
-                BooleanChunked::new("sma_crossunder".into(), vec![false; n]).into_series()
-            );
+            return Ok(BooleanChunked::new("sma_crossunder".into(), vec![false; n]).into_series());
         }
         let fast = pad_series(&sti::simple_moving_average(&prices, self.fast_period), n);
         let slow = pad_series(&sti::simple_moving_average(&prices, self.slow_period), n);
@@ -230,9 +228,7 @@ impl SignalFn for EmaCrossunder {
         let n = prices.len();
         let min_period = self.fast_period.max(self.slow_period);
         if n < min_period {
-            return Ok(
-                BooleanChunked::new("ema_crossunder".into(), vec![false; n]).into_series()
-            );
+            return Ok(BooleanChunked::new("ema_crossunder".into(), vec![false; n]).into_series());
         }
         let fast = pad_series(
             &sti::exponential_moving_average(&prices, self.fast_period),
