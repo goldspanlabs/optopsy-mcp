@@ -9,7 +9,7 @@ use polars::prelude::*;
 use serde::Deserialize;
 use schemars::JsonSchema;
 
-use crate::engine::types::*;
+use crate::engine::types::{TargetRange, Slippage, Commission, TradeSelector, CompareEntry, SimParams, EvaluateParams, BacktestParams, CompareParams};
 use crate::tools;
 
 #[derive(Clone)]
@@ -39,7 +39,7 @@ pub struct LoadDataParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct EvaluateStrategyParams {
-    /// Strategy name (e.g. 'iron_condor')
+    /// Strategy name (e.g. '`iron_condor`')
     pub strategy: String,
     /// Per-leg delta targets
     pub leg_deltas: Vec<TargetRange>,
@@ -113,7 +113,7 @@ impl OptopsyServer {
         .await
         {
             Ok(result) => result,
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("Error: {e}"),
         }
     }
 
@@ -122,7 +122,7 @@ impl OptopsyServer {
     async fn list_strategies(&self) -> String {
         match tools::strategies::execute() {
             Ok(result) => result,
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("Error: {e}"),
         }
     }
 
@@ -151,7 +151,7 @@ impl OptopsyServer {
 
         match tools::evaluate::execute(df, &eval_params) {
             Ok(result) => result,
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("Error: {e}"),
         }
     }
 
@@ -184,7 +184,7 @@ impl OptopsyServer {
 
         match tools::backtest::execute(df, &backtest_params) {
             Ok(result) => result,
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("Error: {e}"),
         }
     }
 
@@ -207,7 +207,7 @@ impl OptopsyServer {
 
         match tools::compare::execute(df, &compare_params) {
             Ok(result) => result,
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("Error: {e}"),
         }
     }
 }

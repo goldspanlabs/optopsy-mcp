@@ -45,19 +45,19 @@ pub fn normalize_quote_datetime(df: DataFrame) -> Result<DataFrame> {
                     .alias(QUOTE_DATETIME_COL),
             );
             let collected = lf.collect()?;
-            if src_col != QUOTE_DATETIME_COL {
-                collected.drop(src_col)?
-            } else {
+            if src_col == QUOTE_DATETIME_COL {
                 collected
+            } else {
+                collected.drop(src_col)?
             }
         }
         DataType::Datetime(_, _) => {
-            if src_col != QUOTE_DATETIME_COL {
+            if src_col == QUOTE_DATETIME_COL {
+                df
+            } else {
                 df.lazy()
                     .rename([src_col], [QUOTE_DATETIME_COL], true)
                     .collect()?
-            } else {
-                df
             }
         }
         DataType::String => {
@@ -69,10 +69,10 @@ pub fn normalize_quote_datetime(df: DataFrame) -> Result<DataFrame> {
                     .alias(QUOTE_DATETIME_COL),
             );
             let collected = lf.collect()?;
-            if src_col != QUOTE_DATETIME_COL {
-                collected.drop(src_col)?
-            } else {
+            if src_col == QUOTE_DATETIME_COL {
                 collected
+            } else {
+                collected.drop(src_col)?
             }
         }
         _ => df,
@@ -212,7 +212,7 @@ impl DataStore for ParquetStore {
             .collect()?;
 
         let ca = df.column("symbol")?.str()?;
-        Ok(ca.into_no_null_iter().map(|s| s.to_string()).collect())
+        Ok(ca.into_no_null_iter().map(std::string::ToString::to_string).collect())
     }
 
     fn date_range(&self, _symbol: &str) -> Result<(NaiveDate, NaiveDate)> {

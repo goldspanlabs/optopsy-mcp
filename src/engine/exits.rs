@@ -31,8 +31,8 @@ pub fn apply_early_exits(
 
             // Check max hold days
             if let Some(max_days) = max_hold_days {
-                if trade.days_held > max_days as i64 {
-                    trade.days_held = max_days as i64;
+                if trade.days_held > i64::from(max_days) {
+                    trade.days_held = i64::from(max_days);
                     if matches!(trade.exit_type, ExitType::DteExit) {
                         trade.exit_type = ExitType::MaxHold;
                     }

@@ -1,4 +1,4 @@
-use super::helpers::*;
+use super::helpers::{StrategyDef, strategy, call_leg, Side, put_leg};
 
 // Vertical spreads
 pub fn bull_call_spread() -> StrategyDef {

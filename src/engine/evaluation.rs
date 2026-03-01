@@ -4,8 +4,8 @@ use polars::prelude::*;
 use crate::data::parquet::QUOTE_DATETIME_COL;
 
 /// Match entry rows with corresponding exit rows based on expiration and exit DTE.
-/// For each (quote_datetime, expiration, strike) in the entry set,
-/// find the row in exit set where quote_datetime is closest to (expiration - exit_dte).
+/// For each (`quote_datetime`, expiration, strike) in the entry set,
+/// find the row in exit set where `quote_datetime` is closest to (expiration - `exit_dte`).
 pub fn match_entry_exit(
     entries: &DataFrame,
     all_data: &DataFrame,
@@ -18,7 +18,7 @@ pub fn match_entry_exit(
         .lazy()
         .with_column(
             (col("expiration").cast(DataType::Date)
-                - lit(exit_dte as i64 * ms_per_day)
+                - lit(i64::from(exit_dte) * ms_per_day)
                     .cast(DataType::Duration(TimeUnit::Milliseconds)))
             .alias("target_exit_date"),
         )

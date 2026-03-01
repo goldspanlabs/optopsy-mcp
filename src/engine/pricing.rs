@@ -2,7 +2,7 @@ use super::types::{Side, Slippage};
 
 /// Calculate fill price based on slippage model
 pub fn fill_price(bid: f64, ask: f64, side: &Side, slippage: &Slippage) -> f64 {
-    let mid = (bid + ask) / 2.0;
+    let mid = f64::midpoint(bid, ask);
     let spread = ask - bid;
 
     match slippage {
@@ -43,7 +43,7 @@ pub fn leg_pnl(
     let exit_price = fill_price(exit_bid, exit_ask, &exit_side, slippage);
 
     let direction = side.multiplier();
-    (exit_price - entry_price) * direction * qty as f64 * multiplier as f64
+    (exit_price - entry_price) * direction * f64::from(qty) * f64::from(multiplier)
 }
 
 #[cfg(test)]

@@ -14,7 +14,7 @@ impl SignalFn for AndSignal {
         let right_bool = right.bool()?;
         Ok((left_bool & right_bool).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "and"
     }
 }
@@ -32,7 +32,7 @@ impl SignalFn for OrSignal {
         let right_bool = right.bool()?;
         Ok((left_bool | right_bool).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "or"
     }
 }

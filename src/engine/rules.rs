@@ -20,8 +20,8 @@ pub fn validate_strike_order(strikes: &[f64]) -> Result<()> {
     Ok(())
 }
 
-/// Filter a multi-leg DataFrame to ensure strike ordering constraints
-/// Assumes legs are joined and strikes are in columns like strike_0, strike_1, etc.
+/// Filter a multi-leg `DataFrame` to ensure strike ordering constraints
+/// Assumes legs are joined and strikes are in columns like `strike_0`, `strike_1`, etc.
 pub fn filter_strike_order(df: &DataFrame, num_legs: usize) -> Result<DataFrame> {
     if num_legs <= 1 {
         return Ok(df.clone());
@@ -31,7 +31,7 @@ pub fn filter_strike_order(df: &DataFrame, num_legs: usize) -> Result<DataFrame>
 
     for i in 1..num_legs {
         let prev_col = format!("strike_{}", i - 1);
-        let curr_col = format!("strike_{}", i);
+        let curr_col = format!("strike_{i}");
         lazy = lazy.filter(col(&curr_col).gt(col(&prev_col)));
     }
 

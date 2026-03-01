@@ -26,14 +26,14 @@ pub async fn execute(
     let df = store.load_options("", start, end)?;
 
     let rows = df.height();
-    let columns: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
+    let columns: Vec<String> = df.get_column_names().iter().map(std::string::ToString::to_string).collect();
 
     // Extract unique symbols
     let symbols = if df.schema().contains("symbol") {
         let sym_col = df.column("symbol")?;
         let unique = sym_col.unique()?.sort(Default::default())?;
         let ca = unique.str()?;
-        ca.into_no_null_iter().map(|s| s.to_string()).collect::<Vec<_>>()
+        ca.into_no_null_iter().map(std::string::ToString::to_string).collect::<Vec<_>>()
     } else {
         vec![]
     };

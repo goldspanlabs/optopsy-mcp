@@ -1,4 +1,4 @@
-use super::helpers::*;
+use super::helpers::{StrategyDef, strategy, call_leg, Side, put_leg};
 
 pub fn long_call() -> StrategyDef {
     strategy("long_call", "Singles", "Buy a call option", vec![

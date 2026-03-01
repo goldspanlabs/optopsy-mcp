@@ -4,7 +4,7 @@ use polars::prelude::*;
 use super::types::TargetRange;
 use crate::data::parquet::QUOTE_DATETIME_COL;
 
-/// Compute DTE (days to expiration) from quote_datetime and expiration columns.
+/// Compute DTE (days to expiration) from `quote_datetime` and expiration columns.
 /// Casts both to Date for integer-day DTE regardless of intraday granularity.
 pub fn compute_dte(df: &DataFrame) -> Result<DataFrame> {
     let ms_per_day = 86_400_000i64;
@@ -24,7 +24,7 @@ pub fn compute_dte(df: &DataFrame) -> Result<DataFrame> {
     Ok(result)
 }
 
-/// Filter by DTE range [exit_dte, max_entry_dte]
+/// Filter by DTE range [`exit_dte`, `max_entry_dte`]
 pub fn filter_dte_range(df: &DataFrame, max_entry_dte: i32, exit_dte: i32) -> Result<DataFrame> {
     let result = df
         .clone()
@@ -45,7 +45,7 @@ pub fn filter_option_type(df: &DataFrame, option_type: &str) -> Result<DataFrame
 }
 
 /// Select the closest option to a target delta within a range.
-/// Groups by (quote_datetime, expiration) and picks the row closest to target delta.
+/// Groups by (`quote_datetime`, expiration) and picks the row closest to target delta.
 pub fn select_closest_delta(df: &DataFrame, target: &TargetRange) -> Result<DataFrame> {
     let result = df
         .clone()
