@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 // Overlap signals: SMA, EMA, crossovers
 
 use super::helpers::{column_to_f64, pad_series, SignalFn};
@@ -6,6 +5,7 @@ use polars::prelude::*;
 use rust_ti::standard_indicators::bulk as sti;
 
 /// Signal: price is above its Simple Moving Average.
+#[allow(dead_code)]
 pub struct PriceAboveSma {
     pub column: String,
     pub period: usize,
@@ -33,6 +33,7 @@ impl SignalFn for PriceAboveSma {
 }
 
 /// Signal: price is below its Simple Moving Average.
+#[allow(dead_code)]
 pub struct PriceBelowSma {
     pub column: String,
     pub period: usize,
@@ -60,6 +61,7 @@ impl SignalFn for PriceBelowSma {
 }
 
 /// Signal: price is above its Exponential Moving Average.
+#[allow(dead_code)]
 pub struct PriceAboveEma {
     pub column: String,
     pub period: usize,
@@ -87,6 +89,7 @@ impl SignalFn for PriceAboveEma {
 }
 
 /// Signal: price is below its Exponential Moving Average.
+#[allow(dead_code)]
 pub struct PriceBelowEma {
     pub column: String,
     pub period: usize,
@@ -115,6 +118,7 @@ impl SignalFn for PriceBelowEma {
 
 /// Signal: fast SMA crosses above slow SMA (golden cross).
 /// True on rows where fast > slow AND the previous row had fast <= slow.
+#[allow(dead_code)]
 pub struct SmaCrossover {
     pub column: String,
     pub fast_period: usize,
@@ -147,6 +151,7 @@ impl SignalFn for SmaCrossover {
 }
 
 /// Signal: fast SMA crosses below slow SMA (death cross).
+#[allow(dead_code)]
 pub struct SmaCrossunder {
     pub column: String,
     pub fast_period: usize,
@@ -179,6 +184,7 @@ impl SignalFn for SmaCrossunder {
 }
 
 /// Signal: fast EMA crosses above slow EMA.
+#[allow(dead_code)]
 pub struct EmaCrossover {
     pub column: String,
     pub fast_period: usize,
@@ -217,6 +223,7 @@ impl SignalFn for EmaCrossover {
 }
 
 /// Signal: fast EMA crosses below slow EMA.
+#[allow(dead_code)]
 pub struct EmaCrossunder {
     pub column: String,
     pub fast_period: usize,

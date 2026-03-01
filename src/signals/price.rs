@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 // Price signals: Gap, drawdown, consecutive moves
 
 use super::helpers::{column_to_f64, SignalFn};
@@ -6,6 +5,7 @@ use polars::prelude::*;
 
 /// Signal: gap up — current value opens significantly higher than previous close.
 /// Detects when (current - previous) / |previous| > threshold.
+#[allow(dead_code)]
 pub struct GapUp {
     pub column: String,
     pub threshold: f64,
@@ -30,6 +30,7 @@ impl SignalFn for GapUp {
 }
 
 /// Signal: gap down — current value drops significantly from previous.
+#[allow(dead_code)]
 pub struct GapDown {
     pub column: String,
     pub threshold: f64,
@@ -56,6 +57,7 @@ impl SignalFn for GapDown {
 /// Signal: drawdown from rolling maximum exceeds a threshold.
 /// Drawdown = (price - `rolling_max`) / `rolling_max`.
 /// True when drawdown < -threshold (e.g., threshold = 0.05 means 5% drawdown).
+#[allow(dead_code)]
 pub struct DrawdownBelow {
     pub column: String,
     pub window: usize,
@@ -86,6 +88,7 @@ impl SignalFn for DrawdownBelow {
 }
 
 /// Signal: N consecutive higher closes.
+#[allow(dead_code)]
 pub struct ConsecutiveUp {
     pub column: String,
     pub count: usize,
@@ -115,6 +118,7 @@ impl SignalFn for ConsecutiveUp {
 }
 
 /// Signal: N consecutive lower closes.
+#[allow(dead_code)]
 pub struct ConsecutiveDown {
     pub column: String,
     pub count: usize,
@@ -144,6 +148,7 @@ impl SignalFn for ConsecutiveDown {
 }
 
 /// Signal: price change from N periods ago exceeds a threshold (rate of change).
+#[allow(dead_code)]
 pub struct RateOfChange {
     pub column: String,
     pub period: usize,

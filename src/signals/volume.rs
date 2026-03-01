@@ -1,10 +1,10 @@
-#![allow(dead_code)]
 // Volume signals: MFI, OBV, CMF
 
 use super::helpers::{column_to_f64, pad_and_compare, pad_series, SignalFn};
 use polars::prelude::*;
 
 /// Signal: Money Flow Index is below a threshold (oversold by volume-weighted momentum).
+#[allow(dead_code)]
 pub struct MfiOversold {
     pub price_col: String,
     pub volume_col: String,
@@ -35,6 +35,7 @@ impl SignalFn for MfiOversold {
 }
 
 /// Signal: Money Flow Index is above a threshold (overbought).
+#[allow(dead_code)]
 pub struct MfiOverbought {
     pub price_col: String,
     pub volume_col: String,
@@ -65,6 +66,7 @@ impl SignalFn for MfiOverbought {
 }
 
 /// Signal: On-Balance Volume is rising (current OBV > previous OBV).
+#[allow(dead_code)]
 pub struct ObvRising {
     pub price_col: String,
     pub volume_col: String,
@@ -95,6 +97,7 @@ impl SignalFn for ObvRising {
 }
 
 /// Signal: On-Balance Volume is falling (current OBV < previous OBV).
+#[allow(dead_code)]
 pub struct ObvFalling {
     pub price_col: String,
     pub volume_col: String,
@@ -124,8 +127,41 @@ impl SignalFn for ObvFalling {
     }
 }
 
+/// Computes the Chaikin Money Flow values over a rolling window.
+/// CMF = sum(money_flow_volume) / sum(volume) for each window of `period`.
+#[allow(dead_code)]
+fn compute_cmf(close: &[f64], high: &[f64], low: &[f64], volume: &[f64], period: usize) -> Vec<f64> {
+    let n = close.len();
+    if n < period {
+        return vec![];
+    }
+    let mfv: Vec<f64> = (0..n)
+        .map(|i| {
+            let range = high[i] - low[i];
+            if range == 0.0 {
+                0.0
+            } else {
+                ((close[i] - low[i]) - (high[i] - close[i])) / range * volume[i]
+            }
+        })
+        .collect();
+    (0..=n - period)
+        .map(|i| {
+            let end = i + period;
+            let mfv_sum: f64 = mfv[i..end].iter().sum();
+            let vol_sum: f64 = volume[i..end].iter().sum();
+            if vol_sum == 0.0 {
+                0.0
+            } else {
+                mfv_sum / vol_sum
+            }
+        })
+        .collect()
+}
+
 /// Signal: Chaikin Money Flow is positive (buying pressure).
 /// CMF = `sum(money_flow_volume)` / `sum(volume)` over a rolling window.
+#[allow(dead_code)]
 pub struct CmfPositive {
     pub close_col: String,
     pub high_col: String,
@@ -144,28 +180,7 @@ impl SignalFn for CmfPositive {
         if n < self.period {
             return Ok(BooleanChunked::new("cmf_positive".into(), vec![false; n]).into_series());
         }
-        let mfv: Vec<f64> = (0..n)
-            .map(|i| {
-                let range = high[i] - low[i];
-                if range == 0.0 {
-                    0.0
-                } else {
-                    ((close[i] - low[i]) - (high[i] - close[i])) / range * volume[i]
-                }
-            })
-            .collect();
-        let cmf: Vec<f64> = (0..=n - self.period)
-            .map(|i| {
-                let end = i + self.period;
-                let mfv_sum: f64 = mfv[i..end].iter().sum();
-                let vol_sum: f64 = volume[i..end].iter().sum();
-                if vol_sum == 0.0 {
-                    0.0
-                } else {
-                    mfv_sum / vol_sum
-                }
-            })
-            .collect();
+        let cmf = compute_cmf(&close, &high, &low, &volume, self.period);
         Ok(pad_and_compare(&cmf, n, |v| v > 0.0, "cmf_positive"))
     }
     fn name(&self) -> &'static str {
@@ -174,6 +189,7 @@ impl SignalFn for CmfPositive {
 }
 
 /// Signal: Chaikin Money Flow is negative (selling pressure).
+#[allow(dead_code)]
 pub struct CmfNegative {
     pub close_col: String,
     pub high_col: String,
@@ -192,28 +208,7 @@ impl SignalFn for CmfNegative {
         if n < self.period {
             return Ok(BooleanChunked::new("cmf_negative".into(), vec![false; n]).into_series());
         }
-        let mfv: Vec<f64> = (0..n)
-            .map(|i| {
-                let range = high[i] - low[i];
-                if range == 0.0 {
-                    0.0
-                } else {
-                    ((close[i] - low[i]) - (high[i] - close[i])) / range * volume[i]
-                }
-            })
-            .collect();
-        let cmf: Vec<f64> = (0..=n - self.period)
-            .map(|i| {
-                let end = i + self.period;
-                let mfv_sum: f64 = mfv[i..end].iter().sum();
-                let vol_sum: f64 = volume[i..end].iter().sum();
-                if vol_sum == 0.0 {
-                    0.0
-                } else {
-                    mfv_sum / vol_sum
-                }
-            })
-            .collect();
+        let cmf = compute_cmf(&close, &high, &low, &volume, self.period);
         Ok(pad_and_compare(&cmf, n, |v| v < 0.0, "cmf_negative"))
     }
     fn name(&self) -> &'static str {
@@ -239,9 +234,10 @@ mod tests {
         let result = signal.evaluate(&df).unwrap();
         let bools = result.bool().unwrap();
         assert_eq!(result.len(), 5);
-        // OBV returns n-1 values; padded first is NaN => false.
-        // Index 1: first OBV value. Prices 100->102 (up), OBV = 1500.
-        // Index 2: Prices 102->104 (up), OBV = 1500+1200 = 2700. 2700 > 1500 => rising.
+        // OBV returns n-1 values; the padded first entry is NaN so bools[0] and bools[1] are
+        // always false (bools[1] compares padded[1] > padded[0] where padded[0] is NaN).
+        // The first meaningful comparison is at index 2: prices 102->104 (up), rising OBV.
+        assert!(!bools.get(1).unwrap());
         assert!(bools.get(2).unwrap());
     }
 
