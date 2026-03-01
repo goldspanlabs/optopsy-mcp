@@ -1,3 +1,4 @@
+use garde::Validate;
 use polars::prelude::*;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Json},
@@ -14,6 +15,19 @@ use crate::engine::types::{
     BacktestParams, Commission, CompareEntry, CompareParams, EvaluateParams, SimParams, Slippage,
     TargetRange, TradeSelector,
 };
+
+fn validate_exit_dte_lt_max_dte(
+    max_entry_dte: &i32,
+) -> impl FnOnce(&i32, &()) -> garde::Result + '_ {
+    move |exit_dte: &i32, (): &()| {
+        if exit_dte >= max_entry_dte {
+            return Err(garde::Error::new(format!(
+                "exit_dte ({exit_dte}) must be less than max_entry_dte ({max_entry_dte})"
+            )));
+        }
+        Ok(())
+    }
+}
 use crate::tools;
 use crate::tools::response_types::{
     BacktestResponse, CheckCacheResponse, CompareResponse, EvaluateResponse, FetchResponse,
@@ -37,91 +51,123 @@ impl OptopsyServer {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct LoadDataParams {
     /// Ticker symbol (e.g. "SPY")
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub symbol: String,
     /// Start date filter (YYYY-MM-DD)
+    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))]
     pub start_date: Option<String>,
     /// End date filter (YYYY-MM-DD)
+    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))]
     pub end_date: Option<String>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct EvaluateStrategyParams {
     /// Strategy name (e.g. '`iron_condor`')
+    #[garde(length(min = 1))]
     pub strategy: String,
     /// Per-leg delta targets
+    #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
     /// Maximum DTE at entry
+    #[garde(range(min = 1))]
     pub max_entry_dte: i32,
     /// DTE at exit
+    #[garde(range(min = 0), custom(validate_exit_dte_lt_max_dte(&self.max_entry_dte)))]
     pub exit_dte: i32,
     /// DTE bucket width (e.g. 7)
+    #[garde(range(min = 1))]
     pub dte_interval: i32,
     /// Delta bucket width (e.g. 0.05)
+    #[garde(range(min = 0.001, max = 1.0))]
     pub delta_interval: f64,
     /// Slippage model
+    #[garde(dive)]
     pub slippage: Slippage,
     /// Commission structure (optional)
+    #[garde(dive)]
     pub commission: Option<Commission>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct RunBacktestParams {
     /// Strategy name
+    #[garde(length(min = 1))]
     pub strategy: String,
     /// Per-leg delta targets
+    #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
     /// Maximum DTE at entry
+    #[garde(range(min = 1))]
     pub max_entry_dte: i32,
     /// DTE at exit
+    #[garde(range(min = 0), custom(validate_exit_dte_lt_max_dte(&self.max_entry_dte)))]
     pub exit_dte: i32,
     /// Slippage model
+    #[garde(dive)]
     pub slippage: Slippage,
     /// Commission structure
+    #[garde(dive)]
     pub commission: Option<Commission>,
-    /// Stop loss threshold (fraction of entry cost)
+    /// Stop loss threshold (multiplier of entry cost; values > 1.0 allowed)
+    #[garde(inner(range(min = 0.0)))]
     pub stop_loss: Option<f64>,
-    /// Take profit threshold (fraction of entry cost)
+    /// Take profit threshold (multiplier of entry cost; values > 1.0 allowed)
+    #[garde(inner(range(min = 0.0)))]
     pub take_profit: Option<f64>,
     /// Maximum days to hold
+    #[garde(inner(range(min = 1)))]
     pub max_hold_days: Option<i32>,
     /// Starting capital
+    #[garde(range(min = 0.01))]
     pub capital: f64,
     /// Number of contracts per trade
+    #[garde(range(min = 1))]
     pub quantity: i32,
     /// Contract multiplier (default 100)
+    #[garde(inner(range(min = 1)))]
     pub multiplier: Option<i32>,
     /// Maximum concurrent positions
+    #[garde(range(min = 1))]
     pub max_positions: i32,
     /// Trade selection method
+    #[garde(skip)]
     pub selector: Option<TradeSelector>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct CompareStrategiesParams {
     /// List of strategies with their parameters
+    #[garde(length(min = 2), dive)]
     pub strategies: Vec<CompareEntry>,
     /// Shared simulation parameters
+    #[garde(dive)]
     pub sim_params: SimParams,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct CheckCacheParams {
     /// Ticker symbol (e.g. "SPY")
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub symbol: String,
     /// Cache category subdirectory (e.g. "prices", "options")
+    #[garde(length(min = 1), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub category: String,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct FetchToParquetParams {
     /// Ticker symbol (e.g. "SPY")
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub symbol: String,
     /// Cache category subdirectory (e.g. "prices")
+    #[garde(length(min = 1), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub category: String,
     /// Time period to fetch (e.g. "6mo", "1y", "5y", "max"). Defaults to "6mo".
+    #[garde(inner(length(min = 1)))]
     pub period: Option<String>,
 }
 
@@ -135,6 +181,9 @@ impl OptopsyServer {
         &self,
         Parameters(params): Parameters<LoadDataParams>,
     ) -> Result<Json<LoadDataResponse>, String> {
+        params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
         tools::load_data::execute(
             &self.data,
             &self.cache,
@@ -159,6 +208,9 @@ impl OptopsyServer {
         &self,
         Parameters(params): Parameters<EvaluateStrategyParams>,
     ) -> Result<Json<EvaluateResponse>, String> {
+        params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
         let data = self.data.read().await;
         let Some(df) = data.as_ref() else {
             return Err("Error: No data loaded. Call load_data first.".to_string());
@@ -174,6 +226,9 @@ impl OptopsyServer {
             slippage: params.slippage,
             commission: params.commission,
         };
+        eval_params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
 
         tools::evaluate::execute(df, &eval_params)
             .map(Json)
@@ -186,6 +241,9 @@ impl OptopsyServer {
         &self,
         Parameters(params): Parameters<RunBacktestParams>,
     ) -> Result<Json<BacktestResponse>, String> {
+        params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
         let data = self.data.read().await;
         let Some(df) = data.as_ref() else {
             return Err("Error: No data loaded. Call load_data first.".to_string());
@@ -208,6 +266,9 @@ impl OptopsyServer {
             selector: params.selector.unwrap_or_default(),
             adjustment_rules: vec![],
         };
+        backtest_params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
 
         tools::backtest::execute(df, &backtest_params)
             .map(Json)
@@ -220,6 +281,9 @@ impl OptopsyServer {
         &self,
         Parameters(params): Parameters<CompareStrategiesParams>,
     ) -> Result<Json<CompareResponse>, String> {
+        params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
         let data = self.data.read().await;
         let Some(df) = data.as_ref() else {
             return Err("Error: No data loaded. Call load_data first.".to_string());
@@ -229,6 +293,9 @@ impl OptopsyServer {
             strategies: params.strategies,
             sim_params: params.sim_params,
         };
+        compare_params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
 
         tools::compare::execute(df, &compare_params)
             .map(Json)
@@ -241,6 +308,9 @@ impl OptopsyServer {
         &self,
         Parameters(params): Parameters<CheckCacheParams>,
     ) -> Result<Json<CheckCacheResponse>, String> {
+        params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
         tools::cache_status::execute(&self.cache, &params.symbol, &params.category)
             .map(Json)
             .map_err(|e| format!("Error: {e}"))
@@ -252,6 +322,9 @@ impl OptopsyServer {
         &self,
         Parameters(params): Parameters<FetchToParquetParams>,
     ) -> Result<Json<FetchResponse>, String> {
+        params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
         let period = params.period.as_deref().unwrap_or("6mo");
         tools::fetch::execute(&self.cache, &params.symbol, &params.category, period)
             .await
