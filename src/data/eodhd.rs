@@ -651,7 +651,7 @@ impl EodhdProvider {
     /// Supports resume: only fetches data newer than the latest cached date.
     pub async fn download_options(&self, symbol: &str) -> Result<DownloadSummary> {
         let symbol = symbol.to_uppercase();
-        self.request_count.store(0, Ordering::Relaxed);
+        let request_count_before = self.request_count.load(Ordering::Relaxed);
 
         // Check for existing cached data to enable resume
         let cached_df = self.read_cache(&symbol);
@@ -724,7 +724,7 @@ impl EodhdProvider {
             }
         };
 
-        let api_requests = self.request_count.load(Ordering::Relaxed);
+        let api_requests = self.request_count.load(Ordering::Relaxed) - request_count_before;
 
         Ok(DownloadSummary {
             symbol,
