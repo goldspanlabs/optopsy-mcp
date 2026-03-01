@@ -48,3 +48,4 @@ cast_precision_loss = "allow"
 tokio-test = "0.4"
 cargo-husky = { version = "1", default-features = false, features = ["user-hooks"] }
 tempfile = "3.26.0"
+rmcp = { version = "0.17", features = ["client", "transport-async-rw"] }
