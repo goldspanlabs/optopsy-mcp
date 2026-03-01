@@ -168,3 +168,28 @@ pub struct DataCoverage {
     pub expiration_count: usize,
     pub warnings: Vec<String>,
 }
+
+/// Signal candidate from `construct_signal`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SignalCandidate {
+    pub name: String,
+    pub category: String,
+    pub description: String,
+    pub params: String,
+    /// Concrete JSON example for this signal with sensible default parameters
+    pub example: serde_json::Value,
+}
+
+/// Response for `construct_signal`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ConstructSignalResponse {
+    pub summary: String,
+    pub candidates: Vec<SignalCandidate>,
+    /// JSON Schema for `SignalSpec` enum, describing all valid signal types and their parameters
+    pub schema: serde_json::Value,
+    /// Default column names for OHLCV data from Yahoo Finance (e.g., {"close": "adjclose", "high": "high"})
+    pub column_defaults: serde_json::Value,
+    /// Example JSON structures showing how to combine signals using And/Or operators
+    pub combinator_examples: Vec<serde_json::Value>,
+    pub suggested_next_steps: Vec<String>,
+}
