@@ -152,6 +152,7 @@ pub struct SignalCandidate {
     pub category: String,
     pub description: String,
     pub params: String,
+    /// Concrete JSON example for this signal with sensible default parameters
     pub example: serde_json::Value,
 }
 
@@ -160,8 +161,11 @@ pub struct SignalCandidate {
 pub struct ConstructSignalResponse {
     pub summary: String,
     pub candidates: Vec<SignalCandidate>,
+    /// JSON Schema for `SignalSpec` enum, describing all valid signal types and their parameters
     pub schema: serde_json::Value,
+    /// Default column names for OHLCV data from Yahoo Finance (e.g., {"close": "adjclose", "high": "high"})
     pub column_defaults: serde_json::Value,
+    /// Example JSON structures showing how to combine signals using And/Or operators
     pub combinator_examples: Vec<serde_json::Value>,
     pub suggested_next_steps: Vec<String>,
 }

@@ -265,8 +265,7 @@ impl OptopsyServer {
     /// Fuzzy-searches the signal catalog, returns matching candidates + live JSON schema.
     /// Pass the result's example JSON to `run_backtest`'s `entry_signal` or `exit_signal` fields.
     #[tool(name = "construct_signal")]
-    #[allow(clippy::unused_self)]
-    fn construct_signal(
+    async fn construct_signal(
         &self,
         Parameters(params): Parameters<ConstructSignalParams>,
     ) -> Result<Json<ConstructSignalResponse>, String> {

@@ -78,7 +78,7 @@ pub fn execute(prompt: &str) -> ConstructSignalResponse {
 }
 
 /// Split a CamelCase string into lowercase words.
-/// E.g., "RsiOversold" → ["rsi", "oversold"]
+/// E.g., `RsiOversold` → `["rsi", "oversold"]`
 fn split_camel_case(s: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut current = String::new();
@@ -100,7 +100,7 @@ fn split_camel_case(s: &str) -> Vec<String> {
 }
 
 /// Fuzzy search `SIGNAL_CATALOG` for signals matching the prompt.
-/// Returns (candidates, had_real_matches) where had_real_matches indicates
+/// Returns `(candidates, had_real_matches)` where `had_real_matches` indicates
 /// whether matches were found (vs. fallback to all signals).
 /// Scoring:
 /// - +3 if any token exactly matches a word in signal name
@@ -175,7 +175,7 @@ fn fuzzy_search(prompt: &str) -> (Vec<SignalCandidate>, bool) {
 }
 
 /// Build a concrete JSON example for a signal given its name.
-/// Note: New signals added to SIGNAL_CATALOG must also be added to this function
+/// Note: New signals added to `SIGNAL_CATALOG` must also be added to this function
 /// to generate concrete examples. This is a necessary manual step to provide Claude
 /// with sensible default parameter values for each signal type.
 #[allow(clippy::too_many_lines)]
