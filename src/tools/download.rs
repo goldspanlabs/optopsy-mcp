@@ -8,10 +8,7 @@ use super::response_types::DownloadResponse;
 
 pub async fn execute(eodhd: Option<&Arc<EodhdProvider>>, symbol: &str) -> Result<DownloadResponse> {
     let Some(provider) = eodhd else {
-        bail!(
-            "EODHD_API_KEY not configured. \
-             Set the EODHD_API_KEY environment variable to download options data."
-        );
+        bail!("EODHD_API_KEY not configured. Set the EODHD_API_KEY environment variable to download options data.");
     };
 
     let summary = provider.download_options(symbol).await?;

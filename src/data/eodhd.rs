@@ -176,9 +176,20 @@ impl EodhdProvider {
     // -- cache helpers ------------------------------------------------------
 
     fn cache_path(&self, symbol: &str) -> PathBuf {
+        // Sanitize symbol to prevent path traversal
+        let safe: String = symbol
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
         self.cache_dir
             .join("options")
-            .join(format!("{symbol}.parquet"))
+            .join(format!("{safe}.parquet"))
     }
 
     fn read_cache(&self, symbol: &str) -> Option<DataFrame> {
@@ -287,7 +298,7 @@ impl EodhdProvider {
                     tracing::warn!(
                         "EODHD request error, retrying in {wait}s (attempt {}/{}): {e}",
                         attempt + 1,
-                        MAX_RETRIES
+                        MAX_RETRIES + 1
                     );
                     sleep(std::time::Duration::from_secs(wait)).await;
                     continue;
@@ -307,7 +318,7 @@ impl EodhdProvider {
                 tracing::warn!(
                     "EODHD {status} server error, backing off {wait}s (attempt {}/{})",
                     attempt + 1,
-                    MAX_RETRIES
+                    MAX_RETRIES + 1
                 );
                 sleep(std::time::Duration::from_secs(wait)).await;
                 continue;
@@ -322,7 +333,7 @@ impl EodhdProvider {
                 tracing::warn!(
                     "EODHD 429 rate limit, backing off {wait}s (attempt {}/{})",
                     attempt + 1,
-                    MAX_RETRIES
+                    MAX_RETRIES + 1
                 );
                 sleep(std::time::Duration::from_secs(wait)).await;
                 continue;
@@ -530,7 +541,20 @@ impl EodhdProvider {
                 return (rows_fetched, error);
             }
 
-            if hit_cap && span_days > MIN_WINDOW_DAYS {
+            if hit_cap && span_days <= MIN_WINDOW_DAYS {
+                tracing::warn!(
+                    "Offset cap hit for {symbol} {option_type} on minimum window \
+                     ({win_from} to {win_to}); data may be truncated"
+                );
+                return (
+                    rows_fetched,
+                    Some(format!(
+                        "offset cap hit on minimum window {win_from}–{win_to}, data may be incomplete"
+                    )),
+                );
+            }
+
+            if hit_cap {
                 // Undo partial count — subdivision will re-fetch this range
                 rows_fetched -= window_rows;
 
