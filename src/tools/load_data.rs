@@ -29,22 +29,29 @@ pub async fn execute(
         .transpose()?;
 
     // Try loading from cache (local parquet + S3 fallback).
-    // On cache miss, attempt EODHD download if configured.
+    // On cache miss (file not found), attempt EODHD download if configured.
+    // Other errors (corrupt parquet, S3 auth failures) are propagated directly.
     let df = match cache.load_options(&symbol, start, end) {
         Ok(df) => df,
         Err(cache_err) => {
-            if let Some(provider) = eodhd {
-                tracing::info!(
-                    %symbol,
-                    "Cache miss, downloading from EODHD…"
-                );
-                provider.download_options(&symbol).await?;
-                // Retry from cache now that the file has been written
-                cache.load_options(&symbol, start, end).map_err(|e| {
-                    anyhow::anyhow!(
-                        "Downloaded from EODHD but failed to load: {e} (original: {cache_err})"
-                    )
-                })?
+            let is_not_found = cache_err.to_string().contains("not found")
+                || cache_err.to_string().contains("No such file");
+            if is_not_found {
+                if let Some(provider) = eodhd {
+                    tracing::info!(
+                        %symbol,
+                        "Cache miss, downloading from EODHD…"
+                    );
+                    provider.download_options(&symbol).await?;
+                    // Retry from cache now that the file has been written
+                    cache.load_options(&symbol, start, end).map_err(|e| {
+                        anyhow::anyhow!(
+                            "Downloaded from EODHD but failed to load: {e} (original: {cache_err})"
+                        )
+                    })?
+                } else {
+                    return Err(cache_err);
+                }
             } else {
                 return Err(cache_err);
             }

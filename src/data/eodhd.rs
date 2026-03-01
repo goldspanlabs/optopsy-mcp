@@ -199,11 +199,21 @@ impl EodhdProvider {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("Failed to create cache dir: {}", parent.display()))?;
         }
-        let file = std::fs::File::create(&path)
-            .with_context(|| format!("Failed to create parquet file: {}", path.display()))?;
+        // Write to a temp file then atomically rename to avoid corruption
+        // from concurrent writes or interrupted I/O.
+        let tmp_path = path.with_extension("parquet.tmp");
+        let file = std::fs::File::create(&tmp_path)
+            .with_context(|| format!("Failed to create temp file: {}", tmp_path.display()))?;
         ParquetWriter::new(file)
             .finish(df)
             .context("Failed to write parquet")?;
+        std::fs::rename(&tmp_path, &path).with_context(|| {
+            format!(
+                "Failed to rename {} → {}",
+                tmp_path.display(),
+                path.display()
+            )
+        })?;
         Ok(())
     }
 
