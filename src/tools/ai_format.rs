@@ -924,12 +924,36 @@ mod tests {
     ) -> BacktestResult {
         // Compute realistic trade-level fields from the trades
         let total = trades.len();
-        let winners: Vec<f64> = trades.iter().filter(|t| t.pnl > 0.0).map(|t| t.pnl).collect();
-        let losers: Vec<f64> = trades.iter().filter(|t| t.pnl < 0.0).map(|t| t.pnl).collect();
-        let avg_trade_pnl = if total > 0 { total_pnl / total as f64 } else { 0.0 };
-        let avg_winner = if winners.is_empty() { 0.0 } else { winners.iter().sum::<f64>() / winners.len() as f64 };
-        let avg_loser = if losers.is_empty() { 0.0 } else { losers.iter().sum::<f64>() / losers.len() as f64 };
-        let avg_days_held = if total > 0 { trades.iter().map(|t| t.days_held).sum::<i64>() as f64 / total as f64 } else { 0.0 };
+        let winners: Vec<f64> = trades
+            .iter()
+            .filter(|t| t.pnl > 0.0)
+            .map(|t| t.pnl)
+            .collect();
+        let losers: Vec<f64> = trades
+            .iter()
+            .filter(|t| t.pnl < 0.0)
+            .map(|t| t.pnl)
+            .collect();
+        let avg_trade_pnl = if total > 0 {
+            total_pnl / total as f64
+        } else {
+            0.0
+        };
+        let avg_winner = if winners.is_empty() {
+            0.0
+        } else {
+            winners.iter().sum::<f64>() / winners.len() as f64
+        };
+        let avg_loser = if losers.is_empty() {
+            0.0
+        } else {
+            losers.iter().sum::<f64>() / losers.len() as f64
+        };
+        let avg_days_held = if total > 0 {
+            trades.iter().map(|t| t.days_held).sum::<i64>() as f64 / total as f64
+        } else {
+            0.0
+        };
         let expectancy = (win_rate * avg_winner) + ((1.0 - win_rate) * avg_loser);
 
         BacktestResult {
@@ -1017,8 +1041,7 @@ mod tests {
             make_trade(100.0, 5, ExitType::TakeProfit),
             make_trade(200.0, 7, ExitType::TakeProfit),
         ];
-        let result =
-            make_backtest_result(300.0, 1.2, 0.02, 1.0, 999.99, 5.0, trades, vec![]);
+        let result = make_backtest_result(300.0, 1.2, 0.02, 1.0, 999.99, 5.0, trades, vec![]);
         let params = make_backtest_params("bull_call_spread", 50_000.0);
         let response = format_backtest(result, &params);
 
@@ -1041,8 +1064,7 @@ mod tests {
             make_equity_point(2, 110_000.0),
         ];
         let trades = vec![make_trade(10_000.0, 2, ExitType::Expiration)];
-        let result =
-            make_backtest_result(10_000.0, 1.0, 0.05, 1.0, 999.99, 2.0, trades, curve);
+        let result = make_backtest_result(10_000.0, 1.0, 0.05, 1.0, 999.99, 2.0, trades, curve);
         let params = make_backtest_params("test", 100_000.0);
         let response = format_backtest(result, &params);
 

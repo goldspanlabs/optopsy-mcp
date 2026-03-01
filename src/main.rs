@@ -22,8 +22,7 @@ async fn main() -> Result<()> {
     if let Ok(port) = std::env::var("PORT") {
         // HTTP mode — used by Railway and other cloud platforms
         use rmcp::transport::streamable_http_server::{
-            session::local::LocalSessionManager, StreamableHttpServerConfig,
-            StreamableHttpService,
+            session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
         };
 
         let service = StreamableHttpService::new(
