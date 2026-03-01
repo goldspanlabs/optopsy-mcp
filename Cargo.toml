@@ -36,4 +36,4 @@ missing_panics_doc = "allow"
 
 [dev-dependencies]
 tokio-test = "0.4"
-cargo-husky = { version = "1", default-features = false, features = ["prepush-hook", "run-cargo-clippy", "run-cargo-fmt", "run-cargo-test"] }
+cargo-husky = { version = "1", default-features = false, features = ["user-hooks"] }
