@@ -24,10 +24,10 @@ pub struct OptopsyServer {
 }
 
 impl OptopsyServer {
-    pub fn new(cache: CachedStore) -> Self {
+    pub fn new(cache: Arc<CachedStore>) -> Self {
         Self {
             data: Arc::new(RwLock::new(None)),
-            cache: Arc::new(cache),
+            cache,
             tool_router: Self::tool_router(),
         }
     }
