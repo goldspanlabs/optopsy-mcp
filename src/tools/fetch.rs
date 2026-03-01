@@ -46,7 +46,10 @@ pub async fn execute(
 
     for q in &quotes {
         let Some(dt) = chrono::DateTime::from_timestamp(q.timestamp, 0) else {
-            tracing::warn!(timestamp = q.timestamp, "Skipping quote with invalid timestamp");
+            tracing::warn!(
+                timestamp = q.timestamp,
+                "Skipping quote with invalid timestamp"
+            );
             continue;
         };
         dates.push(dt.naive_utc().date());
