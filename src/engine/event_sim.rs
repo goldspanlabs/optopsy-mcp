@@ -50,7 +50,7 @@ pub fn build_price_table(df: &DataFrame) -> Result<(PriceTable, Vec<NaiveDate>)>
 }
 
 /// Extract a `NaiveDate` from a column value at a given index.
-/// Handles both Date and Datetime column types.
+/// Handles Date, Datetime, and String column types.
 pub(crate) fn extract_date_from_column(col: &Column, idx: usize) -> Result<NaiveDate> {
     match col.dtype() {
         DataType::Date => {
@@ -78,8 +78,8 @@ pub(crate) fn extract_date_from_column(col: &Column, idx: usize) -> Result<Naive
                             chrono::DateTime::from_timestamp_micros(v).map(|dt| dt.naive_utc())
                         }
                         TimeUnit::Nanoseconds => {
-                            let secs = v / 1_000_000_000;
-                            let nsecs = (v % 1_000_000_000) as u32;
+                            let secs = v.div_euclid(1_000_000_000);
+                            let nsecs = v.rem_euclid(1_000_000_000) as u32;
                             chrono::DateTime::from_timestamp(secs, nsecs).map(|dt| dt.naive_utc())
                         }
                     };
@@ -89,6 +89,18 @@ pub(crate) fn extract_date_from_column(col: &Column, idx: usize) -> Result<Naive
                     }
                 }
                 None => bail!("Null datetime at index {idx}"),
+            }
+        }
+        DataType::String => {
+            let str_val = col.str()?.get(idx);
+            match str_val {
+                Some(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                    .or_else(|_| {
+                        chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
+                            .map(|dt| dt.date())
+                    })
+                    .map_err(|e| anyhow::anyhow!("Cannot parse date '{s}': {e}")),
+                None => bail!("Null string date at index {idx}"),
             }
         }
         other => bail!("Unsupported column type for date extraction: {other:?}"),

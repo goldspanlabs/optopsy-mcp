@@ -56,8 +56,8 @@ pub fn execute() -> SignalsResponse {
             "volume".into(),
         ],
         combinators: vec![
-            "And { left: <signal>, right: <signal> } — both must be true".into(),
-            "Or { left: <signal>, right: <signal> } — either must be true".into(),
+            r#"{"type": "And", "left": <signal>, "right": <signal>} — both must be true"#.into(),
+            r#"{"type": "Or", "left": <signal>, "right": <signal>} — either must be true"#.into(),
         ],
         suggested_next_steps: vec![
             "Use entry_signal in run_backtest to only enter on signal days".into(),
