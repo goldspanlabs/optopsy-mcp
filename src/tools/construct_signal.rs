@@ -12,7 +12,7 @@ const DEFAULT_VOLUME: &str = "volume";
 
 pub fn execute(prompt: &str) -> ConstructSignalResponse {
     // Fuzzy search SIGNAL_CATALOG for matches
-    let candidates = fuzzy_search(prompt);
+    let (candidates, had_real_matches) = fuzzy_search(prompt);
 
     // Generate live JSON Schema for SignalSpec
     let schema = schema_for!(SignalSpec);
@@ -47,17 +47,17 @@ pub fn execute(prompt: &str) -> ConstructSignalResponse {
         vec![]
     };
 
-    let summary = if candidates.is_empty() {
-        format!(
-            "No signals matched '{}'. Showing all {} available signals.",
-            prompt,
-            SIGNAL_CATALOG.len()
-        )
-    } else {
+    let summary = if had_real_matches {
         format!(
             "Found {} signal(s) matching '{}'.",
             candidates.len(),
             prompt
+        )
+    } else {
+        format!(
+            "No signals matched '{}'. Showing all {} available signals.",
+            prompt,
+            SIGNAL_CATALOG.len()
         )
     };
 
@@ -77,12 +77,36 @@ pub fn execute(prompt: &str) -> ConstructSignalResponse {
     }
 }
 
+/// Split a CamelCase string into lowercase words.
+/// E.g., "RsiOversold" → ["rsi", "oversold"]
+fn split_camel_case(s: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+
+    for ch in s.chars() {
+        if ch.is_uppercase() && !current.is_empty() {
+            words.push(current.to_lowercase());
+            current = ch.to_string();
+        } else {
+            current.push(ch);
+        }
+    }
+
+    if !current.is_empty() {
+        words.push(current.to_lowercase());
+    }
+
+    words
+}
+
 /// Fuzzy search `SIGNAL_CATALOG` for signals matching the prompt.
+/// Returns (candidates, had_real_matches) where had_real_matches indicates
+/// whether matches were found (vs. fallback to all signals).
 /// Scoring:
 /// - +3 if any token exactly matches a word in signal name
 /// - +2 if any token is substring of signal name
 /// - +1 if any token appears in description
-fn fuzzy_search(prompt: &str) -> Vec<SignalCandidate> {
+fn fuzzy_search(prompt: &str) -> (Vec<SignalCandidate>, bool) {
     let prompt_lower = prompt.to_lowercase();
     let tokens: Vec<&str> = prompt_lower.split_whitespace().collect();
 
@@ -91,14 +115,14 @@ fn fuzzy_search(prompt: &str) -> Vec<SignalCandidate> {
         .enumerate()
         .map(|(idx, info)| {
             let name_lower = info.name.to_lowercase();
-            let name_words: Vec<&str> = name_lower.split('_').collect();
+            let name_words_str = split_camel_case(info.name);
             let desc_lower = info.description.to_lowercase();
 
             let mut score = 0;
 
             for token in &tokens {
-                // +3 for exact word match
-                if name_words.iter().any(|w| w == token) {
+                // +3 for exact word match (split on CamelCase boundaries)
+                if name_words_str.iter().any(|w| w == token) {
                     score += 3;
                 }
                 // +2 for substring in name
@@ -132,7 +156,7 @@ fn fuzzy_search(prompt: &str) -> Vec<SignalCandidate> {
         (0..SIGNAL_CATALOG.len()).collect()
     };
 
-    results
+    let candidates = results
         .iter()
         .map(|&idx| {
             let info = &SIGNAL_CATALOG[idx];
@@ -145,10 +169,15 @@ fn fuzzy_search(prompt: &str) -> Vec<SignalCandidate> {
                 example,
             }
         })
-        .collect()
+        .collect();
+
+    (candidates, has_matches)
 }
 
 /// Build a concrete JSON example for a signal given its name.
+/// Note: New signals added to SIGNAL_CATALOG must also be added to this function
+/// to generate concrete examples. This is a necessary manual step to provide Claude
+/// with sensible default parameter values for each signal type.
 #[allow(clippy::too_many_lines)]
 fn build_example(signal_name: &str) -> Value {
     match signal_name {
@@ -405,15 +434,17 @@ mod tests {
 
     #[test]
     fn fuzzy_search_rsi_oversold() {
-        let result = fuzzy_search("rsi oversold");
+        let (result, had_matches) = fuzzy_search("rsi oversold");
         let names: Vec<&str> = result.iter().map(|c| c.name.as_str()).collect();
+        assert!(had_matches);
         assert!(names.contains(&"RsiOversold"));
     }
 
     #[test]
     fn fuzzy_search_macd() {
-        let result = fuzzy_search("macd");
+        let (result, had_matches) = fuzzy_search("macd");
         let names: Vec<&str> = result.iter().map(|c| c.name.as_str()).collect();
+        assert!(had_matches);
         assert!(
             names.contains(&"MacdBullish")
                 || names.contains(&"MacdBearish")
@@ -423,22 +454,25 @@ mod tests {
 
     #[test]
     fn fuzzy_search_golden_cross() {
-        let result = fuzzy_search("golden cross");
+        let (result, had_matches) = fuzzy_search("golden cross");
         let names: Vec<&str> = result.iter().map(|c| c.name.as_str()).collect();
+        assert!(had_matches);
         assert!(names.contains(&"SmaCrossover"));
     }
 
     #[test]
     fn fuzzy_search_bollinger_upper() {
-        let result = fuzzy_search("bollinger upper");
+        let (result, had_matches) = fuzzy_search("bollinger upper");
         let names: Vec<&str> = result.iter().map(|c| c.name.as_str()).collect();
+        assert!(had_matches);
         assert!(names.contains(&"BollingerUpperTouch"));
     }
 
     #[test]
     fn fuzzy_search_no_match_fallback() {
-        let result = fuzzy_search("xyzabc");
-        // Should fallback to all signals
+        let (result, had_matches) = fuzzy_search("xyzabc");
+        // Should fallback to all signals (had_matches = false)
+        assert!(!had_matches);
         assert_eq!(result.len(), SIGNAL_CATALOG.len());
     }
 
@@ -448,13 +482,6 @@ mod tests {
         assert!(!response.candidates.is_empty());
         assert!(response.schema != serde_json::Value::Null);
         assert_eq!(response.column_defaults["close"], "adjclose");
-    }
-
-    #[test]
-    fn execute_empty_prompt() {
-        let response = execute("");
-        // Should fallback to all signals
-        assert_eq!(response.candidates.len(), SIGNAL_CATALOG.len());
     }
 
     #[test]

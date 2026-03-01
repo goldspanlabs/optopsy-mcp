@@ -184,7 +184,8 @@ pub struct CheckCacheParams {
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct ConstructSignalParams {
     /// Natural language description e.g. "RSI oversold" or "MACD bullish and above 50-day SMA"
-    #[garde(length(min = 1, max = 500))]
+    /// Must contain at least one non-whitespace character.
+    #[garde(length(min = 1, max = 500), pattern(r"[^ \t\n\r]"))]
     pub prompt: String,
 }
 
