@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Volume signals: MFI, OBV, CMF
 
 use super::helpers::{column_to_f64, pad_and_compare, pad_series, SignalFn};
@@ -28,7 +29,7 @@ impl SignalFn for MfiOversold {
             "mfi_oversold",
         ))
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "mfi_oversold"
     }
 }
@@ -58,7 +59,7 @@ impl SignalFn for MfiOverbought {
             "mfi_overbought",
         ))
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "mfi_overbought"
     }
 }
@@ -88,7 +89,7 @@ impl SignalFn for ObvRising {
         }
         Ok(BooleanChunked::new("obv_rising".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "obv_rising"
     }
 }
@@ -118,13 +119,13 @@ impl SignalFn for ObvFalling {
         }
         Ok(BooleanChunked::new("obv_falling".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "obv_falling"
     }
 }
 
 /// Signal: Chaikin Money Flow is positive (buying pressure).
-/// CMF = sum(money_flow_volume) / sum(volume) over a rolling window.
+/// CMF = `sum(money_flow_volume)` / `sum(volume)` over a rolling window.
 pub struct CmfPositive {
     pub close_col: String,
     pub high_col: String,
@@ -167,7 +168,7 @@ impl SignalFn for CmfPositive {
             .collect();
         Ok(pad_and_compare(&cmf, n, |v| v > 0.0, "cmf_positive"))
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "cmf_positive"
     }
 }
@@ -215,7 +216,7 @@ impl SignalFn for CmfNegative {
             .collect();
         Ok(pad_and_compare(&cmf, n, |v| v < 0.0, "cmf_negative"))
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "cmf_negative"
     }
 }

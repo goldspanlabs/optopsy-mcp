@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Overlap signals: SMA, EMA, crossovers
 
 use super::helpers::{column_to_f64, pad_series, SignalFn};
@@ -26,7 +27,7 @@ impl SignalFn for PriceAboveSma {
             .collect();
         Ok(BooleanChunked::new("price_above_sma".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "price_above_sma"
     }
 }
@@ -53,7 +54,7 @@ impl SignalFn for PriceBelowSma {
             .collect();
         Ok(BooleanChunked::new("price_below_sma".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "price_below_sma"
     }
 }
@@ -80,7 +81,7 @@ impl SignalFn for PriceAboveEma {
             .collect();
         Ok(BooleanChunked::new("price_above_ema".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "price_above_ema"
     }
 }
@@ -107,7 +108,7 @@ impl SignalFn for PriceBelowEma {
             .collect();
         Ok(BooleanChunked::new("price_below_ema".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "price_below_ema"
     }
 }
@@ -140,7 +141,7 @@ impl SignalFn for SmaCrossover {
         }
         Ok(BooleanChunked::new("sma_crossover".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "sma_crossover"
     }
 }
@@ -172,7 +173,7 @@ impl SignalFn for SmaCrossunder {
         }
         Ok(BooleanChunked::new("sma_crossunder".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "sma_crossunder"
     }
 }
@@ -210,7 +211,7 @@ impl SignalFn for EmaCrossover {
         }
         Ok(BooleanChunked::new("ema_crossover".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "ema_crossover"
     }
 }
@@ -248,7 +249,7 @@ impl SignalFn for EmaCrossunder {
         }
         Ok(BooleanChunked::new("ema_crossunder".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "ema_crossunder"
     }
 }

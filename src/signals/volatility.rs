@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Volatility signals: ATR, Bollinger Bands, Keltner Channels
 
 use super::helpers::{column_to_f64, pad_series, SignalFn};
@@ -40,7 +41,7 @@ impl SignalFn for AtrAbove {
             .collect();
         Ok(BooleanChunked::new("atr_above".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "atr_above"
     }
 }
@@ -81,7 +82,7 @@ impl SignalFn for AtrBelow {
             .collect();
         Ok(BooleanChunked::new("atr_below".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "atr_below"
     }
 }
@@ -111,7 +112,7 @@ impl SignalFn for BollingerLowerTouch {
             .collect();
         Ok(BooleanChunked::new("bollinger_lower_touch".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "bollinger_lower_touch"
     }
 }
@@ -140,7 +141,7 @@ impl SignalFn for BollingerUpperTouch {
             .collect();
         Ok(BooleanChunked::new("bollinger_upper_touch".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "bollinger_upper_touch"
     }
 }
@@ -184,7 +185,7 @@ impl SignalFn for KeltnerLowerBreak {
             .collect();
         Ok(BooleanChunked::new("keltner_lower_break".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "keltner_lower_break"
     }
 }
@@ -227,7 +228,7 @@ impl SignalFn for KeltnerUpperBreak {
             .collect();
         Ok(BooleanChunked::new("keltner_upper_break".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "keltner_upper_break"
     }
 }
@@ -249,7 +250,7 @@ mod tests {
 
     #[test]
     fn atr_above_correct_length() {
-        let close: Vec<f64> = (0..20).map(|i| 100.0 + i as f64).collect();
+        let close: Vec<f64> = (0..20).map(|i| 100.0 + f64::from(i)).collect();
         let high: Vec<f64> = close.iter().map(|c| c + 2.0).collect();
         let low: Vec<f64> = close.iter().map(|c| c - 2.0).collect();
         let df = df! {

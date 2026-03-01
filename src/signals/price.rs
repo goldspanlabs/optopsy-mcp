@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Price signals: Gap, drawdown, consecutive moves
 
 use super::helpers::{column_to_f64, SignalFn};
@@ -23,7 +24,7 @@ impl SignalFn for GapUp {
         }
         Ok(BooleanChunked::new("gap_up".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "gap_up"
     }
 }
@@ -47,13 +48,13 @@ impl SignalFn for GapDown {
         }
         Ok(BooleanChunked::new("gap_down".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "gap_down"
     }
 }
 
 /// Signal: drawdown from rolling maximum exceeds a threshold.
-/// Drawdown = (price - rolling_max) / rolling_max.
+/// Drawdown = (price - `rolling_max`) / `rolling_max`.
 /// True when drawdown < -threshold (e.g., threshold = 0.05 means 5% drawdown).
 pub struct DrawdownBelow {
     pub column: String,
@@ -79,7 +80,7 @@ impl SignalFn for DrawdownBelow {
         }
         Ok(BooleanChunked::new("drawdown_below".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "drawdown_below"
     }
 }
@@ -108,7 +109,7 @@ impl SignalFn for ConsecutiveUp {
         }
         Ok(BooleanChunked::new("consecutive_up".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "consecutive_up"
     }
 }
@@ -137,7 +138,7 @@ impl SignalFn for ConsecutiveDown {
         }
         Ok(BooleanChunked::new("consecutive_down".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "consecutive_down"
     }
 }
@@ -162,7 +163,7 @@ impl SignalFn for RateOfChange {
         }
         Ok(BooleanChunked::new("rate_of_change".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "rate_of_change"
     }
 }

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Momentum signals: RSI, MACD, Stochastic
 
 use super::helpers::{column_to_f64, pad_and_compare, pad_series, SignalFn};
@@ -26,7 +27,7 @@ impl SignalFn for RsiOversold {
             "rsi_oversold",
         ))
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "rsi_oversold"
     }
 }
@@ -52,7 +53,7 @@ impl SignalFn for RsiOverbought {
             "rsi_overbought",
         ))
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "rsi_overbought"
     }
 }
@@ -74,7 +75,7 @@ impl SignalFn for MacdBullish {
         let histograms: Vec<f64> = macd_values.iter().map(|t| t.2).collect();
         Ok(pad_and_compare(&histograms, n, |v| v > 0.0, "macd_bullish"))
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "macd_bullish"
     }
 }
@@ -95,7 +96,7 @@ impl SignalFn for MacdBearish {
         let histograms: Vec<f64> = macd_values.iter().map(|t| t.2).collect();
         Ok(pad_and_compare(&histograms, n, |v| v < 0.0, "macd_bearish"))
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "macd_bearish"
     }
 }
@@ -123,7 +124,7 @@ impl SignalFn for MacdCrossover {
         }
         Ok(BooleanChunked::new("macd_crossover".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "macd_crossover"
     }
 }
@@ -146,7 +147,7 @@ impl SignalFn for StochasticOversold {
         }
         let stoch_values: Vec<f64> = prices
             .windows(self.period)
-            .map(|w| rust_ti::momentum_indicators::single::stochastic_oscillator(w))
+            .map(rust_ti::momentum_indicators::single::stochastic_oscillator)
             .collect();
         Ok(pad_and_compare(
             &stoch_values,
@@ -155,7 +156,7 @@ impl SignalFn for StochasticOversold {
             "stochastic_oversold",
         ))
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "stochastic_oversold"
     }
 }
@@ -178,7 +179,7 @@ impl SignalFn for StochasticOverbought {
         }
         let stoch_values: Vec<f64> = prices
             .windows(self.period)
-            .map(|w| rust_ti::momentum_indicators::single::stochastic_oscillator(w))
+            .map(rust_ti::momentum_indicators::single::stochastic_oscillator)
             .collect();
         Ok(pad_and_compare(
             &stoch_values,
@@ -187,7 +188,7 @@ impl SignalFn for StochasticOverbought {
             "stochastic_overbought",
         ))
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "stochastic_overbought"
     }
 }

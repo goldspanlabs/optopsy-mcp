@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Trend signals: Aroon, Supertrend
 
 use super::helpers::{column_to_f64, pad_series, SignalFn};
@@ -19,7 +20,7 @@ impl SignalFn for AroonUptrend {
         if n < self.period + 1 {
             return Ok(BooleanChunked::new("aroon_uptrend".into(), vec![false; n]).into_series());
         }
-        let aroon_values: Vec<(f64, f64, f64)> = (0..=n - self.period - 1)
+        let aroon_values: Vec<(f64, f64, f64)> = (0..(n - self.period))
             .map(|i| {
                 let end = i + self.period + 1;
                 rust_ti::trend_indicators::single::aroon_indicator(&highs[i..end], &lows[i..end])
@@ -30,7 +31,7 @@ impl SignalFn for AroonUptrend {
         let bools: Vec<bool> = padded.iter().map(|&v| !v.is_nan() && v > 0.0).collect();
         Ok(BooleanChunked::new("aroon_uptrend".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "aroon_uptrend"
     }
 }
@@ -50,7 +51,7 @@ impl SignalFn for AroonDowntrend {
         if n < self.period + 1 {
             return Ok(BooleanChunked::new("aroon_downtrend".into(), vec![false; n]).into_series());
         }
-        let aroon_values: Vec<(f64, f64, f64)> = (0..=n - self.period - 1)
+        let aroon_values: Vec<(f64, f64, f64)> = (0..(n - self.period))
             .map(|i| {
                 let end = i + self.period + 1;
                 rust_ti::trend_indicators::single::aroon_indicator(&highs[i..end], &lows[i..end])
@@ -61,7 +62,7 @@ impl SignalFn for AroonDowntrend {
         let bools: Vec<bool> = padded.iter().map(|&v| !v.is_nan() && v < 0.0).collect();
         Ok(BooleanChunked::new("aroon_downtrend".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "aroon_downtrend"
     }
 }
@@ -80,7 +81,7 @@ impl SignalFn for AroonUpAbove {
         if n < self.period + 1 {
             return Ok(BooleanChunked::new("aroon_up_above".into(), vec![false; n]).into_series());
         }
-        let aroon_up_values: Vec<f64> = (0..=n - self.period - 1)
+        let aroon_up_values: Vec<f64> = (0..(n - self.period))
             .map(|i| {
                 let end = i + self.period + 1;
                 rust_ti::trend_indicators::single::aroon_up(&highs[i..end])
@@ -93,7 +94,7 @@ impl SignalFn for AroonUpAbove {
             .collect();
         Ok(BooleanChunked::new("aroon_up_above".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "aroon_up_above"
     }
 }
@@ -134,7 +135,7 @@ impl SignalFn for SupertrendBearish {
             .collect();
         Ok(BooleanChunked::new("supertrend_bearish".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "supertrend_bearish"
     }
 }
@@ -175,7 +176,7 @@ impl SignalFn for SupertrendBullish {
             .collect();
         Ok(BooleanChunked::new("supertrend_bullish".into(), &bools).into_series())
     }
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "supertrend_bullish"
     }
 }
@@ -187,8 +188,8 @@ mod tests {
     #[test]
     fn aroon_uptrend_correct_length() {
         let n = 30;
-        let high: Vec<f64> = (0..n).map(|i| 100.0 + i as f64 + 2.0).collect();
-        let low: Vec<f64> = (0..n).map(|i| 100.0 + i as f64 - 2.0).collect();
+        let high: Vec<f64> = (0..30_i32).map(|i| 100.0 + f64::from(i) + 2.0).collect();
+        let low: Vec<f64> = (0..30_i32).map(|i| 100.0 + f64::from(i) - 2.0).collect();
         let df = df! {
             "high" => &high,
             "low" => &low,
