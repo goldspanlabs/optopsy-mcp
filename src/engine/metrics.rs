@@ -48,81 +48,20 @@ pub fn calculate_metrics(
     trade_log: &[TradeRecord],
     initial_capital: f64,
 ) -> Result<PerformanceMetrics> {
-    if equity_curve.len() < 2 || initial_capital <= 0.0 {
+    if initial_capital <= 0.0 {
         return Ok(DEFAULT_METRICS);
     }
 
-    // Calculate daily returns from equity curve
-    let mut returns = Vec::new();
-    let mut prev_equity = initial_capital;
-    for point in equity_curve {
-        if prev_equity > 0.0 {
-            returns.push((point.equity - prev_equity) / prev_equity);
-        }
-        prev_equity = point.equity;
-    }
-
-    if returns.is_empty() {
-        return Ok(DEFAULT_METRICS);
-    }
-
-    let mean_return = returns.iter().sum::<f64>() / returns.len() as f64;
-    let std_return = std_dev(&returns);
-    let downside_std = downside_deviation(&returns);
-
-    // Annualize (assume ~252 trading days)
-    let annualization = (252.0_f64).sqrt();
-    // Use actual date span from equity curve for CAGR/Calmar.
-    // This works regardless of whether the curve includes an initial-capital point.
-    let first_dt = equity_curve.first().unwrap().datetime;
-    let last_dt = equity_curve.last().unwrap().datetime;
-    let calendar_days = (last_dt - first_dt).num_days().max(0) as f64;
-
-    // Sharpe ratio (from equity curve)
-    let sharpe = if std_return > 0.0 {
-        mean_return / std_return * annualization
-    } else {
-        0.0
-    };
-
-    // Sortino ratio (from equity curve)
-    let sortino = if downside_std > 0.0 {
-        mean_return / downside_std * annualization
-    } else {
-        0.0
-    };
-
-    // Max drawdown (from equity curve)
-    let max_drawdown = calculate_max_drawdown(equity_curve);
-
-    // VaR 95% (from equity curve)
-    let var_95 = calculate_var(&returns, 0.05);
-
-    // Total return
-    let final_equity = equity_curve.last().unwrap().equity;
-    let total_return = (final_equity - initial_capital) / initial_capital;
-    let total_return_pct = total_return * 100.0;
-
-    // CAGR and Calmar only meaningful with enough data
-    let (cagr, calmar) = if calendar_days >= MIN_CALENDAR_DAYS_FOR_ANNUALIZED {
-        let years = calendar_days / 365.0;
-        let cagr = if final_equity > 0.0 && initial_capital > 0.0 {
-            (final_equity / initial_capital).powf(1.0 / years) - 1.0
-        } else {
-            0.0
-        };
-        let calmar = if max_drawdown > 0.0 {
-            cagr / max_drawdown
-        } else {
-            0.0
-        };
-        (cagr, calmar)
-    } else {
-        (0.0, 0.0)
-    };
-
-    // Trade-level metrics
+    // Trade-level metrics are always computed (even with minimal equity data)
     let tm = compute_trade_metrics(trade_log);
+
+    // Equity-curve-derived metrics require at least 2 points
+    let (sharpe, sortino, max_drawdown, var_95, total_return_pct, cagr, calmar) =
+        if equity_curve.len() < 2 {
+            (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        } else {
+            compute_equity_metrics(equity_curve, initial_capital)
+        };
 
     Ok(PerformanceMetrics {
         sharpe,
@@ -141,6 +80,84 @@ pub fn calculate_metrics(
         max_consecutive_losses: tm.max_consecutive_losses,
         expectancy: tm.expectancy,
     })
+}
+
+/// Compute equity-curve-derived metrics (Sharpe, Sortino, max DD, `VaR`, total return, CAGR, Calmar).
+/// Assumes `equity_curve.len() >= 2`.
+#[allow(clippy::cast_precision_loss)]
+fn compute_equity_metrics(
+    equity_curve: &[EquityPoint],
+    initial_capital: f64,
+) -> (f64, f64, f64, f64, f64, f64, f64) {
+    let mut returns = Vec::new();
+    let mut prev_equity = initial_capital;
+    for point in equity_curve {
+        if prev_equity > 0.0 {
+            returns.push((point.equity - prev_equity) / prev_equity);
+        }
+        prev_equity = point.equity;
+    }
+
+    if returns.is_empty() {
+        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    }
+
+    let mean_return = returns.iter().sum::<f64>() / returns.len() as f64;
+    let std_return = std_dev(&returns);
+    let downside_std = downside_deviation(&returns);
+
+    // Annualize (assume ~252 trading days)
+    let annualization = (252.0_f64).sqrt();
+    // Use actual date span from equity curve for CAGR/Calmar.
+    let first_dt = equity_curve.first().unwrap().datetime;
+    let last_dt = equity_curve.last().unwrap().datetime;
+    let calendar_days = (last_dt - first_dt).num_days().max(0) as f64;
+
+    let sharpe = if std_return > 0.0 {
+        mean_return / std_return * annualization
+    } else {
+        0.0
+    };
+
+    let sortino = if downside_std > 0.0 {
+        mean_return / downside_std * annualization
+    } else {
+        0.0
+    };
+
+    let max_drawdown = calculate_max_drawdown(equity_curve);
+    let var_95 = calculate_var(&returns, 0.05);
+
+    let final_equity = equity_curve.last().unwrap().equity;
+    let total_return = (final_equity - initial_capital) / initial_capital;
+    let total_return_pct = total_return * 100.0;
+
+    let (cagr, calmar) = if calendar_days >= MIN_CALENDAR_DAYS_FOR_ANNUALIZED {
+        let years = calendar_days / 365.0;
+        let cagr = if final_equity > 0.0 && initial_capital > 0.0 {
+            (final_equity / initial_capital).powf(1.0 / years) - 1.0
+        } else {
+            0.0
+        };
+        let calmar = if max_drawdown > 0.0 {
+            cagr / max_drawdown
+        } else {
+            0.0
+        };
+        (cagr, calmar)
+    } else {
+        (0.0, 0.0)
+    };
+
+    (
+        sharpe,
+        sortino,
+        max_drawdown,
+        var_95,
+        total_return_pct,
+        cagr,
+        calmar,
+    )
 }
 
 #[allow(clippy::cast_precision_loss)]
