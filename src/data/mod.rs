@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod parquet;
 #[cfg(feature = "postgres")]
 pub mod postgres;

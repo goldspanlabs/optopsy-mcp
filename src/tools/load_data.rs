@@ -5,17 +5,17 @@ use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::data::parquet::{ParquetStore, QUOTE_DATETIME_COL};
+use crate::data::cache::CachedStore;
+use crate::data::parquet::QUOTE_DATETIME_COL;
 use crate::data::DataStore;
 
 pub async fn execute(
     data: &Arc<RwLock<Option<DataFrame>>>,
-    file_path: &str,
+    cache: &Arc<CachedStore>,
+    symbol: &str,
     start_date: Option<&str>,
     end_date: Option<&str>,
 ) -> Result<String> {
-    let store = ParquetStore::new(file_path);
-
     let start = start_date
         .map(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d"))
         .transpose()?;
@@ -23,7 +23,7 @@ pub async fn execute(
         .map(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d"))
         .transpose()?;
 
-    let df = store.load_options("", start, end)?;
+    let df = cache.load_options(symbol, start, end)?;
 
     let rows = df.height();
     let columns: Vec<String> = df

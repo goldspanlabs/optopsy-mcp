@@ -9,6 +9,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::data::cache::CachedStore;
 use crate::engine::types::{
     BacktestParams, Commission, CompareEntry, CompareParams, EvaluateParams, SimParams, Slippage,
     TargetRange, TradeSelector,
@@ -18,13 +19,15 @@ use crate::tools;
 #[derive(Clone)]
 pub struct OptopsyServer {
     pub data: Arc<RwLock<Option<DataFrame>>>,
+    pub cache: Arc<CachedStore>,
     tool_router: ToolRouter<Self>,
 }
 
 impl OptopsyServer {
-    pub fn new() -> Self {
+    pub fn new(cache: CachedStore) -> Self {
         Self {
             data: Arc::new(RwLock::new(None)),
+            cache: Arc::new(cache),
             tool_router: Self::tool_router(),
         }
     }
@@ -32,8 +35,8 @@ impl OptopsyServer {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct LoadDataParams {
-    /// Path to the Parquet file
-    pub file_path: String,
+    /// Ticker symbol (e.g. "SPY")
+    pub symbol: String,
     /// Start date filter (YYYY-MM-DD)
     pub start_date: Option<String>,
     /// End date filter (YYYY-MM-DD)
@@ -104,12 +107,13 @@ use rmcp::handler::server::wrapper::Parameters;
 
 #[tool_router]
 impl OptopsyServer {
-    /// Load options chain data from a Parquet file
+    /// Load options chain data by symbol (auto-fetches from S3 cache if configured)
     #[tool(name = "load_data")]
     async fn load_data(&self, Parameters(params): Parameters<LoadDataParams>) -> String {
         match tools::load_data::execute(
             &self.data,
-            &params.file_path,
+            &self.cache,
+            &params.symbol,
             params.start_date.as_deref(),
             params.end_date.as_deref(),
         )

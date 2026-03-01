@@ -18,7 +18,8 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting optopsy-mcp MCP server");
 
-    let server = server::OptopsyServer::new();
+    let cache = data::cache::CachedStore::from_env()?;
+    let server = server::OptopsyServer::new(cache);
     let service = server.serve(rmcp::transport::stdio()).await?;
     service.waiting().await?;
 
