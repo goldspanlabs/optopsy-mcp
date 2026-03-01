@@ -47,7 +47,7 @@ pub fn calculate_metrics(
     trade_log: &[TradeRecord],
     initial_capital: f64,
 ) -> Result<PerformanceMetrics> {
-    if equity_curve.len() < 2 {
+    if equity_curve.len() < 2 || initial_capital <= 0.0 {
         return Ok(DEFAULT_METRICS);
     }
 
@@ -71,8 +71,11 @@ pub fn calculate_metrics(
 
     // Annualize (assume ~252 trading days)
     let annualization = (252.0_f64).sqrt();
-    // First equity point is initial state; trading days = number of return intervals
-    let num_trading_days = (equity_curve.len() - 1) as f64;
+    // Use actual date span from equity curve for CAGR/Calmar.
+    // This works regardless of whether the curve includes an initial-capital point.
+    let first_dt = equity_curve.first().unwrap().datetime;
+    let last_dt = equity_curve.last().unwrap().datetime;
+    let calendar_days = (last_dt - first_dt).num_days().max(0) as f64;
 
     // Sharpe ratio (from equity curve)
     let sharpe = if std_return > 0.0 {
@@ -99,9 +102,9 @@ pub fn calculate_metrics(
     let total_return = (final_equity - initial_capital) / initial_capital;
     let total_return_pct = total_return * 100.0;
 
-    // CAGR and Calmar only meaningful with enough trading days
-    let (cagr, calmar) = if num_trading_days >= MIN_DAYS_FOR_ANNUALIZED {
-        let years = num_trading_days / 252.0;
+    // CAGR and Calmar only meaningful with enough data
+    let (cagr, calmar) = if calendar_days >= MIN_DAYS_FOR_ANNUALIZED {
+        let years = calendar_days / 365.0;
         let cagr = if final_equity > 0.0 && initial_capital > 0.0 {
             (final_equity / initial_capital).powf(1.0 / years) - 1.0
         } else {
@@ -394,10 +397,10 @@ mod tests {
 
     #[test]
     fn cagr_one_year_matches_total_return() {
-        // 253 points = 252 trading days = 1 year, so CAGR should equal total return
+        // 366 points = 365 calendar days = 1 year, so CAGR should equal total return
         let mut values = vec![10000.0];
-        for i in 1..=252 {
-            values.push(10000.0 + i as f64 * 4.0); // end at 11008
+        for i in 1..=365 {
+            values.push(10000.0 + i as f64 * 2.76); // end at ~11008
         }
         let curve = make_equity_curve(&values);
         let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
@@ -427,10 +430,10 @@ mod tests {
 
     #[test]
     fn calmar_annualized() {
-        // 126 trading days = ~0.5 year (above threshold)
+        // 126 calendar days (~0.35 year, above MIN_DAYS_FOR_ANNUALIZED threshold)
         let mut values = Vec::new();
         for i in 0..127 {
-            // 127 points = 126 trading days
+            // 127 points = 126 calendar day span
             values.push(10000.0 + i as f64 * 10.0);
         }
         // Add a dip for drawdown

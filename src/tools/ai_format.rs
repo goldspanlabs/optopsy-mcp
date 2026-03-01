@@ -177,7 +177,7 @@ fn backtest_key_findings(
     findings.push(format!(
         "Win rate of {win_pct:.0}% with profit factor {:.2}{}",
         m.profit_factor,
-        if m.profit_factor >= 999.0 {
+        if m.max_consecutive_losses == 0 && m.win_rate > 0.0 {
             " — no losing trades"
         } else if m.profit_factor >= 1.5 {
             " — consistently profitable"
@@ -956,6 +956,17 @@ mod tests {
         };
         let expectancy = (win_rate * avg_winner) + ((1.0 - win_rate) * avg_loser);
 
+        let mut max_consecutive_losses = 0usize;
+        let mut streak = 0usize;
+        for t in &trades {
+            if t.pnl < 0.0 {
+                streak += 1;
+                max_consecutive_losses = max_consecutive_losses.max(streak);
+            } else if t.pnl > 0.0 {
+                streak = 0;
+            }
+        }
+
         BacktestResult {
             trade_count: total,
             total_pnl,
@@ -973,7 +984,7 @@ mod tests {
                 avg_winner,
                 avg_loser,
                 avg_days_held,
-                max_consecutive_losses: 0,
+                max_consecutive_losses,
                 expectancy,
             },
             equity_curve: equity,
