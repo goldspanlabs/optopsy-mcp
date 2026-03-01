@@ -143,19 +143,16 @@ impl CachedStore {
 }
 
 impl DataStore for CachedStore {
-    fn load_options(
+    async fn load_options(
         &self,
         symbol: &str,
         start_date: Option<NaiveDate>,
         end_date: Option<NaiveDate>,
     ) -> Result<DataFrame> {
-        // Block on async ensure_local within the sync trait method
-        let path = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(self.ensure_local(symbol))
-        })?;
+        let path = self.ensure_local(symbol).await?;
 
         let store = ParquetStore::new(&path.to_string_lossy());
-        store.load_options(symbol, start_date, end_date)
+        store.load_options(symbol, start_date, end_date).await
     }
 
     fn list_symbols(&self) -> Result<Vec<String>> {

@@ -82,7 +82,7 @@ pub fn normalize_quote_datetime(df: DataFrame) -> Result<DataFrame> {
 }
 
 impl DataStore for ParquetStore {
-    fn load_options(
+    async fn load_options(
         &self,
         _symbol: &str,
         start_date: Option<NaiveDate>,

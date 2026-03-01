@@ -101,7 +101,7 @@ async fn load_with_fallback(
     start: Option<NaiveDate>,
     end: Option<NaiveDate>,
 ) -> Result<DataFrame> {
-    match cache.load_options(symbol, start, end) {
+    match cache.load_options(symbol, start, end).await {
         Ok(df) => {
             tracing::info!(
                 symbol = %symbol,
@@ -134,7 +134,7 @@ async fn load_with_fallback(
                         symbol = %symbol,
                         "✅ Downloaded from EODHD. Retrying cache load…"
                     );
-                    cache.load_options(symbol, start, end).map_err(|e| {
+                    cache.load_options(symbol, start, end).await.map_err(|e| {
                         anyhow::anyhow!(
                             "Downloaded from EODHD but failed to load: {e} (original: {cache_err})"
                         )

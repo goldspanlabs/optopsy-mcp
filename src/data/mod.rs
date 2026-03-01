@@ -8,9 +8,9 @@ use anyhow::Result;
 use chrono::NaiveDate;
 use polars::prelude::*;
 
-#[allow(dead_code)]
+#[allow(dead_code, async_fn_in_trait)]
 pub trait DataStore: Send + Sync {
-    fn load_options(
+    async fn load_options(
         &self,
         symbol: &str,
         start_date: Option<NaiveDate>,

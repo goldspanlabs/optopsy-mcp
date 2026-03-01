@@ -27,7 +27,7 @@ impl PostgresStore {
 
 #[cfg(feature = "postgres")]
 impl DataStore for PostgresStore {
-    fn load_options(
+    async fn load_options(
         &self,
         _symbol: &str,
         _start_date: Option<NaiveDate>,
