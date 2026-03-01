@@ -2,7 +2,15 @@ use anyhow::Result;
 
 use super::types::{EquityPoint, PerformanceMetrics, TradeRecord};
 
-const DEFAULT_METRICS: PerformanceMetrics = PerformanceMetrics {
+/// Maximum finite value for profit factor when there are no losing trades.
+/// Avoids `f64::INFINITY` which is not valid JSON.
+const MAX_PROFIT_FACTOR: f64 = 999.99;
+
+/// Minimum number of trading days required to report CAGR and Calmar.
+/// Below this threshold these annualized metrics are misleadingly inflated.
+const MIN_DAYS_FOR_ANNUALIZED: f64 = 25.0;
+
+pub(crate) const DEFAULT_METRICS: PerformanceMetrics = PerformanceMetrics {
     sharpe: 0.0,
     sortino: 0.0,
     max_drawdown: 0.0,
@@ -19,6 +27,18 @@ const DEFAULT_METRICS: PerformanceMetrics = PerformanceMetrics {
     max_consecutive_losses: 0,
     expectancy: 0.0,
 };
+
+/// Trade-level metrics extracted from the trade log.
+struct TradeMetrics {
+    win_rate: f64,
+    profit_factor: f64,
+    avg_trade_pnl: f64,
+    avg_winner: f64,
+    avg_loser: f64,
+    avg_days_held: f64,
+    max_consecutive_losses: usize,
+    expectancy: f64,
+}
 
 /// Calculate performance metrics from equity curve and trade log
 #[allow(clippy::unnecessary_wraps, clippy::cast_precision_loss)]
@@ -51,7 +71,8 @@ pub fn calculate_metrics(
 
     // Annualize (assume ~252 trading days)
     let annualization = (252.0_f64).sqrt();
-    let num_trading_days = equity_curve.len() as f64;
+    // First equity point is initial state; trading days = number of return intervals
+    let num_trading_days = (equity_curve.len() - 1) as f64;
 
     // Sharpe ratio (from equity curve)
     let sharpe = if std_return > 0.0 {
@@ -78,53 +99,64 @@ pub fn calculate_metrics(
     let total_return = (final_equity - initial_capital) / initial_capital;
     let total_return_pct = total_return * 100.0;
 
-    // CAGR: annualized compound return
-    let years = num_trading_days / 252.0;
-    let cagr = if years > 0.0 && final_equity > 0.0 && initial_capital > 0.0 {
-        (final_equity / initial_capital).powf(1.0 / years) - 1.0
+    // CAGR and Calmar only meaningful with enough trading days
+    let (cagr, calmar) = if num_trading_days >= MIN_DAYS_FOR_ANNUALIZED {
+        let years = num_trading_days / 252.0;
+        let cagr = if final_equity > 0.0 && initial_capital > 0.0 {
+            (final_equity / initial_capital).powf(1.0 / years) - 1.0
+        } else {
+            0.0
+        };
+        let calmar = if max_drawdown > 0.0 {
+            cagr / max_drawdown
+        } else {
+            0.0
+        };
+        (cagr, calmar)
     } else {
-        0.0
-    };
-
-    // Calmar ratio: annualized return / max drawdown
-    let annualized_return = cagr;
-    let calmar = if max_drawdown > 0.0 {
-        annualized_return / max_drawdown
-    } else {
-        0.0
+        (0.0, 0.0)
     };
 
     // Trade-level metrics
-    let (win_rate, profit_factor, avg_trade_pnl, avg_winner, avg_loser, avg_days_held, max_consecutive_losses, expectancy) =
-        compute_trade_metrics(trade_log);
+    let tm = compute_trade_metrics(trade_log);
 
     Ok(PerformanceMetrics {
         sharpe,
         sortino,
         max_drawdown,
-        win_rate,
-        profit_factor,
+        win_rate: tm.win_rate,
+        profit_factor: tm.profit_factor,
         calmar,
         var_95,
         total_return_pct,
         cagr,
-        avg_trade_pnl,
-        avg_winner,
-        avg_loser,
-        avg_days_held,
-        max_consecutive_losses,
-        expectancy,
+        avg_trade_pnl: tm.avg_trade_pnl,
+        avg_winner: tm.avg_winner,
+        avg_loser: tm.avg_loser,
+        avg_days_held: tm.avg_days_held,
+        max_consecutive_losses: tm.max_consecutive_losses,
+        expectancy: tm.expectancy,
     })
 }
 
 #[allow(clippy::cast_precision_loss)]
-fn compute_trade_metrics(trade_log: &[TradeRecord]) -> (f64, f64, f64, f64, f64, f64, usize, f64) {
+fn compute_trade_metrics(trade_log: &[TradeRecord]) -> TradeMetrics {
     if trade_log.is_empty() {
-        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0.0);
+        return TradeMetrics {
+            win_rate: 0.0,
+            profit_factor: 0.0,
+            avg_trade_pnl: 0.0,
+            avg_winner: 0.0,
+            avg_loser: 0.0,
+            avg_days_held: 0.0,
+            max_consecutive_losses: 0,
+            expectancy: 0.0,
+        };
     }
 
     let total = trade_log.len() as f64;
     let mut winner_count = 0usize;
+    let mut loser_count = 0usize;
     let mut winner_pnl_sum = 0.0_f64;
     let mut loser_pnl_sum = 0.0_f64;
     let mut total_pnl = 0.0_f64;
@@ -140,23 +172,26 @@ fn compute_trade_metrics(trade_log: &[TradeRecord]) -> (f64, f64, f64, f64, f64,
             winner_count += 1;
             winner_pnl_sum += t.pnl;
             current_loss_streak = 0;
-        } else {
-            loser_pnl_sum += t.pnl; // negative value
+        } else if t.pnl < 0.0 {
+            loser_count += 1;
+            loser_pnl_sum += t.pnl;
             current_loss_streak += 1;
             if current_loss_streak > max_loss_streak {
                 max_loss_streak = current_loss_streak;
             }
+        } else {
+            // Zero-PnL (scratch) trades: neutral — don't affect win/loss or streaks
+            current_loss_streak = 0;
         }
     }
 
-    let loser_count = trade_log.len() - winner_count;
     let win_rate = winner_count as f64 / total;
-    let loss_rate = 1.0 - win_rate;
+    let loss_rate = loser_count as f64 / total;
 
     let profit_factor = if loser_pnl_sum < 0.0 {
         winner_pnl_sum / loser_pnl_sum.abs()
     } else if winner_pnl_sum > 0.0 {
-        f64::INFINITY
+        MAX_PROFIT_FACTOR
     } else {
         0.0
     };
@@ -176,16 +211,16 @@ fn compute_trade_metrics(trade_log: &[TradeRecord]) -> (f64, f64, f64, f64, f64,
 
     let expectancy = (win_rate * avg_winner) + (loss_rate * avg_loser);
 
-    (
+    TradeMetrics {
         win_rate,
         profit_factor,
         avg_trade_pnl,
         avg_winner,
         avg_loser,
         avg_days_held,
-        max_loss_streak,
+        max_consecutive_losses: max_loss_streak,
         expectancy,
-    )
+    }
 }
 
 #[allow(clippy::cast_precision_loss)]
@@ -307,12 +342,13 @@ mod tests {
     }
 
     #[test]
-    fn all_wins_profit_factor_infinite() {
+    fn all_wins_profit_factor_capped() {
         let curve = make_equity_curve(&[10100.0, 10200.0, 10300.0]);
         let trades = vec![make_trade(100.0, 5), make_trade(200.0, 10)];
         let m = calculate_metrics(&curve, &trades, 10000.0).unwrap();
         assert_eq!(m.win_rate, 1.0);
-        assert!(m.profit_factor.is_infinite());
+        assert_eq!(m.profit_factor, MAX_PROFIT_FACTOR);
+        assert!(m.profit_factor.is_finite());
     }
 
     #[test]
@@ -359,22 +395,43 @@ mod tests {
 
     #[test]
     fn cagr_one_year_matches_total_return() {
-        // 252 trading days = 1 year, so CAGR should equal total return
+        // 253 points = 252 trading days = 1 year, so CAGR should equal total return
         let mut values = vec![10000.0];
         for i in 1..=252 {
-            values.push(10000.0 + i as f64 * 4.0); // end at ~11008
+            values.push(10000.0 + i as f64 * 4.0); // end at 11008
         }
         let curve = make_equity_curve(&values);
         let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
         let total_ret = (curve.last().unwrap().equity - 10000.0) / 10000.0;
-        assert!((m.cagr - total_ret).abs() < 0.01);
+        assert!(
+            (m.cagr - total_ret).abs() < 1e-10,
+            "CAGR {:.10} should equal total return {:.10}",
+            m.cagr,
+            total_ret
+        );
+    }
+
+    #[test]
+    fn cagr_zero_for_short_backtests() {
+        // 10 trading days — below MIN_DAYS_FOR_ANNUALIZED threshold
+        let mut values = vec![10000.0];
+        for i in 1..=10 {
+            values.push(10000.0 + i as f64 * 50.0);
+        }
+        let curve = make_equity_curve(&values);
+        let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
+        assert_eq!(m.cagr, 0.0, "CAGR should be 0 for short backtests");
+        assert_eq!(m.calmar, 0.0, "Calmar should be 0 for short backtests");
+        // total_return_pct should still be populated
+        assert!(m.total_return_pct > 0.0);
     }
 
     #[test]
     fn calmar_annualized() {
-        // 126 trading days = ~0.5 year
+        // 126 trading days = ~0.5 year (above threshold)
         let mut values = Vec::new();
-        for i in 0..126 {
+        for i in 0..127 {
+            // 127 points = 126 trading days
             values.push(10000.0 + i as f64 * 10.0);
         }
         // Add a dip for drawdown
@@ -419,6 +476,23 @@ mod tests {
         let curve = make_equity_curve(&[10000.0, 10100.0]);
         let m = calculate_metrics(&curve, &trades, 10000.0).unwrap();
         assert_eq!(m.max_consecutive_losses, 3);
+    }
+
+    #[test]
+    fn zero_pnl_trades_are_neutral() {
+        let trades = vec![
+            make_trade(-50.0, 3),
+            make_trade(0.0, 1), // scratch — should break loss streak
+            make_trade(-30.0, 2),
+        ];
+        let curve = make_equity_curve(&[10000.0, 9920.0]);
+        let m = calculate_metrics(&curve, &trades, 10000.0).unwrap();
+        // Zero-PnL breaks the streak, so max consecutive losses is 1, not 2
+        assert_eq!(m.max_consecutive_losses, 1);
+        // 0 winners, 2 losers, 1 scratch — win_rate = 0/3
+        assert_eq!(m.win_rate, 0.0);
+        // avg_loser should only include actual losers
+        assert!((m.avg_loser - (-40.0)).abs() < 1e-10); // (-50 + -30) / 2
     }
 
     #[test]
