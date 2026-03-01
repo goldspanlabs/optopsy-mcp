@@ -6,12 +6,7 @@ use rmcp::ServiceExt;
 use std::sync::Arc;
 use tracing_subscriber::{self, EnvFilter};
 
-mod data;
-mod engine;
-mod server;
-mod signals;
-mod strategies;
-mod tools;
+use optopsy_mcp::{data, server};
 
 #[tokio::main]
 async fn main() -> Result<()> {
