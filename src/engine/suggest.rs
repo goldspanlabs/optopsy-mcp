@@ -76,7 +76,6 @@ pub fn suggest_parameters(df: &DataFrame, params: &SuggestParams) -> Result<Sugg
 
     // Get unique expiration dates from the liquid subset
     let exp_dates = liquid_df.column("expiration")?.unique()?.len();
-
     // Analyze DTE distribution for the best cluster
     let (max_entry_dte, exit_dte, dte_range_str) = find_best_dte_cluster(&liquid_df)?;
 
