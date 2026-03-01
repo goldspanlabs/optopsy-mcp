@@ -532,12 +532,16 @@ pub fn format_strategies(strategies: Vec<StrategyInfo>) -> StrategiesResponse {
             .collect()
     };
 
-    let summary = format!(
-        "{} strategies available across {} categories: {}.",
-        total,
-        categories.len(),
-        cat_parts.join(", "),
-    );
+    let summary = if total == 0 {
+        "No strategies are currently available.".to_string()
+    } else {
+        format!(
+            "{} strategies available across {} categories: {}.",
+            total,
+            categories.len(),
+            cat_parts.join(", "),
+        )
+    };
 
     StrategiesResponse {
         summary,

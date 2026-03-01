@@ -68,6 +68,7 @@ pub async fn execute(
                         .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S").to_string())
                 }
                 AnyValue::Date(days) => {
+                    // 719_163 = days between 0001-01-01 (CE) and 1970-01-01 (Unix epoch)
                     chrono::NaiveDate::from_num_days_from_ce_opt(days + 719_163)
                         .map(|d| d.format("%Y-%m-%d").to_string())
                 }
