@@ -232,10 +232,26 @@ impl ServerHandler for OptopsyServer {
                 website_url: None,
             },
             instructions: Some(
-                "Options backtesting engine. Load data first with load_data, \
-                then use list_strategies to see available strategies, \
-                evaluate_strategy for statistical analysis, \
-                or run_backtest for simulation."
+                "Options backtesting engine. \
+                \n\nRecommended exploration workflow:\
+                \n1. load_data({ symbol }) — load (or auto-fetch) a symbol's options chain. \
+                All subsequent tools operate on the in-memory DataFrame loaded here.\
+                \n2. list_strategies() — browse all built-in strategies grouped by category \
+                (singles, spreads, butterflies, condors, iron, calendars).\
+                \n3. evaluate_strategy({ strategy, leg_deltas, max_entry_dte, exit_dte, \
+                dte_interval, delta_interval, slippage }) — fast statistical screen that \
+                groups historical trades into DTE × delta buckets and returns mean P&L, \
+                win rate, profit factor, and distribution stats per bucket. \
+                Use this to identify promising parameter ranges before committing to a full simulation.\
+                \n4. run_backtest({ strategy, leg_deltas, ..., capital, quantity, max_positions }) \
+                — event-driven day-by-day simulation with position management (stop loss, take profit, \
+                max hold, DTE exit), equity curve, and full performance metrics \
+                (Sharpe, Sortino, Calmar, VaR, CAGR, expectancy).\
+                \n5. compare_strategies({ strategies: [...], sim_params }) — run the same backtest \
+                pipeline for multiple strategies in parallel and rank them by Sharpe and total P&L.\
+                \n\nData flow summary: raw Parquet → DataFrame → per-leg filter/delta-select → \
+                leg join → strike-order validation → P&L calculation → bucket aggregation \
+                (evaluate) or event-loop simulation (backtest) → AI-enriched JSON response."
                     .into(),
             ),
         }
