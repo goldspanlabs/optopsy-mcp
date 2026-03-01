@@ -55,7 +55,13 @@ pub async fn execute(
         #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
         let format_scalar = |s: polars::prelude::Scalar| -> Option<String> {
             match s.value() {
-                AnyValue::Datetime(us, TimeUnit::Microseconds, _) => {
+                AnyValue::Null => None,
+                AnyValue::Datetime(v, tu, _) => {
+                    let us = match tu {
+                        TimeUnit::Nanoseconds => v / 1_000,
+                        TimeUnit::Microseconds => *v,
+                        TimeUnit::Milliseconds => v * 1_000,
+                    };
                     let secs = us / 1_000_000;
                     let nanos = (us.rem_euclid(1_000_000) * 1_000) as u32;
                     chrono::DateTime::from_timestamp(secs, nanos)
