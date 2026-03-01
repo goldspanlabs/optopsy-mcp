@@ -1,4 +1,7 @@
-use super::helpers::{call_leg, put_leg, strategy, strategy_relaxed, Side, StrategyDef};
+use super::helpers::{
+    call_leg, call_leg_secondary, put_leg, put_leg_secondary, strategy, strategy_relaxed, Side,
+    StrategyDef,
+};
 
 pub fn call_calendar_spread() -> StrategyDef {
     strategy_relaxed(
@@ -6,8 +9,8 @@ pub fn call_calendar_spread() -> StrategyDef {
         "Calendar",
         "Sell near-term call, buy far-term call at same strike",
         vec![
-            call_leg(Side::Short, 1), // near-term (lower DTE)
-            call_leg(Side::Long, 1),  // far-term (higher DTE)
+            call_leg(Side::Short, 1),          // near-term (Primary)
+            call_leg_secondary(Side::Long, 1), // far-term (Secondary)
         ],
     )
 }
@@ -17,7 +20,10 @@ pub fn put_calendar_spread() -> StrategyDef {
         "put_calendar_spread",
         "Calendar",
         "Sell near-term put, buy far-term put at same strike",
-        vec![put_leg(Side::Short, 1), put_leg(Side::Long, 1)],
+        vec![
+            put_leg(Side::Short, 1),          // near-term (Primary)
+            put_leg_secondary(Side::Long, 1), // far-term (Secondary)
+        ],
     )
 }
 
@@ -26,7 +32,10 @@ pub fn call_diagonal_spread() -> StrategyDef {
         "call_diagonal_spread",
         "Calendar",
         "Sell near-term call, buy far-term call at different strike",
-        vec![call_leg(Side::Short, 1), call_leg(Side::Long, 1)],
+        vec![
+            call_leg(Side::Short, 1),          // near-term (Primary)
+            call_leg_secondary(Side::Long, 1), // far-term (Secondary)
+        ],
     )
 }
 
@@ -35,7 +44,10 @@ pub fn put_diagonal_spread() -> StrategyDef {
         "put_diagonal_spread",
         "Calendar",
         "Sell near-term put, buy far-term put at different strike",
-        vec![put_leg(Side::Short, 1), put_leg(Side::Long, 1)],
+        vec![
+            put_leg(Side::Short, 1),          // near-term (Primary)
+            put_leg_secondary(Side::Long, 1), // far-term (Secondary)
+        ],
     )
 }
 
@@ -45,24 +57,24 @@ pub fn double_calendar() -> StrategyDef {
         "Calendar",
         "Call calendar + put calendar at different strikes",
         vec![
-            call_leg(Side::Short, 1),
-            call_leg(Side::Long, 1),
-            put_leg(Side::Short, 1),
-            put_leg(Side::Long, 1),
+            call_leg(Side::Short, 1),          // near-term call (Primary)
+            call_leg_secondary(Side::Long, 1), // far-term call (Secondary)
+            put_leg(Side::Short, 1),           // near-term put (Primary)
+            put_leg_secondary(Side::Long, 1),  // far-term put (Secondary)
         ],
     )
 }
 
 pub fn double_diagonal() -> StrategyDef {
-    strategy_relaxed(
+    strategy(
         "double_diagonal",
         "Calendar",
         "Call diagonal + put diagonal at different strikes",
         vec![
-            call_leg(Side::Short, 1),
-            call_leg(Side::Long, 1),
-            put_leg(Side::Short, 1),
-            put_leg(Side::Long, 1),
+            call_leg(Side::Short, 1),          // near-term call (Primary)
+            call_leg_secondary(Side::Long, 1), // far-term call (Secondary)
+            put_leg(Side::Short, 1),           // near-term put (Primary)
+            put_leg_secondary(Side::Long, 1),  // far-term put (Secondary)
         ],
     )
 }

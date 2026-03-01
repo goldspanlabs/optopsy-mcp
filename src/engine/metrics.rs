@@ -314,7 +314,11 @@ mod tests {
                     .unwrap()
                     .and_hms_opt(0, 0, 0)
                     .unwrap()
-                    + chrono::Duration::days(i as i64),
+                    + chrono::Duration::days({
+                        #[allow(clippy::cast_possible_wrap)]
+                        let days = i as i64;
+                        days
+                    }),
                 equity: eq,
             })
             .collect()
@@ -341,8 +345,8 @@ mod tests {
     fn single_point_returns_zeros() {
         let curve = make_equity_curve(&[10000.0]);
         let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
-        assert_eq!(m.sharpe, 0.0);
-        assert_eq!(m.max_drawdown, 0.0);
+        assert!((m.sharpe - 0.0).abs() < f64::EPSILON);
+        assert!((m.max_drawdown - 0.0).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -367,8 +371,8 @@ mod tests {
         let curve = make_equity_curve(&[10100.0, 10200.0, 10300.0]);
         let trades = vec![make_trade(100.0, 5), make_trade(200.0, 10)];
         let m = calculate_metrics(&curve, &trades, 10000.0).unwrap();
-        assert_eq!(m.win_rate, 1.0);
-        assert_eq!(m.profit_factor, MAX_PROFIT_FACTOR);
+        assert!((m.win_rate - 1.0).abs() < f64::EPSILON);
+        assert!((m.profit_factor - MAX_PROFIT_FACTOR).abs() < f64::EPSILON);
         assert!(m.profit_factor.is_finite());
     }
 
@@ -381,8 +385,8 @@ mod tests {
             make_trade(-100.0, 5),
         ];
         let m = calculate_metrics(&curve, &trades, 10000.0).unwrap();
-        assert_eq!(m.win_rate, 0.0);
-        assert_eq!(m.profit_factor, 0.0);
+        assert!((m.win_rate - 0.0).abs() < f64::EPSILON);
+        assert!((m.profit_factor - 0.0).abs() < f64::EPSILON);
         assert!(m.max_drawdown > 0.0);
     }
 
@@ -399,8 +403,8 @@ mod tests {
     fn flat_equity_zero_std() {
         let curve = make_equity_curve(&[10000.0, 10000.0, 10000.0, 10000.0]);
         let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
-        assert_eq!(m.sharpe, 0.0); // std is 0
-        assert_eq!(m.max_drawdown, 0.0);
+        assert!((m.sharpe - 0.0).abs() < f64::EPSILON); // std is 0
+        assert!((m.max_drawdown - 0.0).abs() < f64::EPSILON);
     }
 
     #[test]

@@ -25,6 +25,13 @@ pub enum OptionType {
     Put,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ExpirationCycle {
+    #[default]
+    Primary, // Near-term (or same-expiration for non-calendar strategies)
+    Secondary, // Far-term (calendar/diagonal only)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TargetRange {
     pub target: f64,
@@ -98,6 +105,7 @@ pub struct LegDef {
     pub option_type: OptionType,
     pub delta: TargetRange,
     pub qty: i32,
+    pub expiration_cycle: ExpirationCycle,
 }
 
 #[derive(Debug, Clone)]
@@ -109,6 +117,15 @@ pub struct StrategyDef {
     /// When `false`, adjacent legs may share the same strike (e.g. straddles,
     /// iron butterflies). When `true` (default), strikes must be strictly ascending.
     pub strict_strike_order: bool,
+}
+
+impl StrategyDef {
+    /// Returns true if this strategy has legs with different expiration cycles.
+    pub fn is_multi_expiration(&self) -> bool {
+        self.legs
+            .iter()
+            .any(|l| l.expiration_cycle == ExpirationCycle::Secondary)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -281,6 +298,7 @@ pub struct Position {
     pub id: usize,
     pub entry_date: NaiveDate,
     pub expiration: NaiveDate,
+    pub secondary_expiration: Option<NaiveDate>,
     pub legs: Vec<PositionLeg>,
     pub entry_cost: f64,
     pub quantity: i32,
@@ -315,6 +333,7 @@ pub enum PositionStatus {
 pub struct EntryCandidate {
     pub entry_date: NaiveDate,
     pub expiration: NaiveDate,
+    pub secondary_expiration: Option<NaiveDate>,
     pub legs: Vec<CandidateLeg>,
     pub net_premium: f64,
 }
@@ -368,12 +387,12 @@ mod tests {
 
     #[test]
     fn side_multiplier_long() {
-        assert_eq!(Side::Long.multiplier(), 1.0);
+        assert!((Side::Long.multiplier() - 1.0).abs() < f64::EPSILON);
     }
 
     #[test]
     fn side_multiplier_short() {
-        assert_eq!(Side::Short.multiplier(), -1.0);
+        assert!((Side::Short.multiplier() - (-1.0)).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -422,7 +441,7 @@ mod tests {
     #[test]
     fn commission_default_zero() {
         let c = Commission::default();
-        assert_eq!(c.calculate(10), 0.0);
+        assert!((c.calculate(10) - 0.0).abs() < f64::EPSILON);
     }
 
     #[test]

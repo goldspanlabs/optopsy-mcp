@@ -17,6 +17,7 @@ pub struct PostgresStore {
 }
 
 #[cfg(feature = "postgres")]
+#[allow(dead_code)]
 impl PostgresStore {
     pub async fn new(database_url: &str) -> Result<Self> {
         let pool = PgPool::connect(database_url).await?;

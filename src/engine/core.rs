@@ -28,6 +28,9 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
         );
     }
 
+    let is_multi_exp = strategy_def.is_multi_expiration();
+    let base_cols: &[&str] = &["strike", "bid", "ask", "delta", "exit_bid", "exit_ask"];
+
     // Process each leg
     let mut leg_dfs = Vec::new();
     for (i, (leg, delta_target)) in strategy_def
@@ -47,9 +50,13 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
         // Compute DTE
         let with_dte = filters::compute_dte(&filtered)?;
 
-        // Filter DTE range
-        let dte_filtered =
-            filters::filter_dte_range(&with_dte, params.max_entry_dte, params.exit_dte)?;
+        // Filter DTE range — secondary legs get wider range to find far-term expirations
+        let max_dte = if leg.expiration_cycle == ExpirationCycle::Secondary {
+            params.max_entry_dte * 2
+        } else {
+            params.max_entry_dte
+        };
+        let dte_filtered = filters::filter_dte_range(&with_dte, max_dte, params.exit_dte)?;
 
         // Filter valid quotes
         let valid = filters::filter_valid_quotes(&dte_filtered)?;
@@ -68,31 +75,35 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
             );
         }
 
-        // Select only needed columns and rename with leg index to avoid
-        // duplicate column errors (e.g. `option_type_right`) when joining 3+ legs.
-        let prepared = filters::prepare_leg_for_join(
-            &matched,
-            i,
-            &["strike", "bid", "ask", "delta", "exit_bid", "exit_ask"],
-        )?;
+        // Select only needed columns and rename with leg index
+        let prepared = if is_multi_exp {
+            filters::prepare_leg_for_join_multi_exp(&matched, i, base_cols, leg.expiration_cycle)?
+        } else {
+            filters::prepare_leg_for_join(&matched, i, base_cols)?
+        };
 
-        leg_dfs.push(prepared);
+        leg_dfs.push((prepared, leg.expiration_cycle));
     }
 
-    // Join all legs on (quote_datetime, expiration)
-    let mut combined = leg_dfs[0].clone();
-    for leg_df in leg_dfs.iter().skip(1) {
-        let join_cols: Vec<&str> = vec![QUOTE_DATETIME_COL, "expiration"];
-        combined = combined
-            .lazy()
-            .join(
-                leg_df.clone().lazy(),
-                join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
-                join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
-                JoinArgs::new(JoinType::Inner),
-            )
-            .collect()?;
-    }
+    // Join all legs
+    let combined = if is_multi_exp {
+        filters::join_multi_expiration_legs(&leg_dfs)?
+    } else {
+        let mut combined = leg_dfs[0].0.clone();
+        for (leg_df, _) in leg_dfs.iter().skip(1) {
+            let join_cols: Vec<&str> = vec![QUOTE_DATETIME_COL, "expiration"];
+            combined = combined
+                .lazy()
+                .join(
+                    leg_df.clone().lazy(),
+                    join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
+                    join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
+                    JoinArgs::new(JoinType::Inner),
+                )
+                .collect()?;
+        }
+        combined
+    };
 
     if combined.height() == 0 {
         return Ok(vec![]);
@@ -100,8 +111,16 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
 
     // Apply strike ordering rules
     let num_legs = strategy_def.legs.len();
-    let combined =
-        rules::filter_strike_order(&combined, num_legs, strategy_def.strict_strike_order)?;
+    let combined = rules::filter_strike_order(
+        &combined,
+        num_legs,
+        strategy_def.strict_strike_order,
+        if is_multi_exp {
+            Some(&strategy_def)
+        } else {
+            None
+        },
+    )?;
 
     // Calculate P&L for each trade
     let mut pnl_values = Vec::with_capacity(combined.height());
@@ -165,8 +184,18 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
         .collect()?;
 
     // Compute DTE for binning (entry DTE)
+    // For multi-expiration strategies, use primary expiration for DTE binning
     let combined = if combined.schema().contains("dte") {
         combined
+    } else if is_multi_exp {
+        // Add a temporary "expiration" column from "expiration_primary" for compute_dte
+        let with_exp = combined
+            .clone()
+            .lazy()
+            .with_column(col("expiration_primary").alias("expiration"))
+            .collect()?;
+        let with_dte = filters::compute_dte(&with_exp)?;
+        with_dte.drop("expiration")?
     } else {
         filters::compute_dte(&combined)?
     };

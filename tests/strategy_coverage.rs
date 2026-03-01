@@ -1,9 +1,11 @@
 //! Integration tests verifying `PnL` correctness for all 32 option strategies.
 //!
 //! Each test uses a synthetic `DataFrame` with 4 strikes (95/100/105/110),
-//! both calls and puts, 3 quote dates (Jan 15, Jan 22, Feb 11), and a
-//! single expiration (Feb 16, 2024). Prices decay over time so that a
-//! DTE-based exit on Feb 11 (DTE=5) produces deterministic, hand-calculated `PnL`.
+//! both calls and puts, 3 quote dates (Jan 15, Jan 22, Feb 11), and two
+//! expirations: near-term (Feb 16, 2024, DTE=32) and far-term (Mar 15, 2024,
+//! DTE=60). Prices decay over time so that a DTE-based exit on Feb 11 (DTE=5
+//! for near-term) produces deterministic, hand-calculated `PnL`.
+//! Calendar/diagonal strategies use both expirations; all others use near-term only.
 
 use chrono::NaiveDate;
 use optopsy_mcp::data::parquet::QUOTE_DATETIME_COL;
@@ -15,9 +17,10 @@ use polars::prelude::*;
 
 // ─── Synthetic DataFrame Builder ─────────────────────────────────────────────
 
-/// Build a rich synthetic options `DataFrame` with calls+puts at 4 strikes across 3 dates.
+/// Build a rich synthetic options `DataFrame` with calls+puts at 4 strikes across 3 dates,
+/// with two expirations: near-term (Feb 16, DTE=32) and far-term (Mar 15, DTE=60).
 ///
-/// Calls (strikes 95/100/105/110):
+/// Near-term calls (strikes 95/100/105/110):
 ///   | Strike | Jan 15 bid/ask | Jan 22 bid/ask | Feb 11 bid/ask | Delta |
 ///   |--------|---------------|---------------|---------------|-------|
 ///   | 95     | 8.00/8.50     | 7.00/7.50     | 5.00/5.50     | 0.70  |
@@ -25,36 +28,56 @@ use polars::prelude::*;
 ///   | 105    | 3.00/3.50     | 2.20/2.70     | 1.00/1.50     | 0.35  |
 ///   | 110    | 1.50/2.00     | 1.00/1.50     | 0.30/0.80     | 0.20  |
 ///
-/// Puts (strikes 95/100/105/110):
+/// Near-term puts (strikes 95/100/105/110):
 ///   | Strike | Jan 15 bid/ask | Jan 22 bid/ask | Feb 11 bid/ask | Delta  |
 ///   |--------|---------------|---------------|---------------|--------|
 ///   | 95     | 1.00/1.50     | 0.80/1.30     | 0.20/0.70     | -0.20  |
 ///   | 100    | 2.50/3.00     | 2.00/2.50     | 1.00/1.50     | -0.40  |
 ///   | 105    | 4.50/5.00     | 3.80/4.30     | 2.50/3.00     | -0.55  |
 ///   | 110    | 7.00/7.50     | 6.20/6.70     | 4.50/5.00     | -0.70  |
+///
+/// Far-term options have higher prices (more time value) and slower decay.
+/// See source for exact far-term pricing data.
 fn make_multi_strike_df() -> DataFrame {
-    let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
+    let exp_near = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap(); // DTE=32 from Jan 15
+    let exp_far = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap(); // DTE=60 from Jan 15
 
     let dates = [
-        NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(), // DTE=32, entry
-        NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(), // DTE=25, mid
-        NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(), // DTE=5, exit
+        NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(), // entry
+        NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(), // mid
+        NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(), // exit (DTE=5 for near, DTE=33 for far)
     ];
 
-    // Call data per strike: (strike, delta, bids, asks)
-    let call_data: Vec<(f64, f64, [f64; 3], [f64; 3])> = vec![
+    // Near-term call data per strike: (strike, delta, bids, asks)
+    let call_data_near: Vec<(f64, f64, [f64; 3], [f64; 3])> = vec![
         (95.0, 0.70, [8.00, 7.00, 5.00], [8.50, 7.50, 5.50]),
         (100.0, 0.50, [5.00, 4.00, 2.00], [5.50, 4.50, 2.50]),
         (105.0, 0.35, [3.00, 2.20, 1.00], [3.50, 2.70, 1.50]),
         (110.0, 0.20, [1.50, 1.00, 0.30], [2.00, 1.50, 0.80]),
     ];
 
-    // Put data per strike: (strike, delta, bids, asks)
-    let put_data: Vec<(f64, f64, [f64; 3], [f64; 3])> = vec![
+    // Near-term put data per strike: (strike, delta, bids, asks)
+    let put_data_near: Vec<(f64, f64, [f64; 3], [f64; 3])> = vec![
         (95.0, -0.20, [1.00, 0.80, 0.20], [1.50, 1.30, 0.70]),
         (100.0, -0.40, [2.50, 2.00, 1.00], [3.00, 2.50, 1.50]),
         (105.0, -0.55, [4.50, 3.80, 2.50], [5.00, 4.30, 3.00]),
         (110.0, -0.70, [7.00, 6.20, 4.50], [7.50, 6.70, 5.00]),
+    ];
+
+    // Far-term call data: higher prices, slower decay
+    let call_data_far: Vec<(f64, f64, [f64; 3], [f64; 3])> = vec![
+        (95.0, 0.72, [10.00, 9.20, 7.00], [10.50, 9.70, 7.50]),
+        (100.0, 0.52, [7.00, 6.30, 4.50], [7.50, 6.80, 5.00]),
+        (105.0, 0.37, [4.50, 3.90, 2.80], [5.00, 4.40, 3.30]),
+        (110.0, 0.22, [2.80, 2.30, 1.50], [3.30, 2.80, 2.00]),
+    ];
+
+    // Far-term put data: higher prices, slower decay
+    let put_data_far: Vec<(f64, f64, [f64; 3], [f64; 3])> = vec![
+        (95.0, -0.22, [2.00, 1.70, 1.00], [2.50, 2.20, 1.50]),
+        (100.0, -0.42, [4.00, 3.50, 2.50], [4.50, 4.00, 3.00]),
+        (105.0, -0.57, [6.50, 5.80, 4.30], [7.00, 6.30, 4.80]),
+        (110.0, -0.72, [9.00, 8.30, 6.50], [9.50, 8.80, 7.00]),
     ];
 
     let mut quote_dates = Vec::new();
@@ -65,31 +88,29 @@ fn make_multi_strike_df() -> DataFrame {
     let mut asks = Vec::new();
     let mut deltas = Vec::new();
 
-    // Add call rows
-    for (strike, delta, bid_arr, ask_arr) in &call_data {
-        for (i, date) in dates.iter().enumerate() {
-            quote_dates.push(date.and_hms_opt(0, 0, 0).unwrap());
-            expirations_vec.push(exp);
-            option_types.push("call");
-            strikes.push(*strike);
-            bids.push(bid_arr[i]);
-            asks.push(ask_arr[i]);
-            deltas.push(*delta);
-        }
-    }
+    // Helper to add rows for a given expiration and option data
+    let mut add_rows =
+        |data: &[(f64, f64, [f64; 3], [f64; 3])], opt_type: &'static str, exp: NaiveDate| {
+            for (strike, delta_val, bid_arr, ask_arr) in data {
+                for (i, date) in dates.iter().enumerate() {
+                    quote_dates.push(date.and_hms_opt(0, 0, 0).unwrap());
+                    expirations_vec.push(exp);
+                    option_types.push(opt_type);
+                    strikes.push(*strike);
+                    bids.push(bid_arr[i]);
+                    asks.push(ask_arr[i]);
+                    deltas.push(*delta_val);
+                }
+            }
+        };
 
-    // Add put rows
-    for (strike, delta, bid_arr, ask_arr) in &put_data {
-        for (i, date) in dates.iter().enumerate() {
-            quote_dates.push(date.and_hms_opt(0, 0, 0).unwrap());
-            expirations_vec.push(exp);
-            option_types.push("put");
-            strikes.push(*strike);
-            bids.push(bid_arr[i]);
-            asks.push(ask_arr[i]);
-            deltas.push(*delta);
-        }
-    }
+    // Near-term expiration rows
+    add_rows(&call_data_near, "call", exp_near);
+    add_rows(&put_data_near, "put", exp_near);
+
+    // Far-term expiration rows
+    add_rows(&call_data_far, "call", exp_far);
+    add_rows(&put_data_far, "put", exp_far);
 
     let mut df = df! {
         QUOTE_DATETIME_COL => &quote_dates,
@@ -440,69 +461,74 @@ fn backtest_reverse_iron_butterfly() {
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // BACKTEST TESTS — Calendar / Diagonal (6)
-// Since all legs join on same expiration, these behave like spreads.
-// TODO: revisit when multi-expiration support is added — these should then
-// test near-term vs far-term expiration behavior.
+// Multi-expiration: Short near-term (Primary) + Long far-term (Secondary).
+// Near-term exp=Feb 16, far-term exp=Mar 15. Exit on DTE=5 of near-term (Feb 11).
+// All legs close together when near-term DTE exit triggers.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
 fn backtest_call_calendar_spread() {
-    // S Call@100 (δ0.50) + L Call@105 (δ0.35)
-    // +300 + (-200) = +100
-    assert_backtest(
-        "call_calendar_spread",
-        vec![delta(0.50), delta(0.35)],
-        100.0,
-    );
+    // S Call@100 near (δ0.50) + L Call@100 far (δ0.50→picks δ0.52)
+    // S near Call@100: entry mid=5.25, exit mid=2.25 → (2.25-5.25)×(-1)×100 = +300
+    // L far  Call@100: entry mid=7.25, exit mid=4.75 → (4.75-7.25)×(1)×100  = -250
+    // Total: +300 + (-250) = +50
+    assert_backtest("call_calendar_spread", vec![delta(0.50), delta(0.50)], 50.0);
 }
 
 #[test]
 fn backtest_put_calendar_spread() {
-    // S Put@100 (δ0.40) + L Put@105 (δ0.55)
-    // +150 + (-200) = -50
-    assert_backtest("put_calendar_spread", vec![delta(0.40), delta(0.55)], -50.0);
+    // S Put@100 near (δ0.40) + L Put@100 far (δ0.40→picks δ0.42)
+    // S near Put@100: entry mid=2.75, exit mid=1.25 → (1.25-2.75)×(-1)×100 = +150
+    // L far  Put@100: entry mid=4.25, exit mid=2.75 → (2.75-4.25)×(1)×100  = -150
+    // Total: +150 + (-150) = 0
+    assert_backtest("put_calendar_spread", vec![delta(0.40), delta(0.40)], 0.0);
 }
 
 #[test]
 fn backtest_call_diagonal_spread() {
-    // S Call@100 (δ0.50) + L Call@105 (δ0.35)
-    // Same as call_calendar: +100
+    // S Call@100 near (δ0.50) + L Call@105 far (δ0.35→picks δ0.37)
+    // S near Call@100: +300
+    // L far  Call@105: entry mid=4.75, exit mid=3.05 → (3.05-4.75)×(1)×100 = -170
+    // Total: +300 + (-170) = +130
     assert_backtest(
         "call_diagonal_spread",
         vec![delta(0.50), delta(0.35)],
-        100.0,
+        130.0,
     );
 }
 
 #[test]
 fn backtest_put_diagonal_spread() {
-    // S Put@100 (δ0.40) + L Put@105 (δ0.55)
-    // Same as put_calendar: -50
-    assert_backtest("put_diagonal_spread", vec![delta(0.40), delta(0.55)], -50.0);
+    // S Put@100 near (δ0.40) + L Put@105 far (δ0.55→picks δ0.57)
+    // S near Put@100: +150
+    // L far  Put@105: entry mid=6.75, exit mid=4.55 → (4.55-6.75)×(1)×100 = -220
+    // Total: +150 + (-220) = -70
+    assert_backtest("put_diagonal_spread", vec![delta(0.40), delta(0.55)], -70.0);
 }
 
 #[test]
 fn backtest_double_calendar() {
-    // S Call@95 (δ0.70), L Call@100 (δ0.50), S Put@105 (δ0.55), L Put@110 (δ0.70)
-    // S Call@95:  (5.25-8.25)×(-1)×100 = +300
-    // L Call@100: (2.25-5.25)×1×100    = -300
-    // S Put@105:  (2.75-4.75)×(-1)×100 = +200
-    // L Put@110:  (4.75-7.25)×1×100    = -250
-    // Total: 300 - 300 + 200 - 250 = -50
+    // S Call@95 near (δ0.70), L Call@100 far (δ0.50→δ0.52),
+    // S Put@105 near (δ0.55), L Put@110 far (δ0.70→δ0.72)
+    // S near Call@95:  (5.25-8.25)×(-1)×100  = +300
+    // L far  Call@100: (4.75-7.25)×(1)×100   = -250
+    // S near Put@105:  (2.75-4.75)×(-1)×100  = +200
+    // L far  Put@110:  (6.75-9.25)×(1)×100   = -250
+    // Total: 300 - 250 + 200 - 250 = 0
     assert_backtest(
         "double_calendar",
         vec![delta(0.70), delta(0.50), delta(0.55), delta(0.70)],
-        -50.0,
+        0.0,
     );
 }
 
 #[test]
 fn backtest_double_diagonal() {
-    // Same structure as double_calendar: -50
+    // Same structure and deltas as double_calendar: 0
     assert_backtest(
         "double_diagonal",
         vec![delta(0.70), delta(0.50), delta(0.55), delta(0.70)],
-        -50.0,
+        0.0,
     );
 }
 
@@ -607,7 +633,7 @@ fn evaluate_iron() {
 #[test]
 fn evaluate_calendar() {
     let df = make_multi_strike_df();
-    let params = evaluate_params("call_calendar_spread", vec![delta(0.50), delta(0.35)]);
+    let params = evaluate_params("call_calendar_spread", vec![delta(0.50), delta(0.50)]);
     let result = evaluate_strategy(&df, &params);
     assert!(
         result.is_ok(),
