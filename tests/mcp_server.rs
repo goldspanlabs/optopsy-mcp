@@ -60,7 +60,7 @@ fn server_info_has_correct_metadata() {
     let info = server.get_info();
 
     assert_eq!(info.server_info.name, "optopsy-mcp");
-    assert_eq!(info.server_info.version, "0.1.0");
+    assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
     assert!(info.capabilities.tools.is_some());
     assert!(info.instructions.is_some());
     let instructions = info.instructions.unwrap();
@@ -104,7 +104,7 @@ async fn tool_router_lists_all_nine_tools() {
     }
 
     client.cancel().await.unwrap();
-    drop(server_handle);
+    server_handle.await.unwrap();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -118,7 +118,7 @@ async fn list_strategies_returns_all_32() {
     let (server_tx, server_rx) = tokio::io::duplex(4096);
     let (client_tx, client_rx) = tokio::io::duplex(4096);
 
-    let _server_handle =
+    let server_handle =
         tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
 
     let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
@@ -148,6 +148,7 @@ async fn list_strategies_returns_all_32() {
     assert!(!resp["suggested_next_steps"].as_array().unwrap().is_empty());
 
     client.cancel().await.unwrap();
+    server_handle.await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -157,7 +158,7 @@ async fn list_signals_returns_catalog() {
     let (server_tx, server_rx) = tokio::io::duplex(4096);
     let (client_tx, client_rx) = tokio::io::duplex(4096);
 
-    let _server_handle =
+    let server_handle =
         tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
 
     let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
@@ -190,6 +191,7 @@ async fn list_signals_returns_catalog() {
         .any(|v| v == "close"));
 
     client.cancel().await.unwrap();
+    server_handle.await.unwrap();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -203,7 +205,7 @@ async fn load_data_rejects_empty_symbol() {
     let (server_tx, server_rx) = tokio::io::duplex(4096);
     let (client_tx, client_rx) = tokio::io::duplex(4096);
 
-    let _server_handle =
+    let server_handle =
         tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
 
     let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
@@ -233,6 +235,7 @@ async fn load_data_rejects_empty_symbol() {
     );
 
     client.cancel().await.unwrap();
+    server_handle.await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -242,7 +245,7 @@ async fn load_data_rejects_invalid_symbol_chars() {
     let (server_tx, server_rx) = tokio::io::duplex(4096);
     let (client_tx, client_rx) = tokio::io::duplex(4096);
 
-    let _server_handle =
+    let server_handle =
         tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
 
     let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
@@ -272,6 +275,7 @@ async fn load_data_rejects_invalid_symbol_chars() {
     );
 
     client.cancel().await.unwrap();
+    server_handle.await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -281,7 +285,7 @@ async fn evaluate_rejects_zero_max_entry_dte() {
     let (server_tx, server_rx) = tokio::io::duplex(4096);
     let (client_tx, client_rx) = tokio::io::duplex(4096);
 
-    let _server_handle =
+    let server_handle =
         tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
 
     let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
@@ -322,6 +326,7 @@ async fn evaluate_rejects_zero_max_entry_dte() {
     );
 
     client.cancel().await.unwrap();
+    server_handle.await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -331,7 +336,7 @@ async fn evaluate_rejects_exit_dte_gte_max_entry_dte() {
     let (server_tx, server_rx) = tokio::io::duplex(4096);
     let (client_tx, client_rx) = tokio::io::duplex(4096);
 
-    let _server_handle =
+    let server_handle =
         tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
 
     let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
@@ -372,6 +377,7 @@ async fn evaluate_rejects_exit_dte_gte_max_entry_dte() {
     );
 
     client.cancel().await.unwrap();
+    server_handle.await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -381,7 +387,7 @@ async fn backtest_rejects_zero_capital() {
     let (server_tx, server_rx) = tokio::io::duplex(4096);
     let (client_tx, client_rx) = tokio::io::duplex(4096);
 
-    let _server_handle =
+    let server_handle =
         tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
 
     let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
@@ -423,6 +429,7 @@ async fn backtest_rejects_zero_capital() {
     );
 
     client.cancel().await.unwrap();
+    server_handle.await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -432,7 +439,7 @@ async fn check_cache_rejects_path_traversal() {
     let (server_tx, server_rx) = tokio::io::duplex(4096);
     let (client_tx, client_rx) = tokio::io::duplex(4096);
 
-    let _server_handle =
+    let server_handle =
         tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
 
     let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
@@ -468,6 +475,7 @@ async fn check_cache_rejects_path_traversal() {
     );
 
     client.cancel().await.unwrap();
+    server_handle.await.unwrap();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -481,7 +489,7 @@ async fn evaluate_fails_without_loaded_data() {
     let (server_tx, server_rx) = tokio::io::duplex(4096);
     let (client_tx, client_rx) = tokio::io::duplex(4096);
 
-    let _server_handle =
+    let server_handle =
         tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
 
     let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
@@ -522,6 +530,7 @@ async fn evaluate_fails_without_loaded_data() {
     );
 
     client.cancel().await.unwrap();
+    server_handle.await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -531,7 +540,7 @@ async fn backtest_fails_without_loaded_data() {
     let (server_tx, server_rx) = tokio::io::duplex(4096);
     let (client_tx, client_rx) = tokio::io::duplex(4096);
 
-    let _server_handle =
+    let server_handle =
         tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
 
     let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
@@ -573,6 +582,7 @@ async fn backtest_fails_without_loaded_data() {
     );
 
     client.cancel().await.unwrap();
+    server_handle.await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -582,7 +592,7 @@ async fn compare_fails_without_loaded_data() {
     let (server_tx, server_rx) = tokio::io::duplex(4096);
     let (client_tx, client_rx) = tokio::io::duplex(4096);
 
-    let _server_handle =
+    let server_handle =
         tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
 
     let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
@@ -638,6 +648,7 @@ async fn compare_fails_without_loaded_data() {
     );
 
     client.cancel().await.unwrap();
+    server_handle.await.unwrap();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -645,7 +656,7 @@ async fn compare_fails_without_loaded_data() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn load_data_populates_shared_state() {
+async fn preload_data_populates_shared_state() {
     // Test that load_data tool wiring works end-to-end by pre-loading data
     // and verifying the server's shared state and response shape.
     // Note: We use preload_data rather than cache.load_options because Polars'
@@ -693,7 +704,7 @@ async fn evaluate_strategy_returns_buckets() {
     let (server_tx, server_rx) = tokio::io::duplex(65536);
     let (client_tx, client_rx) = tokio::io::duplex(65536);
 
-    let _server_handle =
+    let server_handle =
         tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
 
     let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
@@ -737,6 +748,7 @@ async fn evaluate_strategy_returns_buckets() {
     assert!(resp["summary"].as_str().is_some());
 
     client.cancel().await.unwrap();
+    server_handle.await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -747,7 +759,7 @@ async fn run_backtest_returns_trades_and_metrics() {
     let (server_tx, server_rx) = tokio::io::duplex(65536);
     let (client_tx, client_rx) = tokio::io::duplex(65536);
 
-    let _server_handle =
+    let server_handle =
         tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
 
     let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
@@ -792,6 +804,7 @@ async fn run_backtest_returns_trades_and_metrics() {
     assert!(resp["metrics"].is_object());
 
     client.cancel().await.unwrap();
+    server_handle.await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -802,7 +815,7 @@ async fn compare_strategies_ranks_results() {
     let (server_tx, server_rx) = tokio::io::duplex(65536);
     let (client_tx, client_rx) = tokio::io::duplex(65536);
 
-    let _server_handle =
+    let server_handle =
         tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
 
     let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
@@ -860,6 +873,7 @@ async fn compare_strategies_ranks_results() {
     assert!(!resp["ranking_by_sharpe"].as_array().unwrap().is_empty());
 
     client.cancel().await.unwrap();
+    server_handle.await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -870,7 +884,7 @@ async fn backtest_golden_path_output_shape() {
     let (server_tx, server_rx) = tokio::io::duplex(65536);
     let (client_tx, client_rx) = tokio::io::duplex(65536);
 
-    let _server_handle =
+    let server_handle =
         tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
 
     let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
@@ -961,6 +975,7 @@ async fn backtest_golden_path_output_shape() {
     assert!(steps[0].is_string());
 
     client.cancel().await.unwrap();
+    server_handle.await.unwrap();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -974,7 +989,7 @@ async fn check_cache_reports_missing_file() {
     let (server_tx, server_rx) = tokio::io::duplex(4096);
     let (client_tx, client_rx) = tokio::io::duplex(4096);
 
-    let _server_handle =
+    let server_handle =
         tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
 
     let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
@@ -1005,6 +1020,7 @@ async fn check_cache_reports_missing_file() {
     assert!(resp["last_updated"].is_null());
 
     client.cancel().await.unwrap();
+    server_handle.await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1016,7 +1032,7 @@ async fn check_cache_reports_existing_file() {
     let (server_tx, server_rx) = tokio::io::duplex(4096);
     let (client_tx, client_rx) = tokio::io::duplex(4096);
 
-    let _server_handle =
+    let server_handle =
         tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
 
     let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
@@ -1046,6 +1062,7 @@ async fn check_cache_reports_existing_file() {
     assert!(resp["last_updated"].is_string());
 
     client.cancel().await.unwrap();
+    server_handle.await.unwrap();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1059,7 +1076,7 @@ async fn download_options_data_fails_without_eodhd() {
     let (server_tx, server_rx) = tokio::io::duplex(4096);
     let (client_tx, client_rx) = tokio::io::duplex(4096);
 
-    let _server_handle =
+    let server_handle =
         tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
 
     let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
@@ -1089,6 +1106,7 @@ async fn download_options_data_fails_without_eodhd() {
     );
 
     client.cancel().await.unwrap();
+    server_handle.await.unwrap();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1102,7 +1120,7 @@ async fn mcp_roundtrip_list_strategies() {
     let (server_tx, server_rx) = tokio::io::duplex(4096);
     let (client_tx, client_rx) = tokio::io::duplex(4096);
 
-    let _server_handle =
+    let server_handle =
         tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
 
     let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
@@ -1130,4 +1148,5 @@ async fn mcp_roundtrip_list_strategies() {
     assert_eq!(resp["total"], 32);
 
     client.cancel().await.unwrap();
+    server_handle.await.unwrap();
 }
