@@ -160,10 +160,16 @@ impl EodhdProvider {
         if api_key.is_empty() {
             return None;
         }
-        let client = Client::builder()
+        let client = match Client::builder()
             .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
             .build()
-            .ok()?;
+        {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("Failed to build HTTP client for EODHD provider: {e}");
+                return None;
+            }
+        };
         Some(Self {
             client,
             cache_dir: cache_dir.to_path_buf(),
@@ -180,7 +186,7 @@ impl EodhdProvider {
         let safe: String = symbol
             .chars()
             .map(|c| {
-                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
                     c
                 } else {
                     '_'
