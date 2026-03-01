@@ -122,3 +122,25 @@ pub struct StrategyInfo {
     pub legs: usize,
     pub description: String,
 }
+
+/// Response for `check_cache_status`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CheckCacheResponse {
+    pub summary: String,
+    pub exists: bool,
+    pub last_updated: Option<String>,
+    pub file_path: String,
+    pub suggested_next_steps: Vec<String>,
+}
+
+/// Response for `fetch_to_parquet`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct FetchResponse {
+    pub summary: String,
+    pub rows: usize,
+    pub symbol: String,
+    pub file_path: String,
+    pub date_range: DateRange,
+    pub columns: Vec<String>,
+    pub suggested_next_steps: Vec<String>,
+}

@@ -72,6 +72,19 @@ impl CachedStore {
         Ok(Self::new(cache_dir, "options".to_string(), bucket))
     }
 
+    /// Resolve the cache path for a symbol under an arbitrary category.
+    ///
+    /// The symbol is uppercased in the filename for consistency.
+    /// Returns an error if `category` or `symbol` contain path separators or `..` segments.
+    pub fn cache_path(&self, symbol: &str, category: &str) -> Result<PathBuf> {
+        validate_path_segment(category).with_context(|| format!("Invalid category: {category}"))?;
+        validate_path_segment(symbol).with_context(|| format!("Invalid symbol: {symbol}"))?;
+        Ok(self
+            .cache_dir
+            .join(category)
+            .join(format!("{}.parquet", symbol.to_uppercase())))
+    }
+
     /// Resolve the local path for a given symbol.
     fn local_path(&self, symbol: &str) -> PathBuf {
         self.cache_dir
@@ -177,9 +190,32 @@ impl DataStore for CachedStore {
 
 /// Default cache directory: `~/.optopsy/cache`
 fn dirs_default_cache() -> PathBuf {
-    dirs_home().join(".optopsy").join("cache")
+    const TEMPLATE: &str = "~/.optopsy/cache";
+    let expanded = shellexpand::tilde(TEMPLATE);
+    // If tilde was not expanded (no home directory available), fall back to a tmp-based path
+    if expanded.as_ref() == TEMPLATE {
+        return std::env::temp_dir().join("optopsy").join("cache");
+    }
+    PathBuf::from(expanded.as_ref())
 }
 
-fn dirs_home() -> PathBuf {
-    std::env::var("HOME").map_or_else(|_| PathBuf::from("/tmp"), PathBuf::from)
+/// Ensure a path segment (category or symbol) contains only safe characters.
+///
+/// Rejects empty strings, absolute paths, and segments with directory separators or `..`.
+fn validate_path_segment(segment: &str) -> Result<()> {
+    if segment.is_empty() {
+        bail!("path segment must not be empty");
+    }
+    // Reject absolute-path-like segments and traversal components
+    if std::path::Path::new(segment)
+        .components()
+        .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        bail!("path segment contains illegal characters or components: {segment}");
+    }
+    // Reject embedded separators (both Unix '/' and Windows '\') on any platform
+    if segment.contains('/') || segment.contains('\\') {
+        bail!("path segment must not contain path separators: {segment}");
+    }
+    Ok(())
 }

@@ -1,8 +1,10 @@
 pub mod ai_format;
 pub mod backtest;
+pub mod cache_status;
 pub mod compare;
 pub mod download;
 pub mod evaluate;
+pub mod fetch;
 pub mod load_data;
 pub mod response_types;
 pub mod strategies;
