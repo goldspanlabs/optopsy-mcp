@@ -6,9 +6,10 @@ use super::types::{EquityPoint, PerformanceMetrics, TradeRecord};
 /// Avoids `f64::INFINITY` which is not valid JSON.
 const MAX_PROFIT_FACTOR: f64 = 999.99;
 
-/// Minimum number of trading days required to report CAGR and Calmar.
+/// Minimum number of calendar days (based on equity curve timestamp span)
+/// required to report CAGR and Calmar.
 /// Below this threshold these annualized metrics are misleadingly inflated.
-const MIN_DAYS_FOR_ANNUALIZED: f64 = 25.0;
+const MIN_CALENDAR_DAYS_FOR_ANNUALIZED: f64 = 25.0;
 
 pub(crate) const DEFAULT_METRICS: PerformanceMetrics = PerformanceMetrics {
     sharpe: 0.0,
@@ -103,7 +104,7 @@ pub fn calculate_metrics(
     let total_return_pct = total_return * 100.0;
 
     // CAGR and Calmar only meaningful with enough data
-    let (cagr, calmar) = if calendar_days >= MIN_DAYS_FOR_ANNUALIZED {
+    let (cagr, calmar) = if calendar_days >= MIN_CALENDAR_DAYS_FOR_ANNUALIZED {
         let years = calendar_days / 365.0;
         let cagr = if final_equity > 0.0 && initial_capital > 0.0 {
             (final_equity / initial_capital).powf(1.0 / years) - 1.0
@@ -415,7 +416,7 @@ mod tests {
 
     #[test]
     fn cagr_zero_for_short_backtests() {
-        // 10 trading days — below MIN_DAYS_FOR_ANNUALIZED threshold
+        // 10 trading days — below MIN_CALENDAR_DAYS_FOR_ANNUALIZED threshold
         let mut values = vec![10000.0];
         for i in 1..=10 {
             values.push(10000.0 + i as f64 * 50.0);
@@ -430,7 +431,7 @@ mod tests {
 
     #[test]
     fn calmar_annualized() {
-        // 126 calendar days (~0.35 year, above MIN_DAYS_FOR_ANNUALIZED threshold)
+        // 126 calendar days (~0.35 year, above MIN_CALENDAR_DAYS_FOR_ANNUALIZED threshold)
         let mut values = Vec::new();
         for i in 0..127 {
             // 127 points = 126 calendar day span

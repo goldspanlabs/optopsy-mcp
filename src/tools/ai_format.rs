@@ -179,6 +179,8 @@ fn backtest_key_findings(
         m.profit_factor,
         if m.max_consecutive_losses == 0 && m.win_rate > 0.0 {
             " — no losing trades"
+        } else if m.win_rate == 0.0 && m.avg_loser == 0.0 {
+            " — all scratch trades"
         } else if m.profit_factor >= 1.5 {
             " — consistently profitable"
         } else if m.profit_factor >= 1.0 {
@@ -916,13 +918,14 @@ mod tests {
         total_pnl: f64,
         sharpe: f64,
         max_drawdown: f64,
-        win_rate: f64,
         profit_factor: f64,
         calmar: f64,
         trades: Vec<TradeRecord>,
         equity: Vec<EquityPoint>,
     ) -> BacktestResult {
-        // Compute realistic trade-level fields from the trades
+        // Derive trade-level fields from the trades to match production logic.
+        // Note: sharpe, max_drawdown, calmar, profit_factor are still provided
+        // as parameters since they depend on equity curve or are hard to compute here.
         let total = trades.len();
         let winners: Vec<f64> = trades
             .iter()
@@ -954,7 +957,13 @@ mod tests {
         } else {
             0.0
         };
-        let expectancy = (win_rate * avg_winner) + ((1.0 - win_rate) * avg_loser);
+        // Derive win_rate from trades to match production (overrides parameter)
+        let actual_win_rate = if total > 0 {
+            winners.len() as f64 / total as f64
+        } else {
+            0.0
+        };
+        let expectancy = (actual_win_rate * avg_winner) + ((1.0 - actual_win_rate) * avg_loser);
 
         let mut max_consecutive_losses = 0usize;
         let mut streak = 0usize;
@@ -962,7 +971,9 @@ mod tests {
             if t.pnl < 0.0 {
                 streak += 1;
                 max_consecutive_losses = max_consecutive_losses.max(streak);
-            } else if t.pnl > 0.0 {
+            } else {
+                // Zero-PnL (scratch) and winners both reset the streak,
+                // matching production behavior in compute_trade_metrics.
                 streak = 0;
             }
         }
@@ -974,7 +985,7 @@ mod tests {
                 sharpe,
                 sortino: sharpe * 1.2,
                 max_drawdown,
-                win_rate,
+                win_rate: actual_win_rate,
                 profit_factor,
                 calmar,
                 var_95: 0.03,
@@ -998,7 +1009,7 @@ mod tests {
             make_trade(200.0, 10, ExitType::Expiration),
             make_trade(150.0, 5, ExitType::TakeProfit),
         ];
-        let result = make_backtest_result(350.0, 1.8, 0.05, 0.9, 3.0, 2.0, trades, vec![]);
+        let result = make_backtest_result(350.0, 1.8, 0.05, 3.0, 2.0, trades, vec![]);
         let params = make_backtest_params("short_put", 100_000.0);
         let response = format_backtest(result, &params);
 
@@ -1024,7 +1035,7 @@ mod tests {
             make_trade(-200.0, 20, ExitType::Expiration),
             make_trade(50.0, 10, ExitType::Expiration),
         ];
-        let result = make_backtest_result(-250.0, -0.5, 0.25, 0.33, 0.3, -0.2, trades, vec![]);
+        let result = make_backtest_result(-250.0, -0.5, 0.25, 0.3, -0.2, trades, vec![]);
         let params = make_backtest_params("long_call", 10_000.0);
         let response = format_backtest(result, &params);
 
@@ -1052,7 +1063,7 @@ mod tests {
             make_trade(100.0, 5, ExitType::TakeProfit),
             make_trade(200.0, 7, ExitType::TakeProfit),
         ];
-        let result = make_backtest_result(300.0, 1.2, 0.02, 1.0, 999.99, 5.0, trades, vec![]);
+        let result = make_backtest_result(300.0, 1.2, 0.02, 999.99, 5.0, trades, vec![]);
         let params = make_backtest_params("bull_call_spread", 50_000.0);
         let response = format_backtest(result, &params);
 
@@ -1075,7 +1086,7 @@ mod tests {
             make_equity_point(2, 110_000.0),
         ];
         let trades = vec![make_trade(10_000.0, 2, ExitType::Expiration)];
-        let result = make_backtest_result(10_000.0, 1.0, 0.05, 1.0, 999.99, 2.0, trades, curve);
+        let result = make_backtest_result(10_000.0, 1.0, 0.05, 999.99, 2.0, trades, curve);
         let params = make_backtest_params("test", 100_000.0);
         let response = format_backtest(result, &params);
 
@@ -1086,7 +1097,7 @@ mod tests {
 
     #[test]
     fn format_backtest_zero_trades() {
-        let result = make_backtest_result(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, vec![], vec![]);
+        let result = make_backtest_result(0.0, 0.0, 0.0, 0.0, 0.0, vec![], vec![]);
         let params = make_backtest_params("iron_condor", 100_000.0);
         let response = format_backtest(result, &params);
 
