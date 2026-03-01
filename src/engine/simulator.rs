@@ -105,6 +105,33 @@ pub fn simulate(
     })
 }
 
+#[allow(dead_code)]
+fn select_trade<'a>(candidates: &'a [RawTrade], selector: &TradeSelector) -> Option<&'a RawTrade> {
+    if candidates.is_empty() {
+        return None;
+    }
+
+    match selector {
+        TradeSelector::First => candidates.first(),
+        TradeSelector::Nearest => {
+            // Already sorted by delta distance in filtering
+            candidates.first()
+        }
+        TradeSelector::HighestPremium => candidates.iter().max_by(|a, b| {
+            a.entry_cost
+                .abs()
+                .partial_cmp(&b.entry_cost.abs())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+        TradeSelector::LowestPremium => candidates.iter().min_by(|a, b| {
+            a.entry_cost
+                .abs()
+                .partial_cmp(&b.entry_cost.abs())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,7 +152,7 @@ mod tests {
             entry_cost,
             exit_proceeds: entry_cost + pnl,
             pnl,
-            days_held: (exit_day - entry_day) as i64,
+            days_held: i64::from(exit_day - entry_day),
             exit_type: ExitType::DteExit,
         }
     }
@@ -197,32 +224,5 @@ mod tests {
         let result = simulate(trades, 10000.0, 5, &TradeSelector::First).unwrap();
         assert_eq!(result.trade_log.len(), 0);
         assert!(result.equity_curve.is_empty());
-    }
-}
-
-#[allow(dead_code)]
-fn select_trade<'a>(candidates: &'a [RawTrade], selector: &TradeSelector) -> Option<&'a RawTrade> {
-    if candidates.is_empty() {
-        return None;
-    }
-
-    match selector {
-        TradeSelector::First => candidates.first(),
-        TradeSelector::Nearest => {
-            // Already sorted by delta distance in filtering
-            candidates.first()
-        }
-        TradeSelector::HighestPremium => candidates.iter().max_by(|a, b| {
-            a.entry_cost
-                .abs()
-                .partial_cmp(&b.entry_cost.abs())
-                .unwrap_or(std::cmp::Ordering::Equal)
-        }),
-        TradeSelector::LowestPremium => candidates.iter().min_by(|a, b| {
-            a.entry_cost
-                .abs()
-                .partial_cmp(&b.entry_cost.abs())
-                .unwrap_or(std::cmp::Ordering::Equal)
-        }),
     }
 }

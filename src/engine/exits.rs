@@ -55,6 +55,7 @@ mod tests {
             .unwrap()
             .and_hms_opt(0, 0, 0)
             .unwrap();
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let exit_dt = NaiveDate::from_ymd_opt(2024, 1, 1 + days_held as u32)
             .unwrap()
             .and_hms_opt(0, 0, 0)
@@ -74,7 +75,7 @@ mod tests {
     fn no_exits_passthrough() {
         let trades = vec![make_trade(100.0, 500.0, 10)];
         let result = apply_early_exits(trades, None, None, None);
-        assert_eq!(result[0].pnl, 100.0);
+        assert!((result[0].pnl - 100.0).abs() < f64::EPSILON);
         assert!(matches!(result[0].exit_type, ExitType::DteExit));
     }
 

@@ -815,7 +815,7 @@ mod tests {
         let mtm = mark_to_market(&position, d2, &table, &last_known, &Slippage::Mid, 100);
         // Long call: entered at 5.25, current mid = 3.25
         // MTM = (3.25 - 5.25) * 1.0 * 1 * 100 = -200.0
-        assert!((mtm - (-200.0)).abs() < 1e-10, "MTM was {}", mtm);
+        assert!((mtm - (-200.0)).abs() < 1e-10, "MTM was {mtm}");
     }
 
     #[test]
@@ -869,7 +869,7 @@ mod tests {
         let mtm = mark_to_market(&position, d2, &table, &last_known, &Slippage::Mid, 100);
         // Short put: sold at 4.25, current mid = 3.25 (to buy back)
         // MTM = (3.25 - 4.25) * (-1.0) * 1 * 100 = +100.0
-        assert!((mtm - 100.0).abs() < 1e-10, "MTM was {}", mtm);
+        assert!((mtm - 100.0).abs() < 1e-10, "MTM was {mtm}");
     }
 
     #[test]
@@ -918,7 +918,7 @@ mod tests {
         assert_eq!(position.legs[0].close_date, Some(d3));
         // Close at mid of 2.0/2.50 = 2.25
         // PnL = (2.25 - 5.25) * 1.0 * 1 * 100 = -300
-        assert!((pnl - (-300.0)).abs() < 1e-10, "PnL was {}", pnl);
+        assert!((pnl - (-300.0)).abs() < 1e-10, "PnL was {pnl}");
     }
 
     #[test]
@@ -1326,8 +1326,8 @@ mod tests {
         );
     }
 
-    /// Helper: build a synthetic daily options DataFrame for testing build_price_table
-    /// and find_entry_candidates.
+    /// Helper: build a synthetic daily options `DataFrame` for testing `build_price_table`
+    /// and `find_entry_candidates`.
     fn make_daily_df() -> DataFrame {
         let d1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
         let d2 = NaiveDate::from_ymd_opt(2024, 1, 22).unwrap();
@@ -1391,7 +1391,7 @@ mod tests {
         );
 
         // Each date group should have exactly 1 candidate (1 strike per date)
-        for (_date, cands) in &candidates {
+        for cands in candidates.values() {
             assert_eq!(cands[0].legs.len(), 1);
         }
     }
@@ -1462,7 +1462,7 @@ mod tests {
             !candidates.is_empty(),
             "Should find entry candidates for 3-leg butterfly"
         );
-        for (_date, cands) in &candidates {
+        for cands in candidates.values() {
             assert_eq!(cands[0].legs.len(), 3, "Butterfly should have 3 legs");
         }
     }

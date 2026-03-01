@@ -164,15 +164,17 @@ mod tests {
         let result = filter_strike_order(&df, 2, true, None).unwrap();
         // Only first row has strike_0 < strike_1
         assert_eq!(result.height(), 1);
-        assert_eq!(
-            result
+        assert!(
+            (result
                 .column("strike_0")
                 .unwrap()
                 .f64()
                 .unwrap()
                 .get(0)
-                .unwrap(),
-            100.0
+                .unwrap()
+                - 100.0)
+                .abs()
+                < f64::EPSILON
         );
     }
 

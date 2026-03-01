@@ -59,22 +59,22 @@ mod tests {
 
     #[test]
     fn fill_price_mid_long() {
-        assert_eq!(fill_price(BID, ASK, Side::Long, &Slippage::Mid), MID);
+        assert!((fill_price(BID, ASK, Side::Long, &Slippage::Mid) - MID).abs() < f64::EPSILON);
     }
 
     #[test]
     fn fill_price_mid_short() {
-        assert_eq!(fill_price(BID, ASK, Side::Short, &Slippage::Mid), MID);
+        assert!((fill_price(BID, ASK, Side::Short, &Slippage::Mid) - MID).abs() < f64::EPSILON);
     }
 
     #[test]
     fn fill_price_spread_long_buys_at_ask() {
-        assert_eq!(fill_price(BID, ASK, Side::Long, &Slippage::Spread), ASK);
+        assert!((fill_price(BID, ASK, Side::Long, &Slippage::Spread) - ASK).abs() < f64::EPSILON);
     }
 
     #[test]
     fn fill_price_spread_short_sells_at_bid() {
-        assert_eq!(fill_price(BID, ASK, Side::Short, &Slippage::Spread), BID);
+        assert!((fill_price(BID, ASK, Side::Short, &Slippage::Spread) - BID).abs() < f64::EPSILON);
     }
 
     #[test]

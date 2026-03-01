@@ -61,6 +61,7 @@ fn sample_equity_curve(curve: &[EquityPoint], max_points: usize) -> Vec<EquityPo
     let step = (curve.len() - 1) as f64 / (max_points - 1) as f64;
     (0..max_points)
         .map(|i| {
+            #[allow(clippy::cast_precision_loss)]
             let idx = (i as f64 * step).round() as usize;
             curve[idx.min(curve.len() - 1)].clone()
         })
@@ -604,10 +605,10 @@ mod tests {
         assert_eq!(summary.total, 0);
         assert_eq!(summary.winners, 0);
         assert_eq!(summary.losers, 0);
-        assert_eq!(summary.avg_pnl, 0.0);
-        assert_eq!(summary.avg_winner, 0.0);
-        assert_eq!(summary.avg_loser, 0.0);
-        assert_eq!(summary.avg_days_held, 0.0);
+        assert!((summary.avg_pnl - 0.0).abs() < f64::EPSILON);
+        assert!((summary.avg_winner - 0.0).abs() < f64::EPSILON);
+        assert!((summary.avg_loser - 0.0).abs() < f64::EPSILON);
+        assert!((summary.avg_days_held - 0.0).abs() < f64::EPSILON);
         assert!(summary.best_trade.is_none());
         assert!(summary.worst_trade.is_none());
     }
@@ -636,9 +637,9 @@ mod tests {
     #[test]
     fn equity_summary_empty_curve() {
         let summary = compute_equity_summary(&[], 100_000.0);
-        assert_eq!(summary.start_equity, 100_000.0);
-        assert_eq!(summary.end_equity, 100_000.0);
-        assert_eq!(summary.total_return_pct, 0.0);
+        assert!((summary.start_equity - 100_000.0).abs() < f64::EPSILON);
+        assert!((summary.end_equity - 100_000.0).abs() < f64::EPSILON);
+        assert!((summary.total_return_pct - 0.0).abs() < f64::EPSILON);
         assert_eq!(summary.num_points, 0);
     }
 
@@ -651,11 +652,11 @@ mod tests {
             make_equity_point(3, 110_000.0),
         ];
         let summary = compute_equity_summary(&curve, 100_000.0);
-        assert_eq!(summary.start_equity, 100_000.0);
-        assert_eq!(summary.end_equity, 110_000.0);
+        assert!((summary.start_equity - 100_000.0).abs() < f64::EPSILON);
+        assert!((summary.end_equity - 110_000.0).abs() < f64::EPSILON);
         assert!((summary.total_return_pct - 10.0).abs() < 1e-10);
-        assert_eq!(summary.peak_equity, 110_000.0);
-        assert_eq!(summary.trough_equity, 95_000.0);
+        assert!((summary.peak_equity - 110_000.0).abs() < f64::EPSILON);
+        assert!((summary.trough_equity - 95_000.0).abs() < f64::EPSILON);
         assert_eq!(summary.num_points, 4);
     }
 
@@ -669,7 +670,11 @@ mod tests {
     #[test]
     fn sample_equity_curve_downsamples() {
         let curve: Vec<EquityPoint> = (0..100)
-            .map(|i| make_equity_point(i, 100.0 + i as f64))
+            .map(|i| {
+                #[allow(clippy::cast_precision_loss)]
+                let eq = 100.0 + i as f64;
+                make_equity_point(i, eq)
+            })
             .collect();
         let sampled = sample_equity_curve(&curve, 10);
         assert_eq!(sampled.len(), 10);
@@ -894,6 +899,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn make_backtest_result(
         total_pnl: f64,
         sharpe: f64,
@@ -1010,8 +1016,8 @@ mod tests {
         let params = make_backtest_params("test", 100_000.0);
         let response = format_backtest(result, &params);
 
-        assert_eq!(response.equity_curve_summary.peak_equity, 110_000.0);
-        assert_eq!(response.equity_curve_summary.trough_equity, 95_000.0);
+        assert!((response.equity_curve_summary.peak_equity - 110_000.0).abs() < f64::EPSILON);
+        assert!((response.equity_curve_summary.trough_equity - 95_000.0).abs() < f64::EPSILON);
         assert_eq!(response.equity_curve_summary.num_points, 3);
     }
 

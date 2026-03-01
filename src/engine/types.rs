@@ -375,12 +375,12 @@ mod tests {
 
     #[test]
     fn side_multiplier_long() {
-        assert_eq!(Side::Long.multiplier(), 1.0);
+        assert!((Side::Long.multiplier() - 1.0).abs() < f64::EPSILON);
     }
 
     #[test]
     fn side_multiplier_short() {
-        assert_eq!(Side::Short.multiplier(), -1.0);
+        assert!((Side::Short.multiplier() - (-1.0)).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -429,7 +429,7 @@ mod tests {
     #[test]
     fn commission_default_zero() {
         let c = Commission::default();
-        assert_eq!(c.calculate(10), 0.0);
+        assert!((c.calculate(10) - 0.0).abs() < f64::EPSILON);
     }
 
     #[test]

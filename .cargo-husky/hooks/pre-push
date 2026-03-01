@@ -5,9 +5,13 @@ set -e
 # Ensure cargo is in PATH for non-interactive shells
 . "$HOME/.cargo/env" 2>/dev/null || true
 
-echo '+cargo test'
-cargo test
-echo '+cargo clippy -- -D warnings'
-cargo clippy -- -D warnings
+export RUSTFLAGS="-Dwarnings"
+
 echo '+cargo fmt -- --check'
 cargo fmt -- --check
+echo '+cargo clippy --all-targets'
+cargo clippy --all-targets
+echo '+cargo clippy --all-targets --features postgres'
+cargo clippy --all-targets --features postgres
+echo '+cargo test'
+cargo test
