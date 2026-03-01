@@ -43,10 +43,7 @@ impl CachedStore {
             Err(_) => dirs_default_cache(),
         };
 
-        let bucket = match (
-            std::env::var("S3_BUCKET"),
-            std::env::var("S3_ENDPOINT"),
-        ) {
+        let bucket = match (std::env::var("S3_BUCKET"), std::env::var("S3_ENDPOINT")) {
             (Ok(bucket_name), Ok(endpoint)) => {
                 let region = Region::Custom {
                     region: "auto".to_string(),
@@ -175,9 +172,7 @@ impl DataStore for CachedStore {
 
 /// Default cache directory: `~/.optopsy/cache`
 fn dirs_default_cache() -> PathBuf {
-    dirs_home()
-        .join(".optopsy")
-        .join("cache")
+    dirs_home().join(".optopsy").join("cache")
 }
 
 fn dirs_home() -> PathBuf {
