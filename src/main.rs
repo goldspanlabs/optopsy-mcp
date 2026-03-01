@@ -16,7 +16,7 @@ async fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .init();
 
-    tracing::info!("Starting optopsy-polars MCP server");
+    tracing::info!("Starting optopsy-mcp MCP server");
 
     let server = server::OptopsyServer::new();
     let service = server.serve(rmcp::transport::stdio()).await?;

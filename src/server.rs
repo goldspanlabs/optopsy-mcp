@@ -218,7 +218,7 @@ impl ServerHandler for OptopsyServer {
             protocol_version: Default::default(),
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             server_info: Implementation {
-                name: "optopsy-polars".into(),
+                name: "optopsy-mcp".into(),
                 title: None,
                 version: "0.1.0".into(),
                 description: None,

@@ -1,5 +1,5 @@
 [package]
-name = "optopsy-polars"
+name = "optopsy-mcp"
 version = "0.1.0"
 edition = "2021"
 description = "Options backtesting engine exposed as an MCP server"
