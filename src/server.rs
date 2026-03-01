@@ -1,6 +1,6 @@
 use polars::prelude::*;
 use rmcp::{
-    handler::server::router::tool::ToolRouter,
+    handler::server::{router::tool::ToolRouter, wrapper::Json},
     model::{Implementation, ServerCapabilities, ServerInfo},
     tool, tool_handler, tool_router, ServerHandler,
 };
@@ -15,6 +15,9 @@ use crate::engine::types::{
     TargetRange, TradeSelector,
 };
 use crate::tools;
+use crate::tools::response_types::{
+    BacktestResponse, CompareResponse, EvaluateResponse, LoadDataResponse, StrategiesResponse,
+};
 
 #[derive(Clone)]
 pub struct OptopsyServer {
@@ -109,8 +112,11 @@ use rmcp::handler::server::wrapper::Parameters;
 impl OptopsyServer {
     /// Load options chain data by symbol (auto-fetches from S3 cache if configured)
     #[tool(name = "load_data")]
-    async fn load_data(&self, Parameters(params): Parameters<LoadDataParams>) -> String {
-        match tools::load_data::execute(
+    async fn load_data(
+        &self,
+        Parameters(params): Parameters<LoadDataParams>,
+    ) -> Result<Json<LoadDataResponse>, String> {
+        tools::load_data::execute(
             &self.data,
             &self.cache,
             &params.symbol,
@@ -118,19 +124,14 @@ impl OptopsyServer {
             params.end_date.as_deref(),
         )
         .await
-        {
-            Ok(result) => result,
-            Err(e) => format!("Error: {e}"),
-        }
+        .map(Json)
+        .map_err(|e| format!("Error: {e}"))
     }
 
     /// List all available options strategies with their definitions
     #[tool(name = "list_strategies")]
-    async fn list_strategies(&self) -> String {
-        match tools::strategies::execute() {
-            Ok(result) => result,
-            Err(e) => format!("Error: {e}"),
-        }
+    async fn list_strategies(&self) -> Json<StrategiesResponse> {
+        Json(tools::strategies::execute())
     }
 
     /// Evaluate a strategy statistically by grouping trades into DTE/delta buckets
@@ -138,10 +139,10 @@ impl OptopsyServer {
     async fn evaluate_strategy(
         &self,
         Parameters(params): Parameters<EvaluateStrategyParams>,
-    ) -> String {
+    ) -> Result<Json<EvaluateResponse>, String> {
         let data = self.data.read().await;
         let Some(df) = data.as_ref() else {
-            return "Error: No data loaded. Call load_data first.".to_string();
+            return Err("Error: No data loaded. Call load_data first.".to_string());
         };
 
         let eval_params = EvaluateParams {
@@ -155,18 +156,20 @@ impl OptopsyServer {
             commission: params.commission,
         };
 
-        match tools::evaluate::execute(df, &eval_params) {
-            Ok(result) => result,
-            Err(e) => format!("Error: {e}"),
-        }
+        tools::evaluate::execute(df, &eval_params)
+            .map(Json)
+            .map_err(|e| format!("Error: {e}"))
     }
 
     /// Run a full backtest simulation with trade log, equity curve, and performance metrics
     #[tool(name = "run_backtest")]
-    async fn run_backtest(&self, Parameters(params): Parameters<RunBacktestParams>) -> String {
+    async fn run_backtest(
+        &self,
+        Parameters(params): Parameters<RunBacktestParams>,
+    ) -> Result<Json<BacktestResponse>, String> {
         let data = self.data.read().await;
         let Some(df) = data.as_ref() else {
-            return "Error: No data loaded. Call load_data first.".to_string();
+            return Err("Error: No data loaded. Call load_data first.".to_string());
         };
 
         let backtest_params = BacktestParams {
@@ -187,10 +190,9 @@ impl OptopsyServer {
             adjustment_rules: vec![],
         };
 
-        match tools::backtest::execute(df, &backtest_params) {
-            Ok(result) => result,
-            Err(e) => format!("Error: {e}"),
-        }
+        tools::backtest::execute(df, &backtest_params)
+            .map(Json)
+            .map_err(|e| format!("Error: {e}"))
     }
 
     /// Compare multiple strategies side by side
@@ -198,10 +200,10 @@ impl OptopsyServer {
     async fn compare_strategies(
         &self,
         Parameters(params): Parameters<CompareStrategiesParams>,
-    ) -> String {
+    ) -> Result<Json<CompareResponse>, String> {
         let data = self.data.read().await;
         let Some(df) = data.as_ref() else {
-            return "Error: No data loaded. Call load_data first.".to_string();
+            return Err("Error: No data loaded. Call load_data first.".to_string());
         };
 
         let compare_params = CompareParams {
@@ -209,10 +211,9 @@ impl OptopsyServer {
             sim_params: params.sim_params,
         };
 
-        match tools::compare::execute(df, &compare_params) {
-            Ok(result) => result,
-            Err(e) => format!("Error: {e}"),
-        }
+        tools::compare::execute(df, &compare_params)
+            .map(Json)
+            .map_err(|e| format!("Error: {e}"))
     }
 }
 

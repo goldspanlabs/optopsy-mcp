@@ -3,7 +3,10 @@ use polars::prelude::*;
 
 use crate::engine::types::EvaluateParams;
 
-pub fn execute(df: &DataFrame, params: &EvaluateParams) -> Result<String> {
+use super::ai_format;
+use super::response_types::EvaluateResponse;
+
+pub fn execute(df: &DataFrame, params: &EvaluateParams) -> Result<EvaluateResponse> {
     let result = crate::engine::core::evaluate_strategy(df, params)?;
-    Ok(serde_json::to_string_pretty(&result)?)
+    Ok(ai_format::format_evaluate(result, params))
 }

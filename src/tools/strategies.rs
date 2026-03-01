@@ -1,20 +1,18 @@
-use anyhow::Result;
-use serde_json::json;
-
 use crate::strategies::all_strategies;
 
-pub fn execute() -> Result<String> {
-    let strategies: Vec<_> = all_strategies()
+use super::ai_format;
+use super::response_types::{StrategiesResponse, StrategyInfo};
+
+pub fn execute() -> StrategiesResponse {
+    let strategies: Vec<StrategyInfo> = all_strategies()
         .into_iter()
-        .map(|s| {
-            json!({
-                "name": s.name,
-                "category": s.category,
-                "legs": s.legs.len(),
-                "description": s.description,
-            })
+        .map(|s| StrategyInfo {
+            name: s.name,
+            category: s.category,
+            legs: s.legs.len(),
+            description: s.description,
         })
         .collect();
 
-    Ok(serde_json::to_string_pretty(&strategies)?)
+    ai_format::format_strategies(strategies)
 }

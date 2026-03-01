@@ -1,7 +1,6 @@
 use anyhow::Result;
 use chrono::NaiveDate;
 use polars::prelude::*;
-use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -9,13 +8,16 @@ use crate::data::cache::CachedStore;
 use crate::data::parquet::QUOTE_DATETIME_COL;
 use crate::data::DataStore;
 
+use super::ai_format;
+use super::response_types::{DateRange, LoadDataResponse};
+
 pub async fn execute(
     data: &Arc<RwLock<Option<DataFrame>>>,
     cache: &Arc<CachedStore>,
     symbol: &str,
     start_date: Option<&str>,
     end_date: Option<&str>,
-) -> Result<String> {
+) -> Result<LoadDataResponse> {
     let start = start_date
         .map(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d"))
         .transpose()?;
@@ -49,22 +51,19 @@ pub async fn execute(
         let date_col = df.column(QUOTE_DATETIME_COL)?;
         let min_scalar = date_col.min_reduce()?;
         let max_scalar = date_col.max_reduce()?;
-        let min_val = format!("{:?}", min_scalar.value());
-        let max_val = format!("{:?}", max_scalar.value());
-        json!({ "start": min_val, "end": max_val })
+        DateRange {
+            start: format!("{:?}", min_scalar.value()),
+            end: format!("{:?}", max_scalar.value()),
+        }
     } else {
-        json!({ "start": null, "end": null })
+        DateRange {
+            start: String::new(),
+            end: String::new(),
+        }
     };
 
     let mut guard = data.write().await;
     *guard = Some(df);
 
-    let result = json!({
-        "rows": rows,
-        "symbols": symbols,
-        "date_range": date_range,
-        "columns": columns,
-    });
-
-    Ok(serde_json::to_string_pretty(&result)?)
+    Ok(ai_format::format_load_data(rows, symbols, date_range, columns))
 }
