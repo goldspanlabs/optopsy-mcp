@@ -15,6 +15,19 @@ use crate::engine::types::{
     BacktestParams, Commission, CompareEntry, CompareParams, EvaluateParams, SimParams, Slippage,
     TargetRange, TradeSelector,
 };
+
+fn validate_exit_dte_lt_max_dte(
+    max_entry_dte: &i32,
+) -> impl FnOnce(&i32, &()) -> garde::Result + '_ {
+    move |exit_dte: &i32, (): &()| {
+        if exit_dte >= max_entry_dte {
+            return Err(garde::Error::new(format!(
+                "exit_dte ({exit_dte}) must be less than max_entry_dte ({max_entry_dte})"
+            )));
+        }
+        Ok(())
+    }
+}
 use crate::tools;
 use crate::tools::response_types::{
     BacktestResponse, CheckCacheResponse, CompareResponse, EvaluateResponse, FetchResponse,
@@ -41,7 +54,7 @@ impl OptopsyServer {
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct LoadDataParams {
     /// Ticker symbol (e.g. "SPY")
-    #[garde(length(min = 1, max = 10))]
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub symbol: String,
     /// Start date filter (YYYY-MM-DD)
     #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))]
@@ -63,7 +76,7 @@ pub struct EvaluateStrategyParams {
     #[garde(range(min = 1))]
     pub max_entry_dte: i32,
     /// DTE at exit
-    #[garde(range(min = 0))]
+    #[garde(range(min = 0), custom(validate_exit_dte_lt_max_dte(&self.max_entry_dte)))]
     pub exit_dte: i32,
     /// DTE bucket width (e.g. 7)
     #[garde(range(min = 1))]
@@ -91,7 +104,7 @@ pub struct RunBacktestParams {
     #[garde(range(min = 1))]
     pub max_entry_dte: i32,
     /// DTE at exit
-    #[garde(range(min = 0))]
+    #[garde(range(min = 0), custom(validate_exit_dte_lt_max_dte(&self.max_entry_dte)))]
     pub exit_dte: i32,
     /// Slippage model
     #[garde(dive)]
@@ -99,10 +112,10 @@ pub struct RunBacktestParams {
     /// Commission structure
     #[garde(dive)]
     pub commission: Option<Commission>,
-    /// Stop loss threshold (fraction of entry cost)
+    /// Stop loss threshold (multiplier of entry cost; values > 1.0 allowed)
     #[garde(inner(range(min = 0.0)))]
     pub stop_loss: Option<f64>,
-    /// Take profit threshold (fraction of entry cost)
+    /// Take profit threshold (multiplier of entry cost; values > 1.0 allowed)
     #[garde(inner(range(min = 0.0)))]
     pub take_profit: Option<f64>,
     /// Maximum days to hold
@@ -138,20 +151,20 @@ pub struct CompareStrategiesParams {
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct CheckCacheParams {
     /// Ticker symbol (e.g. "SPY")
-    #[garde(length(min = 1, max = 10))]
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub symbol: String,
     /// Cache category subdirectory (e.g. "prices", "options")
-    #[garde(length(min = 1))]
+    #[garde(length(min = 1), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub category: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct FetchToParquetParams {
     /// Ticker symbol (e.g. "SPY")
-    #[garde(length(min = 1, max = 10))]
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub symbol: String,
     /// Cache category subdirectory (e.g. "prices")
-    #[garde(length(min = 1))]
+    #[garde(length(min = 1), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub category: String,
     /// Time period to fetch (e.g. "6mo", "1y", "5y", "max"). Defaults to "6mo".
     #[garde(inner(length(min = 1)))]

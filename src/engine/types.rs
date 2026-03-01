@@ -39,8 +39,19 @@ pub struct TargetRange {
     pub target: f64,
     #[garde(range(min = 0.0, max = 1.0))]
     pub min: f64,
-    #[garde(range(min = 0.0, max = 1.0))]
+    #[garde(range(min = 0.0, max = 1.0), custom(validate_max_gte_min(&self.min)))]
     pub max: f64,
+}
+
+fn validate_max_gte_min(min: &f64) -> impl FnOnce(&f64, &()) -> garde::Result + '_ {
+    move |max: &f64, (): &()| {
+        if min > max {
+            return Err(garde::Error::new(format!(
+                "min ({min}) must be <= max ({max})"
+            )));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
@@ -138,6 +149,17 @@ impl StrategyDef {
     }
 }
 
+fn validate_exit_dte_lt_max(max_entry_dte: &i32) -> impl FnOnce(&i32, &()) -> garde::Result + '_ {
+    move |exit_dte: &i32, (): &()| {
+        if exit_dte >= max_entry_dte {
+            return Err(garde::Error::new(format!(
+                "exit_dte ({exit_dte}) must be less than max_entry_dte ({max_entry_dte})"
+            )));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct EvaluateParams {
     #[garde(length(min = 1))]
@@ -146,7 +168,7 @@ pub struct EvaluateParams {
     pub leg_deltas: Vec<TargetRange>,
     #[garde(range(min = 1))]
     pub max_entry_dte: i32,
-    #[garde(range(min = 0))]
+    #[garde(range(min = 0), custom(validate_exit_dte_lt_max(&self.max_entry_dte)))]
     pub exit_dte: i32,
     #[garde(range(min = 1))]
     pub dte_interval: i32,
@@ -167,7 +189,7 @@ pub struct BacktestParams {
     pub leg_deltas: Vec<TargetRange>,
     #[garde(range(min = 1))]
     pub max_entry_dte: i32,
-    #[garde(range(min = 0))]
+    #[garde(range(min = 0), custom(validate_exit_dte_lt_max(&self.max_entry_dte)))]
     pub exit_dte: i32,
     #[garde(dive)]
     pub slippage: Slippage,
@@ -217,7 +239,7 @@ pub struct CompareEntry {
     pub leg_deltas: Vec<TargetRange>,
     #[garde(range(min = 1))]
     pub max_entry_dte: i32,
-    #[garde(range(min = 0))]
+    #[garde(range(min = 0), custom(validate_exit_dte_lt_max(&self.max_entry_dte)))]
     pub exit_dte: i32,
     #[garde(dive)]
     pub slippage: Slippage,
@@ -669,6 +691,35 @@ mod tests {
             max_positions: 1,
             selector: TradeSelector::default(),
             adjustment_rules: vec![],
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn target_range_rejects_min_gt_max() {
+        let tr = TargetRange {
+            target: 0.5,
+            min: 0.8,
+            max: 0.2,
+        };
+        assert!(tr.validate().is_err());
+    }
+
+    #[test]
+    fn evaluate_params_rejects_exit_dte_gte_max_entry_dte() {
+        let p = EvaluateParams {
+            strategy: "long_call".to_string(),
+            leg_deltas: vec![TargetRange {
+                target: 0.5,
+                min: 0.2,
+                max: 0.8,
+            }],
+            max_entry_dte: 30,
+            exit_dte: 45,
+            dte_interval: 7,
+            delta_interval: 0.05,
+            slippage: Slippage::Mid,
+            commission: None,
         };
         assert!(p.validate().is_err());
     }
