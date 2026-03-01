@@ -2006,6 +2006,7 @@ dependencies = [
  "chrono",
  "ordered-float",
  "polars",
+ "reqwest",
  "rmcp",
  "rust-s3",
  "rust_ti",

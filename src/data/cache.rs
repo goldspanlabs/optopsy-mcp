@@ -28,6 +28,11 @@ impl CachedStore {
         }
     }
 
+    /// Return the cache directory path.
+    pub fn cache_dir(&self) -> PathBuf {
+        self.cache_dir.clone()
+    }
+
     /// Build from environment variables.
     ///
     /// | Env Var | Default | Purpose |

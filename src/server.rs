@@ -10,30 +10,40 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::data::cache::CachedStore;
+use crate::data::eodhd::EodhdProvider;
 use crate::engine::types::{
     BacktestParams, Commission, CompareEntry, CompareParams, EvaluateParams, SimParams, Slippage,
     TargetRange, TradeSelector,
 };
 use crate::tools;
 use crate::tools::response_types::{
-    BacktestResponse, CompareResponse, EvaluateResponse, LoadDataResponse, StrategiesResponse,
+    BacktestResponse, CompareResponse, DownloadResponse, EvaluateResponse, LoadDataResponse,
+    StrategiesResponse,
 };
 
 #[derive(Clone)]
 pub struct OptopsyServer {
     pub data: Arc<RwLock<Option<DataFrame>>>,
     pub cache: Arc<CachedStore>,
+    pub eodhd: Option<Arc<EodhdProvider>>,
     tool_router: ToolRouter<Self>,
 }
 
 impl OptopsyServer {
-    pub fn new(cache: Arc<CachedStore>) -> Self {
+    pub fn new(cache: Arc<CachedStore>, eodhd: Option<Arc<EodhdProvider>>) -> Self {
         Self {
             data: Arc::new(RwLock::new(None)),
             cache,
+            eodhd,
             tool_router: Self::tool_router(),
         }
     }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DownloadOptionsParams {
+    /// US stock ticker symbol (e.g. "SPY", "AAPL", "TSLA")
+    pub symbol: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -110,7 +120,25 @@ use rmcp::handler::server::wrapper::Parameters;
 
 #[tool_router]
 impl OptopsyServer {
-    /// Load options chain data by symbol (auto-fetches from S3 cache if configured)
+    /// Download ALL historical options data for a US stock symbol from EODHD
+    /// and store locally. This is a bulk download that fetches the complete
+    /// history (calls + puts, weekly + monthly expirations). Supports
+    /// resumable downloads — re-running will only fetch new data.
+    /// Requires `EODHD_API_KEY` environment variable.
+    #[tool(name = "download_options_data")]
+    async fn download_options_data(
+        &self,
+        Parameters(params): Parameters<DownloadOptionsParams>,
+    ) -> Result<Json<DownloadResponse>, String> {
+        tools::download::execute(self.eodhd.as_ref(), &params.symbol)
+            .await
+            .map(Json)
+            .map_err(|e| format!("Error: {e}"))
+    }
+
+    /// Load options chain data by symbol. Auto-downloads from EODHD if not
+    /// cached locally and `EODHD_API_KEY` is configured. Also fetches from
+    /// S3 cache if configured.
     #[tool(name = "load_data")]
     async fn load_data(
         &self,
@@ -119,6 +147,7 @@ impl OptopsyServer {
         tools::load_data::execute(
             &self.data,
             &self.cache,
+            self.eodhd.as_ref(),
             &params.symbol,
             params.start_date.as_deref(),
             params.end_date.as_deref(),
@@ -235,7 +264,9 @@ impl ServerHandler for OptopsyServer {
                 "Options backtesting engine. \
                 \n\nRecommended exploration workflow:\
                 \n1. load_data({ symbol }) — load (or auto-fetch) a symbol's options chain. \
-                All subsequent tools operate on the in-memory DataFrame loaded here.\
+                If the data is not cached locally and EODHD_API_KEY is set, it will \
+                automatically download from EODHD. You can also use download_options_data \
+                to explicitly download data first.\
                 \n2. list_strategies() — browse all built-in strategies grouped by category \
                 (singles, spreads, butterflies, condors, iron, calendars).\
                 \n3. evaluate_strategy({ strategy, leg_deltas, max_entry_dte, exit_dte, \
@@ -249,9 +280,10 @@ impl ServerHandler for OptopsyServer {
                 (Sharpe, Sortino, Calmar, VaR, CAGR, expectancy).\
                 \n5. compare_strategies({ strategies: [...], sim_params }) — run the same backtest \
                 pipeline for multiple strategies in parallel and rank them by Sharpe and total P&L.\
-                \n\nData flow summary: raw Parquet → DataFrame → per-leg filter/delta-select → \
-                leg join → strike-order validation → P&L calculation → bucket aggregation \
-                (evaluate) or event-loop simulation (backtest) → AI-enriched JSON response."
+                \n\nData flow summary: EODHD API → local Parquet cache → DataFrame → per-leg \
+                filter/delta-select → leg join → strike-order validation → P&L calculation → \
+                bucket aggregation (evaluate) or event-loop simulation (backtest) → \
+                AI-enriched JSON response."
                     .into(),
             ),
         }

@@ -26,6 +26,7 @@ blackscholes = "0.24"
 ordered-float = "4"
 rust-s3 = { version = "0.37", default-features = false, features = ["tokio-rustls-tls", "fail-on-err"] }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
