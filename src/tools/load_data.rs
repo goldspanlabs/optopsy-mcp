@@ -21,6 +21,9 @@ pub async fn execute(
     end_date: Option<&str>,
 ) -> Result<LoadDataResponse> {
     let symbol = symbol.to_uppercase();
+    if symbol.is_empty() || symbol.contains('/') || symbol.contains('\\') || symbol.contains("..") {
+        anyhow::bail!("Invalid symbol: {symbol}");
+    }
     let start = start_date
         .map(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d"))
         .transpose()?;
@@ -34,8 +37,10 @@ pub async fn execute(
     let df = match cache.load_options(&symbol, start, end) {
         Ok(df) => df,
         Err(cache_err) => {
-            let is_not_found = cache_err.to_string().contains("not found")
-                || cache_err.to_string().contains("No such file");
+            let err_msg = cache_err.to_string();
+            let is_not_found = err_msg.contains("not found")
+                || err_msg.contains("No such file")
+                || err_msg.contains("returned status 404");
             if is_not_found {
                 if let Some(provider) = eodhd {
                     tracing::info!(

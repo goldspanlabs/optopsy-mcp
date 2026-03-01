@@ -534,14 +534,12 @@ impl EodhdProvider {
             let window_rows = rows.len();
             if !rows.is_empty() {
                 match normalize_rows(&rows) {
-                    Ok(df) => {
-                        if let Err(e) = self.merge_and_save(symbol, df) {
-                            tracing::warn!("Failed to save window data: {e}");
-                        }
-                    }
+                    Ok(df) => match self.merge_and_save(symbol, df) {
+                        Ok(()) => rows_fetched += window_rows,
+                        Err(e) => tracing::warn!("Failed to save window data: {e}"),
+                    },
                     Err(e) => tracing::warn!("Failed to normalize window data: {e}"),
                 }
-                rows_fetched += window_rows;
             }
 
             if let Some(ref err_msg) = error {
@@ -805,10 +803,11 @@ fn normalize_rows(rows: &[HashMap<String, String>]) -> Result<DataFrame> {
     let column_map: HashMap<&str, &str> = COLUMN_MAP.iter().copied().collect();
 
     // Collect all API field names actually present in the data
+    let mut seen = std::collections::HashSet::new();
     let mut api_fields: Vec<String> = Vec::new();
     for row in rows {
         for key in row.keys() {
-            if !api_fields.contains(key) {
+            if seen.insert(key.clone()) {
                 api_fields.push(key.clone());
             }
         }
