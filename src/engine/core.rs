@@ -68,24 +68,15 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
             );
         }
 
-        // Rename columns to avoid conflicts when joining legs
-        let renamed = matched
-            .lazy()
-            .rename(
-                ["strike", "bid", "ask", "delta", "exit_bid", "exit_ask"],
-                [
-                    format!("strike_{i}"),
-                    format!("bid_{i}"),
-                    format!("ask_{i}"),
-                    format!("delta_{i}"),
-                    format!("exit_bid_{i}"),
-                    format!("exit_ask_{i}"),
-                ],
-                true,
-            )
-            .collect()?;
+        // Select only needed columns and rename with leg index to avoid
+        // duplicate column errors (e.g. `option_type_right`) when joining 3+ legs.
+        let prepared = filters::prepare_leg_for_join(
+            &matched,
+            i,
+            &["strike", "bid", "ask", "delta", "exit_bid", "exit_ask"],
+        )?;
 
-        leg_dfs.push(renamed);
+        leg_dfs.push(prepared);
     }
 
     // Join all legs on (quote_datetime, expiration)
@@ -109,7 +100,8 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
 
     // Apply strike ordering rules
     let num_legs = strategy_def.legs.len();
-    let combined = rules::filter_strike_order(&combined, num_legs)?;
+    let combined =
+        rules::filter_strike_order(&combined, num_legs, strategy_def.strict_strike_order)?;
 
     // Calculate P&L for each trade
     let mut pnl_values = Vec::with_capacity(combined.height());

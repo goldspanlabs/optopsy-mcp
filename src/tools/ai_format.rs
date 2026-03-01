@@ -915,7 +915,7 @@ mod tests {
 
     #[allow(clippy::cast_precision_loss)]
     fn make_backtest_result(
-        total_pnl: f64,
+        _total_pnl: f64,
         sharpe: f64,
         max_drawdown: f64,
         profit_factor: f64,
@@ -937,8 +937,9 @@ mod tests {
             .filter(|t| t.pnl < 0.0)
             .map(|t| t.pnl)
             .collect();
+        let sum_pnl: f64 = trades.iter().map(|t| t.pnl).sum();
         let avg_trade_pnl = if total > 0 {
-            total_pnl / total as f64
+            sum_pnl / total as f64
         } else {
             0.0
         };
@@ -980,7 +981,7 @@ mod tests {
 
         BacktestResult {
             trade_count: total,
-            total_pnl,
+            total_pnl: sum_pnl,
             metrics: crate::engine::types::PerformanceMetrics {
                 sharpe,
                 sortino: sharpe * 1.2,

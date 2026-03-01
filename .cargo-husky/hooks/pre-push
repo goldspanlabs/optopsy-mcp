@@ -1,0 +1,13 @@
+#!/bin/sh
+
+set -e
+
+# Ensure cargo is in PATH for non-interactive shells
+. "$HOME/.cargo/env" 2>/dev/null || true
+
+echo '+cargo test'
+cargo test
+echo '+cargo clippy -- -D warnings'
+cargo clippy -- -D warnings
+echo '+cargo fmt -- --check'
+cargo fmt -- --check

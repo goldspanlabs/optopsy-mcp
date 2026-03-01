@@ -27,5 +27,23 @@ pub fn strategy(name: &str, category: &str, description: &str, legs: Vec<LegDef>
         category: category.to_string(),
         description: description.to_string(),
         legs,
+        strict_strike_order: true,
+    }
+}
+
+/// Build a strategy that allows adjacent legs to share the same strike
+/// (e.g. straddles, iron butterflies, calendar spreads).
+pub fn strategy_relaxed(
+    name: &str,
+    category: &str,
+    description: &str,
+    legs: Vec<LegDef>,
+) -> StrategyDef {
+    StrategyDef {
+        name: name.to_string(),
+        category: category.to_string(),
+        description: description.to_string(),
+        legs,
+        strict_strike_order: false,
     }
 }

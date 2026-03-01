@@ -1,4 +1,4 @@
-use super::helpers::{call_leg, put_leg, strategy, Side, StrategyDef};
+use super::helpers::{call_leg, put_leg, strategy, strategy_relaxed, Side, StrategyDef};
 
 pub fn iron_condor() -> StrategyDef {
     strategy(
@@ -29,7 +29,7 @@ pub fn reverse_iron_condor() -> StrategyDef {
 }
 
 pub fn iron_butterfly() -> StrategyDef {
-    strategy(
+    strategy_relaxed(
         "iron_butterfly",
         "Iron",
         "Sell ATM straddle + buy OTM strangle",
@@ -43,7 +43,7 @@ pub fn iron_butterfly() -> StrategyDef {
 }
 
 pub fn reverse_iron_butterfly() -> StrategyDef {
-    strategy(
+    strategy_relaxed(
         "reverse_iron_butterfly",
         "Iron",
         "Buy ATM straddle + sell OTM strangle",
