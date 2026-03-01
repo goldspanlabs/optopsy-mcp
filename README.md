@@ -4,22 +4,30 @@ Options backtesting engine exposed as an MCP server — strategy screening, simu
 
 ## Features
 
-- **Symmetric Caching Data Layer** — symbol-based data access with local cache and optional S3-compatible fetch-on-miss
-- **Statistical Evaluation** — group trades by DTE/delta buckets with aggregate stats (mean, std, win rate, profit factor) for strategy research and screening
-- **Backtesting** — full simulation with trade selection, position management, equity curve, and performance metrics (Sharpe, Sortino, Calmar, VaR, max drawdown)
-- **32 Built-in Strategies** — singles, verticals, straddles, strangles, butterflies, condors, iron condors/butterflies, calendars, diagonals
-- **4 Slippage Models** — mid, spread, liquidity-based, per-leg fixed
-- **MCP Interface** — 5 tools accessible via any MCP client (Claude, etc.)
+- **Multi-Source Data Integration** — Load options data from EODHD API, local Parquet cache, or S3-compatible storage with fetch-on-miss
+- **Statistical Evaluation** — Group trades by DTE/delta buckets with aggregate stats (mean, std, win rate, profit factor) for strategy research and screening
+- **Event-Driven Backtesting** — Full simulation with position management, trade log, equity curve, and risk metrics (Sharpe, Sortino, Calmar, VaR, max drawdown)
+- **Signal-Based Entry/Exit** — Filter trades using 40+ technical analysis indicators (momentum, trend, volatility, overlap, price, volume)
+- **32 Built-in Strategies** — Singles, verticals, straddles, strangles, butterflies, condors, iron condors/butterflies, calendars, diagonals (with multi-expiration support)
+- **4 Slippage Models** — Mid, spread, liquidity-based, per-leg fixed
+- **Cache Management Tools** — Check cache status, fetch OHLCV data, validate schema
+- **9 MCP Tools** — All accessible via Claude Desktop or any MCP-compatible client
+- **Parameter Validation** — garde-powered input validation with detailed error feedback
+- **HTTP & Stdio Transport** — Deploy locally via stdio or run as HTTP service on cloud platforms
 
 ## MCP Tools
 
 | Tool | Description |
 |------|-------------|
-| `load_data` | Load options data by symbol (auto-fetches from S3 if configured) |
-| `list_strategies` | List all 32 available strategies with definitions |
-| `evaluate_strategy` | Statistical evaluation with DTE/delta bucket grouping |
-| `run_backtest` | Full simulation with trade log, equity curve, and metrics |
-| `compare_strategies` | Side-by-side comparison of multiple strategies |
+| `download_options_data` | Download options data from EODHD API and cache locally |
+| `load_data` | Load options chain data by symbol (auto-fetches from EODHD/S3 if configured) |
+| `list_strategies` | List all 32 available strategies with leg definitions |
+| `list_signals` | List all 40+ available TA signals for entry/exit filtering |
+| `evaluate_strategy` | Statistical evaluation with DTE/delta bucket grouping and aggregate stats |
+| `run_backtest` | Full event-driven simulation with signal support, trade log, and metrics |
+| `compare_strategies` | Side-by-side comparison of multiple strategies ranked by Sharpe ratio |
+| `check_cache_status` | Check if cached parquet data exists for a symbol and last update time |
+| `fetch_to_parquet` | Download historical OHLCV data from Yahoo Finance and save as Parquet |
 
 ## Quick Start
 
@@ -27,8 +35,11 @@ Options backtesting engine exposed as an MCP server — strategy screening, simu
 # Build
 cargo build --release
 
-# Run as MCP server (stdio transport)
+# Run as MCP server (stdio transport, default)
 cargo run --release
+
+# Or run as HTTP service
+PORT=8000 cargo run --release
 ```
 
 ### Claude Desktop Configuration
@@ -45,11 +56,30 @@ Add to your Claude Desktop config (`claude_desktop_config.json`):
 }
 ```
 
+### Optional Environment Variables
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `PORT` | Run as HTTP service on this port; if unset, uses stdio | _(unset)_ |
+| `EODHD_API_KEY` | Enable EODHD options data downloads | _(unset)_ |
+| `DATA_ROOT` | Local cache directory for Parquet files | `~/.optopsy/cache` |
+| `S3_BUCKET` | S3 bucket for fallback data fetch | _(unset)_ |
+| `S3_ENDPOINT` | S3-compatible endpoint URL | _(unset)_ |
+| `AWS_ACCESS_KEY_ID` | S3 credentials | _(unset)_ |
+| `AWS_SECRET_ACCESS_KEY` | S3 credentials | _(unset)_ |
+
 ## Data Layer
 
-Data is loaded by **symbol** through a caching layer that resolves Parquet files locally and optionally fetches from S3-compatible storage on cache miss.
+Data is loaded by **symbol** through a caching layer that supports three sources:
+1. **Local Parquet cache** — fastest; place files in `~/.optopsy/cache/{category}/{SYMBOL}.parquet`
+2. **EODHD API** — automatic download and cache if `EODHD_API_KEY` is set
+3. **S3-compatible storage** — fallback for cache miss if configured
 
-### Local-only mode (default)
+Data flows in priority order: Local cache → EODHD (if available) → S3 (if available)
+
+### Data Source Priorities
+
+**1. Local Parquet Cache (fastest)**
 
 Place Parquet files in the cache directory following the `{cache_dir}/{category}/{SYMBOL}.parquet` convention:
 
@@ -58,23 +88,28 @@ Place Parquet files in the cache directory following the `{cache_dir}/{category}
   options/
     SPY.parquet
     QQQ.parquet
+  prices/
+    SPY.parquet
 ```
 
 Then load with: `load_data({ symbol: "SPY" })`
 
-### S3 mode
+**2. EODHD API Integration (automatic download)**
 
-Set environment variables to enable automatic fetch-on-miss from an S3-compatible bucket (AWS, Railway Buckets, MinIO, R2, etc.):
+If `EODHD_API_KEY` is set, `load_data` will automatically:
+- Check local cache first
+- Download from EODHD if not cached
+- Save to local cache for future use
 
-| Env Var | Default | Purpose |
-|---------|---------|---------|
-| `DATA_ROOT` | `~/.optopsy/cache` | Local cache directory |
-| `S3_BUCKET` | _(none)_ | Bucket name — if unset, S3 is disabled |
-| `S3_ENDPOINT` | _(none)_ | S3-compatible endpoint URL |
-| `AWS_ACCESS_KEY_ID` | _(none)_ | S3 credentials |
-| `AWS_SECRET_ACCESS_KEY` | _(none)_ | S3 credentials |
+Also supports manual bulk downloads via `download_options_data` tool.
 
-When S3 is configured, files are downloaded to the local cache on first access and served from cache on subsequent calls.
+**3. Yahoo Finance OHLCV Data**
+
+Use `fetch_to_parquet` to download historical price data and cache it locally. Required for signal-based entry/exit filtering in backtests.
+
+**4. S3-Compatible Fallback**
+
+For cloud deployments, configure S3 credentials to enable automatic fetch-on-miss from an S3-compatible bucket (AWS S3, Railway Buckets, Cloudflare R2, MinIO, etc.). Files are downloaded to local cache on first access.
 
 ### Parquet schema
 
@@ -97,10 +132,21 @@ The `quote_date` column is auto-normalized — `quote_date`, `data_date`, and `q
 
 Once connected via MCP:
 
+**Basic workflow (statistical screening):**
 1. Load data: `load_data({ symbol: "SPY" })`
 2. Browse strategies: `list_strategies()`
 3. Screen: `evaluate_strategy({ strategy: "iron_condor", leg_deltas: [...], max_entry_dte: 45, exit_dte: 14, dte_interval: 7, delta_interval: 0.05, slippage: { type: "Mid" } })`
 4. Validate: `run_backtest({ strategy: "iron_condor", ..., capital: 100000, quantity: 1, max_positions: 5 })`
+
+**Advanced workflow (with signals):**
+1. `fetch_to_parquet({ symbol: "SPY", category: "prices" })` — Get OHLCV data for signals
+2. `list_signals()` — Browse available TA indicators
+3. `run_backtest({ strategy: "iron_condor", ..., entry_signal: "rsi_oversold", exit_signal: "rsi_overbought" })`
+
+**Data management:**
+- `check_cache_status({ symbol: "SPY", category: "options" })` — Check if data is cached
+- `download_options_data({ symbol: "SPY" })` — Bulk download from EODHD
+- `compare_strategies({ strategies: [...], sim_params: {...} })` — Compare multiple strategies
 
 ## Architecture & Data Flow
 
@@ -166,16 +212,27 @@ Client → load_data({ symbol: "SPY", start_date?, end_date? })
     column list, suggested next steps
 ```
 
-#### Step 2 — Browse Strategies (`list_strategies`)
+#### Step 2a — Browse Strategies (`list_strategies`)
 
 ```
 Client → list_strategies()
   → strategies::all_strategies() → Vec<StrategyDef>
-      each StrategyDef: name, category, description
-      each LegDef: side (Long/Short), option_type (Call/Put), qty
+      each StrategyDef: name, category, description, legs (multi-expiration support)
+      each LegDef: side (Long/Short), option_type (Call/Put), qty, delta target
   → grouped by category (singles, spreads, butterflies, condors,
-    iron, calendars)
+    iron, calendars, diagonals)
   → returns StrategiesResponse with suggested next steps
+```
+
+#### Step 2b — Browse Signals (`list_signals`)
+
+```
+Client → list_signals()
+  → signals::all_signals() → Vec<SignalDef>
+      each SignalDef: name, category, description, params
+      categories: momentum (RSI, MACD, Stoch), trend (SMA, EMA, ADX),
+                  volatility (BBands, ATR), overlap, price, volume
+  → returns SignalsResponse with all available indicators
 ```
 
 #### Step 3 — Statistical Screen (`evaluate_strategy`)
@@ -238,14 +295,15 @@ engine/core::evaluate_strategy(df, params):
 
 #### Step 4 — Full Simulation (`run_backtest`)
 
-This path runs a realistic, capital-constrained, event-driven backtest.
+This path runs a realistic, capital-constrained, event-driven backtest with optional signal-based filtering.
 
 ```
 Client → run_backtest({ strategy, leg_deltas, max_entry_dte,
                         exit_dte, slippage, commission?,
                         stop_loss?, take_profit?, max_hold_days?,
                         capital, quantity, multiplier?, max_positions,
-                        selector? })
+                        selector?, entry_signal?, exit_signal?,
+                        ohlcv_path? })
 
 engine/core::run_backtest(df, params):
 
@@ -263,6 +321,11 @@ engine/core::run_backtest(df, params):
           filter_valid_quotes → select_closest_delta)
        → joins legs, enforces strike order, computes net_premium
        → returns Vec<EntryCandidate> (one per entry date × expiration)
+
+  3b. signals::apply_signal_filter(candidates, entry_signal, ohlcv_path)
+       → if entry_signal specified: load OHLCV data, compute TA indicators
+       → filter candidates to only those where entry signal triggers on entry_date
+       → optional: apply exit_signal to pre-filter positions for early exit logic
 
   4. event_sim::run_event_loop(price_table, candidates,
                                trading_days, params, strategy_def)
@@ -317,7 +380,7 @@ engine/core::run_backtest(df, params):
   → returns BacktestResponse
 ```
 
-#### Step 5 — Strategy Comparison (`compare_strategies`)
+#### Step 6 — Strategy Comparison (`compare_strategies`)
 
 ```
 Client → compare_strategies({ strategies: [CompareEntry, ...],
@@ -351,11 +414,16 @@ Client → compare_strategies({ strategies: [CompareEntry, ...],
 
 ## Tech Stack
 
-- [Polars](https://pola.rs/) — DataFrame engine
-- [rmcp](https://github.com/anthropics/rmcp) — MCP server framework
+- [Polars](https://pola.rs/) — DataFrame engine for data processing
+- [rmcp](https://github.com/anthropics/rmcp) — MCP server framework (v0.17)
+- [Tokio](https://tokio.rs/) — Async runtime for concurrent operations
+- [Axum](https://github.com/tokio-rs/axum) — HTTP server (optional, via PORT env var)
 - [rust-s3](https://crates.io/crates/rust-s3) — S3-compatible object storage
-- [rust_ti](https://crates.io/crates/rust_ti) — Technical analysis indicators
-- [blackscholes](https://crates.io/crates/blackscholes) — Options pricing
+- [rust_ti](https://crates.io/crates/rust_ti) — Technical analysis indicators (40+ signals)
+- [blackscholes](https://crates.io/crates/blackscholes) — Options pricing models
+- [garde](https://crates.io/crates/garde) — Input validation framework
+- [serde + serde_json](https://serde.rs/) — JSON serialization
+- [schemars](https://docs.rs/schemars/) — JSON Schema generation for MCP tools
 
 ## License
 
