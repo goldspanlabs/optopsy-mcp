@@ -199,10 +199,10 @@ impl EodhdProvider {
     }
 
     /// Read cached parquet for a symbol, offloading blocking I/O from the
-    /// async executor via `block_in_place`.
-    fn read_cache(&self, symbol: &str) -> Option<DataFrame> {
+    /// async executor via `spawn_blocking`.
+    async fn read_cache(&self, symbol: &str) -> Option<DataFrame> {
         let path = self.cache_path(symbol);
-        tokio::task::block_in_place(|| {
+        tokio::task::spawn_blocking(move || {
             if !path.exists() {
                 return None;
             }
@@ -212,6 +212,9 @@ impl EodhdProvider {
                 .collect()
                 .ok()
         })
+        .await
+        .ok()
+        .flatten()
     }
 
     fn save_parquet_sync(path: &std::path::Path, df: &mut DataFrame) -> Result<()> {
@@ -238,11 +241,12 @@ impl EodhdProvider {
     }
 
     /// Merge new rows into the existing cache and save, offloading blocking
-    /// I/O from the async executor via `block_in_place`.
-    fn merge_and_save(&self, symbol: &str, new_df: DataFrame) -> Result<()> {
+    /// I/O from the async executor via `spawn_blocking`.
+    async fn merge_and_save(&self, symbol: &str, new_df: DataFrame) -> Result<()> {
         let path = self.cache_path(symbol);
-        let cached = self.read_cache(symbol);
-        tokio::task::block_in_place(move || {
+        let cached = self.read_cache(symbol).await;
+
+        tokio::task::spawn_blocking(move || {
             let merged = if let Some(existing) = cached {
                 concat(
                     [existing.lazy(), new_df.lazy()],
@@ -280,6 +284,7 @@ impl EodhdProvider {
 
             Self::save_parquet_sync(&path, &mut deduped)
         })
+        .await?
     }
 
     // -- HTTP ---------------------------------------------------------------
@@ -540,7 +545,7 @@ impl EodhdProvider {
             let window_rows = rows.len();
             if !rows.is_empty() {
                 match normalize_rows(&rows) {
-                    Ok(df) => match self.merge_and_save(symbol, df) {
+                    Ok(df) => match self.merge_and_save(symbol, df).await {
                         Ok(()) => rows_fetched += window_rows,
                         Err(e) => tracing::warn!("Failed to save window data: {e}"),
                     },
@@ -654,7 +659,7 @@ impl EodhdProvider {
         let request_count_before = self.request_count.load(Ordering::Relaxed);
 
         // Check for existing cached data to enable resume
-        let cached_df = self.read_cache(&symbol);
+        let cached_df = self.read_cache(&symbol).await;
         let cached_rows = cached_df.as_ref().map_or(0, DataFrame::height);
         let is_resume = cached_rows > 0;
 
@@ -705,7 +710,7 @@ impl EodhdProvider {
         }
 
         // Re-read the cache to build summary
-        let final_df = self.read_cache(&symbol);
+        let final_df = self.read_cache(&symbol).await;
 
         let (total_rows, date_min, date_max) = match &final_df {
             Some(df) if df.height() > 0 => {
