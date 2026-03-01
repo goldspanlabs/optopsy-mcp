@@ -80,6 +80,41 @@ pub fn select_closest_delta(df: &DataFrame, target: &TargetRange) -> Result<Data
     Ok(result)
 }
 
+/// Select only the columns needed for leg joining, then rename per-leg columns
+/// with the leg index suffix to avoid conflicts when joining multiple legs.
+///
+/// The `base_cols` are the per-leg columns to rename (e.g. `["strike", "bid", "ask", "delta"]`).
+/// Each is renamed to `{col}_{leg_index}`. Only join keys (`quote_datetime`, `expiration`)
+/// and the renamed columns are kept, dropping extras like `option_type` and `dte` that
+/// would cause duplicate column errors when joining 3+ legs.
+///
+/// # Errors
+///
+/// Returns an error if any of the specified columns are missing from the `DataFrame`.
+pub fn prepare_leg_for_join(
+    df: &DataFrame,
+    leg_index: usize,
+    base_cols: &[&str],
+) -> Result<DataFrame> {
+    let mut select_cols: Vec<&str> = vec![QUOTE_DATETIME_COL, "expiration"];
+    select_cols.extend_from_slice(base_cols);
+
+    let selected = df.select(select_cols)?;
+
+    let old_names: Vec<String> = base_cols.iter().map(|s| (*s).to_string()).collect();
+    let new_names: Vec<String> = base_cols
+        .iter()
+        .map(|s| format!("{s}_{leg_index}"))
+        .collect();
+
+    let result = selected
+        .lazy()
+        .rename(old_names, new_names, true)
+        .collect()?;
+
+    Ok(result)
+}
+
 /// Filter out options with zero or negative bid
 pub fn filter_valid_quotes(df: &DataFrame) -> Result<DataFrame> {
     let result = df
@@ -94,8 +129,8 @@ pub fn filter_valid_quotes(df: &DataFrame) -> Result<DataFrame> {
 mod tests {
     use super::*;
     use chrono::NaiveDate;
-    /// Build a minimal options DataFrame for testing filters.
-    /// Uses Datetime for quote_datetime and Date for expiration to match production data.
+    /// Build a minimal options `DataFrame` for testing filters.
+    /// Uses `Datetime` for `quote_datetime` and `Date` for expiration to match production data.
     fn make_options_df() -> DataFrame {
         let dates = vec![
             NaiveDate::from_ymd_opt(2024, 1, 15)

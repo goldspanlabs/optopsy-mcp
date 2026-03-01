@@ -1,4 +1,4 @@
-use super::helpers::{call_leg, put_leg, strategy, Side, StrategyDef};
+use super::helpers::{call_leg, put_leg, strategy, strategy_relaxed, Side, StrategyDef};
 
 // Vertical spreads
 pub fn bull_call_spread() -> StrategyDef {
@@ -39,7 +39,7 @@ pub fn bear_put_spread() -> StrategyDef {
 
 // Straddles
 pub fn long_straddle() -> StrategyDef {
-    strategy(
+    strategy_relaxed(
         "long_straddle",
         "Spreads",
         "Buy ATM call and put at same strike",
@@ -48,7 +48,7 @@ pub fn long_straddle() -> StrategyDef {
 }
 
 pub fn short_straddle() -> StrategyDef {
-    strategy(
+    strategy_relaxed(
         "short_straddle",
         "Spreads",
         "Sell ATM call and put at same strike",

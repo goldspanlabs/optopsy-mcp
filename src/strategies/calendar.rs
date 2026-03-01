@@ -1,7 +1,7 @@
-use super::helpers::{call_leg, put_leg, strategy, Side, StrategyDef};
+use super::helpers::{call_leg, put_leg, strategy, strategy_relaxed, Side, StrategyDef};
 
 pub fn call_calendar_spread() -> StrategyDef {
-    strategy(
+    strategy_relaxed(
         "call_calendar_spread",
         "Calendar",
         "Sell near-term call, buy far-term call at same strike",
@@ -13,7 +13,7 @@ pub fn call_calendar_spread() -> StrategyDef {
 }
 
 pub fn put_calendar_spread() -> StrategyDef {
-    strategy(
+    strategy_relaxed(
         "put_calendar_spread",
         "Calendar",
         "Sell near-term put, buy far-term put at same strike",
@@ -40,7 +40,7 @@ pub fn put_diagonal_spread() -> StrategyDef {
 }
 
 pub fn double_calendar() -> StrategyDef {
-    strategy(
+    strategy_relaxed(
         "double_calendar",
         "Calendar",
         "Call calendar + put calendar at different strikes",
@@ -54,7 +54,7 @@ pub fn double_calendar() -> StrategyDef {
 }
 
 pub fn double_diagonal() -> StrategyDef {
-    strategy(
+    strategy_relaxed(
         "double_diagonal",
         "Calendar",
         "Call diagonal + put diagonal at different strikes",
