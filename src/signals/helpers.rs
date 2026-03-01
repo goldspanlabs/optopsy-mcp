@@ -28,6 +28,12 @@ pub fn pad_and_compare(
     pred: impl Fn(f64) -> bool,
     name: &str,
 ) -> Series {
+    debug_assert!(
+        values.len() <= original_len,
+        "indicator output longer than input: {} > {}",
+        values.len(),
+        original_len
+    );
     let pad = original_len.saturating_sub(values.len());
     let bools: Vec<bool> = std::iter::repeat_n(false, pad)
         .chain(values.iter().map(|&v| pred(v)))
@@ -38,6 +44,12 @@ pub fn pad_and_compare(
 /// Pad indicator output to match original length, filling front with `f64::NAN`.
 #[allow(dead_code)]
 pub fn pad_series(values: &[f64], original_len: usize) -> Vec<f64> {
+    debug_assert!(
+        values.len() <= original_len,
+        "indicator output longer than input: {} > {}",
+        values.len(),
+        original_len
+    );
     let pad = original_len.saturating_sub(values.len());
     let mut result = vec![f64::NAN; pad];
     result.extend_from_slice(values);

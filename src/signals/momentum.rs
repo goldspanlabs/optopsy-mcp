@@ -24,7 +24,7 @@ impl SignalFn for RsiOversold {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
         let prices = column_to_f64(df, &self.column)?;
         let n = prices.len();
-        if n < RSI_PERIOD {
+        if n <= RSI_PERIOD {
             return Ok(BooleanChunked::new("rsi_oversold".into(), vec![false; n]).into_series());
         }
         let rsi_values = sti::rsi(&prices);
@@ -51,7 +51,7 @@ impl SignalFn for RsiOverbought {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
         let prices = column_to_f64(df, &self.column)?;
         let n = prices.len();
-        if n < RSI_PERIOD {
+        if n <= RSI_PERIOD {
             return Ok(BooleanChunked::new("rsi_overbought".into(), vec![false; n]).into_series());
         }
         let rsi_values = sti::rsi(&prices);
@@ -184,7 +184,7 @@ impl SignalFn for StochasticOversold {
         let high = column_to_f64(df, &self.high_col)?;
         let low = column_to_f64(df, &self.low_col)?;
         let n = close.len();
-        if n < self.period {
+        if self.period == 0 || n < self.period {
             return Ok(
                 BooleanChunked::new("stochastic_oversold".into(), vec![false; n]).into_series(),
             );
@@ -219,7 +219,7 @@ impl SignalFn for StochasticOverbought {
         let high = column_to_f64(df, &self.high_col)?;
         let low = column_to_f64(df, &self.low_col)?;
         let n = close.len();
-        if n < self.period {
+        if self.period == 0 || n < self.period {
             return Ok(
                 BooleanChunked::new("stochastic_overbought".into(), vec![false; n]).into_series(),
             );

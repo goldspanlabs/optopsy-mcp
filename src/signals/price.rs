@@ -3,22 +3,29 @@
 use super::helpers::{column_to_f64, SignalFn};
 use polars::prelude::*;
 
-/// Signal: gap up — current value opens significantly higher than previous close.
-/// Detects when (current - previous) / |previous| > threshold.
+/// Signal: gap up — open is significantly higher than the previous close.
+/// Detects when (open[i] - close[i-1]) / |close[i-1]| > threshold.
 #[allow(dead_code)]
 pub struct GapUp {
-    pub column: String,
+    pub open_col: String,
+    pub close_col: String,
     pub threshold: f64,
 }
 
 impl SignalFn for GapUp {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
-        let prices = column_to_f64(df, &self.column)?;
-        let n = prices.len();
+        let open = column_to_f64(df, &self.open_col)?;
+        let close = column_to_f64(df, &self.close_col)?;
+        let n = close.len();
+        if open.len() != n {
+            return Err(PolarsError::ShapeMismatch(
+                "open_col and close_col must have the same length".into(),
+            ));
+        }
         let mut bools = vec![false; n];
         for i in 1..n {
-            if prices[i - 1] != 0.0 {
-                let gap_pct = (prices[i] - prices[i - 1]) / prices[i - 1].abs();
+            if close[i - 1] != 0.0 {
+                let gap_pct = (open[i] - close[i - 1]) / close[i - 1].abs();
                 bools[i] = gap_pct > self.threshold;
             }
         }
@@ -29,21 +36,29 @@ impl SignalFn for GapUp {
     }
 }
 
-/// Signal: gap down — current value drops significantly from previous.
+/// Signal: gap down — open is significantly lower than the previous close.
+/// Detects when (close[i-1] - open[i]) / |close[i-1]| > threshold.
 #[allow(dead_code)]
 pub struct GapDown {
-    pub column: String,
+    pub open_col: String,
+    pub close_col: String,
     pub threshold: f64,
 }
 
 impl SignalFn for GapDown {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
-        let prices = column_to_f64(df, &self.column)?;
-        let n = prices.len();
+        let open = column_to_f64(df, &self.open_col)?;
+        let close = column_to_f64(df, &self.close_col)?;
+        let n = close.len();
+        if open.len() != n {
+            return Err(PolarsError::ShapeMismatch(
+                "open_col and close_col must have the same length".into(),
+            ));
+        }
         let mut bools = vec![false; n];
         for i in 1..n {
-            if prices[i - 1] != 0.0 {
-                let gap_pct = (prices[i - 1] - prices[i]) / prices[i - 1].abs();
+            if close[i - 1] != 0.0 {
+                let gap_pct = (close[i - 1] - open[i]) / close[i - 1].abs();
                 bools[i] = gap_pct > self.threshold;
             }
         }
@@ -180,17 +195,20 @@ mod tests {
     #[test]
     fn gap_up_detects_gap() {
         let df = df! {
+            "open" => &[100.0, 111.0, 111.5, 121.0, 121.5],
             "close" => &[100.0, 110.0, 111.0, 120.0, 121.0]
         }
         .unwrap();
         let signal = GapUp {
-            column: "close".into(),
+            open_col: "open".into(),
+            close_col: "close".into(),
             threshold: 0.05,
         };
         let result = signal.evaluate(&df).unwrap();
         let bools = result.bool().unwrap();
-        // 100 -> 110 = 10% gap, 111 -> 120 ~8% gap
+        // open[1]=111 vs close[0]=100: 11% gap up
         assert!(bools.get(1).unwrap());
+        // open[3]=121 vs close[2]=111: ~8.9% gap up
         assert!(bools.get(3).unwrap());
         assert!(!bools.get(0).unwrap());
     }
