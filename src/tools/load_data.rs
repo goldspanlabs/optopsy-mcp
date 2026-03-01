@@ -51,14 +51,32 @@ pub async fn execute(
         let date_col = df.column(QUOTE_DATETIME_COL)?;
         let min_scalar = date_col.min_reduce()?;
         let max_scalar = date_col.max_reduce()?;
+
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+        let format_scalar = |s: polars::prelude::Scalar| -> Option<String> {
+            match s.value() {
+                AnyValue::Datetime(us, TimeUnit::Microseconds, _) => {
+                    let secs = us / 1_000_000;
+                    let nanos = (us.rem_euclid(1_000_000) * 1_000) as u32;
+                    chrono::DateTime::from_timestamp(secs, nanos)
+                        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S").to_string())
+                }
+                AnyValue::Date(days) => {
+                    chrono::NaiveDate::from_num_days_from_ce_opt(days + 719_163)
+                        .map(|d| d.format("%Y-%m-%d").to_string())
+                }
+                other => Some(format!("{other}")),
+            }
+        };
+
         DateRange {
-            start: Some(format!("{}", min_scalar.value())),
-            end: Some(format!("{}", max_scalar.value())),
+            start: format_scalar(min_scalar),
+            end: format_scalar(max_scalar),
         }
     } else {
         DateRange {
-            start: None,
-            end: None,
+            start: start_date.map(std::string::ToString::to_string),
+            end: end_date.map(std::string::ToString::to_string),
         }
     };
 

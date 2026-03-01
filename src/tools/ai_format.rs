@@ -492,7 +492,11 @@ pub fn format_load_data(
     date_range: DateRange,
     columns: Vec<String>,
 ) -> LoadDataResponse {
-    let symbol_list = symbols.join(", ");
+    let symbol_list = if symbols.is_empty() {
+        "unknown".to_string()
+    } else {
+        symbols.join(", ")
+    };
     let start = date_range.start.as_deref().unwrap_or("unknown");
     let end = date_range.end.as_deref().unwrap_or("unknown");
     let summary =
@@ -828,6 +832,25 @@ mod tests {
         );
         assert_eq!(response.rows, 1000);
         assert!(response.summary.contains("unknown"));
+    }
+
+    #[test]
+    fn format_load_data_empty_symbols_shows_unknown() {
+        let response = format_load_data(
+            500,
+            vec![],
+            DateRange {
+                start: Some("2024-01-01".to_string()),
+                end: Some("2024-12-31".to_string()),
+            },
+            vec!["col1".to_string()],
+        );
+        assert!(
+            response.summary.contains("unknown"),
+            "summary should fall back to 'unknown' when symbols is empty, got: {}",
+            response.summary
+        );
+        assert!(!response.summary.contains("for  from"));
     }
 
     #[test]
