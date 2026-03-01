@@ -1,9 +1,7 @@
-// Allow pedantic clippy lints that are too noisy for this codebase.
-// float_cmp: assert_eq! on f64 in tests is intentional for exact-zero and known-value checks.
-// cast_possible_truncation/sign_loss/wrap: controlled casts in safe numeric contexts.
-// cast_precision_loss: i64→f64 for day counts is acceptable precision.
+// float_cmp: only in tests where assert_eq! on f64 is intentional.
+#![cfg_attr(test, allow(clippy::float_cmp))]
+// Cast lints: controlled numeric casts throughout (day counts, indices, etc.).
 #![allow(
-    clippy::float_cmp,
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
     clippy::cast_possible_wrap,

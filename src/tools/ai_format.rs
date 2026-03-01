@@ -958,13 +958,18 @@ mod tests {
         } else {
             0.0
         };
-        // Derive win_rate from trades to match production (overrides parameter)
+        // Derive win_rate and loss_rate from trades to match production
         let actual_win_rate = if total > 0 {
             winners.len() as f64 / total as f64
         } else {
             0.0
         };
-        let expectancy = (actual_win_rate * avg_winner) + ((1.0 - actual_win_rate) * avg_loser);
+        let actual_loss_rate = if total > 0 {
+            losers.len() as f64 / total as f64
+        } else {
+            0.0
+        };
+        let expectancy = (actual_win_rate * avg_winner) + (actual_loss_rate * avg_loser);
 
         let mut max_consecutive_losses = 0usize;
         let mut streak = 0usize;
