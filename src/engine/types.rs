@@ -35,11 +35,11 @@ pub enum ExpirationCycle {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct TargetRange {
-    #[garde(range(min = -1.0, max = 1.0))]
+    #[garde(range(min = 0.0, max = 1.0))]
     pub target: f64,
-    #[garde(range(min = -1.0, max = 1.0))]
+    #[garde(range(min = 0.0, max = 1.0))]
     pub min: f64,
-    #[garde(range(min = -1.0, max = 1.0))]
+    #[garde(range(min = 0.0, max = 1.0))]
     pub max: f64,
 }
 
@@ -140,7 +140,7 @@ impl StrategyDef {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct EvaluateParams {
-    #[garde(skip)]
+    #[garde(length(min = 1))]
     pub strategy: String,
     #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
@@ -161,7 +161,7 @@ pub struct EvaluateParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct BacktestParams {
-    #[garde(skip)]
+    #[garde(length(min = 1))]
     pub strategy: String,
     #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
@@ -174,7 +174,7 @@ pub struct BacktestParams {
     #[serde(default)]
     #[garde(dive)]
     pub commission: Option<Commission>,
-    #[garde(inner(range(min = 0.0, max = 1.0)))]
+    #[garde(inner(range(min = 0.0)))]
     pub stop_loss: Option<f64>,
     #[garde(inner(range(min = 0.0)))]
     pub take_profit: Option<f64>,
@@ -211,7 +211,7 @@ pub struct CompareParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct CompareEntry {
-    #[garde(skip)]
+    #[garde(length(min = 1))]
     pub name: String,
     #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
@@ -240,7 +240,7 @@ pub struct SimParams {
     #[serde(default)]
     #[garde(skip)]
     pub selector: TradeSelector,
-    #[garde(inner(range(min = 0.0, max = 1.0)))]
+    #[garde(inner(range(min = 0.0)))]
     pub stop_loss: Option<f64>,
     #[garde(inner(range(min = 0.0)))]
     pub take_profit: Option<f64>,
@@ -501,5 +501,175 @@ mod tests {
             min_fee: 0.0,
         };
         assert!((c.calculate(-10) - 6.50).abs() < 1e-10);
+    }
+
+    // --- Validation tests ---
+
+    #[test]
+    fn target_range_valid() {
+        let tr = TargetRange {
+            target: 0.5,
+            min: 0.2,
+            max: 0.8,
+        };
+        assert!(tr.validate().is_ok());
+    }
+
+    #[test]
+    fn target_range_rejects_negative() {
+        let tr = TargetRange {
+            target: -0.5,
+            min: 0.2,
+            max: 0.8,
+        };
+        assert!(tr.validate().is_err());
+    }
+
+    #[test]
+    fn target_range_rejects_over_one() {
+        let tr = TargetRange {
+            target: 0.5,
+            min: 0.2,
+            max: 1.1,
+        };
+        assert!(tr.validate().is_err());
+    }
+
+    #[test]
+    fn commission_rejects_negative_fee() {
+        let c = Commission {
+            per_contract: -0.65,
+            base_fee: 0.0,
+            min_fee: 0.0,
+        };
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn slippage_liquidity_rejects_fill_ratio_over_one() {
+        let s = Slippage::Liquidity {
+            fill_ratio: 1.5,
+            ref_volume: 1000,
+        };
+        assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn backtest_params_rejects_negative_capital() {
+        let p = BacktestParams {
+            strategy: "long_call".to_string(),
+            leg_deltas: vec![TargetRange {
+                target: 0.5,
+                min: 0.2,
+                max: 0.8,
+            }],
+            max_entry_dte: 45,
+            exit_dte: 0,
+            slippage: Slippage::Mid,
+            commission: None,
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            capital: -1000.0,
+            quantity: 1,
+            multiplier: 100,
+            max_positions: 1,
+            selector: TradeSelector::default(),
+            adjustment_rules: vec![],
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn backtest_params_rejects_zero_quantity() {
+        let p = BacktestParams {
+            strategy: "long_call".to_string(),
+            leg_deltas: vec![TargetRange {
+                target: 0.5,
+                min: 0.2,
+                max: 0.8,
+            }],
+            max_entry_dte: 45,
+            exit_dte: 0,
+            slippage: Slippage::Mid,
+            commission: None,
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            capital: 10_000.0,
+            quantity: 0,
+            multiplier: 100,
+            max_positions: 1,
+            selector: TradeSelector::default(),
+            adjustment_rules: vec![],
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn backtest_params_accepts_stop_loss_above_one() {
+        let p = BacktestParams {
+            strategy: "long_call".to_string(),
+            leg_deltas: vec![TargetRange {
+                target: 0.5,
+                min: 0.2,
+                max: 0.8,
+            }],
+            max_entry_dte: 45,
+            exit_dte: 0,
+            slippage: Slippage::Mid,
+            commission: None,
+            stop_loss: Some(2.0),
+            take_profit: None,
+            max_hold_days: None,
+            capital: 10_000.0,
+            quantity: 1,
+            multiplier: 100,
+            max_positions: 1,
+            selector: TradeSelector::default(),
+            adjustment_rules: vec![],
+        };
+        assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn sim_params_rejects_zero_max_positions() {
+        let p = SimParams {
+            capital: 10_000.0,
+            quantity: 1,
+            multiplier: 100,
+            max_positions: 0,
+            selector: TradeSelector::default(),
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn backtest_params_rejects_empty_strategy() {
+        let p = BacktestParams {
+            strategy: String::new(),
+            leg_deltas: vec![TargetRange {
+                target: 0.5,
+                min: 0.2,
+                max: 0.8,
+            }],
+            max_entry_dte: 45,
+            exit_dte: 0,
+            slippage: Slippage::Mid,
+            commission: None,
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            capital: 10_000.0,
+            quantity: 1,
+            multiplier: 100,
+            max_positions: 1,
+            selector: TradeSelector::default(),
+            adjustment_rules: vec![],
+        };
+        assert!(p.validate().is_err());
     }
 }

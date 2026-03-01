@@ -54,7 +54,7 @@ pub struct LoadDataParams {
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct EvaluateStrategyParams {
     /// Strategy name (e.g. '`iron_condor`')
-    #[garde(skip)]
+    #[garde(length(min = 1))]
     pub strategy: String,
     /// Per-leg delta targets
     #[garde(length(min = 1), dive)]
@@ -82,7 +82,7 @@ pub struct EvaluateStrategyParams {
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct RunBacktestParams {
     /// Strategy name
-    #[garde(skip)]
+    #[garde(length(min = 1))]
     pub strategy: String,
     /// Per-leg delta targets
     #[garde(length(min = 1), dive)]
@@ -100,7 +100,7 @@ pub struct RunBacktestParams {
     #[garde(dive)]
     pub commission: Option<Commission>,
     /// Stop loss threshold (fraction of entry cost)
-    #[garde(inner(range(min = 0.0, max = 1.0)))]
+    #[garde(inner(range(min = 0.0)))]
     pub stop_loss: Option<f64>,
     /// Take profit threshold (fraction of entry cost)
     #[garde(inner(range(min = 0.0)))]
@@ -154,7 +154,7 @@ pub struct FetchToParquetParams {
     #[garde(length(min = 1))]
     pub category: String,
     /// Time period to fetch (e.g. "6mo", "1y", "5y", "max"). Defaults to "6mo".
-    #[garde(skip)]
+    #[garde(inner(length(min = 1)))]
     pub period: Option<String>,
 }
 
@@ -213,6 +213,9 @@ impl OptopsyServer {
             slippage: params.slippage,
             commission: params.commission,
         };
+        eval_params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
 
         tools::evaluate::execute(df, &eval_params)
             .map(Json)
@@ -250,6 +253,9 @@ impl OptopsyServer {
             selector: params.selector.unwrap_or_default(),
             adjustment_rules: vec![],
         };
+        backtest_params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
 
         tools::backtest::execute(df, &backtest_params)
             .map(Json)
@@ -274,6 +280,9 @@ impl OptopsyServer {
             strategies: params.strategies,
             sim_params: params.sim_params,
         };
+        compare_params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
 
         tools::compare::execute(df, &compare_params)
             .map(Json)
