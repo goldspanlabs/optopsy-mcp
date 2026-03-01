@@ -3,6 +3,7 @@ use polars::prelude::*;
 use std::fmt::Write as _;
 
 use super::types::{Slippage, StrategyDef, TargetRange};
+use crate::engine::types::Side;
 use crate::strategies;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,7 +81,7 @@ pub fn suggest_parameters(df: &DataFrame, params: &SuggestParams) -> Result<Sugg
     let (max_entry_dte, exit_dte, dte_range_str) = find_best_dte_cluster(&liquid_df)?;
 
     // Analyze delta distribution for each leg's option type
-    let leg_deltas = extract_leg_deltas(&liquid_df, &strategy_def)?;
+    let leg_deltas = extract_leg_deltas(&liquid_df, &strategy_def, max_entry_dte, exit_dte)?;
 
     // Infer slippage from median spread_ratio
     let slippage = infer_slippage(&liquid_df)?;
@@ -184,6 +185,13 @@ fn apply_liquidity_filter(
     Ok((liquid_count, filtered))
 }
 
+/// Compute `exit_dte` based on `max_entry_dte` with sensible bounds.
+/// Formula: 20% of `max_entry_dte`, clamped to [7, 21] and always < `max_entry_dte`.
+fn compute_exit_dte(max_entry_dte: i32) -> i32 {
+    let raw = (f64::from(max_entry_dte) * 0.20).round() as i32;
+    raw.clamp(7, 21).min(max_entry_dte.saturating_sub(1))
+}
+
 /// Find the best DTE cluster (most continuous coverage) and suggest `exit_dte`.
 /// Returns (`max_entry_dte`, `exit_dte`, `dte_range_string`).
 fn find_best_dte_cluster(df: &DataFrame) -> Result<(i32, i32, String)> {
@@ -199,42 +207,31 @@ fn find_best_dte_cluster(df: &DataFrame) -> Result<(i32, i32, String)> {
         bail!("No strictly positive DTE values in filtered data");
     }
 
-    // Use unique DTEs to avoid duplicates dominating the cluster
+    // Use percentile of raw (non-deduped) DTE values.
+    // High-volume DTE zones dominate; liquid theta-decay options (7-60 DTE) are the bulk.
     dtes.sort_unstable();
-    dtes.dedup();
+    let n = dtes.len();
+    let p75_idx = ((n as f64 * 0.75) as usize).min(n - 1);
+    let p05_idx = ((n as f64 * 0.05) as usize).min(n - 1);
 
-    // Find the largest contiguous cluster
-    let mut best_cluster = vec![];
-    let mut current_cluster = vec![dtes[0]];
+    let max_entry_dte = dtes[p75_idx].clamp(7, 180);
+    let min_rep_dte = dtes[p05_idx];
+    let dte_range_str = format!("{min_rep_dte}-{max_entry_dte} days (p5-p75 of liquid DTE rows)");
 
-    for &dte in &dtes[1..] {
-        if dte - current_cluster.last().unwrap() <= 15 {
-            // Allow gaps up to 15 days
-            current_cluster.push(dte);
-        } else {
-            if current_cluster.len() > best_cluster.len() {
-                best_cluster.clone_from(&current_cluster);
-            }
-            current_cluster = vec![dte];
-        }
-    }
-    if current_cluster.len() > best_cluster.len() {
-        best_cluster.clone_from(&current_cluster);
-    }
+    // Compute exit_dte from max_entry_dte using sensible formula
+    let exit_dte = compute_exit_dte(max_entry_dte);
 
-    let min_dte = *best_cluster.first().unwrap_or(&1);
-    let max_dte = *best_cluster.last().unwrap_or(&60);
-    let dte_range_str = format!("{min_dte}-{max_dte} days");
-
-    // Suggest exit_dte as 30% of max_entry_dte, floored to natural cluster boundary
-    let suggested_exit = (max_dte as f32 * 0.3).floor() as i32;
-    let exit_dte = suggested_exit.max(min_dte / 2).min(min_dte);
-
-    Ok((max_dte, exit_dte, dte_range_str))
+    Ok((max_entry_dte, exit_dte, dte_range_str))
 }
 
-/// Extract recommended delta ranges for each leg based on option type analysis.
-fn extract_leg_deltas(df: &DataFrame, strategy_def: &StrategyDef) -> Result<Vec<TargetRange>> {
+/// Extract recommended delta ranges for each leg based on option type and side analysis.
+/// Filters to the DTE zone [`exit_dte`, `max_entry_dte`] and uses side-aware percentile bands.
+fn extract_leg_deltas(
+    df: &DataFrame,
+    strategy_def: &StrategyDef,
+    max_entry_dte: i32,
+    exit_dte: i32,
+) -> Result<Vec<TargetRange>> {
     let mut leg_deltas = Vec::new();
 
     for leg in &strategy_def.legs {
@@ -243,21 +240,25 @@ fn extract_leg_deltas(df: &DataFrame, strategy_def: &StrategyDef) -> Result<Vec<
             crate::engine::types::OptionType::Put => "put",
         };
 
-        // Filter by option type
+        // Filter by option type, DTE range, and OTM range [0.05, 0.50]
         let leg_df = df
             .clone()
             .lazy()
             .filter(col("option_type").eq(lit(option_type_str)))
+            .filter(col("dte").gt_eq(lit(exit_dte)))
+            .filter(col("dte").lt_eq(lit(max_entry_dte)))
             .with_column(col("delta").abs().alias("abs_delta"))
+            .filter(col("abs_delta").gt_eq(lit(0.05_f64)))
+            .filter(col("abs_delta").lt_eq(lit(0.50_f64)))
             .collect()?;
 
         if leg_df.height() == 0 {
-            // No rows for this option type; use defaults
-            leg_deltas.push(TargetRange {
-                target: 0.5,
-                min: 0.2,
-                max: 0.8,
-            });
+            // No rows for this option type in DTE zone; use side-aware defaults
+            let (target, min, max) = match leg.side {
+                Side::Short => (0.30, 0.20, 0.40),
+                Side::Long => (0.15, 0.08, 0.22),
+            };
+            leg_deltas.push(TargetRange { target, min, max });
             continue;
         }
 
@@ -269,28 +270,44 @@ fn extract_leg_deltas(df: &DataFrame, strategy_def: &StrategyDef) -> Result<Vec<
             .collect();
 
         if deltas.is_empty() {
-            leg_deltas.push(TargetRange {
-                target: 0.5,
-                min: 0.2,
-                max: 0.8,
-            });
+            // No finite deltas; use side-aware defaults
+            let (target, min, max) = match leg.side {
+                Side::Short => (0.30, 0.20, 0.40),
+                Side::Long => (0.15, 0.08, 0.22),
+            };
+            leg_deltas.push(TargetRange { target, min, max });
             continue;
         }
 
         deltas.sort_by(f64::total_cmp);
+        let n = deltas.len();
 
-        let q25_idx = (deltas.len() as f64 * 0.25) as usize;
-        let q50_idx = (deltas.len() as f64 * 0.50) as usize;
-        let q75_idx = (deltas.len() as f64 * 0.75) as usize;
+        // Use side-aware percentile bands
+        let (min_delta, target_delta, max_delta) = match leg.side {
+            Side::Short => {
+                // Sell premium at the body: p40-p60 of OTM range ≈ 0.25-0.35 for SPY
+                let p40 = deltas[((n as f64 * 0.40) as usize).min(n - 1)];
+                let p50 = deltas[((n as f64 * 0.50) as usize).min(n - 1)];
+                let p60 = deltas[((n as f64 * 0.60) as usize).min(n - 1)];
+                (p40, p50, p60)
+            }
+            Side::Long => {
+                // Buy wings at far OTM: p10-p25 of OTM range ≈ 0.08-0.15 for SPY
+                let p10 = deltas[((n as f64 * 0.10) as usize).min(n - 1)];
+                let p15 = deltas[((n as f64 * 0.15) as usize).min(n - 1)];
+                let p25 = deltas[((n as f64 * 0.25) as usize).min(n - 1)];
+                (p10, p15, p25)
+            }
+        };
 
-        let min_delta = deltas[q25_idx];
-        let target_delta = deltas[q50_idx];
-        let max_delta = deltas[q75_idx];
+        let min_delta = min_delta.clamp(0.05, 0.95);
+        let max_delta = max_delta.clamp(0.05, 0.95).max(min_delta + 0.01);
+        let target_delta = target_delta.clamp(min_delta, max_delta);
 
         leg_deltas.push(TargetRange {
-            target: target_delta.clamp(0.1, 0.9),
-            min: min_delta.clamp(0.0, 0.5),
-            max: max_delta.clamp(0.5, 1.0),
+            target: target_delta,
+            min: min_delta,
+            max: max_delta,
         });
     }
 
