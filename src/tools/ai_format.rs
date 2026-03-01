@@ -61,7 +61,6 @@ fn sample_equity_curve(curve: &[EquityPoint], max_points: usize) -> Vec<EquityPo
     let step = (curve.len() - 1) as f64 / (max_points - 1) as f64;
     (0..max_points)
         .map(|i| {
-            #[allow(clippy::cast_precision_loss)]
             let idx = (i as f64 * step).round() as usize;
             curve[idx.min(curve.len() - 1)].clone()
         })
@@ -678,7 +677,6 @@ mod tests {
     fn sample_equity_curve_downsamples() {
         let curve: Vec<EquityPoint> = (0..100)
             .map(|i| {
-                #[allow(clippy::cast_precision_loss)]
                 let eq = 100.0 + i as f64;
                 make_equity_point(i, eq)
             })
@@ -918,7 +916,7 @@ mod tests {
         }
     }
 
-    #[allow(clippy::too_many_arguments, clippy::cast_precision_loss)]
+    #[allow(clippy::too_many_arguments)]
     fn make_backtest_result(
         _total_pnl: f64,
         sharpe: f64,

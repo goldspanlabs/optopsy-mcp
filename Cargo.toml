@@ -33,6 +33,11 @@ module_name_repetitions = "allow"
 must_use_candidate = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+# Controlled numeric casts throughout (day counts, indices, etc.)
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -79,7 +79,6 @@ fn extract_date_from_column(col: &Column, idx: usize) -> Result<NaiveDate> {
                         }
                         TimeUnit::Nanoseconds => {
                             let secs = v / 1_000_000_000;
-                            #[allow(clippy::cast_sign_loss)]
                             let nsecs = (v % 1_000_000_000) as u32;
                             chrono::DateTime::from_timestamp(secs, nsecs).map(|dt| dt.naive_utc())
                         }
@@ -342,7 +341,6 @@ pub fn run_event_loop(
 
         // Phase 2: Enter new positions
         let open_count = positions.len();
-        #[allow(clippy::cast_sign_loss)]
         if open_count < params.max_positions as usize {
             if let Some(day_candidates) = candidates.get(&today) {
                 // Filter out candidates with expirations we already hold

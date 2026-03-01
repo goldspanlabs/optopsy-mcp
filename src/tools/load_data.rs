@@ -52,7 +52,6 @@ pub async fn execute(
         let min_scalar = date_col.min_reduce()?;
         let max_scalar = date_col.max_reduce()?;
 
-        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
         let format_scalar = |s: polars::prelude::Scalar| -> Option<String> {
             match s.value() {
                 AnyValue::Null => None,
