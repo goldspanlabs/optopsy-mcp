@@ -6,4 +6,5 @@ pub mod metrics;
 pub mod output;
 pub mod pricing;
 pub mod rules;
+pub mod suggest;
 pub mod types;

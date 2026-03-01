@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::engine::types::{
-    CompareResult, EquityPoint, GroupStats, PerformanceMetrics, TradeRecord,
+    CompareResult, EquityPoint, GroupStats, PerformanceMetrics, Slippage, TargetRange, TradeRecord,
 };
 
 /// Data quality report for `evaluate_strategy`
@@ -196,4 +196,28 @@ pub struct ConstructSignalResponse {
     /// Example JSON structures showing how to combine signals using And/Or operators
     pub combinator_examples: Vec<serde_json::Value>,
     pub suggested_next_steps: Vec<String>,
+}
+
+/// AI-enriched response for `suggest_parameters`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SuggestResponse {
+    pub summary: String,
+    pub strategy: String,
+    pub leg_deltas: Vec<TargetRange>,
+    pub max_entry_dte: i32,
+    pub exit_dte: i32,
+    pub slippage: Slippage,
+    pub rationale: String,
+    pub confidence: f64,
+    pub data_coverage: DataCoverage,
+    pub suggested_next_steps: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DataCoverage {
+    pub total_rows: usize,
+    pub liquid_rows: usize,
+    pub dte_range: String,
+    pub expiration_count: usize,
+    pub warnings: Vec<String>,
 }

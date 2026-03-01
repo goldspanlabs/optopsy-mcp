@@ -34,6 +34,7 @@ use crate::tools;
 use crate::tools::response_types::{
     BacktestResponse, CheckCacheResponse, CompareResponse, ConstructSignalResponse,
     DownloadResponse, EvaluateResponse, FetchResponse, LoadDataResponse, StrategiesResponse,
+    SuggestResponse,
 };
 use crate::tools::signals::SignalsResponse;
 
@@ -200,6 +201,30 @@ pub struct FetchToParquetParams {
     /// Time period to fetch (e.g. "6mo", "1y", "5y", "max"). Defaults to "6mo".
     #[garde(inner(length(min = 1)))]
     pub period: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, Validate)]
+#[serde(rename_all = "lowercase")]
+pub enum RiskPreferenceParam {
+    Conservative,
+    Moderate,
+    Aggressive,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+pub struct SuggestParametersParams {
+    /// Strategy name (e.g. '`iron_condor`')
+    #[garde(length(min = 1))]
+    pub strategy: String,
+    /// Risk preference: conservative (tight filters), moderate (balanced), or aggressive (loose filters)
+    #[garde(skip)]
+    pub risk_preference: RiskPreferenceParam,
+    /// Target win rate (0.0-1.0), informational only
+    #[garde(inner(range(min = 0.0, max = 1.0)))]
+    pub target_win_rate: Option<f64>,
+    /// Target Sharpe ratio, informational only
+    #[garde(skip)]
+    pub target_sharpe: Option<f64>,
 }
 
 use rmcp::handler::server::wrapper::Parameters;
@@ -423,6 +448,42 @@ impl OptopsyServer {
             .map(Json)
             .map_err(|e| format!("Error: {e}"))
     }
+
+    /// Analyze the loaded options chain and suggest optimal parameters for a strategy
+    /// based on DTE coverage, bid/ask spread quality, and delta distribution.
+    #[tool(name = "suggest_parameters")]
+    async fn suggest_parameters(
+        &self,
+        Parameters(params): Parameters<SuggestParametersParams>,
+    ) -> Result<Json<SuggestResponse>, String> {
+        params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
+
+        let risk_pref = match params.risk_preference {
+            RiskPreferenceParam::Conservative => {
+                crate::engine::suggest::RiskPreference::Conservative
+            }
+            RiskPreferenceParam::Moderate => crate::engine::suggest::RiskPreference::Moderate,
+            RiskPreferenceParam::Aggressive => crate::engine::suggest::RiskPreference::Aggressive,
+        };
+
+        let suggest_params = crate::engine::suggest::SuggestParams {
+            strategy: params.strategy,
+            risk_preference: risk_pref,
+            target_win_rate: params.target_win_rate,
+            target_sharpe: params.target_sharpe,
+        };
+
+        let data = self.data.read().await;
+        let Some((_, df)) = data.as_ref() else {
+            return Err("Error: No data loaded. Call load_data first.".to_string());
+        };
+
+        tools::suggest::execute(df, &suggest_params)
+            .map(Json)
+            .map_err(|e| format!("Error: {e}"))
+    }
 }
 
 #[tool_handler]
@@ -434,7 +495,7 @@ impl ServerHandler for OptopsyServer {
             server_info: Implementation {
                 name: "optopsy-mcp".into(),
                 title: None,
-                version: env!("CARGO_PKG_VERSION").into(),
+                version: "0.1.0".into(),
                 description: None,
                 icons: None,
                 website_url: None,
