@@ -83,19 +83,20 @@ fn make_multi_strike_df() -> DataFrame {
     let mut deltas = Vec::new();
 
     // Helper to add rows for a given expiration and option data
-    let mut add_rows = |data: &[(f64, f64, [f64; 3], [f64; 3])], opt_type: &'static str, exp: NaiveDate| {
-        for (strike, delta_val, bid_arr, ask_arr) in data {
-            for (i, date) in dates.iter().enumerate() {
-                quote_dates.push(date.and_hms_opt(0, 0, 0).unwrap());
-                expirations_vec.push(exp);
-                option_types.push(opt_type);
-                strikes.push(*strike);
-                bids.push(bid_arr[i]);
-                asks.push(ask_arr[i]);
-                deltas.push(*delta_val);
+    let mut add_rows =
+        |data: &[(f64, f64, [f64; 3], [f64; 3])], opt_type: &'static str, exp: NaiveDate| {
+            for (strike, delta_val, bid_arr, ask_arr) in data {
+                for (i, date) in dates.iter().enumerate() {
+                    quote_dates.push(date.and_hms_opt(0, 0, 0).unwrap());
+                    expirations_vec.push(exp);
+                    option_types.push(opt_type);
+                    strikes.push(*strike);
+                    bids.push(bid_arr[i]);
+                    asks.push(ask_arr[i]);
+                    deltas.push(*delta_val);
+                }
             }
-        }
-    };
+        };
 
     // Near-term expiration rows
     add_rows(&call_data_near, "call", exp_near);
@@ -465,11 +466,7 @@ fn backtest_call_calendar_spread() {
     // S near Call@100: entry mid=5.25, exit mid=2.25 → (2.25-5.25)×(-1)×100 = +300
     // L far  Call@100: entry mid=7.25, exit mid=4.75 → (4.75-7.25)×(1)×100  = -250
     // Total: +300 + (-250) = +50
-    assert_backtest(
-        "call_calendar_spread",
-        vec![delta(0.50), delta(0.50)],
-        50.0,
-    );
+    assert_backtest("call_calendar_spread", vec![delta(0.50), delta(0.50)], 50.0);
 }
 
 #[test]

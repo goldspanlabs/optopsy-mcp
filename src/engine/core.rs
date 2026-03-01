@@ -77,12 +77,7 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
 
         // Select only needed columns and rename with leg index
         let prepared = if is_multi_exp {
-            filters::prepare_leg_for_join_multi_exp(
-                &matched,
-                i,
-                base_cols,
-                leg.expiration_cycle,
-            )?
+            filters::prepare_leg_for_join_multi_exp(&matched, i, base_cols, leg.expiration_cycle)?
         } else {
             filters::prepare_leg_for_join(&matched, i, base_cols)?
         };
@@ -301,9 +296,7 @@ pub fn compare_strategies(df: &DataFrame, params: &CompareParams) -> Result<Vec<
 /// Primary and secondary legs are joined separately within their groups on
 /// `(quote_datetime, expiration_<cycle>)`, then cross-joined on `quote_datetime`
 /// with a filter ensuring `expiration_secondary > expiration_primary`.
-fn join_multi_expiration_legs(
-    leg_dfs: &[(DataFrame, ExpirationCycle)],
-) -> Result<DataFrame> {
+fn join_multi_expiration_legs(leg_dfs: &[(DataFrame, ExpirationCycle)]) -> Result<DataFrame> {
     let mut primary_dfs: Vec<&DataFrame> = Vec::new();
     let mut secondary_dfs: Vec<&DataFrame> = Vec::new();
 

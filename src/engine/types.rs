@@ -28,7 +28,7 @@ pub enum OptionType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ExpirationCycle {
     #[default]
-    Primary,   // Near-term (or same-expiration for non-calendar strategies)
+    Primary, // Near-term (or same-expiration for non-calendar strategies)
     Secondary, // Far-term (calendar/diagonal only)
 }
 

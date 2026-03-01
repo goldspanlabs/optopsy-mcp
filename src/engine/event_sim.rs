@@ -147,12 +147,7 @@ pub fn find_entry_candidates(
 
         // Select only needed columns and rename with leg index
         let prepared = if is_multi_exp {
-            filters::prepare_leg_for_join_multi_exp(
-                &selected,
-                i,
-                base_cols,
-                leg.expiration_cycle,
-            )?
+            filters::prepare_leg_for_join_multi_exp(&selected, i, base_cols, leg.expiration_cycle)?
         } else {
             filters::prepare_leg_for_join(&selected, i, base_cols)?
         };
@@ -210,20 +205,11 @@ pub fn find_entry_candidates(
 
         // Extract expiration dates
         let (primary_exp, secondary_exp) = if is_multi_exp {
-            let prim = extract_date_from_column(
-                combined.column("expiration_primary")?,
-                row_idx,
-            )?;
-            let sec = extract_date_from_column(
-                combined.column("expiration_secondary")?,
-                row_idx,
-            )?;
+            let prim = extract_date_from_column(combined.column("expiration_primary")?, row_idx)?;
+            let sec = extract_date_from_column(combined.column("expiration_secondary")?, row_idx)?;
             (prim, Some(sec))
         } else {
-            let exp = extract_date_from_column(
-                combined.column("expiration")?,
-                row_idx,
-            )?;
+            let exp = extract_date_from_column(combined.column("expiration")?, row_idx)?;
             (exp, None)
         };
 
@@ -288,9 +274,7 @@ pub fn find_entry_candidates(
 }
 
 /// Join legs for multi-expiration strategies in the backtest pipeline.
-fn join_multi_exp_legs(
-    leg_dfs: &[(DataFrame, ExpirationCycle)],
-) -> Result<DataFrame> {
+fn join_multi_exp_legs(leg_dfs: &[(DataFrame, ExpirationCycle)]) -> Result<DataFrame> {
     let mut primary_dfs: Vec<&DataFrame> = Vec::new();
     let mut secondary_dfs: Vec<&DataFrame> = Vec::new();
 
