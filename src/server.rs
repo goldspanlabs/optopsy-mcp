@@ -282,7 +282,9 @@ impl ServerHandler for OptopsyServer {
                 fetch_to_parquet to avoid re-downloading data that is already available.\
                 \n0b. fetch_to_parquet({ symbol, category, period? }) — fetch historical \
                 OHLCV data from Yahoo Finance and write it to a local Parquet file. \
-                Only needed if check_cache_status shows the data is missing or stale.\
+                Only needed if check_cache_status shows the data is missing or stale. \
+                Note: the resulting Parquet file is for OHLCV price data and is separate from \
+                the options chain loaded by load_data.\
                 \n1. load_data({ symbol }) — load (or auto-fetch) a symbol's options chain. \
                 All subsequent tools operate on the in-memory DataFrame loaded here.\
                 \n2. list_strategies() — browse all built-in strategies grouped by category \
