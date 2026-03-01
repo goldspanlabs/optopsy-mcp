@@ -32,8 +32,8 @@ fn validate_exit_dte_lt_max_dte(
 }
 use crate::tools;
 use crate::tools::response_types::{
-    BacktestResponse, CheckCacheResponse, CompareResponse, DownloadResponse, EvaluateResponse,
-    FetchResponse, LoadDataResponse, StrategiesResponse,
+    BacktestResponse, CheckCacheResponse, CompareResponse, ConstructSignalResponse,
+    DownloadResponse, EvaluateResponse, FetchResponse, LoadDataResponse, StrategiesResponse,
 };
 use crate::tools::signals::SignalsResponse;
 
@@ -182,6 +182,14 @@ pub struct CheckCacheParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
+pub struct ConstructSignalParams {
+    /// Natural language description e.g. "RSI oversold" or "MACD bullish and above 50-day SMA"
+    /// Must contain at least one non-whitespace character.
+    #[garde(length(min = 1, max = 500), pattern(r"[^ \t\n\r]"))]
+    pub prompt: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct FetchToParquetParams {
     /// Ticker symbol (e.g. "SPY")
     #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
@@ -251,6 +259,20 @@ impl OptopsyServer {
     #[tool(name = "list_signals")]
     async fn list_signals(&self) -> Json<SignalsResponse> {
         Json(tools::signals::execute())
+    }
+
+    /// Construct a signal specification from a natural language prompt.
+    /// Fuzzy-searches the signal catalog, returns matching candidates + live JSON schema.
+    /// Pass the result's example JSON to `run_backtest`'s `entry_signal` or `exit_signal` fields.
+    #[tool(name = "construct_signal")]
+    async fn construct_signal(
+        &self,
+        Parameters(params): Parameters<ConstructSignalParams>,
+    ) -> Result<Json<ConstructSignalResponse>, String> {
+        params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
+        Ok(Json(tools::construct_signal::execute(&params.prompt)))
     }
 
     /// Evaluate a strategy statistically by grouping trades into DTE/delta buckets
