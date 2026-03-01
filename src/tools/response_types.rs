@@ -144,3 +144,24 @@ pub struct FetchResponse {
     pub columns: Vec<String>,
     pub suggested_next_steps: Vec<String>,
 }
+
+/// Signal candidate from `construct_signal`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SignalCandidate {
+    pub name: String,
+    pub category: String,
+    pub description: String,
+    pub params: String,
+    pub example: serde_json::Value,
+}
+
+/// Response for `construct_signal`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ConstructSignalResponse {
+    pub summary: String,
+    pub candidates: Vec<SignalCandidate>,
+    pub schema: serde_json::Value,
+    pub column_defaults: serde_json::Value,
+    pub combinator_examples: Vec<serde_json::Value>,
+    pub suggested_next_steps: Vec<String>,
+}
