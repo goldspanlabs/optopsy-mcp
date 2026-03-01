@@ -2,7 +2,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::engine::types::{CompareResult, EquityPoint, GroupStats, PerformanceMetrics, TradeRecord};
+use crate::engine::types::{
+    CompareResult, EquityPoint, GroupStats, PerformanceMetrics, TradeRecord,
+};
 
 /// AI-enriched response for `run_backtest`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

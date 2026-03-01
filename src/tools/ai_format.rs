@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::engine::types::{
-    BacktestParams, BacktestResult, CompareResult, EquityPoint, ExitType, EvaluateParams,
+    BacktestParams, BacktestResult, CompareResult, EquityPoint, EvaluateParams, ExitType,
     GroupStats, TradeRecord,
 };
 
@@ -98,12 +98,16 @@ fn compute_trade_summary(trade_log: &[TradeRecord]) -> TradeSummary {
             .or_default() += 1;
     }
 
-    let best = trade_log
-        .iter()
-        .max_by(|a, b| a.pnl.partial_cmp(&b.pnl).unwrap_or(std::cmp::Ordering::Equal));
-    let worst = trade_log
-        .iter()
-        .min_by(|a, b| a.pnl.partial_cmp(&b.pnl).unwrap_or(std::cmp::Ordering::Equal));
+    let best = trade_log.iter().max_by(|a, b| {
+        a.pnl
+            .partial_cmp(&b.pnl)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let worst = trade_log.iter().min_by(|a, b| {
+        a.pnl
+            .partial_cmp(&b.pnl)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let best_trade = best.map_or(
         TradeStat {
@@ -148,14 +152,8 @@ fn compute_equity_summary(curve: &[EquityPoint], capital: f64) -> EquityCurveSum
         curve[0].equity
     };
     let end_equity = curve.last().map_or(capital, |p| p.equity);
-    let peak_equity = curve
-        .iter()
-        .map(|p| p.equity)
-        .fold(capital, f64::max);
-    let trough_equity = curve
-        .iter()
-        .map(|p| p.equity)
-        .fold(capital, f64::min);
+    let peak_equity = curve.iter().map(|p| p.equity).fold(capital, f64::max);
+    let trough_equity = curve.iter().map(|p| p.equity).fold(capital, f64::min);
     let total_return_pct = if capital > 0.0 {
         (end_equity - capital) / capital * 100.0
     } else {
@@ -222,9 +220,7 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
             }
         ));
     } else {
-        key_findings.push(format!(
-            "Win rate of {win_pct:.0}% with no losing trades"
-        ));
+        key_findings.push(format!("Win rate of {win_pct:.0}% with no losing trades"));
     }
 
     // Drawdown
@@ -306,12 +302,20 @@ pub fn format_evaluate(groups: Vec<GroupStats>, params: &EvaluateParams) -> Eval
 
     let best_bucket = groups
         .iter()
-        .max_by(|a, b| a.median.partial_cmp(&b.median).unwrap_or(std::cmp::Ordering::Equal))
+        .max_by(|a, b| {
+            a.median
+                .partial_cmp(&b.median)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
         .cloned();
 
     let worst_bucket = groups
         .iter()
-        .min_by(|a, b| a.median.partial_cmp(&b.median).unwrap_or(std::cmp::Ordering::Equal))
+        .min_by(|a, b| {
+            a.median
+                .partial_cmp(&b.median)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
         .cloned();
 
     let highest_win_rate_bucket = groups
@@ -387,10 +391,7 @@ pub fn format_compare(results: Vec<CompareResult>) -> CompareResponse {
     });
     let ranking_by_pnl: Vec<String> = by_pnl.iter().map(|r| r.strategy.clone()).collect();
 
-    let best_overall = ranking_by_sharpe
-        .first()
-        .cloned()
-        .unwrap_or_default();
+    let best_overall = ranking_by_sharpe.first().cloned().unwrap_or_default();
 
     let summary = if results.is_empty() {
         "No strategies to compare.".to_string()

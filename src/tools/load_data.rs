@@ -65,5 +65,7 @@ pub async fn execute(
     let mut guard = data.write().await;
     *guard = Some(df);
 
-    Ok(ai_format::format_load_data(rows, symbols, date_range, columns))
+    Ok(ai_format::format_load_data(
+        rows, symbols, date_range, columns,
+    ))
 }
