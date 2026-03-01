@@ -16,6 +16,7 @@ use crate::engine::types::{
     BacktestParams, Commission, CompareEntry, CompareParams, EvaluateParams, SimParams, Slippage,
     TargetRange, TradeSelector,
 };
+use crate::signals::registry::SignalSpec;
 
 fn validate_exit_dte_lt_max_dte(
     max_entry_dte: &i32,
@@ -34,10 +35,14 @@ use crate::tools::response_types::{
     BacktestResponse, CheckCacheResponse, CompareResponse, DownloadResponse, EvaluateResponse,
     FetchResponse, LoadDataResponse, StrategiesResponse,
 };
+use crate::tools::signals::SignalsResponse;
+
+/// Loaded data: (symbol, `DataFrame`) tuple so we can auto-resolve OHLCV paths.
+type LoadedData = Option<(String, DataFrame)>;
 
 #[derive(Clone)]
 pub struct OptopsyServer {
-    pub data: Arc<RwLock<Option<DataFrame>>>,
+    pub data: Arc<RwLock<LoadedData>>,
     pub cache: Arc<CachedStore>,
     pub eodhd: Option<Arc<EodhdProvider>>,
     tool_router: ToolRouter<Self>,
@@ -146,6 +151,14 @@ pub struct RunBacktestParams {
     /// Trade selection method
     #[garde(skip)]
     pub selector: Option<TradeSelector>,
+    /// Entry signal — only open trades on dates where this TA signal fires.
+    /// Requires OHLCV data (call `fetch_to_parquet` first).
+    #[garde(skip)]
+    pub entry_signal: Option<SignalSpec>,
+    /// Exit signal — close open positions on dates where this TA signal fires.
+    /// Requires OHLCV data (call `fetch_to_parquet` first).
+    #[garde(skip)]
+    pub exit_signal: Option<SignalSpec>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
@@ -214,11 +227,12 @@ impl OptopsyServer {
         params
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
+        let symbol = params.symbol.clone();
         tools::load_data::execute(
             &self.data,
             &self.cache,
             self.eodhd.as_ref(),
-            &params.symbol,
+            &symbol,
             params.start_date.as_deref(),
             params.end_date.as_deref(),
         )
@@ -233,6 +247,12 @@ impl OptopsyServer {
         Json(tools::strategies::execute())
     }
 
+    /// List all available TA signals for entry/exit filtering in `run_backtest`
+    #[tool(name = "list_signals")]
+    async fn list_signals(&self) -> Json<SignalsResponse> {
+        Json(tools::signals::execute())
+    }
+
     /// Evaluate a strategy statistically by grouping trades into DTE/delta buckets
     #[tool(name = "evaluate_strategy")]
     async fn evaluate_strategy(
@@ -243,7 +263,7 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
         let data = self.data.read().await;
-        let Some(df) = data.as_ref() else {
+        let Some((_, df)) = data.as_ref() else {
             return Err("Error: No data loaded. Call load_data first.".to_string());
         };
 
@@ -276,8 +296,24 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
         let data = self.data.read().await;
-        let Some(df) = data.as_ref() else {
+        let Some((symbol, df)) = data.as_ref() else {
             return Err("Error: No data loaded. Call load_data first.".to_string());
+        };
+
+        // Auto-resolve OHLCV path if signals are requested
+        let ohlcv_path = if params.entry_signal.is_some() || params.exit_signal.is_some() {
+            let path = self
+                .cache
+                .cache_path(symbol, "prices")
+                .map_err(|e| format!("Error resolving OHLCV path: {e}"))?;
+            if !path.exists() {
+                return Err(format!(
+                    "OHLCV data not found for {symbol}. Call fetch_to_parquet({{ symbol: \"{symbol}\", category: \"prices\" }}) first."
+                ));
+            }
+            Some(path.to_string_lossy().to_string())
+        } else {
+            None
         };
 
         let backtest_params = BacktestParams {
@@ -296,6 +332,9 @@ impl OptopsyServer {
             max_positions: params.max_positions,
             selector: params.selector.unwrap_or_default(),
             adjustment_rules: vec![],
+            entry_signal: params.entry_signal,
+            exit_signal: params.exit_signal,
+            ohlcv_path,
         };
         backtest_params
             .validate()
@@ -316,7 +355,7 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
         let data = self.data.read().await;
-        let Some(df) = data.as_ref() else {
+        let Some((_, df)) = data.as_ref() else {
             return Err("Error: No data loaded. Call load_data first.".to_string());
         };
 
@@ -395,16 +434,23 @@ impl ServerHandler for OptopsyServer {
                 to explicitly download data first.\
                 \n2. list_strategies() — browse all built-in strategies grouped by category \
                 (singles, spreads, butterflies, condors, iron, calendars).\
-                \n3. evaluate_strategy({ strategy, leg_deltas, max_entry_dte, exit_dte, \
+                \n3. list_signals() — browse all available TA signals grouped by category \
+                (momentum, overlap, trend, volatility, price, volume). Signals can be used as \
+                entry_signal and exit_signal in run_backtest.\
+                \n4. evaluate_strategy({ strategy, leg_deltas, max_entry_dte, exit_dte, \
                 dte_interval, delta_interval, slippage }) — fast statistical screen that \
                 groups historical trades into DTE × delta buckets and returns mean P&L, \
                 win rate, profit factor, and distribution stats per bucket. \
                 Use this to identify promising parameter ranges before committing to a full simulation.\
-                \n4. run_backtest({ strategy, leg_deltas, ..., capital, quantity, max_positions }) \
+                \n5. run_backtest({ strategy, leg_deltas, ..., capital, quantity, max_positions, \
+                entry_signal?, exit_signal? }) \
                 — event-driven day-by-day simulation with position management (stop loss, take profit, \
-                max hold, DTE exit), equity curve, and full performance metrics \
-                (Sharpe, Sortino, Calmar, VaR, CAGR, expectancy).\
-                \n5. compare_strategies({ strategies: [...], sim_params }) — run the same backtest \
+                max hold, DTE exit, signal exit), equity curve, and full performance metrics \
+                (Sharpe, Sortino, Calmar, VaR, CAGR, expectancy). \
+                Optional: pass entry_signal to filter entries to days where a TA condition fires, \
+                and/or exit_signal to trigger early exits. Signals require OHLCV data — call \
+                fetch_to_parquet({ symbol, category: \"prices\" }) first.\
+                \n6. compare_strategies({ strategies: [...], sim_params }) — run the same backtest \
                 pipeline for multiple strategies in parallel and rank them by Sharpe and total P&L.\
                 \n\nData flow summary: EODHD API → local Parquet cache → DataFrame → per-leg \
                 filter/delta-select → leg join → strike-order validation → P&L calculation → \

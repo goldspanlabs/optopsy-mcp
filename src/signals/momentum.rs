@@ -5,16 +5,13 @@ use polars::prelude::*;
 use rust_ti::standard_indicators::bulk as sti;
 
 /// Standard RSI lookback period.
-#[allow(dead_code)]
 const RSI_PERIOD: usize = 14;
 
 /// Minimum number of data points required to compute MACD (slow EMA + signal line).
-#[allow(dead_code)]
 const MACD_MIN_PERIODS: usize = 34;
 
 /// Signal: RSI is below a threshold (oversold condition).
 /// Uses the standard 14-period RSI.
-#[allow(dead_code)]
 pub struct RsiOversold {
     pub column: String,
     pub threshold: f64,
@@ -41,7 +38,6 @@ impl SignalFn for RsiOversold {
 }
 
 /// Signal: RSI is above a threshold (overbought condition).
-#[allow(dead_code)]
 pub struct RsiOverbought {
     pub column: String,
     pub threshold: f64,
@@ -69,7 +65,6 @@ impl SignalFn for RsiOverbought {
 
 /// Signal: MACD histogram is positive (bullish momentum).
 /// Requires at least 34 data points.
-#[allow(dead_code)]
 pub struct MacdBullish {
     pub column: String,
 }
@@ -91,7 +86,6 @@ impl SignalFn for MacdBullish {
 }
 
 /// Signal: MACD histogram is negative (bearish momentum).
-#[allow(dead_code)]
 pub struct MacdBearish {
     pub column: String,
 }
@@ -113,7 +107,6 @@ impl SignalFn for MacdBearish {
 }
 
 /// Signal: MACD histogram crosses from negative to positive (bullish crossover).
-#[allow(dead_code)]
 pub struct MacdCrossover {
     pub column: String,
 }
@@ -143,7 +136,6 @@ impl SignalFn for MacdCrossover {
 
 /// Computes the stochastic oscillator values over a rolling window.
 /// Formula: (close - `lowest_low`) / (`highest_high` - `lowest_low`) * 100
-#[allow(dead_code)]
 fn compute_stochastic(close: &[f64], high: &[f64], low: &[f64], period: usize) -> Vec<f64> {
     let n = close.len();
     if n < period {
@@ -169,7 +161,6 @@ fn compute_stochastic(close: &[f64], high: &[f64], low: &[f64], period: usize) -
 
 /// Signal: Stochastic oscillator is below threshold (oversold).
 /// Uses the standard formula: (close - `lowest_low`) / (`highest_high` - `lowest_low`) * 100.
-#[allow(dead_code)]
 pub struct StochasticOversold {
     pub close_col: String,
     pub high_col: String,
@@ -204,7 +195,6 @@ impl SignalFn for StochasticOversold {
 
 /// Signal: Stochastic oscillator is above threshold (overbought).
 /// Uses the standard formula: (close - `lowest_low`) / (`highest_high` - `lowest_low`) * 100.
-#[allow(dead_code)]
 pub struct StochasticOverbought {
     pub close_col: String,
     pub high_col: String,

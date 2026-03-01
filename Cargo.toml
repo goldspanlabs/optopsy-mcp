@@ -47,3 +47,4 @@ cast_precision_loss = "allow"
 [dev-dependencies]
 tokio-test = "0.4"
 cargo-husky = { version = "1", default-features = false, features = ["user-hooks"] }
+tempfile = "3.26.0"

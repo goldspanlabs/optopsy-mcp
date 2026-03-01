@@ -5,6 +5,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::signals::registry::SignalSpec;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Side {
     Long = 1,
@@ -117,6 +119,7 @@ pub enum ExitType {
     MaxHold,
     DteExit,
     Adjustment,
+    Signal,
 }
 
 #[derive(Debug, Clone)]
@@ -217,6 +220,18 @@ pub struct BacktestParams {
     #[serde(default)]
     #[garde(skip)]
     pub adjustment_rules: Vec<AdjustmentRule>,
+    /// Optional entry signal — only enter trades on dates where this signal is active
+    #[serde(default)]
+    #[garde(skip)]
+    pub entry_signal: Option<SignalSpec>,
+    /// Optional exit signal — close open positions on dates where this signal is active
+    #[serde(default)]
+    #[garde(skip)]
+    pub exit_signal: Option<SignalSpec>,
+    /// Path to OHLCV parquet file (auto-resolved by server from cached price data)
+    #[serde(default)]
+    #[garde(skip)]
+    pub ohlcv_path: Option<String>,
 }
 
 fn default_multiplier() -> i32 {
@@ -598,6 +613,9 @@ mod tests {
             max_positions: 1,
             selector: TradeSelector::default(),
             adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
         };
         assert!(p.validate().is_err());
     }
@@ -624,6 +642,9 @@ mod tests {
             max_positions: 1,
             selector: TradeSelector::default(),
             adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
         };
         assert!(p.validate().is_err());
     }
@@ -650,6 +671,9 @@ mod tests {
             max_positions: 1,
             selector: TradeSelector::default(),
             adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
         };
         assert!(p.validate().is_ok());
     }
@@ -691,6 +715,9 @@ mod tests {
             max_positions: 1,
             selector: TradeSelector::default(),
             adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
         };
         assert!(p.validate().is_err());
     }

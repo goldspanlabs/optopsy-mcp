@@ -2,16 +2,15 @@ use polars::prelude::*;
 
 /// A signal function takes a `DataFrame` and returns a boolean Series
 /// indicating which rows meet the signal criteria.
-#[allow(dead_code)]
 pub trait SignalFn: Send + Sync {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError>;
+    #[allow(dead_code)]
     fn name(&self) -> &'static str;
 }
 
 /// Extract a column from a `DataFrame` as a `Vec<f64>`.
 /// Returns an error if the column doesn't exist or can't be cast to f64.
 /// Null values are preserved as `f64::NAN` to maintain row alignment.
-#[allow(dead_code)]
 pub fn column_to_f64(df: &DataFrame, col_name: &str) -> Result<Vec<f64>, PolarsError> {
     let s = df.column(col_name)?.cast(&DataType::Float64)?;
     let ca = s.f64()?;
@@ -21,7 +20,6 @@ pub fn column_to_f64(df: &DataFrame, col_name: &str) -> Result<Vec<f64>, PolarsE
 /// Pad a computed indicator series (shorter than the original) with NaN at the front,
 /// then produce a boolean Series by applying a predicate to each value.
 /// Rows with NaN (from the padding) are set to `false`.
-#[allow(dead_code)]
 pub fn pad_and_compare(
     values: &[f64],
     original_len: usize,
@@ -42,7 +40,6 @@ pub fn pad_and_compare(
 }
 
 /// Pad indicator output to match original length, filling front with `f64::NAN`.
-#[allow(dead_code)]
 pub fn pad_series(values: &[f64], original_len: usize) -> Vec<f64> {
     debug_assert!(
         values.len() <= original_len,

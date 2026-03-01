@@ -1,4 +1,7 @@
+use std::collections::HashSet;
+
 use anyhow::{bail, Result};
+use chrono::NaiveDate;
 use polars::prelude::*;
 
 use super::evaluation;
@@ -11,6 +14,7 @@ use super::rules;
 #[allow(clippy::wildcard_imports)]
 use super::types::*;
 use crate::data::parquet::QUOTE_DATETIME_COL;
+use crate::signals;
 use crate::strategies;
 
 /// Evaluate strategy statistically — returns grouped stats by DTE/delta buckets
@@ -204,6 +208,43 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
     output::bin_and_aggregate(&combined, params.dte_interval, params.delta_interval)
 }
 
+type DateFilter = Option<HashSet<NaiveDate>>;
+
+/// Load OHLCV parquet into a `DataFrame`.
+fn load_ohlcv(ohlcv_path: &str) -> Result<DataFrame> {
+    let args = ScanArgsParquet::default();
+    Ok(LazyFrame::scan_parquet(ohlcv_path.into(), args)?.collect()?)
+}
+
+/// Build entry/exit date filters from signal specs, loading OHLCV at most once.
+fn build_signal_filters(params: &BacktestParams) -> Result<(DateFilter, DateFilter)> {
+    let has_entry = params.entry_signal.is_some();
+    let has_exit = params.exit_signal.is_some();
+
+    if !has_entry && !has_exit {
+        return Ok((None, None));
+    }
+
+    let ohlcv_path = params.ohlcv_path.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("ohlcv_path is required when entry_signal or exit_signal is set")
+    })?;
+
+    let ohlcv_df = load_ohlcv(ohlcv_path)?;
+
+    let entry_dates = params
+        .entry_signal
+        .as_ref()
+        .map(|spec| signals::active_dates(spec, &ohlcv_df, "date"))
+        .transpose()?;
+    let exit_dates = params
+        .exit_signal
+        .as_ref()
+        .map(|spec| signals::active_dates(spec, &ohlcv_df, "date"))
+        .transpose()?;
+
+    Ok((entry_dates, exit_dates))
+}
+
 /// Run a full backtest simulation using event-driven simulation
 pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestResult> {
     let strategy_def = strategies::find_strategy(&params.strategy)
@@ -218,14 +259,24 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
         );
     }
 
+    // Build signal date filters if specified (loads OHLCV at most once)
+    let (entry_dates, exit_dates) = build_signal_filters(params)?;
+
     let (price_table, trading_days) = event_sim::build_price_table(df)?;
-    let candidates = event_sim::find_entry_candidates(df, &strategy_def, params)?;
+    let mut candidates = event_sim::find_entry_candidates(df, &strategy_def, params)?;
+
+    // Filter entry candidates to only dates where the entry signal is active
+    if let Some(ref allowed_dates) = entry_dates {
+        candidates.retain(|date, _| allowed_dates.contains(date));
+    }
+
     let (trade_log, equity_curve) = event_sim::run_event_loop(
         &price_table,
         &candidates,
         &trading_days,
         params,
         &strategy_def,
+        exit_dates.as_ref(),
     );
 
     let perf_metrics = metrics::calculate_metrics(&equity_curve, &trade_log, params.capital)?;
@@ -261,6 +312,9 @@ pub fn compare_strategies(df: &DataFrame, params: &CompareParams) -> Result<Vec<
             max_positions: params.sim_params.max_positions,
             selector: params.sim_params.selector.clone(),
             adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
         };
 
         match run_backtest(df, &backtest_params) {
@@ -440,6 +494,9 @@ mod tests {
             max_positions: 5,
             selector: TradeSelector::First,
             adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
         }
     }
 
@@ -562,6 +619,137 @@ mod tests {
     }
 
     #[test]
+    fn run_backtest_signal_without_ohlcv_path_errors() {
+        let df = make_daily_options_df();
+        let mut params = default_backtest_params();
+        params.entry_signal = Some(signals::registry::SignalSpec::ConsecutiveUp {
+            column: "close".into(),
+            count: 2,
+        });
+        // ohlcv_path intentionally left None
+        let result = run_backtest(&df, &params);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("ohlcv_path is required"),);
+    }
+
+    /// Write a minimal OHLCV parquet to a temp file for signal tests.
+    /// Returns a `TempDir` that keeps the file alive until dropped.
+    fn write_ohlcv_parquet(dates: &[NaiveDate], closes: &[f64]) -> (tempfile::TempDir, String) {
+        let n = dates.len();
+        let mut df = df! {
+            "open" => vec![100.0f64; n],
+            "high" => vec![105.0f64; n],
+            "low" => vec![95.0f64; n],
+            "close" => closes,
+            "adjclose" => closes,
+            "volume" => vec![1_000_000i64; n],
+        }
+        .unwrap();
+        df.with_column(
+            DateChunked::from_naive_date(PlSmallStr::from("date"), dates.to_vec()).into_column(),
+        )
+        .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ohlcv.parquet");
+        let file = std::fs::File::create(&path).unwrap();
+        polars::prelude::ParquetWriter::new(file)
+            .finish(&mut df)
+            .unwrap();
+        let path_str = path.to_string_lossy().to_string();
+        (dir, path_str)
+    }
+
+    #[test]
+    fn run_backtest_entry_signal_filters_candidates() {
+        let df = make_daily_options_df();
+        // Options dates: Jan 15, 22, 29, Feb 1, 5, 11 — all are entry candidates (DTE > exit_dte=5)
+        //
+        // OHLCV: closes decline throughout, so ConsecutiveUp(2) never fires.
+        // All entry candidates should be blocked → 0 trades.
+        let ohlcv_dates: Vec<NaiveDate> = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 11).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 29).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 2, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 2, 5).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(),
+        ];
+        // Monotonically decreasing → ConsecutiveUp(2) never fires
+        let closes = vec![107.0, 106.0, 105.0, 104.0, 103.0, 102.0, 101.0];
+        let (_dir, path) = write_ohlcv_parquet(&ohlcv_dates, &closes);
+
+        let mut params = default_backtest_params();
+        params.entry_signal = Some(signals::registry::SignalSpec::ConsecutiveUp {
+            column: "close".into(),
+            count: 2,
+        });
+        params.ohlcv_path = Some(path);
+
+        let result = run_backtest(&df, &params).unwrap();
+        // All entry dates blocked since close never goes up twice in a row
+        assert_eq!(result.trade_count, 0);
+
+        // Verify baseline without signal would have produced a trade
+        let mut baseline = default_backtest_params();
+        baseline.entry_signal = None;
+        let baseline_result = run_backtest(&df, &baseline).unwrap();
+        assert!(
+            baseline_result.trade_count > 0,
+            "Baseline without signal should produce trades"
+        );
+    }
+
+    #[test]
+    fn run_backtest_exit_signal_triggers_early_close() {
+        let df = make_daily_options_df();
+        // Options dates: Jan 15, 22, 29, Feb 1, 5, 11
+        // Without exit signal, trade closes on Feb 11 (DTE=5 exit).
+        // With exit signal on Jan 29, trade should close there instead.
+        let ohlcv_dates: Vec<NaiveDate> = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 29).unwrap(), // exit signal fires here
+            NaiveDate::from_ymd_opt(2024, 2, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 2, 5).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(),
+        ];
+        // ConsecutiveUp(2): fires when 2 consecutive up closes
+        // Make close go up on Jan 22 and Jan 29 → signal fires on Jan 29
+        let closes = vec![100.0, 101.0, 102.0, 99.0, 98.0, 97.0];
+        let (_dir, path) = write_ohlcv_parquet(&ohlcv_dates, &closes);
+
+        let mut params = default_backtest_params();
+        params.max_positions = 1; // prevent re-entry after signal exit
+        params.exit_signal = Some(signals::registry::SignalSpec::ConsecutiveUp {
+            column: "close".into(),
+            count: 2,
+        });
+        params.ohlcv_path = Some(path);
+
+        let result = run_backtest(&df, &params).unwrap();
+        // First trade: entry Jan 15, signal exit Jan 29 (ConsecutiveUp fires)
+        // With max_positions=1, a second trade may open after exit.
+        // Verify the first trade was closed by signal.
+        assert!(
+            result.trade_count >= 1,
+            "Expected at least 1 trade, got {}",
+            result.trade_count
+        );
+        assert!(
+            matches!(result.trade_log[0].exit_type, ExitType::Signal),
+            "Expected Signal exit on first trade, got {:?}",
+            result.trade_log[0].exit_type
+        );
+        // Entry Jan 15, exit Jan 29 = 14 days
+        assert_eq!(result.trade_log[0].days_held, 14);
+    }
+
+    #[test]
     fn run_backtest_spread_strategy() {
         // Build data for a bull call spread: long call at lower strike, short call at higher
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
@@ -652,6 +840,9 @@ mod tests {
             max_positions: 5,
             selector: TradeSelector::First,
             adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
         };
 
         let result = run_backtest(&df, &params);

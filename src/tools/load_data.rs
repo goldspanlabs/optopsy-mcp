@@ -13,7 +13,7 @@ use super::ai_format;
 use super::response_types::{DateRange, LoadDataResponse};
 
 pub async fn execute(
-    data: &Arc<RwLock<Option<DataFrame>>>,
+    data: &Arc<RwLock<Option<(String, DataFrame)>>>,
     cache: &Arc<CachedStore>,
     eodhd: Option<&Arc<EodhdProvider>>,
     symbol: &str,
@@ -102,7 +102,7 @@ pub async fn execute(
     };
 
     let mut guard = data.write().await;
-    *guard = Some(df);
+    *guard = Some((symbol.to_uppercase(), df));
 
     Ok(ai_format::format_load_data(
         rows, symbols, date_range, columns,

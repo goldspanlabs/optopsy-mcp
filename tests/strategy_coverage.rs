@@ -157,6 +157,9 @@ fn backtest_params(strategy: &str, leg_deltas: Vec<TargetRange>) -> BacktestPara
         max_positions: 5,
         selector: TradeSelector::First,
         adjustment_rules: vec![],
+        entry_signal: None,
+        exit_signal: None,
+        ohlcv_path: None,
     }
 }
 
