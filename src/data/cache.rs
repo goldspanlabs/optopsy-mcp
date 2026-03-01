@@ -67,6 +67,15 @@ impl CachedStore {
         Ok(Self::new(cache_dir, "options".to_string(), bucket))
     }
 
+    /// Resolve the cache path for a symbol under an arbitrary category.
+    ///
+    /// The symbol is uppercased in the filename for consistency.
+    pub fn cache_path(&self, symbol: &str, category: &str) -> PathBuf {
+        self.cache_dir
+            .join(category)
+            .join(format!("{}.parquet", symbol.to_uppercase()))
+    }
+
     /// Resolve the local path for a given symbol.
     fn local_path(&self, symbol: &str) -> PathBuf {
         self.cache_dir
@@ -172,9 +181,6 @@ impl DataStore for CachedStore {
 
 /// Default cache directory: `~/.optopsy/cache`
 fn dirs_default_cache() -> PathBuf {
-    dirs_home().join(".optopsy").join("cache")
-}
-
-fn dirs_home() -> PathBuf {
-    std::env::var("HOME").map_or_else(|_| PathBuf::from("/tmp"), PathBuf::from)
+    let expanded = shellexpand::tilde("~/.optopsy/cache");
+    PathBuf::from(expanded.as_ref())
 }
