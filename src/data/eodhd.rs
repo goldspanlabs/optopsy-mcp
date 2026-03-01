@@ -12,6 +12,7 @@
 
 use anyhow::{bail, Context, Result};
 use chrono::{Duration, NaiveDate, Utc};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use polars::prelude::*;
 use reqwest::Client;
 use serde::Deserialize;
@@ -559,31 +560,32 @@ impl EodhdProvider {
         symbol: &str,
         option_type: &str,
         resume_from: Option<NaiveDate>,
+        pb: &ProgressBar,
     ) -> (usize, Option<String>) {
         let today = Utc::now().date_naive();
         let start = resume_from.unwrap_or_else(|| today - Duration::days(HISTORY_DAYS));
         let end = today;
 
         if start >= end {
+            pb.finish_with_message("up to date");
             return (0, None);
         }
 
         let windows = Self::quarter_windows(start, end);
-        let total_windows = windows.len();
+        pb.set_length(windows.len() as u64);
         let mut rows_fetched: usize = 0;
 
-        for (i, (win_from, win_to)) in windows.iter().enumerate() {
-            tracing::info!(
-                "  {option_type} window {}/{total_windows}: {win_from} to {win_to}",
-                i + 1
-            );
+        for (win_from, win_to) in &windows {
+            pb.set_message(format!("{win_from} → {win_to}"));
 
             let (fetched, _) = self
                 .fetch_window_recursive(symbol, option_type, *win_from, *win_to, rows_fetched)
                 .await;
             rows_fetched = fetched;
+            pb.inc(1);
         }
 
+        pb.finish_with_message(format!("{rows_fetched} rows"));
         (rows_fetched, None)
     }
 
@@ -603,6 +605,12 @@ impl EodhdProvider {
         let cached_rows = cached_df.as_ref().map_or(0, DataFrame::height);
         let is_resume = cached_rows > 0;
 
+        let mp = MultiProgress::new();
+        let bar_style = ProgressStyle::default_bar()
+            .template("  {prefix:.bold} [{bar:30.cyan/dim}] {pos}/{len} windows  {msg}")
+            .expect("valid template")
+            .progress_chars("=> ");
+
         let mut errors: Vec<String> = Vec::new();
         let mut new_rows_total: usize = 0;
 
@@ -621,13 +629,16 @@ impl EodhdProvider {
                 );
             }
 
-            tracing::info!("Downloading {symbol} {option_type} options from EODHD…");
+            let pb = mp.add(ProgressBar::new(0));
+            pb.set_style(bar_style.clone());
+            pb.set_prefix(format!("{symbol} {option_type}s"));
 
             let (new_rows, error) = self
-                .fetch_all_for_type(&symbol, option_type, resume_from)
+                .fetch_all_for_type(&symbol, option_type, resume_from, &pb)
                 .await;
 
             if let Some(err) = error {
+                pb.abandon_with_message(format!("error: {err}"));
                 errors.push(format!("{option_type}: {err}"));
                 tracing::warn!(
                     "Error fetching {symbol} {option_type} options \
