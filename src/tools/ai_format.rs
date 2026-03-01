@@ -67,31 +67,25 @@ fn sample_equity_curve(curve: &[EquityPoint], max_points: usize) -> Vec<EquityPo
         .collect()
 }
 
-#[allow(clippy::cast_precision_loss)]
-fn compute_trade_summary(trade_log: &[TradeRecord]) -> TradeSummary {
+fn compute_trade_summary(
+    trade_log: &[TradeRecord],
+    metrics: &crate::engine::types::PerformanceMetrics,
+) -> TradeSummary {
     let total = trade_log.len();
 
-    // Single pass: accumulate all statistics without intermediate Vecs
+    // Only compute presentation-layer fields (best/worst trade, exit breakdown)
+    // Trade-level averages come from PerformanceMetrics (already computed in metrics.rs)
     let mut winner_count: usize = 0;
     let mut loser_count: usize = 0;
-    let mut total_pnl = 0.0_f64;
-    let mut winner_pnl_sum = 0.0_f64;
-    let mut loser_pnl_sum = 0.0_f64;
-    let mut total_days = 0_i64;
     let mut exit_breakdown: HashMap<String, usize> = HashMap::new();
     let mut best: Option<&TradeRecord> = None;
     let mut worst: Option<&TradeRecord> = None;
 
     for t in trade_log {
-        total_pnl += t.pnl;
-        total_days += t.days_held;
-
         if t.pnl > 0.0 {
             winner_count += 1;
-            winner_pnl_sum += t.pnl;
         } else {
             loser_count += 1;
-            loser_pnl_sum += t.pnl;
         }
 
         *exit_breakdown
@@ -106,27 +100,6 @@ fn compute_trade_summary(trade_log: &[TradeRecord]) -> TradeSummary {
         }
     }
 
-    let avg_pnl = if total > 0 {
-        total_pnl / total as f64
-    } else {
-        0.0
-    };
-    let avg_winner = if winner_count > 0 {
-        winner_pnl_sum / winner_count as f64
-    } else {
-        0.0
-    };
-    let avg_loser = if loser_count > 0 {
-        loser_pnl_sum / loser_count as f64
-    } else {
-        0.0
-    };
-    let avg_days_held = if total > 0 {
-        total_days as f64 / total as f64
-    } else {
-        0.0
-    };
-
     let to_trade_stat = |t: Option<&TradeRecord>| {
         t.map(|t| TradeStat {
             pnl: t.pnl,
@@ -138,10 +111,10 @@ fn compute_trade_summary(trade_log: &[TradeRecord]) -> TradeSummary {
         total,
         winners: winner_count,
         losers: loser_count,
-        avg_pnl,
-        avg_winner,
-        avg_loser,
-        avg_days_held,
+        avg_pnl: metrics.avg_trade_pnl,
+        avg_winner: metrics.avg_winner,
+        avg_loser: metrics.avg_loser,
+        avg_days_held: metrics.avg_days_held,
         exit_breakdown,
         best_trade: to_trade_stat(best),
         worst_trade: to_trade_stat(worst),
@@ -195,7 +168,6 @@ fn most_common_exit(trade_log: &[TradeRecord]) -> String {
 
 fn backtest_key_findings(
     m: &crate::engine::types::PerformanceMetrics,
-    trade_summary: &TradeSummary,
     trade_log: &[TradeRecord],
 ) -> Vec<String> {
     let mut findings = Vec::new();
@@ -217,6 +189,13 @@ fn backtest_key_findings(
     } else {
         findings.push(format!("Win rate of {win_pct:.0}% with no losing trades"));
     }
+
+    // CAGR + total return
+    findings.push(format!(
+        "Total return {:.1}%, CAGR {:.1}%",
+        m.total_return_pct,
+        m.cagr * 100.0,
+    ));
 
     // Drawdown
     let dd_pct = m.max_drawdown * 100.0;
@@ -244,11 +223,14 @@ fn backtest_key_findings(
         }
     ));
 
-    // Trade behavior
+    // Expectancy + trade behavior
     let common_exit = most_common_exit(trade_log);
     findings.push(format!(
-        "Average hold of {:.1} days, most common exit: {}",
-        trade_summary.avg_days_held, common_exit
+        "Expectancy {} per trade, avg hold {:.1} days, max losing streak: {}. Most common exit: {}",
+        format_pnl(m.expectancy),
+        m.avg_days_held,
+        m.max_consecutive_losses,
+        common_exit
     ));
 
     findings
@@ -256,7 +238,7 @@ fn backtest_key_findings(
 
 pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> BacktestResponse {
     let m = &result.metrics;
-    let trade_summary = compute_trade_summary(&result.trade_log);
+    let trade_summary = compute_trade_summary(&result.trade_log, m);
     let equity_curve_summary = compute_equity_summary(&result.equity_curve, params.capital);
 
     // Zero-trade early branch: metrics are not meaningful
@@ -306,7 +288,7 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
         assessment,
     );
 
-    let key_findings = backtest_key_findings(m, &trade_summary, &result.trade_log);
+    let key_findings = backtest_key_findings(m, &result.trade_log);
 
     let mut suggested_next_steps = vec![
         format!(
@@ -457,12 +439,14 @@ pub fn format_compare(results: Vec<CompareResult>) -> CompareResponse {
         let best_sharpe_idx = sharpe_indices[0];
         let best_pnl_idx = pnl_indices[0];
         format!(
-            "Compared {} strategies. Best by Sharpe: {} ({:.2}). Best by P&L: {} ({}).",
+            "Compared {} strategies. Best by Sharpe: {} ({:.2}). Best by P&L: {} ({}). \
+             Best return: {:.1}%.",
             results.len(),
             results[best_sharpe_idx].strategy,
             results[best_sharpe_idx].sharpe,
             results[best_pnl_idx].strategy,
             format_pnl(results[best_pnl_idx].pnl),
+            results[best_pnl_idx].total_return_pct,
         )
     };
 
@@ -598,9 +582,30 @@ mod tests {
         assert_eq!(assess_sharpe(-0.5), "poor");
     }
 
+    fn default_metrics() -> crate::engine::types::PerformanceMetrics {
+        crate::engine::types::PerformanceMetrics {
+            sharpe: 0.0,
+            sortino: 0.0,
+            max_drawdown: 0.0,
+            win_rate: 0.0,
+            profit_factor: 0.0,
+            calmar: 0.0,
+            var_95: 0.0,
+            total_return_pct: 0.0,
+            cagr: 0.0,
+            avg_trade_pnl: 0.0,
+            avg_winner: 0.0,
+            avg_loser: 0.0,
+            avg_days_held: 0.0,
+            max_consecutive_losses: 0,
+            expectancy: 0.0,
+        }
+    }
+
     #[test]
     fn trade_summary_empty_log() {
-        let summary = compute_trade_summary(&[]);
+        let metrics = default_metrics();
+        let summary = compute_trade_summary(&[], &metrics);
         assert_eq!(summary.total, 0);
         assert_eq!(summary.winners, 0);
         assert_eq!(summary.losers, 0);
@@ -619,7 +624,14 @@ mod tests {
             make_trade(-50.0, 5, ExitType::StopLoss),
             make_trade(200.0, 20, ExitType::TakeProfit),
         ];
-        let summary = compute_trade_summary(&trades);
+        let metrics = crate::engine::types::PerformanceMetrics {
+            avg_trade_pnl: 250.0 / 3.0,
+            avg_winner: 150.0,
+            avg_loser: -50.0,
+            avg_days_held: 35.0 / 3.0,
+            ..default_metrics()
+        };
+        let summary = compute_trade_summary(&trades, &metrics);
         assert_eq!(summary.total, 3);
         assert_eq!(summary.winners, 2);
         assert_eq!(summary.losers, 1);
@@ -695,24 +707,36 @@ mod tests {
                 trades: 10,
                 pnl: 500.0,
                 sharpe: 0.8,
+                sortino: 1.0,
                 max_dd: 0.05,
                 win_rate: 0.6,
+                profit_factor: 1.5,
+                calmar: 1.0,
+                total_return_pct: 5.0,
             },
             CompareResult {
                 strategy: "beta".to_string(),
                 trades: 20,
                 pnl: 300.0,
                 sharpe: 1.5,
+                sortino: 2.0,
                 max_dd: 0.03,
                 win_rate: 0.7,
+                profit_factor: 2.5,
+                calmar: 2.0,
+                total_return_pct: 3.0,
             },
             CompareResult {
                 strategy: "gamma".to_string(),
                 trades: 15,
                 pnl: 1000.0,
                 sharpe: 1.2,
+                sortino: 1.5,
                 max_dd: 0.08,
                 win_rate: 0.65,
+                profit_factor: 2.0,
+                calmar: 1.5,
+                total_return_pct: 10.0,
             },
         ];
         let response = format_compare(results);
@@ -915,6 +939,14 @@ mod tests {
                 profit_factor,
                 calmar,
                 var_95: 0.03,
+                total_return_pct: 0.0,
+                cagr: 0.0,
+                avg_trade_pnl: 0.0,
+                avg_winner: 0.0,
+                avg_loser: 0.0,
+                avg_days_held: 0.0,
+                max_consecutive_losses: 0,
+                expectancy: 0.0,
             },
             equity_curve: equity,
             trade_log: trades,

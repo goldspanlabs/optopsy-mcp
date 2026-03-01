@@ -207,7 +207,7 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
         &strategy_def,
     );
 
-    let perf_metrics = metrics::calculate_metrics(&equity_curve, params.capital)?;
+    let perf_metrics = metrics::calculate_metrics(&equity_curve, &trade_log, params.capital)?;
 
     Ok(BacktestResult {
         trade_count: trade_log.len(),
@@ -249,8 +249,12 @@ pub fn compare_strategies(df: &DataFrame, params: &CompareParams) -> Result<Vec<
                     trades: bt.trade_count,
                     pnl: bt.total_pnl,
                     sharpe: bt.metrics.sharpe,
+                    sortino: bt.metrics.sortino,
                     max_dd: bt.metrics.max_drawdown,
                     win_rate: bt.metrics.win_rate,
+                    profit_factor: bt.metrics.profit_factor,
+                    calmar: bt.metrics.calmar,
+                    total_return_pct: bt.metrics.total_return_pct,
                 });
             }
             Err(e) => {
@@ -260,8 +264,12 @@ pub fn compare_strategies(df: &DataFrame, params: &CompareParams) -> Result<Vec<
                     trades: 0,
                     pnl: 0.0,
                     sharpe: 0.0,
+                    sortino: 0.0,
                     max_dd: 0.0,
                     win_rate: 0.0,
+                    profit_factor: 0.0,
+                    calmar: 0.0,
+                    total_return_pct: 0.0,
                 });
             }
         }
