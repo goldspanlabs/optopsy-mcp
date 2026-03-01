@@ -160,7 +160,10 @@ impl SignalFn for StochasticOversold {
                 let end = i + self.period;
                 let close_last = close[end - 1];
                 let lowest_low = low[i..end].iter().cloned().fold(f64::INFINITY, f64::min);
-                let highest_high = high[i..end].iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                let highest_high = high[i..end]
+                    .iter()
+                    .cloned()
+                    .fold(f64::NEG_INFINITY, f64::max);
                 if (highest_high - lowest_low).abs() < f64::EPSILON {
                     0.0
                 } else {
@@ -207,7 +210,10 @@ impl SignalFn for StochasticOverbought {
                 let end = i + self.period;
                 let close_last = close[end - 1];
                 let lowest_low = low[i..end].iter().cloned().fold(f64::INFINITY, f64::min);
-                let highest_high = high[i..end].iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                let highest_high = high[i..end]
+                    .iter()
+                    .cloned()
+                    .fold(f64::NEG_INFINITY, f64::max);
                 if (highest_high - lowest_low).abs() < f64::EPSILON {
                     0.0
                 } else {

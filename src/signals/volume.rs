@@ -130,7 +130,13 @@ impl SignalFn for ObvFalling {
 /// Computes the Chaikin Money Flow values over a rolling window.
 /// CMF = sum(money_flow_volume) / sum(volume) for each window of `period`.
 #[allow(dead_code)]
-fn compute_cmf(close: &[f64], high: &[f64], low: &[f64], volume: &[f64], period: usize) -> Vec<f64> {
+fn compute_cmf(
+    close: &[f64],
+    high: &[f64],
+    low: &[f64],
+    volume: &[f64],
+    period: usize,
+) -> Vec<f64> {
     let n = close.len();
     if n < period {
         return vec![];
