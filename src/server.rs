@@ -412,7 +412,7 @@ impl ServerHandler for OptopsyServer {
             server_info: Implementation {
                 name: "optopsy-mcp".into(),
                 title: None,
-                version: "0.1.0".into(),
+                version: env!("CARGO_PKG_VERSION").into(),
                 description: None,
                 icons: None,
                 website_url: None,
