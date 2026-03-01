@@ -64,84 +64,87 @@ fn sample_equity_curve(curve: &[EquityPoint], max_points: usize) -> Vec<EquityPo
 #[allow(clippy::cast_precision_loss)]
 fn compute_trade_summary(trade_log: &[TradeRecord]) -> TradeSummary {
     let total = trade_log.len();
-    let winners: Vec<&TradeRecord> = trade_log.iter().filter(|t| t.pnl > 0.0).collect();
-    let losers: Vec<&TradeRecord> = trade_log.iter().filter(|t| t.pnl <= 0.0).collect();
 
-    let avg_pnl = if total > 0 {
-        trade_log.iter().map(|t| t.pnl).sum::<f64>() / total as f64
-    } else {
-        0.0
-    };
-
-    let avg_winner = if winners.is_empty() {
-        0.0
-    } else {
-        winners.iter().map(|t| t.pnl).sum::<f64>() / winners.len() as f64
-    };
-
-    let avg_loser = if losers.is_empty() {
-        0.0
-    } else {
-        losers.iter().map(|t| t.pnl).sum::<f64>() / losers.len() as f64
-    };
-
-    let avg_days_held = if total > 0 {
-        trade_log.iter().map(|t| t.days_held as f64).sum::<f64>() / total as f64
-    } else {
-        0.0
-    };
-
+    // Single pass: accumulate all statistics without intermediate Vecs
+    let mut winner_count: usize = 0;
+    let mut loser_count: usize = 0;
+    let mut total_pnl = 0.0_f64;
+    let mut winner_pnl_sum = 0.0_f64;
+    let mut loser_pnl_sum = 0.0_f64;
+    let mut total_days = 0_i64;
     let mut exit_breakdown: HashMap<String, usize> = HashMap::new();
+    let mut best: Option<&TradeRecord> = None;
+    let mut worst: Option<&TradeRecord> = None;
+
     for t in trade_log {
+        total_pnl += t.pnl;
+        total_days += t.days_held;
+
+        if t.pnl > 0.0 {
+            winner_count += 1;
+            winner_pnl_sum += t.pnl;
+        } else {
+            loser_count += 1;
+            loser_pnl_sum += t.pnl;
+        }
+
         *exit_breakdown
             .entry(exit_type_name(&t.exit_type).to_string())
             .or_default() += 1;
+
+        if best.is_none_or(|b| t.pnl > b.pnl) {
+            best = Some(t);
+        }
+        if worst.is_none_or(|w| t.pnl < w.pnl) {
+            worst = Some(t);
+        }
     }
 
-    let best = trade_log.iter().max_by(|a, b| {
-        a.pnl
-            .partial_cmp(&b.pnl)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    let worst = trade_log.iter().min_by(|a, b| {
-        a.pnl
-            .partial_cmp(&b.pnl)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    let avg_pnl = if total > 0 {
+        total_pnl / total as f64
+    } else {
+        0.0
+    };
+    let avg_winner = if winner_count > 0 {
+        winner_pnl_sum / winner_count as f64
+    } else {
+        0.0
+    };
+    let avg_loser = if loser_count > 0 {
+        loser_pnl_sum / loser_count as f64
+    } else {
+        0.0
+    };
+    let avg_days_held = if total > 0 {
+        total_days as f64 / total as f64
+    } else {
+        0.0
+    };
 
-    let best_trade = best.map_or(
-        TradeStat {
-            pnl: 0.0,
-            date: String::new(),
-        },
-        |t| TradeStat {
-            pnl: t.pnl,
-            date: t.entry_datetime.format("%Y-%m-%d").to_string(),
-        },
-    );
-
-    let worst_trade = worst.map_or(
-        TradeStat {
-            pnl: 0.0,
-            date: String::new(),
-        },
-        |t| TradeStat {
-            pnl: t.pnl,
-            date: t.entry_datetime.format("%Y-%m-%d").to_string(),
-        },
-    );
+    let to_trade_stat = |t: Option<&TradeRecord>| {
+        t.map_or(
+            TradeStat {
+                pnl: 0.0,
+                date: String::new(),
+            },
+            |t| TradeStat {
+                pnl: t.pnl,
+                date: t.entry_datetime.format("%Y-%m-%d").to_string(),
+            },
+        )
+    };
 
     TradeSummary {
         total,
-        winners: winners.len(),
-        losers: losers.len(),
+        winners: winner_count,
+        losers: loser_count,
         avg_pnl,
         avg_winner,
         avg_loser,
         avg_days_held,
         exit_breakdown,
-        best_trade,
-        worst_trade,
+        best_trade: to_trade_stat(best),
+        worst_trade: to_trade_stat(worst),
     }
 }
 
@@ -375,36 +378,45 @@ pub fn format_evaluate(groups: Vec<GroupStats>, params: &EvaluateParams) -> Eval
 }
 
 pub fn format_compare(results: Vec<CompareResult>) -> CompareResponse {
-    let mut by_sharpe = results.clone();
-    by_sharpe.sort_by(|a, b| {
-        b.sharpe
-            .partial_cmp(&a.sharpe)
+    // Build index-based rankings to avoid cloning the full results vec
+    let mut sharpe_indices: Vec<usize> = (0..results.len()).collect();
+    sharpe_indices.sort_by(|&a, &b| {
+        results[b]
+            .sharpe
+            .partial_cmp(&results[a].sharpe)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    let ranking_by_sharpe: Vec<String> = by_sharpe.iter().map(|r| r.strategy.clone()).collect();
+    let ranking_by_sharpe: Vec<String> = sharpe_indices
+        .iter()
+        .map(|&i| results[i].strategy.clone())
+        .collect();
 
-    let mut by_pnl = results.clone();
-    by_pnl.sort_by(|a, b| {
-        b.pnl
-            .partial_cmp(&a.pnl)
+    let mut pnl_indices: Vec<usize> = (0..results.len()).collect();
+    pnl_indices.sort_by(|&a, &b| {
+        results[b]
+            .pnl
+            .partial_cmp(&results[a].pnl)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    let ranking_by_pnl: Vec<String> = by_pnl.iter().map(|r| r.strategy.clone()).collect();
+    let ranking_by_pnl: Vec<String> = pnl_indices
+        .iter()
+        .map(|&i| results[i].strategy.clone())
+        .collect();
 
     let best_overall = ranking_by_sharpe.first().cloned().unwrap_or_default();
 
     let summary = if results.is_empty() {
         "No strategies to compare.".to_string()
     } else {
-        let best_sharpe = &by_sharpe[0];
-        let best_pnl = &by_pnl[0];
+        let best_sharpe_idx = sharpe_indices[0];
+        let best_pnl_idx = pnl_indices[0];
         format!(
             "Compared {} strategies. Best by Sharpe: {} ({:.2}). Best by P&L: {} ({}).",
             results.len(),
-            best_sharpe.strategy,
-            best_sharpe.sharpe,
-            best_pnl.strategy,
-            format_pnl(best_pnl.pnl),
+            results[best_sharpe_idx].strategy,
+            results[best_sharpe_idx].sharpe,
+            results[best_pnl_idx].strategy,
+            format_pnl(results[best_pnl_idx].pnl),
         )
     };
 
@@ -435,10 +447,10 @@ pub fn format_load_data(
     columns: Vec<String>,
 ) -> LoadDataResponse {
     let symbol_list = symbols.join(", ");
-    let summary = format!(
-        "Loaded {} rows of options data for {} from {} to {}.",
-        rows, symbol_list, date_range.start, date_range.end,
-    );
+    let start = date_range.start.as_deref().unwrap_or("unknown");
+    let end = date_range.end.as_deref().unwrap_or("unknown");
+    let summary =
+        format!("Loaded {rows} rows of options data for {symbol_list} from {start} to {end}.",);
 
     LoadDataResponse {
         summary,
@@ -488,5 +500,302 @@ pub fn format_strategies(strategies: Vec<StrategyInfo>) -> StrategiesResponse {
             "Use run_backtest to simulate a strategy with specific parameters".to_string(),
             "Use compare_strategies to benchmark multiple strategies side by side".to_string(),
         ],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDateTime;
+
+    fn make_trade(pnl: f64, days_held: i64, exit_type: ExitType) -> TradeRecord {
+        let dt = NaiveDateTime::parse_from_str("2024-01-15 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        TradeRecord {
+            trade_id: 1,
+            entry_datetime: dt,
+            exit_datetime: dt,
+            entry_cost: 100.0,
+            exit_proceeds: 100.0 + pnl,
+            pnl,
+            days_held,
+            exit_type,
+        }
+    }
+
+    fn make_equity_point(days_offset: i64, equity: f64) -> EquityPoint {
+        let dt = NaiveDateTime::parse_from_str("2024-01-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap()
+            + chrono::Duration::days(days_offset);
+        EquityPoint {
+            datetime: dt,
+            equity,
+        }
+    }
+
+    #[test]
+    fn assess_sharpe_thresholds() {
+        assert_eq!(assess_sharpe(2.0), "excellent");
+        assert_eq!(assess_sharpe(1.5), "excellent");
+        assert_eq!(assess_sharpe(1.2), "strong");
+        assert_eq!(assess_sharpe(1.0), "strong");
+        assert_eq!(assess_sharpe(0.7), "moderate");
+        assert_eq!(assess_sharpe(0.5), "moderate");
+        assert_eq!(assess_sharpe(0.3), "weak");
+        assert_eq!(assess_sharpe(0.0), "weak");
+        assert_eq!(assess_sharpe(-0.5), "poor");
+    }
+
+    #[test]
+    fn trade_summary_empty_log() {
+        let summary = compute_trade_summary(&[]);
+        assert_eq!(summary.total, 0);
+        assert_eq!(summary.winners, 0);
+        assert_eq!(summary.losers, 0);
+        assert_eq!(summary.avg_pnl, 0.0);
+        assert_eq!(summary.avg_winner, 0.0);
+        assert_eq!(summary.avg_loser, 0.0);
+        assert_eq!(summary.avg_days_held, 0.0);
+    }
+
+    #[test]
+    fn trade_summary_mixed_trades() {
+        let trades = vec![
+            make_trade(100.0, 10, ExitType::Expiration),
+            make_trade(-50.0, 5, ExitType::StopLoss),
+            make_trade(200.0, 20, ExitType::TakeProfit),
+        ];
+        let summary = compute_trade_summary(&trades);
+        assert_eq!(summary.total, 3);
+        assert_eq!(summary.winners, 2);
+        assert_eq!(summary.losers, 1);
+        assert!((summary.avg_pnl - 250.0 / 3.0).abs() < 1e-10);
+        assert!((summary.avg_winner - 150.0).abs() < 1e-10);
+        assert!((summary.avg_loser - -50.0).abs() < 1e-10);
+        assert!((summary.best_trade.pnl - 200.0).abs() < 1e-10);
+        assert!((summary.worst_trade.pnl - -50.0).abs() < 1e-10);
+        assert_eq!(summary.exit_breakdown["Expiration"], 1);
+        assert_eq!(summary.exit_breakdown["StopLoss"], 1);
+        assert_eq!(summary.exit_breakdown["TakeProfit"], 1);
+    }
+
+    #[test]
+    fn equity_summary_empty_curve() {
+        let summary = compute_equity_summary(&[], 100_000.0);
+        assert_eq!(summary.start_equity, 100_000.0);
+        assert_eq!(summary.end_equity, 100_000.0);
+        assert_eq!(summary.total_return_pct, 0.0);
+        assert_eq!(summary.num_points, 0);
+    }
+
+    #[test]
+    fn equity_summary_with_data() {
+        let curve = vec![
+            make_equity_point(0, 100_000.0),
+            make_equity_point(1, 105_000.0),
+            make_equity_point(2, 95_000.0),
+            make_equity_point(3, 110_000.0),
+        ];
+        let summary = compute_equity_summary(&curve, 100_000.0);
+        assert_eq!(summary.start_equity, 100_000.0);
+        assert_eq!(summary.end_equity, 110_000.0);
+        assert!((summary.total_return_pct - 10.0).abs() < 1e-10);
+        assert_eq!(summary.peak_equity, 110_000.0);
+        assert_eq!(summary.trough_equity, 95_000.0);
+        assert_eq!(summary.num_points, 4);
+    }
+
+    #[test]
+    fn sample_equity_curve_no_downsample() {
+        let curve = vec![make_equity_point(0, 100.0), make_equity_point(1, 110.0)];
+        let sampled = sample_equity_curve(&curve, 50);
+        assert_eq!(sampled.len(), 2);
+    }
+
+    #[test]
+    fn sample_equity_curve_downsamples() {
+        let curve: Vec<EquityPoint> = (0..100)
+            .map(|i| make_equity_point(i, 100.0 + i as f64))
+            .collect();
+        let sampled = sample_equity_curve(&curve, 10);
+        assert_eq!(sampled.len(), 10);
+        // First and last points should be preserved
+        assert!((sampled[0].equity - 100.0).abs() < 1e-10);
+        assert!((sampled[9].equity - 199.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn format_compare_empty_results() {
+        let response = format_compare(vec![]);
+        assert_eq!(response.summary, "No strategies to compare.");
+        assert!(response.ranking_by_sharpe.is_empty());
+        assert!(response.ranking_by_pnl.is_empty());
+        assert!(response.best_overall.is_empty());
+    }
+
+    #[test]
+    fn format_compare_rankings_correct() {
+        let results = vec![
+            CompareResult {
+                strategy: "alpha".to_string(),
+                trades: 10,
+                pnl: 500.0,
+                sharpe: 0.8,
+                max_dd: 0.05,
+                win_rate: 0.6,
+            },
+            CompareResult {
+                strategy: "beta".to_string(),
+                trades: 20,
+                pnl: 300.0,
+                sharpe: 1.5,
+                max_dd: 0.03,
+                win_rate: 0.7,
+            },
+            CompareResult {
+                strategy: "gamma".to_string(),
+                trades: 15,
+                pnl: 1000.0,
+                sharpe: 1.2,
+                max_dd: 0.08,
+                win_rate: 0.65,
+            },
+        ];
+        let response = format_compare(results);
+        assert_eq!(response.ranking_by_sharpe, vec!["beta", "gamma", "alpha"]);
+        assert_eq!(response.ranking_by_pnl, vec!["gamma", "alpha", "beta"]);
+        assert_eq!(response.best_overall, "beta");
+        assert!(response.summary.contains("beta"));
+        assert!(response.summary.contains("gamma"));
+    }
+
+    #[test]
+    fn format_evaluate_empty_groups() {
+        let params = EvaluateParams {
+            strategy: "test_strat".to_string(),
+            leg_deltas: vec![],
+            max_entry_dte: 45,
+            exit_dte: 0,
+            dte_interval: 7,
+            delta_interval: 0.05,
+            slippage: crate::engine::types::Slippage::Mid,
+            commission: None,
+        };
+        let response = format_evaluate(vec![], &params);
+        assert_eq!(response.total_buckets, 0);
+        assert_eq!(response.total_trades, 0);
+        assert!(response.best_bucket.is_none());
+        assert!(response.worst_bucket.is_none());
+        assert!(response.summary.contains("no buckets"));
+    }
+
+    #[test]
+    fn format_evaluate_finds_best_worst() {
+        let params = EvaluateParams {
+            strategy: "test_strat".to_string(),
+            leg_deltas: vec![],
+            max_entry_dte: 45,
+            exit_dte: 0,
+            dte_interval: 7,
+            delta_interval: 0.05,
+            slippage: crate::engine::types::Slippage::Mid,
+            commission: None,
+        };
+        let groups = vec![
+            GroupStats {
+                dte_range: "(0, 7]".to_string(),
+                delta_range: "(0.10, 0.15]".to_string(),
+                count: 10,
+                mean: 50.0,
+                std: 20.0,
+                min: -10.0,
+                q25: 30.0,
+                median: 45.0,
+                q75: 60.0,
+                max: 100.0,
+                win_rate: 0.7,
+                profit_factor: 2.0,
+            },
+            GroupStats {
+                dte_range: "(7, 14]".to_string(),
+                delta_range: "(0.15, 0.20]".to_string(),
+                count: 5,
+                mean: -20.0,
+                std: 30.0,
+                min: -80.0,
+                q25: -40.0,
+                median: -15.0,
+                q75: 5.0,
+                max: 20.0,
+                win_rate: 0.4,
+                profit_factor: 0.5,
+            },
+        ];
+        let response = format_evaluate(groups, &params);
+        assert_eq!(response.total_buckets, 2);
+        assert_eq!(response.total_trades, 15);
+        let best = response.best_bucket.unwrap();
+        assert_eq!(best.dte_range, "(0, 7]");
+        let worst = response.worst_bucket.unwrap();
+        assert_eq!(worst.dte_range, "(7, 14]");
+    }
+
+    #[test]
+    fn format_strategies_category_counts() {
+        let strategies = vec![
+            StrategyInfo {
+                name: "long_call".to_string(),
+                category: "Singles".to_string(),
+                legs: 1,
+                description: "Buy a call".to_string(),
+            },
+            StrategyInfo {
+                name: "short_put".to_string(),
+                category: "Singles".to_string(),
+                legs: 1,
+                description: "Sell a put".to_string(),
+            },
+            StrategyInfo {
+                name: "bull_call_spread".to_string(),
+                category: "Spreads".to_string(),
+                legs: 2,
+                description: "Bullish spread".to_string(),
+            },
+        ];
+        let response = format_strategies(strategies);
+        assert_eq!(response.total, 3);
+        assert_eq!(response.categories["Singles"], 2);
+        assert_eq!(response.categories["Spreads"], 1);
+        assert!(response.summary.contains('3'));
+    }
+
+    #[test]
+    fn format_load_data_with_missing_dates() {
+        let response = format_load_data(
+            1000,
+            vec!["SPY".to_string()],
+            DateRange {
+                start: None,
+                end: None,
+            },
+            vec!["col1".to_string()],
+        );
+        assert_eq!(response.rows, 1000);
+        assert!(response.summary.contains("unknown"));
+    }
+
+    #[test]
+    fn format_load_data_with_dates() {
+        let response = format_load_data(
+            5000,
+            vec!["SPY".to_string(), "QQQ".to_string()],
+            DateRange {
+                start: Some("2024-01-01".to_string()),
+                end: Some("2024-12-31".to_string()),
+            },
+            vec!["col1".to_string(), "col2".to_string()],
+        );
+        assert_eq!(response.rows, 5000);
+        assert!(response.summary.contains("SPY, QQQ"));
+        assert!(response.summary.contains("2024-01-01"));
+        assert!(response.summary.contains("2024-12-31"));
     }
 }

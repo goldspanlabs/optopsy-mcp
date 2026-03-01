@@ -52,13 +52,13 @@ pub async fn execute(
         let min_scalar = date_col.min_reduce()?;
         let max_scalar = date_col.max_reduce()?;
         DateRange {
-            start: format!("{:?}", min_scalar.value()),
-            end: format!("{:?}", max_scalar.value()),
+            start: Some(format!("{:?}", min_scalar.value())),
+            end: Some(format!("{:?}", max_scalar.value())),
         }
     } else {
         DateRange {
-            start: String::new(),
-            end: String::new(),
+            start: None,
+            end: None,
         }
     };
 

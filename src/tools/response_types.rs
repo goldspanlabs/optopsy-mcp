@@ -88,8 +88,8 @@ pub struct LoadDataResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DateRange {
-    pub start: String,
-    pub end: String,
+    pub start: Option<String>,
+    pub end: Option<String>,
 }
 
 /// AI-enriched response for `list_strategies`
