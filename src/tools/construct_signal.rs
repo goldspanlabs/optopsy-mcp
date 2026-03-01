@@ -16,7 +16,8 @@ pub fn execute(prompt: &str) -> ConstructSignalResponse {
 
     // Generate live JSON Schema for SignalSpec
     let schema = schema_for!(SignalSpec);
-    let schema_value = serde_json::to_value(&schema).unwrap_or(json!({}));
+    let schema_value =
+        serde_json::to_value(&schema).expect("Failed to serialize SignalSpec schema to JSON value");
 
     // Build column defaults
     let column_defaults = json!({
@@ -423,8 +424,11 @@ fn build_example(signal_name: &str) -> Value {
             "volume_col": DEFAULT_VOLUME,
             "period": 20,
         }),
-        // Fallback
-        _ => json!({}),
+        // Fallback: return a structured placeholder with explicit error message
+        _ => json!({
+            "type": "UnknownSignal",
+            "error": format!("No example defined for signal '{}'", signal_name),
+        }),
     }
 }
 
