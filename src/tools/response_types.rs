@@ -75,6 +75,19 @@ pub struct CompareResponse {
     pub suggested_next_steps: Vec<String>,
 }
 
+/// AI-enriched response for `download_options_data`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DownloadResponse {
+    pub summary: String,
+    pub symbol: String,
+    pub new_rows: usize,
+    pub total_rows: usize,
+    pub was_resumed: bool,
+    pub api_requests: u32,
+    pub date_range: DateRange,
+    pub suggested_next_steps: Vec<String>,
+}
+
 /// AI-enriched response for `load_data`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LoadDataResponse {
