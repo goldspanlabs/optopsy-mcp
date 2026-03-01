@@ -5,9 +5,11 @@ use crate::engine::types::{
     GroupStats, TradeRecord,
 };
 
+use crate::data::eodhd::DownloadSummary;
+
 use super::response_types::{
-    BacktestResponse, CompareResponse, DateRange, EquityCurveSummary, EvaluateResponse,
-    LoadDataResponse, StrategiesResponse, StrategyInfo, TradeStat, TradeSummary,
+    BacktestResponse, CompareResponse, DateRange, DownloadResponse, EquityCurveSummary,
+    EvaluateResponse, LoadDataResponse, StrategiesResponse, StrategyInfo, TradeStat, TradeSummary,
 };
 
 fn assess_sharpe(sharpe: f64) -> &'static str {
@@ -548,6 +550,66 @@ pub fn format_strategies(strategies: Vec<StrategyInfo>) -> StrategiesResponse {
                 .to_string(),
             "Use run_backtest to simulate a strategy with specific parameters".to_string(),
             "Use compare_strategies to benchmark multiple strategies side by side".to_string(),
+        ],
+    }
+}
+
+pub fn format_download(summary: DownloadSummary) -> DownloadResponse {
+    let api_calls = summary.api_requests * crate::data::eodhd::API_CALLS_PER_REQUEST;
+
+    let status = if summary.was_resumed && summary.new_rows > 0 {
+        format!(
+            "Resumed download for {}: added {} new rows to {} previously cached. Total: {} records.",
+            summary.symbol, summary.new_rows, summary.cached_rows, summary.total_rows,
+        )
+    } else if summary.was_resumed && summary.new_rows == 0 {
+        format!(
+            "Cache for {} is already up to date ({} records, no new data fetched).",
+            summary.symbol, summary.total_rows,
+        )
+    } else {
+        format!(
+            "Downloaded {} options records for {}.",
+            summary.total_rows, summary.symbol,
+        )
+    };
+
+    let date_info = match (&summary.date_min, &summary.date_max) {
+        (Some(min), Some(max)) => format!(" Date range: {min} to {max}."),
+        _ => String::new(),
+    };
+
+    let mut full_summary = format!(
+        "{status}{date_info} API usage: {} requests ({api_calls} API calls).",
+        summary.api_requests,
+    );
+
+    if !summary.errors.is_empty() {
+        use std::fmt::Write;
+        let _ = write!(
+            full_summary,
+            " WARNING: partial errors occurred: {}. Run download_options_data again to retry.",
+            summary.errors.join("; "),
+        );
+    }
+
+    DownloadResponse {
+        summary: full_summary,
+        symbol: summary.symbol.clone(),
+        new_rows: summary.new_rows,
+        total_rows: summary.total_rows,
+        was_resumed: summary.was_resumed,
+        api_requests: summary.api_requests,
+        date_range: DateRange {
+            start: summary.date_min,
+            end: summary.date_max,
+        },
+        suggested_next_steps: vec![
+            format!(
+                "Use load_data({{ symbol: \"{}\" }}) to load the downloaded data for backtesting",
+                summary.symbol,
+            ),
+            "Use list_strategies to see available options strategies".to_string(),
         ],
     }
 }

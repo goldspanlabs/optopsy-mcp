@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::data::cache::CachedStore;
+use crate::data::eodhd::EodhdProvider;
 use crate::data::parquet::QUOTE_DATETIME_COL;
 use crate::data::DataStore;
 
@@ -14,10 +15,15 @@ use super::response_types::{DateRange, LoadDataResponse};
 pub async fn execute(
     data: &Arc<RwLock<Option<(String, DataFrame)>>>,
     cache: &Arc<CachedStore>,
+    eodhd: Option<&Arc<EodhdProvider>>,
     symbol: &str,
     start_date: Option<&str>,
     end_date: Option<&str>,
 ) -> Result<LoadDataResponse> {
+    let symbol = symbol.to_uppercase();
+    if symbol.is_empty() || symbol.contains('/') || symbol.contains('\\') || symbol.contains("..") {
+        anyhow::bail!("Invalid symbol: {symbol}");
+    }
     let start = start_date
         .map(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d"))
         .transpose()?;
@@ -25,7 +31,37 @@ pub async fn execute(
         .map(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d"))
         .transpose()?;
 
-    let df = cache.load_options(symbol, start, end)?;
+    // Try loading from cache (local parquet + S3 fallback).
+    // On cache miss (file not found), attempt EODHD download if configured.
+    // Other errors (corrupt parquet, S3 auth failures) are propagated directly.
+    let df = match cache.load_options(&symbol, start, end) {
+        Ok(df) => df,
+        Err(cache_err) => {
+            let err_msg = cache_err.to_string();
+            let is_not_found = err_msg.contains("not found")
+                || err_msg.contains("No such file")
+                || err_msg.contains("returned status 404");
+            if is_not_found {
+                if let Some(provider) = eodhd {
+                    tracing::info!(
+                        %symbol,
+                        "Cache miss, downloading from EODHD…"
+                    );
+                    provider.download_options(&symbol).await?;
+                    // Retry from cache now that the file has been written
+                    cache.load_options(&symbol, start, end).map_err(|e| {
+                        anyhow::anyhow!(
+                            "Downloaded from EODHD but failed to load: {e} (original: {cache_err})"
+                        )
+                    })?
+                } else {
+                    return Err(cache_err);
+                }
+            } else {
+                return Err(cache_err);
+            }
+        }
+    };
 
     let rows = df.height();
     let columns: Vec<String> = df
@@ -42,43 +78,22 @@ pub async fn execute(
         ca.into_no_null_iter()
             .map(std::string::ToString::to_string)
             .collect::<Vec<_>>()
+    } else if df.schema().contains("underlying_symbol") {
+        let sym_col = df.column("underlying_symbol")?;
+        let unique = sym_col.unique()?.sort(SortOptions::default())?;
+        let ca = unique.str()?;
+        ca.into_no_null_iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
     } else {
         vec![]
     };
 
-    // Get date range from normalized quote_datetime column
+    // Get date range from normalized quote_datetime column, or fallback to quote_date
     let date_range = if df.schema().contains(QUOTE_DATETIME_COL) {
-        let date_col = df.column(QUOTE_DATETIME_COL)?;
-        let min_scalar = date_col.min_reduce()?;
-        let max_scalar = date_col.max_reduce()?;
-
-        let format_scalar = |s: polars::prelude::Scalar| -> Option<String> {
-            match s.value() {
-                AnyValue::Null => None,
-                AnyValue::Datetime(v, tu, _) => {
-                    let us = match tu {
-                        TimeUnit::Nanoseconds => v / 1_000,
-                        TimeUnit::Microseconds => *v,
-                        TimeUnit::Milliseconds => v * 1_000,
-                    };
-                    let secs = us / 1_000_000;
-                    let nanos = (us.rem_euclid(1_000_000) * 1_000) as u32;
-                    chrono::DateTime::from_timestamp(secs, nanos)
-                        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S").to_string())
-                }
-                AnyValue::Date(days) => {
-                    // 719_163 = days between 0001-01-01 (CE) and 1970-01-01 (Unix epoch)
-                    chrono::NaiveDate::from_num_days_from_ce_opt(days + 719_163)
-                        .map(|d| d.format("%Y-%m-%d").to_string())
-                }
-                other => Some(format!("{other}")),
-            }
-        };
-
-        DateRange {
-            start: format_scalar(min_scalar),
-            end: format_scalar(max_scalar),
-        }
+        extract_date_range(&df, QUOTE_DATETIME_COL, start_date, end_date)
+    } else if df.schema().contains("quote_date") {
+        extract_date_range(&df, "quote_date", start_date, end_date)
     } else {
         DateRange {
             start: start_date.map(std::string::ToString::to_string),
@@ -92,4 +107,43 @@ pub async fn execute(
     Ok(ai_format::format_load_data(
         rows, symbols, date_range, columns,
     ))
+}
+
+fn format_scalar(s: &polars::prelude::Scalar) -> Option<String> {
+    match s.value() {
+        AnyValue::Null => None,
+        AnyValue::Datetime(v, tu, _) => {
+            let us = match tu {
+                TimeUnit::Nanoseconds => v / 1_000,
+                TimeUnit::Microseconds => *v,
+                TimeUnit::Milliseconds => v * 1_000,
+            };
+            let secs = us / 1_000_000;
+            let nanos = (us.rem_euclid(1_000_000) * 1_000) as u32;
+            chrono::DateTime::from_timestamp(secs, nanos)
+                .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S").to_string())
+        }
+        AnyValue::Date(days) => chrono::NaiveDate::from_num_days_from_ce_opt(days + 719_163)
+            .map(|d| d.format("%Y-%m-%d").to_string()),
+        other => Some(format!("{other}")),
+    }
+}
+
+fn extract_date_range(
+    df: &DataFrame,
+    col_name: &str,
+    start_date: Option<&str>,
+    end_date: Option<&str>,
+) -> DateRange {
+    let Ok(date_col) = df.column(col_name) else {
+        return DateRange {
+            start: start_date.map(std::string::ToString::to_string),
+            end: end_date.map(std::string::ToString::to_string),
+        };
+    };
+
+    DateRange {
+        start: date_col.min_reduce().ok().and_then(|s| format_scalar(&s)),
+        end: date_col.max_reduce().ok().and_then(|s| format_scalar(&s)),
+    }
 }
