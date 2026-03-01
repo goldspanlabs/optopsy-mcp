@@ -29,7 +29,11 @@ pub fn filter_dte_range(df: &DataFrame, max_entry_dte: i32, exit_dte: i32) -> Re
     let result = df
         .clone()
         .lazy()
-        .filter(col("dte").gt_eq(lit(exit_dte)).and(col("dte").lt_eq(lit(max_entry_dte))))
+        .filter(
+            col("dte")
+                .gt_eq(lit(exit_dte))
+                .and(col("dte").lt_eq(lit(max_entry_dte))),
+        )
         .collect()?;
     Ok(result)
 }
@@ -94,10 +98,22 @@ mod tests {
     /// Uses Datetime for quote_datetime and Date for expiration to match production data.
     fn make_options_df() -> DataFrame {
         let dates = vec![
-            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap().and_hms_opt(0, 0, 0).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap().and_hms_opt(0, 0, 0).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap().and_hms_opt(0, 0, 0).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 1, 16).unwrap().and_hms_opt(0, 0, 0).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 15)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 15)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 15)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 16)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
         ];
         let expirations = [
             NaiveDate::from_ymd_opt(2024, 2, 16).unwrap(), // 32 DTE
@@ -116,10 +132,8 @@ mod tests {
             "delta" => &[0.50f64, 0.40, -0.45, 0.30],
         }
         .unwrap();
-        let exp_col = DateChunked::from_naive_date(
-            PlSmallStr::from("expiration"),
-            expirations,
-        ).into_column();
+        let exp_col =
+            DateChunked::from_naive_date(PlSmallStr::from("expiration"), expirations).into_column();
         df.with_column(exp_col).unwrap();
         df
     }
@@ -127,9 +141,18 @@ mod tests {
     #[test]
     fn compute_dte_correct_day_values() {
         let dates = vec![
-            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap().and_hms_opt(0, 0, 0).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap().and_hms_opt(0, 0, 0).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 1, 16).unwrap().and_hms_opt(0, 0, 0).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 15)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 15)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 16)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
         ];
         let expirations = [
             NaiveDate::from_ymd_opt(2024, 1, 16).unwrap(), // 1 DTE
@@ -141,8 +164,7 @@ mod tests {
         }
         .unwrap();
         df.with_column(
-            DateChunked::from_naive_date(PlSmallStr::from("expiration"), expirations)
-                .into_column(),
+            DateChunked::from_naive_date(PlSmallStr::from("expiration"), expirations).into_column(),
         )
         .unwrap();
 
@@ -217,8 +239,14 @@ mod tests {
 
     #[test]
     fn select_closest_delta_picks_nearest() {
-        let dt1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap().and_hms_opt(0, 0, 0).unwrap();
-        let exp1 = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap().and_hms_opt(0, 0, 0).unwrap();
+        let dt1 = NaiveDate::from_ymd_opt(2024, 1, 15)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        let exp1 = NaiveDate::from_ymd_opt(2024, 2, 16)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
         let df = df! {
             QUOTE_DATETIME_COL => &[dt1, dt1, dt1],
             "expiration" => &[exp1, exp1, exp1],
@@ -229,18 +257,34 @@ mod tests {
         }
         .unwrap();
 
-        let target = TargetRange { target: 0.50, min: 0.25, max: 0.55 };
+        let target = TargetRange {
+            target: 0.50,
+            min: 0.25,
+            max: 0.55,
+        };
         let result = select_closest_delta(&df, &target).unwrap();
         // Should pick delta=0.48 or 0.52 (both distance 0.02 from 0.50)
         assert_eq!(result.height(), 1);
-        let selected_delta = result.column("delta").unwrap().f64().unwrap().get(0).unwrap();
+        let selected_delta = result
+            .column("delta")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(0)
+            .unwrap();
         assert!((selected_delta - 0.48).abs() < 0.05 || (selected_delta - 0.52).abs() < 0.05);
     }
 
     #[test]
     fn select_closest_delta_filters_out_of_range() {
-        let dt1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap().and_hms_opt(0, 0, 0).unwrap();
-        let exp1 = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap().and_hms_opt(0, 0, 0).unwrap();
+        let dt1 = NaiveDate::from_ymd_opt(2024, 1, 15)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        let exp1 = NaiveDate::from_ymd_opt(2024, 2, 16)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
         let df = df! {
             QUOTE_DATETIME_COL => &[dt1, dt1],
             "expiration" => &[exp1, exp1],
@@ -251,7 +295,11 @@ mod tests {
         }
         .unwrap();
 
-        let target = TargetRange { target: 0.50, min: 0.40, max: 0.60 };
+        let target = TargetRange {
+            target: 0.50,
+            min: 0.40,
+            max: 0.60,
+        };
         let result = select_closest_delta(&df, &target).unwrap();
         assert_eq!(result.height(), 0);
     }

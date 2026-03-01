@@ -1,15 +1,18 @@
+use polars::prelude::*;
+use rmcp::{
+    handler::server::router::tool::ToolRouter,
+    model::{Implementation, ServerCapabilities, ServerInfo},
+    tool, tool_handler, tool_router, ServerHandler,
+};
+use schemars::JsonSchema;
+use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use rmcp::{
-    ServerHandler, tool, tool_handler, tool_router,
-    handler::server::router::tool::ToolRouter,
-    model::{ServerCapabilities, Implementation, ServerInfo},
-};
-use polars::prelude::*;
-use serde::Deserialize;
-use schemars::JsonSchema;
 
-use crate::engine::types::{TargetRange, Slippage, Commission, TradeSelector, CompareEntry, SimParams, EvaluateParams, BacktestParams, CompareParams};
+use crate::engine::types::{
+    BacktestParams, Commission, CompareEntry, CompareParams, EvaluateParams, SimParams, Slippage,
+    TargetRange, TradeSelector,
+};
 use crate::tools;
 
 #[derive(Clone)]
@@ -133,9 +136,8 @@ impl OptopsyServer {
         Parameters(params): Parameters<EvaluateStrategyParams>,
     ) -> String {
         let data = self.data.read().await;
-        let df = match data.as_ref() {
-            Some(df) => df,
-            None => return "Error: No data loaded. Call load_data first.".to_string(),
+        let Some(df) = data.as_ref() else {
+            return "Error: No data loaded. Call load_data first.".to_string();
         };
 
         let eval_params = EvaluateParams {
@@ -159,9 +161,8 @@ impl OptopsyServer {
     #[tool(name = "run_backtest")]
     async fn run_backtest(&self, Parameters(params): Parameters<RunBacktestParams>) -> String {
         let data = self.data.read().await;
-        let df = match data.as_ref() {
-            Some(df) => df,
-            None => return "Error: No data loaded. Call load_data first.".to_string(),
+        let Some(df) = data.as_ref() else {
+            return "Error: No data loaded. Call load_data first.".to_string();
         };
 
         let backtest_params = BacktestParams {
@@ -195,9 +196,8 @@ impl OptopsyServer {
         Parameters(params): Parameters<CompareStrategiesParams>,
     ) -> String {
         let data = self.data.read().await;
-        let df = match data.as_ref() {
-            Some(df) => df,
-            None => return "Error: No data loaded. Call load_data first.".to_string(),
+        let Some(df) = data.as_ref() else {
+            return "Error: No data loaded. Call load_data first.".to_string();
         };
 
         let compare_params = CompareParams {
@@ -216,7 +216,7 @@ impl OptopsyServer {
 impl ServerHandler for OptopsyServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
-            protocol_version: Default::default(),
+            protocol_version: rmcp::model::ProtocolVersion::default(),
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             server_info: Implementation {
                 name: "optopsy-mcp".into(),

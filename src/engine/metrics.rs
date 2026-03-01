@@ -3,6 +3,7 @@ use anyhow::Result;
 use super::types::{EquityPoint, PerformanceMetrics};
 
 /// Calculate performance metrics from equity curve
+#[allow(clippy::unnecessary_wraps, clippy::cast_precision_loss)]
 pub fn calculate_metrics(
     equity_curve: &[EquityPoint],
     initial_capital: f64,
@@ -102,6 +103,7 @@ pub fn calculate_metrics(
     })
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn std_dev(data: &[f64]) -> f64 {
     if data.len() < 2 {
         return 0.0;
@@ -111,6 +113,7 @@ fn std_dev(data: &[f64]) -> f64 {
     variance.sqrt()
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn downside_deviation(returns: &[f64]) -> f64 {
     if returns.len() < 2 {
         return 0.0;
@@ -140,6 +143,11 @@ fn calculate_max_drawdown(equity_curve: &[EquityPoint]) -> f64 {
     max_dd
 }
 
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 fn calculate_var(returns: &[f64], confidence: f64) -> f64 {
     let mut sorted = returns.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -232,8 +240,7 @@ mod tests {
     fn var_95_positive_for_losses() {
         let curve = make_equity_curve(&[
             10000.0, 9900.0, 9950.0, 9850.0, 9800.0, 9750.0, 9700.0, 9650.0, 9600.0, 9550.0,
-            9500.0, 9450.0, 9400.0, 9350.0, 9300.0, 9250.0, 9200.0, 9150.0, 9100.0, 9050.0,
-            9000.0,
+            9500.0, 9450.0, 9400.0, 9350.0, 9300.0, 9250.0, 9200.0, 9150.0, 9100.0, 9050.0, 9000.0,
         ]);
         let m = calculate_metrics(&curve, 10000.0).unwrap();
         assert!(m.var_95 > 0.0); // VaR is positive for losses

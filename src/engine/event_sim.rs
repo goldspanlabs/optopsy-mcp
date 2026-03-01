@@ -8,6 +8,7 @@ use polars::prelude::*;
 use super::filters;
 use super::pricing;
 use super::rules;
+#[allow(clippy::wildcard_imports)]
 use super::types::*;
 use crate::data::parquet::QUOTE_DATETIME_COL;
 
@@ -71,19 +72,16 @@ fn extract_date_from_column(col: &Column, idx: usize) -> Result<NaiveDate> {
                 Some(v) => {
                     let ndt = match tu {
                         TimeUnit::Milliseconds => {
-                            chrono::DateTime::from_timestamp_millis(v)
-                                .map(|dt| dt.naive_utc())
+                            chrono::DateTime::from_timestamp_millis(v).map(|dt| dt.naive_utc())
                         }
                         TimeUnit::Microseconds => {
-                            chrono::DateTime::from_timestamp_micros(v)
-                                .map(|dt| dt.naive_utc())
+                            chrono::DateTime::from_timestamp_micros(v).map(|dt| dt.naive_utc())
                         }
                         TimeUnit::Nanoseconds => {
                             let secs = v / 1_000_000_000;
                             #[allow(clippy::cast_sign_loss)]
                             let nsecs = (v % 1_000_000_000) as u32;
-                            chrono::DateTime::from_timestamp(secs, nsecs)
-                                .map(|dt| dt.naive_utc())
+                            chrono::DateTime::from_timestamp(secs, nsecs).map(|dt| dt.naive_utc())
                         }
                     };
                     match ndt {
@@ -233,12 +231,15 @@ pub fn find_entry_candidates(
             });
         }
 
-        candidates.entry(entry_date).or_default().push(EntryCandidate {
-            entry_date,
-            expiration: exp_date,
-            legs,
-            net_premium,
-        });
+        candidates
+            .entry(entry_date)
+            .or_default()
+            .push(EntryCandidate {
+                entry_date,
+                expiration: exp_date,
+                legs,
+                net_premium,
+            });
     }
 
     Ok(candidates)
@@ -261,7 +262,8 @@ pub fn run_event_loop(
     let mut trade_id = 0usize;
 
     // Last known prices for carry-forward on gaps
-    let mut last_known: HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot> = HashMap::new();
+    let mut last_known: HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot> =
+        HashMap::new();
 
     for &today in trading_days {
         // Phase 1: Check exits on open positions
@@ -272,13 +274,8 @@ pub fn run_event_loop(
                 continue;
             }
 
-            let exit_type = check_exit_triggers(
-                &positions[i],
-                today,
-                price_table,
-                &last_known,
-                params,
-            );
+            let exit_type =
+                check_exit_triggers(&positions[i], today, price_table, &last_known, params);
 
             if let Some(exit_type) = exit_type {
                 let pnl = close_position(
@@ -293,10 +290,7 @@ pub fn run_event_loop(
                 realized_equity += pnl;
 
                 trade_id += 1;
-                let entry_dt = positions[i]
-                    .entry_date
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap();
+                let entry_dt = positions[i].entry_date.and_hms_opt(0, 0, 0).unwrap();
                 let exit_dt = today.and_hms_opt(0, 0, 0).unwrap();
                 let days_held = (today - positions[i].entry_date).num_days();
 
@@ -328,19 +322,12 @@ pub fn run_event_loop(
                     .iter()
                     .filter(|c| {
                         !positions.iter().any(|p| {
-                            matches!(p.status, PositionStatus::Open)
-                                && p.expiration == c.expiration
+                            matches!(p.status, PositionStatus::Open) && p.expiration == c.expiration
                         })
                     })
                     .collect();
                 if let Some(candidate) = select_candidate(&available, &params.selector) {
-                    let position = open_position(
-                        candidate,
-                        today,
-                        strategy_def,
-                        params,
-                        next_id,
-                    );
+                    let position = open_position(candidate, today, strategy_def, params, next_id);
                     next_id += 1;
                     positions.push(position);
                 }
@@ -449,7 +436,10 @@ pub fn mark_to_market(
                     Side::Short => Side::Long,
                 };
                 let direction = leg.side.multiplier();
-                mtm += (close_price - leg.entry_price) * direction * f64::from(leg.qty) * f64::from(multiplier);
+                mtm += (close_price - leg.entry_price)
+                    * direction
+                    * f64::from(leg.qty)
+                    * f64::from(multiplier);
                 let _ = exit_side; // side used for fill price was already applied
             }
             continue;
@@ -472,7 +462,7 @@ pub fn mark_to_market(
                 Side::Long => Side::Short,
                 Side::Short => Side::Long,
             };
-            let current_price = pricing::fill_price(snap.bid, snap.ask, &exit_side, slippage);
+            let current_price = pricing::fill_price(snap.bid, snap.ask, exit_side, slippage);
             let direction = leg.side.multiplier();
             mtm += (current_price - leg.entry_price)
                 * direction
@@ -521,7 +511,7 @@ fn close_position(
         };
 
         let close_price = if let Some(snap) = snapshot {
-            pricing::fill_price(snap.bid, snap.ask, &exit_side, slippage)
+            pricing::fill_price(snap.bid, snap.ask, exit_side, slippage)
         } else {
             // No price available — assume worthless at expiration
             0.0
@@ -563,12 +553,8 @@ fn open_position(
         .zip(strategy_def.legs.iter())
         .enumerate()
     {
-        let entry_price = pricing::fill_price(
-            cand_leg.bid,
-            cand_leg.ask,
-            &leg_def.side,
-            &params.slippage,
-        );
+        let entry_price =
+            pricing::fill_price(cand_leg.bid, cand_leg.ask, leg_def.side, &params.slippage);
 
         let contracts = leg_def.qty * params.quantity;
         entry_cost += entry_price
@@ -663,17 +649,29 @@ mod tests {
         // Day 1: entry day
         table.insert(
             (d1, exp, OrderedFloat(strike), OptionType::Call),
-            QuoteSnapshot { bid: 5.0, ask: 5.50, delta: 0.50 },
+            QuoteSnapshot {
+                bid: 5.0,
+                ask: 5.50,
+                delta: 0.50,
+            },
         );
         // Day 2: mid-trade
         table.insert(
             (d2, exp, OrderedFloat(strike), OptionType::Call),
-            QuoteSnapshot { bid: 3.0, ask: 3.50, delta: 0.35 },
+            QuoteSnapshot {
+                bid: 3.0,
+                ask: 3.50,
+                delta: 0.35,
+            },
         );
         // Day 3: near exit
         table.insert(
             (d3, exp, OrderedFloat(strike), OptionType::Call),
-            QuoteSnapshot { bid: 2.0, ask: 2.50, delta: 0.25 },
+            QuoteSnapshot {
+                bid: 2.0,
+                ask: 2.50,
+                delta: 0.25,
+            },
         );
 
         let days = vec![d1, d2, d3];
@@ -739,11 +737,19 @@ mod tests {
 
         table.insert(
             (d1, exp, OrderedFloat(100.0), OptionType::Put),
-            QuoteSnapshot { bid: 4.0, ask: 4.50, delta: -0.40 },
+            QuoteSnapshot {
+                bid: 4.0,
+                ask: 4.50,
+                delta: -0.40,
+            },
         );
         table.insert(
             (d2, exp, OrderedFloat(100.0), OptionType::Put),
-            QuoteSnapshot { bid: 3.0, ask: 3.50, delta: -0.30 },
+            QuoteSnapshot {
+                bid: 3.0,
+                ask: 3.50,
+                delta: -0.30,
+            },
         );
 
         let last_known = HashMap::new();
@@ -830,25 +836,32 @@ mod tests {
         let d1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
 
         let mut candidates = BTreeMap::new();
-        candidates.insert(d1, vec![EntryCandidate {
-            entry_date: d1,
-            expiration: exp,
-            legs: vec![CandidateLeg {
-                option_type: OptionType::Call,
-                strike: 100.0,
+        candidates.insert(
+            d1,
+            vec![EntryCandidate {
+                entry_date: d1,
                 expiration: exp,
-                bid: 5.0,
-                ask: 5.50,
-                delta: 0.50,
+                legs: vec![CandidateLeg {
+                    option_type: OptionType::Call,
+                    strike: 100.0,
+                    expiration: exp,
+                    bid: 5.0,
+                    ask: 5.50,
+                    delta: 0.50,
+                }],
+                net_premium: -5.25,
             }],
-            net_premium: -5.25,
-        }]);
+        );
 
         let strategy_def = crate::strategies::find_strategy("long_call").unwrap();
 
         let params = BacktestParams {
             strategy: "long_call".to_string(),
-            leg_deltas: vec![TargetRange { target: 0.50, min: 0.20, max: 0.80 }],
+            leg_deltas: vec![TargetRange {
+                target: 0.50,
+                min: 0.20,
+                max: 0.80,
+            }],
             max_entry_dte: 45,
             exit_dte: 15, // DTE exit at 15 days
             slippage: Slippage::Mid,
@@ -885,40 +898,59 @@ mod tests {
         // Entry day: price = 5.0/5.50
         table.insert(
             (d1, exp, OrderedFloat(100.0), OptionType::Call),
-            QuoteSnapshot { bid: 5.0, ask: 5.50, delta: 0.50 },
+            QuoteSnapshot {
+                bid: 5.0,
+                ask: 5.50,
+                delta: 0.50,
+            },
         );
         // Day 2: small drop
         table.insert(
             (d2, exp, OrderedFloat(100.0), OptionType::Call),
-            QuoteSnapshot { bid: 4.0, ask: 4.50, delta: 0.45 },
+            QuoteSnapshot {
+                bid: 4.0,
+                ask: 4.50,
+                delta: 0.45,
+            },
         );
         // Day 3: big drop → stop loss should fire
         table.insert(
             (d3, exp, OrderedFloat(100.0), OptionType::Call),
-            QuoteSnapshot { bid: 1.0, ask: 1.50, delta: 0.15 },
+            QuoteSnapshot {
+                bid: 1.0,
+                ask: 1.50,
+                delta: 0.15,
+            },
         );
 
         let days = vec![d1, d2, d3];
         let mut candidates = BTreeMap::new();
-        candidates.insert(d1, vec![EntryCandidate {
-            entry_date: d1,
-            expiration: exp,
-            legs: vec![CandidateLeg {
-                option_type: OptionType::Call,
-                strike: 100.0,
+        candidates.insert(
+            d1,
+            vec![EntryCandidate {
+                entry_date: d1,
                 expiration: exp,
-                bid: 5.0,
-                ask: 5.50,
-                delta: 0.50,
+                legs: vec![CandidateLeg {
+                    option_type: OptionType::Call,
+                    strike: 100.0,
+                    expiration: exp,
+                    bid: 5.0,
+                    ask: 5.50,
+                    delta: 0.50,
+                }],
+                net_premium: -5.25,
             }],
-            net_premium: -5.25,
-        }]);
+        );
 
         let strategy_def = crate::strategies::find_strategy("long_call").unwrap();
 
         let params = BacktestParams {
             strategy: "long_call".to_string(),
-            leg_deltas: vec![TargetRange { target: 0.50, min: 0.20, max: 0.80 }],
+            leg_deltas: vec![TargetRange {
+                target: 0.50,
+                min: 0.20,
+                max: 0.80,
+            }],
             max_entry_dte: 45,
             exit_dte: 5,
             slippage: Slippage::Mid,
@@ -934,8 +966,7 @@ mod tests {
             adjustment_rules: vec![],
         };
 
-        let (trade_log, _) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def);
+        let (trade_log, _) = run_event_loop(&table, &candidates, &days, &params, &strategy_def);
 
         // Stop loss: entry_cost = 5.25 * 100 = 525, threshold = 525 * 0.5 = 262.5
         // Day 2 MTM: (4.25 - 5.25) * 100 = -100 → no trigger
@@ -958,39 +989,58 @@ mod tests {
 
         table.insert(
             (d1, exp, OrderedFloat(100.0), OptionType::Call),
-            QuoteSnapshot { bid: 5.0, ask: 5.50, delta: 0.50 },
+            QuoteSnapshot {
+                bid: 5.0,
+                ask: 5.50,
+                delta: 0.50,
+            },
         );
         table.insert(
             (d2, exp, OrderedFloat(100.0), OptionType::Call),
-            QuoteSnapshot { bid: 6.0, ask: 6.50, delta: 0.55 },
+            QuoteSnapshot {
+                bid: 6.0,
+                ask: 6.50,
+                delta: 0.55,
+            },
         );
         // Big jump → take profit
         table.insert(
             (d3, exp, OrderedFloat(100.0), OptionType::Call),
-            QuoteSnapshot { bid: 10.0, ask: 10.50, delta: 0.70 },
+            QuoteSnapshot {
+                bid: 10.0,
+                ask: 10.50,
+                delta: 0.70,
+            },
         );
 
         let days = vec![d1, d2, d3];
         let mut candidates = BTreeMap::new();
-        candidates.insert(d1, vec![EntryCandidate {
-            entry_date: d1,
-            expiration: exp,
-            legs: vec![CandidateLeg {
-                option_type: OptionType::Call,
-                strike: 100.0,
+        candidates.insert(
+            d1,
+            vec![EntryCandidate {
+                entry_date: d1,
                 expiration: exp,
-                bid: 5.0,
-                ask: 5.50,
-                delta: 0.50,
+                legs: vec![CandidateLeg {
+                    option_type: OptionType::Call,
+                    strike: 100.0,
+                    expiration: exp,
+                    bid: 5.0,
+                    ask: 5.50,
+                    delta: 0.50,
+                }],
+                net_premium: -5.25,
             }],
-            net_premium: -5.25,
-        }]);
+        );
 
         let strategy_def = crate::strategies::find_strategy("long_call").unwrap();
 
         let params = BacktestParams {
             strategy: "long_call".to_string(),
-            leg_deltas: vec![TargetRange { target: 0.50, min: 0.20, max: 0.80 }],
+            leg_deltas: vec![TargetRange {
+                target: 0.50,
+                min: 0.20,
+                max: 0.80,
+            }],
             max_entry_dte: 45,
             exit_dte: 5,
             slippage: Slippage::Mid,
@@ -1006,8 +1056,7 @@ mod tests {
             adjustment_rules: vec![],
         };
 
-        let (trade_log, _) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def);
+        let (trade_log, _) = run_event_loop(&table, &candidates, &days, &params, &strategy_def);
 
         // Take profit: entry_cost = 525, threshold = 525 * 0.5 = 262.5
         // Day 2 MTM: (6.25 - 5.25) * 100 = 100 → no trigger
@@ -1030,11 +1079,19 @@ mod tests {
         for d in [d1, d2] {
             table.insert(
                 (d, exp, OrderedFloat(100.0), OptionType::Call),
-                QuoteSnapshot { bid: 5.0, ask: 5.50, delta: 0.50 },
+                QuoteSnapshot {
+                    bid: 5.0,
+                    ask: 5.50,
+                    delta: 0.50,
+                },
             );
             table.insert(
                 (d, exp, OrderedFloat(105.0), OptionType::Call),
-                QuoteSnapshot { bid: 3.0, ask: 3.50, delta: 0.40 },
+                QuoteSnapshot {
+                    bid: 3.0,
+                    ask: 3.50,
+                    delta: 0.40,
+                },
             );
         }
 
@@ -1065,7 +1122,11 @@ mod tests {
 
         let params = BacktestParams {
             strategy: "long_call".to_string(),
-            leg_deltas: vec![TargetRange { target: 0.50, min: 0.20, max: 0.80 }],
+            leg_deltas: vec![TargetRange {
+                target: 0.50,
+                min: 0.20,
+                max: 0.80,
+            }],
             max_entry_dte: 45,
             exit_dte: 5,
             slippage: Slippage::Mid,
@@ -1081,8 +1142,7 @@ mod tests {
             adjustment_rules: vec![],
         };
 
-        let (trade_log, _) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def);
+        let (trade_log, _) = run_event_loop(&table, &candidates, &days, &params, &strategy_def);
 
         // Max positions = 1, first position stays open, second rejected
         assert_eq!(trade_log.len(), 0, "No trades should close in 2 days");
@@ -1095,25 +1155,32 @@ mod tests {
         let d1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
 
         let mut candidates = BTreeMap::new();
-        candidates.insert(d1, vec![EntryCandidate {
-            entry_date: d1,
-            expiration: exp,
-            legs: vec![CandidateLeg {
-                option_type: OptionType::Call,
-                strike: 100.0,
+        candidates.insert(
+            d1,
+            vec![EntryCandidate {
+                entry_date: d1,
                 expiration: exp,
-                bid: 5.0,
-                ask: 5.50,
-                delta: 0.50,
+                legs: vec![CandidateLeg {
+                    option_type: OptionType::Call,
+                    strike: 100.0,
+                    expiration: exp,
+                    bid: 5.0,
+                    ask: 5.50,
+                    delta: 0.50,
+                }],
+                net_premium: -5.25,
             }],
-            net_premium: -5.25,
-        }]);
+        );
 
         let strategy_def = crate::strategies::find_strategy("long_call").unwrap();
 
         let params = BacktestParams {
             strategy: "long_call".to_string(),
-            leg_deltas: vec![TargetRange { target: 0.50, min: 0.20, max: 0.80 }],
+            leg_deltas: vec![TargetRange {
+                target: 0.50,
+                min: 0.20,
+                max: 0.80,
+            }],
             max_entry_dte: 45,
             exit_dte: 5,
             slippage: Slippage::Mid,
@@ -1129,11 +1196,14 @@ mod tests {
             adjustment_rules: vec![],
         };
 
-        let (_, equity_curve) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def);
+        let (_, equity_curve) = run_event_loop(&table, &candidates, &days, &params, &strategy_def);
 
         // Should have one equity point per trading day
-        assert_eq!(equity_curve.len(), days.len(), "One equity point per trading day");
+        assert_eq!(
+            equity_curve.len(),
+            days.len(),
+            "One equity point per trading day"
+        );
 
         // Day 1: just entered, MTM = 0 (entry price = current price)
         // Actually on entry day, position is opened after MTM phase, so MTM includes the position
@@ -1184,8 +1254,7 @@ mod tests {
         }
         .unwrap();
         df.with_column(
-            DateChunked::from_naive_date(PlSmallStr::from("expiration"), expirations)
-                .into_column(),
+            DateChunked::from_naive_date(PlSmallStr::from("expiration"), expirations).into_column(),
         )
         .unwrap();
         df
@@ -1198,7 +1267,11 @@ mod tests {
 
         let params = BacktestParams {
             strategy: "long_call".to_string(),
-            leg_deltas: vec![TargetRange { target: 0.50, min: 0.10, max: 0.80 }],
+            leg_deltas: vec![TargetRange {
+                target: 0.50,
+                min: 0.10,
+                max: 0.80,
+            }],
             max_entry_dte: 45,
             exit_dte: 5,
             slippage: Slippage::Mid,
@@ -1215,7 +1288,10 @@ mod tests {
         };
 
         let candidates = find_entry_candidates(&df, &strategy_def, &params).unwrap();
-        assert!(!candidates.is_empty(), "Should find at least one date with candidates");
+        assert!(
+            !candidates.is_empty(),
+            "Should find at least one date with candidates"
+        );
 
         // Each date group should have exactly 1 candidate (1 strike per date)
         for (_date, cands) in &candidates {

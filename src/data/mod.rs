@@ -6,6 +6,7 @@ use anyhow::Result;
 use chrono::NaiveDate;
 use polars::prelude::*;
 
+#[allow(dead_code)]
 pub trait DataStore: Send + Sync {
     fn load_options(
         &self,

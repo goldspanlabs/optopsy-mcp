@@ -4,7 +4,11 @@ pub fn leg(side: Side, option_type: OptionType, qty: i32) -> LegDef {
     LegDef {
         side,
         option_type,
-        delta: TargetRange { target: 0.0, min: 0.0, max: 1.0 },
+        delta: TargetRange {
+            target: 0.0,
+            min: 0.0,
+            max: 1.0,
+        },
         qty,
     }
 }

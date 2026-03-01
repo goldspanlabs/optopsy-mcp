@@ -3,14 +3,22 @@ use chrono::NaiveDateTime;
 use std::collections::BTreeMap;
 
 use super::core::RawTrade;
+#[allow(clippy::wildcard_imports)]
 use super::types::*;
 
+#[allow(dead_code)]
 pub struct SimResult {
     pub equity_curve: Vec<EquityPoint>,
     pub trade_log: Vec<TradeRecord>,
 }
 
 /// Run simulation: trade selection, position management, equity curve
+#[allow(
+    dead_code,
+    clippy::unnecessary_wraps,
+    clippy::cast_sign_loss,
+    clippy::float_cmp
+)]
 pub fn simulate(
     mut trades: Vec<RawTrade>,
     capital: f64,
@@ -48,9 +56,9 @@ pub fn simulate(
 
         if let Some(trade) = selected {
             // Check no overlap with existing positions
-            let overlaps = active_positions.iter().any(|(entry, exit)| {
-                trade.entry_datetime < *exit && trade.exit_datetime > *entry
-            });
+            let overlaps = active_positions
+                .iter()
+                .any(|(entry, exit)| trade.entry_datetime < *exit && trade.exit_datetime > *entry);
 
             if overlaps && active_positions.len() >= max_positions as usize {
                 continue;
@@ -102,12 +110,7 @@ mod tests {
     use super::*;
     use chrono::NaiveDate;
 
-    fn make_raw_trade(
-        entry_day: u32,
-        exit_day: u32,
-        pnl: f64,
-        entry_cost: f64,
-    ) -> RawTrade {
+    fn make_raw_trade(entry_day: u32, exit_day: u32, pnl: f64, entry_cost: f64) -> RawTrade {
         let entry = NaiveDate::from_ymd_opt(2024, 1, entry_day)
             .unwrap()
             .and_hms_opt(0, 0, 0)
@@ -197,6 +200,7 @@ mod tests {
     }
 }
 
+#[allow(dead_code)]
 fn select_trade<'a>(candidates: &'a [RawTrade], selector: &TradeSelector) -> Option<&'a RawTrade> {
     if candidates.is_empty() {
         return None;
@@ -208,21 +212,17 @@ fn select_trade<'a>(candidates: &'a [RawTrade], selector: &TradeSelector) -> Opt
             // Already sorted by delta distance in filtering
             candidates.first()
         }
-        TradeSelector::HighestPremium => {
-            candidates.iter().max_by(|a, b| {
-                a.entry_cost
-                    .abs()
-                    .partial_cmp(&b.entry_cost.abs())
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-        }
-        TradeSelector::LowestPremium => {
-            candidates.iter().min_by(|a, b| {
-                a.entry_cost
-                    .abs()
-                    .partial_cmp(&b.entry_cost.abs())
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-        }
+        TradeSelector::HighestPremium => candidates.iter().max_by(|a, b| {
+            a.entry_cost
+                .abs()
+                .partial_cmp(&b.entry_cost.abs())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+        TradeSelector::LowestPremium => candidates.iter().min_by(|a, b| {
+            a.entry_cost
+                .abs()
+                .partial_cmp(&b.entry_cost.abs())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
     }
 }

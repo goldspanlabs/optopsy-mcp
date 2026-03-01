@@ -1,7 +1,7 @@
 use chrono::{NaiveDate, NaiveDateTime};
 use ordered_float::OrderedFloat;
-use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -11,7 +11,7 @@ pub enum Side {
 }
 
 impl Side {
-    pub fn multiplier(&self) -> f64 {
+    pub fn multiplier(self) -> f64 {
         match self {
             Side::Long => 1.0,
             Side::Short => -1.0,
@@ -41,7 +41,11 @@ pub struct Commission {
 
 impl Default for Commission {
     fn default() -> Self {
-        Self { per_contract: 0.0, base_fee: 0.0, min_fee: 0.0 }
+        Self {
+            per_contract: 0.0,
+            base_fee: 0.0,
+            min_fee: 0.0,
+        }
     }
 }
 
@@ -59,13 +63,16 @@ pub enum Slippage {
     #[default]
     Mid,
     Spread,
-    Liquidity { fill_ratio: f64, ref_volume: u64 },
-    PerLeg { per_leg: f64 },
+    Liquidity {
+        fill_ratio: f64,
+        ref_volume: u64,
+    },
+    PerLeg {
+        per_leg: f64,
+    },
 }
 
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub enum TradeSelector {
     #[default]
     Nearest,
@@ -73,7 +80,6 @@ pub enum TradeSelector {
     LowestPremium,
     First,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum ExitType {
@@ -86,6 +92,7 @@ pub enum ExitType {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct LegDef {
     pub side: Side,
     pub option_type: OptionType,
@@ -137,7 +144,9 @@ pub struct BacktestParams {
     pub adjustment_rules: Vec<AdjustmentRule>,
 }
 
-fn default_multiplier() -> i32 { 100 }
+fn default_multiplier() -> i32 {
+    100
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CompareParams {
@@ -307,9 +316,22 @@ pub struct CandidateLeg {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum AdjustmentAction {
-    Close { position_id: usize, leg_index: usize },
-    Roll { position_id: usize, leg_index: usize, new_strike: f64, new_expiration: NaiveDate },
-    Add { position_id: usize, leg: CandidateLeg, side: Side, qty: i32 },
+    Close {
+        position_id: usize,
+        leg_index: usize,
+    },
+    Roll {
+        position_id: usize,
+        leg_index: usize,
+        new_strike: f64,
+        new_expiration: NaiveDate,
+    },
+    Add {
+        position_id: usize,
+        leg: CandidateLeg,
+        side: Side,
+        qty: i32,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -341,27 +363,43 @@ mod tests {
 
     #[test]
     fn commission_per_contract() {
-        let c = Commission { per_contract: 0.65, base_fee: 0.0, min_fee: 0.0 };
+        let c = Commission {
+            per_contract: 0.65,
+            base_fee: 0.0,
+            min_fee: 0.0,
+        };
         assert!((c.calculate(10) - 6.50).abs() < 1e-10);
     }
 
     #[test]
     fn commission_base_fee() {
-        let c = Commission { per_contract: 0.65, base_fee: 1.00, min_fee: 0.0 };
+        let c = Commission {
+            per_contract: 0.65,
+            base_fee: 1.00,
+            min_fee: 0.0,
+        };
         // 1.00 + 0.65 * 5 = 4.25
         assert!((c.calculate(5) - 4.25).abs() < 1e-10);
     }
 
     #[test]
     fn commission_min_fee() {
-        let c = Commission { per_contract: 0.10, base_fee: 0.0, min_fee: 5.00 };
+        let c = Commission {
+            per_contract: 0.10,
+            base_fee: 0.0,
+            min_fee: 5.00,
+        };
         // 0.10 * 1 = 0.10, but min is 5.00
         assert!((c.calculate(1) - 5.00).abs() < 1e-10);
     }
 
     #[test]
     fn commission_min_fee_not_applied_when_above() {
-        let c = Commission { per_contract: 1.00, base_fee: 5.00, min_fee: 2.00 };
+        let c = Commission {
+            per_contract: 1.00,
+            base_fee: 5.00,
+            min_fee: 2.00,
+        };
         // 5.00 + 1.00 * 3 = 8.00 > 2.00, so min not relevant
         assert!((c.calculate(3) - 8.00).abs() < 1e-10);
     }
@@ -374,7 +412,11 @@ mod tests {
 
     #[test]
     fn commission_negative_contracts_uses_abs() {
-        let c = Commission { per_contract: 0.65, base_fee: 0.0, min_fee: 0.0 };
+        let c = Commission {
+            per_contract: 0.65,
+            base_fee: 0.0,
+            min_fee: 0.0,
+        };
         assert!((c.calculate(-10) - 6.50).abs() < 1e-10);
     }
 }

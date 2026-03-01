@@ -8,11 +8,13 @@ use super::metrics;
 use super::output;
 use super::pricing;
 use super::rules;
+#[allow(clippy::wildcard_imports)]
 use super::types::*;
 use crate::data::parquet::QUOTE_DATETIME_COL;
 use crate::strategies;
 
 /// Evaluate strategy statistically — returns grouped stats by DTE/delta buckets
+#[allow(clippy::too_many_lines)]
 pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<GroupStats>> {
     let strategy_def = strategies::find_strategy(&params.strategy)
         .ok_or_else(|| anyhow::anyhow!("Unknown strategy: {}", params.strategy))?;
@@ -46,7 +48,8 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
         let with_dte = filters::compute_dte(&filtered)?;
 
         // Filter DTE range
-        let dte_filtered = filters::filter_dte_range(&with_dte, params.max_entry_dte, params.exit_dte)?;
+        let dte_filtered =
+            filters::filter_dte_range(&with_dte, params.max_entry_dte, params.exit_dte)?;
 
         // Filter valid quotes
         let valid = filters::filter_valid_quotes(&dte_filtered)?;
@@ -58,16 +61,18 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
         let matched = evaluation::match_entry_exit(&selected, &with_dte, params.exit_dte)?;
 
         if matched.height() == 0 {
-            bail!("No trades found for leg {} of strategy '{}'", i, params.strategy);
+            bail!(
+                "No trades found for leg {} of strategy '{}'",
+                i,
+                params.strategy
+            );
         }
 
         // Rename columns to avoid conflicts when joining legs
         let renamed = matched
             .lazy()
             .rename(
-                [
-                    "strike", "bid", "ask", "delta", "exit_bid", "exit_ask",
-                ],
+                ["strike", "bid", "ask", "delta", "exit_bid", "exit_ask"],
                 [
                     format!("strike_{i}"),
                     format!("bid_{i}"),
@@ -141,7 +146,7 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
                 ask,
                 exit_bid,
                 exit_ask,
-                &leg.side,
+                leg.side,
                 &params.slippage,
                 leg.qty,
                 100, // default multiplier for evaluation
@@ -175,11 +180,7 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
     };
 
     // Bin and aggregate
-    output::bin_and_aggregate(
-        &combined,
-        params.dte_interval,
-        params.delta_interval,
-    )
+    output::bin_and_aggregate(&combined, params.dte_interval, params.delta_interval)
 }
 
 /// Run a full backtest simulation using event-driven simulation
@@ -218,6 +219,7 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
 }
 
 /// Compare multiple strategies
+#[allow(clippy::unnecessary_wraps)]
 pub fn compare_strategies(df: &DataFrame, params: &CompareParams) -> Result<Vec<CompareResult>> {
     let mut results = Vec::new();
 
@@ -290,8 +292,14 @@ mod tests {
     /// (which still use the old match_entry_exit pipeline).
     fn make_synthetic_options_df() -> DataFrame {
         let quote_dates = vec![
-            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap().and_hms_opt(0, 0, 0).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 2, 11).unwrap().and_hms_opt(0, 0, 0).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 15)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            NaiveDate::from_ymd_opt(2024, 2, 11)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
         ];
         let expirations = [
             NaiveDate::from_ymd_opt(2024, 2, 16).unwrap(),
@@ -308,8 +316,7 @@ mod tests {
         }
         .unwrap();
         df.with_column(
-            DateChunked::from_naive_date(PlSmallStr::from("expiration"), expirations)
-                .into_column(),
+            DateChunked::from_naive_date(PlSmallStr::from("expiration"), expirations).into_column(),
         )
         .unwrap();
         df
@@ -329,7 +336,10 @@ mod tests {
             NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(), // DTE=5
         ];
 
-        let quote_dates: Vec<_> = dates.iter().map(|d| d.and_hms_opt(0, 0, 0).unwrap()).collect();
+        let quote_dates: Vec<_> = dates
+            .iter()
+            .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
+            .collect();
         let expirations: Vec<_> = dates.iter().map(|_| exp).collect();
 
         // Simulate time decay: option losing value over time
@@ -348,8 +358,7 @@ mod tests {
         }
         .unwrap();
         df.with_column(
-            DateChunked::from_naive_date(PlSmallStr::from("expiration"), expirations)
-                .into_column(),
+            DateChunked::from_naive_date(PlSmallStr::from("expiration"), expirations).into_column(),
         )
         .unwrap();
         df
@@ -366,7 +375,10 @@ mod tests {
             NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(), // DTE=5
         ];
 
-        let quote_dates: Vec<_> = dates.iter().map(|d| d.and_hms_opt(0, 0, 0).unwrap()).collect();
+        let quote_dates: Vec<_> = dates
+            .iter()
+            .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
+            .collect();
         let expirations: Vec<_> = dates.iter().map(|_| exp).collect();
 
         // Sharp drop on day 3: entry mid=5.25, day 3 mid=1.25 → loss = 400 > 50% of 525 = 262.5
@@ -385,8 +397,7 @@ mod tests {
         }
         .unwrap();
         df.with_column(
-            DateChunked::from_naive_date(PlSmallStr::from("expiration"), expirations)
-                .into_column(),
+            DateChunked::from_naive_date(PlSmallStr::from("expiration"), expirations).into_column(),
         )
         .unwrap();
         df
@@ -395,7 +406,11 @@ mod tests {
     fn default_backtest_params() -> BacktestParams {
         BacktestParams {
             strategy: "long_call".to_string(),
-            leg_deltas: vec![TargetRange { target: 0.50, min: 0.20, max: 0.80 }],
+            leg_deltas: vec![TargetRange {
+                target: 0.50,
+                min: 0.20,
+                max: 0.80,
+            }],
             max_entry_dte: 45,
             exit_dte: 5,
             slippage: Slippage::Mid,
@@ -417,7 +432,11 @@ mod tests {
         let df = make_synthetic_options_df();
         let params = EvaluateParams {
             strategy: "long_call".to_string(),
-            leg_deltas: vec![TargetRange { target: 0.50, min: 0.20, max: 0.80 }],
+            leg_deltas: vec![TargetRange {
+                target: 0.50,
+                min: 0.20,
+                max: 0.80,
+            }],
             max_entry_dte: 45,
             exit_dte: 5,
             dte_interval: 10,
@@ -427,7 +446,11 @@ mod tests {
         };
 
         let result = evaluate_strategy(&df, &params);
-        assert!(result.is_ok(), "evaluate_strategy failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "evaluate_strategy failed: {:?}",
+            result.err()
+        );
         let stats = result.unwrap();
         assert!(!stats.is_empty(), "Expected at least one group stat");
     }
@@ -485,7 +508,11 @@ mod tests {
         params.stop_loss = Some(0.50); // 50% stop loss
 
         let result = run_backtest(&df, &params);
-        assert!(result.is_ok(), "run_backtest with stop loss failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "run_backtest with stop loss failed: {:?}",
+            result.err()
+        );
         let bt = result.unwrap();
         assert_eq!(bt.trade_count, 1);
         // Stop loss fires on day 3 (Jan 17) at real market prices
@@ -528,7 +555,6 @@ mod tests {
             NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(),
         ];
 
-        let n = dates.len();
         // Two strikes per date: 100 and 105
         let mut quote_dates = Vec::new();
         let mut expirations_vec = Vec::new();
@@ -586,8 +612,16 @@ mod tests {
         let params = BacktestParams {
             strategy: "bull_call_spread".to_string(),
             leg_deltas: vec![
-                TargetRange { target: 0.50, min: 0.20, max: 0.80 },
-                TargetRange { target: 0.35, min: 0.10, max: 0.60 },
+                TargetRange {
+                    target: 0.50,
+                    min: 0.20,
+                    max: 0.80,
+                },
+                TargetRange {
+                    target: 0.35,
+                    min: 0.10,
+                    max: 0.60,
+                },
             ],
             max_entry_dte: 45,
             exit_dte: 5,
@@ -605,11 +639,14 @@ mod tests {
         };
 
         let result = run_backtest(&df, &params);
-        assert!(result.is_ok(), "run_backtest for spread failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "run_backtest for spread failed: {:?}",
+            result.err()
+        );
         let bt = result.unwrap();
         assert_eq!(bt.trade_count, 1);
         // Both legs should be present in the trade
         assert_eq!(bt.trade_log.len(), 1);
     }
 }
-

@@ -1,10 +1,10 @@
+pub mod butterflies;
+pub mod calendar;
+pub mod condors;
 pub mod helpers;
+pub mod iron;
 pub mod singles;
 pub mod spreads;
-pub mod butterflies;
-pub mod condors;
-pub mod iron;
-pub mod calendar;
 
 use crate::engine::types::StrategyDef;
 
@@ -50,11 +50,7 @@ mod tests {
     #[test]
     fn all_strategies_have_at_least_one_leg() {
         for s in all_strategies() {
-            assert!(
-                !s.legs.is_empty(),
-                "Strategy '{}' has no legs",
-                s.name
-            );
+            assert!(!s.legs.is_empty(), "Strategy '{}' has no legs", s.name);
         }
     }
 

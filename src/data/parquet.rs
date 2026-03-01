@@ -108,8 +108,14 @@ mod tests {
     #[test]
     fn normalize_datetime_column_passthrough() {
         let datetimes = vec![
-            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap().and_hms_opt(9, 30, 0).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 1, 16).unwrap().and_hms_opt(10, 0, 0).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 15)
+                .unwrap()
+                .and_hms_opt(9, 30, 0)
+                .unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 16)
+                .unwrap()
+                .and_hms_opt(10, 0, 0)
+                .unwrap(),
         ];
         let df = df! {
             "quote_datetime" => &datetimes,
@@ -176,7 +182,7 @@ impl DataStore for ParquetStore {
         end_date: Option<NaiveDate>,
     ) -> Result<DataFrame> {
         let path_str = self.path.to_string_lossy().to_string();
-        let df = LazyFrame::scan_parquet(path_str.as_str().into(), Default::default())?
+        let df = LazyFrame::scan_parquet(path_str.as_str().into(), ScanArgsParquet::default())?
             .collect()
             .context("Failed to read Parquet file")?;
 
@@ -206,18 +212,21 @@ impl DataStore for ParquetStore {
 
     fn list_symbols(&self) -> Result<Vec<String>> {
         let path_str = self.path.to_string_lossy().to_string();
-        let df = LazyFrame::scan_parquet(path_str.as_str().into(), Default::default())?
+        let df = LazyFrame::scan_parquet(path_str.as_str().into(), ScanArgsParquet::default())?
             .select([col("symbol")])
             .unique(None, UniqueKeepStrategy::First)
             .collect()?;
 
         let ca = df.column("symbol")?.str()?;
-        Ok(ca.into_no_null_iter().map(std::string::ToString::to_string).collect())
+        Ok(ca
+            .into_no_null_iter()
+            .map(std::string::ToString::to_string)
+            .collect())
     }
 
     fn date_range(&self, _symbol: &str) -> Result<(NaiveDate, NaiveDate)> {
         let path_str = self.path.to_string_lossy().to_string();
-        let df = LazyFrame::scan_parquet(path_str.as_str().into(), Default::default())?
+        let df = LazyFrame::scan_parquet(path_str.as_str().into(), ScanArgsParquet::default())?
             .collect()?;
 
         let df = normalize_quote_datetime(df)?;

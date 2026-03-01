@@ -1,9 +1,9 @@
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use anyhow::Result;
 use chrono::NaiveDate;
 use polars::prelude::*;
 use serde_json::json;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use crate::data::parquet::{ParquetStore, QUOTE_DATETIME_COL};
 use crate::data::DataStore;
@@ -26,14 +26,20 @@ pub async fn execute(
     let df = store.load_options("", start, end)?;
 
     let rows = df.height();
-    let columns: Vec<String> = df.get_column_names().iter().map(std::string::ToString::to_string).collect();
+    let columns: Vec<String> = df
+        .get_column_names()
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
 
     // Extract unique symbols
     let symbols = if df.schema().contains("symbol") {
         let sym_col = df.column("symbol")?;
-        let unique = sym_col.unique()?.sort(Default::default())?;
+        let unique = sym_col.unique()?.sort(SortOptions::default())?;
         let ca = unique.str()?;
-        ca.into_no_null_iter().map(std::string::ToString::to_string).collect::<Vec<_>>()
+        ca.into_no_null_iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
     } else {
         vec![]
     };

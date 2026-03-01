@@ -2,6 +2,7 @@ use super::core::RawTrade;
 use super::types::ExitType;
 
 /// Apply early exit rules to trades
+#[allow(dead_code)]
 pub fn apply_early_exits(
     trades: Vec<RawTrade>,
     stop_loss: Option<f64>,
@@ -50,7 +51,10 @@ mod tests {
     use chrono::NaiveDate;
 
     fn make_trade(pnl: f64, entry_cost: f64, days_held: i64) -> RawTrade {
-        let dt = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap().and_hms_opt(0, 0, 0).unwrap();
+        let dt = NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
         let exit_dt = NaiveDate::from_ymd_opt(2024, 1, 1 + days_held as u32)
             .unwrap()
             .and_hms_opt(0, 0, 0)

@@ -5,6 +5,7 @@ use polars::prelude::*;
 /// For spreads: strikes must be ordered correctly.
 /// For butterflies: lower < middle < upper.
 /// For condors/iron strategies: s1 < s2 < s3 < s4.
+#[allow(dead_code)]
 pub fn validate_strike_order(strikes: &[f64]) -> Result<()> {
     for i in 1..strikes.len() {
         if strikes[i] <= strikes[i - 1] {
@@ -93,7 +94,16 @@ mod tests {
         let result = filter_strike_order(&df, 2).unwrap();
         // Only first row has strike_0 < strike_1
         assert_eq!(result.height(), 1);
-        assert_eq!(result.column("strike_0").unwrap().f64().unwrap().get(0).unwrap(), 100.0);
+        assert_eq!(
+            result
+                .column("strike_0")
+                .unwrap()
+                .f64()
+                .unwrap()
+                .get(0)
+                .unwrap(),
+            100.0
+        );
     }
 
     #[test]

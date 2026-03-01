@@ -1,6 +1,7 @@
-use polars::prelude::*;
 use super::helpers::SignalFn;
+use polars::prelude::*;
 
+#[allow(dead_code)]
 pub struct AndSignal {
     pub left: Box<dyn SignalFn>,
     pub right: Box<dyn SignalFn>,
@@ -19,6 +20,7 @@ impl SignalFn for AndSignal {
     }
 }
 
+#[allow(dead_code)]
 pub struct OrSignal {
     pub left: Box<dyn SignalFn>,
     pub right: Box<dyn SignalFn>,
