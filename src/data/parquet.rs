@@ -81,99 +81,6 @@ pub fn normalize_quote_datetime(df: DataFrame) -> Result<DataFrame> {
     Ok(result)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn normalize_date_column_to_datetime() {
-        let dates = vec![
-            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 1, 16).unwrap(),
-        ];
-        let df = df! {
-            "quote_date" => &dates,
-            "value" => &[1, 2],
-        }
-        .unwrap();
-
-        let result = normalize_quote_datetime(df).unwrap();
-        assert!(result.schema().contains(QUOTE_DATETIME_COL));
-        assert!(!result.schema().contains("quote_date"));
-        match result.column(QUOTE_DATETIME_COL).unwrap().dtype() {
-            DataType::Datetime(_, _) => {}
-            other => panic!("Expected Datetime, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn normalize_datetime_column_passthrough() {
-        let datetimes = vec![
-            NaiveDate::from_ymd_opt(2024, 1, 15)
-                .unwrap()
-                .and_hms_opt(9, 30, 0)
-                .unwrap(),
-            NaiveDate::from_ymd_opt(2024, 1, 16)
-                .unwrap()
-                .and_hms_opt(10, 0, 0)
-                .unwrap(),
-        ];
-        let df = df! {
-            "quote_datetime" => &datetimes,
-            "value" => &[1, 2],
-        }
-        .unwrap();
-
-        let result = normalize_quote_datetime(df).unwrap();
-        assert!(result.schema().contains(QUOTE_DATETIME_COL));
-        assert_eq!(result.height(), 2);
-    }
-
-    #[test]
-    fn normalize_data_date_renamed() {
-        let dates = vec![
-            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 1, 16).unwrap(),
-        ];
-        let df = df! {
-            "data_date" => &dates,
-            "value" => &[1, 2],
-        }
-        .unwrap();
-
-        let result = normalize_quote_datetime(df).unwrap();
-        assert!(result.schema().contains(QUOTE_DATETIME_COL));
-        assert!(!result.schema().contains("data_date"));
-    }
-
-    #[test]
-    fn normalize_string_column_to_datetime() {
-        let df = df! {
-            "quote_date" => &["2024-01-15", "2024-01-16"],
-            "value" => &[1, 2],
-        }
-        .unwrap();
-
-        let result = normalize_quote_datetime(df).unwrap();
-        assert!(result.schema().contains(QUOTE_DATETIME_COL));
-        match result.column(QUOTE_DATETIME_COL).unwrap().dtype() {
-            DataType::Datetime(_, _) => {}
-            other => panic!("Expected Datetime, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn normalize_no_recognized_column_noop() {
-        let df = df! {
-            "some_other_col" => &[1, 2],
-            "value" => &[3, 4],
-        }
-        .unwrap();
-
-        let result = normalize_quote_datetime(df.clone()).unwrap();
-        assert_eq!(result.schema(), df.schema());
-    }
-}
-
 impl DataStore for ParquetStore {
     fn load_options(
         &self,
@@ -241,5 +148,98 @@ impl DataStore for ParquetStore {
         let end = NaiveDate::parse_from_str(max_str.trim_matches('"'), "%Y-%m-%d")?;
 
         Ok((start, end))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn normalize_date_column_to_datetime() {
+        let dates = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 16).unwrap(),
+        ];
+        let df = df! {
+            "quote_date" => &dates,
+            "value" => &[1, 2],
+        }
+        .unwrap();
+
+        let result = normalize_quote_datetime(df).unwrap();
+        assert!(result.schema().contains(QUOTE_DATETIME_COL));
+        assert!(!result.schema().contains("quote_date"));
+        match result.column(QUOTE_DATETIME_COL).unwrap().dtype() {
+            DataType::Datetime(_, _) => {}
+            other => panic!("Expected Datetime, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn normalize_datetime_column_passthrough() {
+        let datetimes = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 15)
+                .unwrap()
+                .and_hms_opt(9, 30, 0)
+                .unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 16)
+                .unwrap()
+                .and_hms_opt(10, 0, 0)
+                .unwrap(),
+        ];
+        let df = df! {
+            "quote_datetime" => &datetimes,
+            "value" => &[1, 2],
+        }
+        .unwrap();
+
+        let result = normalize_quote_datetime(df).unwrap();
+        assert!(result.schema().contains(QUOTE_DATETIME_COL));
+        assert_eq!(result.height(), 2);
+    }
+
+    #[test]
+    fn normalize_data_date_renamed() {
+        let dates = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 16).unwrap(),
+        ];
+        let df = df! {
+            "data_date" => &dates,
+            "value" => &[1, 2],
+        }
+        .unwrap();
+
+        let result = normalize_quote_datetime(df).unwrap();
+        assert!(result.schema().contains(QUOTE_DATETIME_COL));
+        assert!(!result.schema().contains("data_date"));
+    }
+
+    #[test]
+    fn normalize_string_column_to_datetime() {
+        let df = df! {
+            "quote_date" => &["2024-01-15", "2024-01-16"],
+            "value" => &[1, 2],
+        }
+        .unwrap();
+
+        let result = normalize_quote_datetime(df).unwrap();
+        assert!(result.schema().contains(QUOTE_DATETIME_COL));
+        match result.column(QUOTE_DATETIME_COL).unwrap().dtype() {
+            DataType::Datetime(_, _) => {}
+            other => panic!("Expected Datetime, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn normalize_no_recognized_column_noop() {
+        let df = df! {
+            "some_other_col" => &[1, 2],
+            "value" => &[3, 4],
+        }
+        .unwrap();
+
+        let result = normalize_quote_datetime(df.clone()).unwrap();
+        assert_eq!(result.schema(), df.schema());
     }
 }

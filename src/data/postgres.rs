@@ -11,6 +11,7 @@ use sqlx::postgres::PgPool;
 use super::DataStore;
 
 #[cfg(feature = "postgres")]
+#[allow(dead_code)]
 pub struct PostgresStore {
     pool: PgPool,
 }

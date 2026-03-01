@@ -217,6 +217,14 @@ pub struct PerformanceMetrics {
     pub profit_factor: f64,
     pub calmar: f64,
     pub var_95: f64,
+    pub total_return_pct: f64,
+    pub cagr: f64,
+    pub avg_trade_pnl: f64,
+    pub avg_winner: f64,
+    pub avg_loser: f64,
+    pub avg_days_held: f64,
+    pub max_consecutive_losses: usize,
+    pub expectancy: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -243,8 +251,12 @@ pub struct CompareResult {
     pub trades: usize,
     pub pnl: f64,
     pub sharpe: f64,
+    pub sortino: f64,
     pub max_dd: f64,
     pub win_rate: f64,
+    pub profit_factor: f64,
+    pub calmar: f64,
+    pub total_return_pct: f64,
 }
 
 // --- Event-driven simulation types ---
