@@ -10,20 +10,25 @@ pub fn execute(df: &DataFrame, params: &SuggestParams) -> Result<SuggestResponse
 }
 
 fn format_suggest(result: SuggestResult) -> SuggestResponse {
+    let liquidity_pct = if result.data_coverage.total_rows == 0 {
+        0.0
+    } else {
+        (result.data_coverage.liquid_rows as f64 / result.data_coverage.total_rows as f64) * 100.0
+    };
+
     let summary = format!(
-        "Suggested parameters for '{}': max_entry_dte={}, exit_dte={}, confidence={:.1}%",
+        "Suggested parameters for '{}': max_entry_dte={}, exit_dte={}, confidence={:.1}%, liquidity={:.1}%",
         result.strategy,
         result.max_entry_dte,
         result.exit_dte,
-        result.confidence * 100.0
+        result.confidence * 100.0,
+        liquidity_pct
     );
 
     let mut key_findings = vec![];
     key_findings.push(format!(
         "Liquidity analysis: {} liquid rows out of {} total ({:.1}%)",
-        result.data_coverage.liquid_rows,
-        result.data_coverage.total_rows,
-        (result.data_coverage.liquid_rows as f64 / result.data_coverage.total_rows as f64) * 100.0
+        result.data_coverage.liquid_rows, result.data_coverage.total_rows, liquidity_pct
     ));
 
     key_findings.push(format!(

@@ -44,8 +44,8 @@ pub struct DataCoverage {
 
 /// Analyze the loaded options chain and suggest optimal parameters for a strategy.
 ///
-/// Performs a single-pass analysis of the `DataFrame` to:
-/// 1. Compute DTE and `spread_ratio` per row
+/// Performs an analysis of the `DataFrame` to:
+/// 1. Compute DTE and `spread_ratio` per row (filters to bid > 0 && ask > 0)
 /// 2. Group by (DTE bucket × delta bucket)
 /// 3. Apply liquidity filters based on `risk_preference`
 /// 4. Extract best DTE cluster and delta tiers
@@ -166,11 +166,14 @@ fn compute_dte(df: &DataFrame) -> Result<DataFrame> {
     Ok(result)
 }
 
-/// Compute `spread_ratio` = (ask - bid) / mid price
+/// Compute `spread_ratio` = (ask - bid) / mid price.
+/// Filters to bid > 0 && ask > 0 to avoid NaN/infinity values.
 fn compute_spread_ratio(df: &DataFrame) -> Result<DataFrame> {
     let result = df
         .clone()
         .lazy()
+        .filter(col("bid").gt(lit(0.0)))
+        .filter(col("ask").gt(lit(0.0)))
         .with_column(
             ((col("ask") - col("bid")) / ((col("ask") + col("bid")) / lit(2.0)))
                 .alias("spread_ratio"),
@@ -184,13 +187,13 @@ fn apply_liquidity_filter(
     df: &DataFrame,
     risk_preference: RiskPreference,
 ) -> Result<(usize, DataFrame)> {
-    let (max_spread, _min_count) = match risk_preference {
-        RiskPreference::Conservative => (0.05, 30),
-        RiskPreference::Moderate => (0.15, 15),
-        RiskPreference::Aggressive => (0.30, 5),
+    let max_spread = match risk_preference {
+        RiskPreference::Conservative => 0.05,
+        RiskPreference::Moderate => 0.15,
+        RiskPreference::Aggressive => 0.30,
     };
 
-    // Filter by option type, then group and filter by row count per (dte_bucket, delta_bucket)
+    // Filter by spread_ratio according to the selected risk preference
     let filtered = df
         .clone()
         .lazy()
@@ -207,14 +210,19 @@ fn apply_liquidity_filter(
 fn find_best_dte_cluster(df: &DataFrame) -> Result<(i32, i32, String)> {
     let dte_col = df.column("dte")?.i32()?;
     #[allow(clippy::filter_map_identity)]
-    let mut dtes: Vec<i32> = dte_col.iter().filter_map(|x| x).collect();
+    let mut dtes: Vec<i32> = dte_col
+        .iter()
+        .filter_map(|x| x)
+        .filter(|d| *d > 0) // Filter to strictly positive DTEs
+        .collect();
 
     if dtes.is_empty() {
-        bail!("No valid DTE values in filtered data");
+        bail!("No strictly positive DTE values in filtered data");
     }
 
+    // Use unique DTEs to avoid duplicates dominating the cluster
     dtes.sort_unstable();
-    let dtes = dtes; // Sorted DTEs
+    dtes.dedup();
 
     // Find the largest contiguous cluster
     let mut best_cluster = vec![];
@@ -235,7 +243,7 @@ fn find_best_dte_cluster(df: &DataFrame) -> Result<(i32, i32, String)> {
         best_cluster.clone_from(&current_cluster);
     }
 
-    let min_dte = *best_cluster.first().unwrap_or(&0);
+    let min_dte = *best_cluster.first().unwrap_or(&1);
     let max_dte = *best_cluster.last().unwrap_or(&60);
     let dte_range_str = format!("{min_dte}-{max_dte} days");
 

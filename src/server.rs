@@ -203,6 +203,14 @@ pub struct FetchToParquetParams {
     pub period: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, Validate)]
+#[serde(rename_all = "lowercase")]
+pub enum RiskPreferenceParam {
+    Conservative,
+    Moderate,
+    Aggressive,
+}
+
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct SuggestParametersParams {
     /// Strategy name (e.g. '`iron_condor`')
@@ -210,7 +218,7 @@ pub struct SuggestParametersParams {
     pub strategy: String,
     /// Risk preference: conservative (tight filters), moderate (balanced), or aggressive (loose filters)
     #[garde(skip)]
-    pub risk_preference: String, // "conservative" | "moderate" | "aggressive"
+    pub risk_preference: RiskPreferenceParam,
     /// Target win rate (0.0-1.0), informational only
     #[garde(inner(range(min = 0.0, max = 1.0)))]
     pub target_win_rate: Option<f64>,
@@ -452,16 +460,13 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
-        let risk_pref =
-            match params.risk_preference.to_lowercase().as_str() {
-                "conservative" => crate::engine::suggest::RiskPreference::Conservative,
-                "moderate" => crate::engine::suggest::RiskPreference::Moderate,
-                "aggressive" => crate::engine::suggest::RiskPreference::Aggressive,
-                _ => return Err(
-                    "Invalid risk_preference. Must be 'conservative', 'moderate', or 'aggressive'."
-                        .to_string(),
-                ),
-            };
+        let risk_pref = match params.risk_preference {
+            RiskPreferenceParam::Conservative => {
+                crate::engine::suggest::RiskPreference::Conservative
+            }
+            RiskPreferenceParam::Moderate => crate::engine::suggest::RiskPreference::Moderate,
+            RiskPreferenceParam::Aggressive => crate::engine::suggest::RiskPreference::Aggressive,
+        };
 
         let suggest_params = crate::engine::suggest::SuggestParams {
             strategy: params.strategy,
