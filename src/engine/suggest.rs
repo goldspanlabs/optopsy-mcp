@@ -3,7 +3,6 @@ use polars::prelude::*;
 use std::fmt::Write as _;
 
 use super::types::{Slippage, StrategyDef, TargetRange};
-use crate::data::parquet::QUOTE_DATETIME_COL;
 use crate::strategies;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,12 +44,12 @@ pub struct DataCoverage {
 /// Analyze the loaded options chain and suggest optimal parameters for a strategy.
 ///
 /// Performs an analysis of the `DataFrame` to:
-/// 1. Compute DTE and `spread_ratio` per row (filters to bid > 0 && ask > 0)
-/// 2. Group by (DTE bucket × delta bucket)
-/// 3. Apply liquidity filters based on `risk_preference`
-/// 4. Extract best DTE cluster and delta tiers
-/// 5. Infer slippage model from median spread quality
-/// 6. Compute confidence score from coverage density
+/// 1. Compute DTE and `spread_ratio` per row (filters to bid > 0 && ask > 0).
+/// 2. Apply liquidity filters based on `risk_preference`.
+/// 3. Identify candidate DTE regions using clustering.
+/// 4. Select leg delta target ranges using quantile-based analysis within the chosen DTE region.
+/// 5. Infer slippage model from median spread quality of retained rows.
+/// 6. Compute confidence score from data coverage (row density, DTE span, expiration cycles).
 pub fn suggest_parameters(df: &DataFrame, params: &SuggestParams) -> Result<SuggestResult> {
     // Validate strategy exists and get leg definitions
     let strategy_def = strategies::find_strategy(&params.strategy)
@@ -59,7 +58,7 @@ pub fn suggest_parameters(df: &DataFrame, params: &SuggestParams) -> Result<Sugg
     let is_multi_exp = strategy_def.is_multi_expiration();
 
     // Compute DTE and spread_ratio columns
-    let df = compute_dte(df)?;
+    let df = crate::engine::filters::compute_dte(df)?;
     let df = compute_spread_ratio(&df)?;
 
     // Get unique expiration dates
@@ -145,25 +144,6 @@ pub fn suggest_parameters(df: &DataFrame, params: &SuggestParams) -> Result<Sugg
         confidence,
         data_coverage,
     })
-}
-
-/// Compute DTE from `quote_datetime` and `expiration` columns.
-fn compute_dte(df: &DataFrame) -> Result<DataFrame> {
-    let ms_per_day = 86_400_000i64;
-    let result = df
-        .clone()
-        .lazy()
-        .with_column(
-            ((col("expiration").cast(DataType::Date)
-                - col(QUOTE_DATETIME_COL).cast(DataType::Date))
-            .dt()
-            .total_milliseconds(false)
-                / lit(ms_per_day))
-            .cast(DataType::Int32)
-            .alias("dte"),
-        )
-        .collect()?;
-    Ok(result)
 }
 
 /// Compute `spread_ratio` = (ask - bid) / mid price.
@@ -319,14 +299,16 @@ fn extract_leg_deltas(df: &DataFrame, strategy_def: &StrategyDef) -> Result<Vec<
 /// Infer slippage model from median `spread_ratio` in the liquid subset.
 fn infer_slippage(df: &DataFrame) -> Result<Slippage> {
     let spread_col = df.column("spread_ratio")?.f64()?;
-    #[allow(clippy::filter_map_identity)]
-    let mut spreads: Vec<f64> = spread_col.iter().filter_map(|x| x).collect();
+    let mut spreads: Vec<f64> = spread_col
+        .iter()
+        .filter_map(|x| x.filter(|v| v.is_finite()))
+        .collect();
 
     if spreads.is_empty() {
         return Ok(Slippage::Mid);
     }
 
-    spreads.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    spreads.sort_by(f64::total_cmp);
     let median_spread = spreads[spreads.len() / 2];
 
     if median_spread < 0.05 {

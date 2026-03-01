@@ -25,33 +25,6 @@ fn format_suggest(result: SuggestResult) -> SuggestResponse {
         liquidity_pct
     );
 
-    let mut key_findings = vec![];
-    key_findings.push(format!(
-        "Liquidity analysis: {} liquid rows out of {} total ({:.1}%)",
-        result.data_coverage.liquid_rows, result.data_coverage.total_rows, liquidity_pct
-    ));
-
-    key_findings.push(format!(
-        "DTE coverage: {} with {} unique expirations detected",
-        result.data_coverage.dte_range, result.data_coverage.expiration_count
-    ));
-
-    key_findings.push(format!(
-        "Recommended slippage model: {}",
-        format_slippage(&result.slippage)
-    ));
-
-    if result.confidence < 0.5 {
-        key_findings.push(
-            "⚠️ Low confidence: consider fetching more data or adjusting risk preference"
-                .to_string(),
-        );
-    }
-
-    for warning in &result.data_coverage.warnings {
-        key_findings.push(format!("⚠️ {warning}"));
-    }
-
     let mut suggested_next_steps = vec![];
     suggested_next_steps.push(
         "Use these parameters in evaluate_strategy to test the suggested configuration".to_string(),
@@ -93,22 +66,5 @@ fn format_suggest(result: SuggestResult) -> SuggestResponse {
             warnings: result.data_coverage.warnings,
         },
         suggested_next_steps,
-    }
-}
-
-fn format_slippage(slippage: &crate::engine::types::Slippage) -> String {
-    match slippage {
-        crate::engine::types::Slippage::Mid => "Mid".to_string(),
-        crate::engine::types::Slippage::Spread => "Spread".to_string(),
-        crate::engine::types::Slippage::Liquidity {
-            fill_ratio,
-            ref_volume,
-        } => format!(
-            "Liquidity (fill_ratio={:.0}%, ref_volume={ref_volume})",
-            fill_ratio * 100.0
-        ),
-        crate::engine::types::Slippage::PerLeg { per_leg } => {
-            format!("PerLeg (${per_leg:.2})")
-        }
     }
 }
