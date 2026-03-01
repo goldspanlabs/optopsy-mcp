@@ -6,7 +6,7 @@ use crate::engine::types::{
     CompareResult, EquityPoint, GroupStats, PerformanceMetrics, TradeRecord,
 };
 
-/// Data quality report for evaluate_strategy
+/// Data quality report for `evaluate_strategy`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DataQualityReport {
     pub total_expected_buckets: usize,
@@ -19,7 +19,7 @@ pub struct DataQualityReport {
     pub warnings: Vec<String>,
 }
 
-/// Data quality report for run_backtest
+/// Data quality report for `run_backtest`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BacktestDataQuality {
     pub trading_days_total: usize,
