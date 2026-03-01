@@ -153,6 +153,24 @@ pub fn find_entry_candidates(
             )
             .collect()?;
 
+        // Keep only join keys + renamed leg columns to avoid duplicate column
+        // errors (e.g. `option_type_right`) when joining 3+ legs.
+        let keep_cols: Vec<PlSmallStr> = renamed
+            .get_column_names()
+            .into_iter()
+            .filter(|name| {
+                let s = name.as_str();
+                s == QUOTE_DATETIME_COL
+                    || s == "expiration"
+                    || s.starts_with("strike_")
+                    || s.starts_with("bid_")
+                    || s.starts_with("ask_")
+                    || s.starts_with("delta_")
+            })
+            .cloned()
+            .collect();
+        let renamed = renamed.select(keep_cols)?;
+
         leg_dfs.push(renamed);
     }
 
