@@ -2,13 +2,12 @@ use anyhow::{bail, Result};
 use polars::prelude::*;
 
 use super::evaluation;
-use super::exits;
+use super::event_sim;
 use super::filters;
 use super::metrics;
 use super::output;
 use super::pricing;
 use super::rules;
-use super::simulator;
 use super::types::*;
 use crate::data::parquet::QUOTE_DATETIME_COL;
 use crate::strategies;
@@ -183,7 +182,7 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
     )
 }
 
-/// Run a full backtest simulation
+/// Run a full backtest simulation using event-driven simulation
 pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestResult> {
     let strategy_def = strategies::find_strategy(&params.strategy)
         .ok_or_else(|| anyhow::anyhow!("Unknown strategy: {}", params.strategy))?;
@@ -197,106 +196,24 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
         );
     }
 
-    // Same leg processing as evaluate_strategy
-    let mut leg_dfs = Vec::new();
-    for (i, (leg, delta_target)) in strategy_def
-        .legs
-        .iter()
-        .zip(params.leg_deltas.iter())
-        .enumerate()
-    {
-        let option_type_str = match leg.option_type {
-            OptionType::Call => "call",
-            OptionType::Put => "put",
-        };
-
-        let filtered = filters::filter_option_type(df, option_type_str)?;
-        let with_dte = filters::compute_dte(&filtered)?;
-        let dte_filtered = filters::filter_dte_range(&with_dte, params.max_entry_dte, params.exit_dte)?;
-        let valid = filters::filter_valid_quotes(&dte_filtered)?;
-        let selected = filters::select_closest_delta(&valid, delta_target)?;
-        let matched = evaluation::match_entry_exit(&selected, &with_dte, params.exit_dte)?;
-
-        if matched.height() == 0 {
-            bail!("No trades found for leg {} of strategy '{}'", i, params.strategy);
-        }
-
-        let renamed = matched
-            .lazy()
-            .rename(
-                ["strike", "bid", "ask", "delta", "exit_bid", "exit_ask"],
-                [
-                    format!("strike_{}", i),
-                    format!("bid_{}", i),
-                    format!("ask_{}", i),
-                    format!("delta_{}", i),
-                    format!("exit_bid_{}", i),
-                    format!("exit_ask_{}", i),
-                ],
-                true,
-            )
-            .collect()?;
-
-        leg_dfs.push(renamed);
-    }
-
-    // Join legs
-    let mut combined = leg_dfs[0].clone();
-    for leg_df in leg_dfs.iter().skip(1) {
-        let join_cols: Vec<&str> = vec![QUOTE_DATETIME_COL, "expiration"];
-        combined = combined
-            .lazy()
-            .join(
-                leg_df.clone().lazy(),
-                join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
-                join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
-                JoinArgs::new(JoinType::Inner),
-            )
-            .collect()?;
-    }
-
-    let num_legs = strategy_def.legs.len();
-    let combined = rules::filter_strike_order(&combined, num_legs)?;
-
-    if combined.height() == 0 {
-        bail!("No valid trades after applying strike ordering rules");
-    }
-
-    // Build trade entries with P&L
-    let trades = build_trade_entries(
-        &combined,
+    let (price_table, trading_days) = event_sim::build_price_table(df)?;
+    let candidates = event_sim::find_entry_candidates(df, &strategy_def, params)?;
+    let (trade_log, equity_curve) = event_sim::run_event_loop(
+        &price_table,
+        &candidates,
+        &trading_days,
+        params,
         &strategy_def,
-        &params.slippage,
-        &params.commission.clone().unwrap_or_default(),
-        params.multiplier,
-        params.quantity,
     )?;
 
-    // Apply early exits
-    let trades = exits::apply_early_exits(
-        trades,
-        params.stop_loss,
-        params.take_profit,
-        params.max_hold_days,
-    );
-
-    // Run simulation
-    let sim_result = simulator::simulate(
-        trades,
-        params.capital,
-        params.max_positions,
-        &params.selector,
-    )?;
-
-    // Calculate metrics
-    let perf_metrics = metrics::calculate_metrics(&sim_result.equity_curve, params.capital)?;
+    let perf_metrics = metrics::calculate_metrics(&equity_curve, params.capital)?;
 
     Ok(BacktestResult {
-        trade_count: sim_result.trade_log.len(),
-        total_pnl: sim_result.trade_log.iter().map(|t| t.pnl).sum(),
+        trade_count: trade_log.len(),
+        total_pnl: trade_log.iter().map(|t| t.pnl).sum(),
         metrics: perf_metrics,
-        equity_curve: sim_result.equity_curve,
-        trade_log: sim_result.trade_log,
+        equity_curve,
+        trade_log,
     })
 }
 
@@ -320,6 +237,7 @@ pub fn compare_strategies(df: &DataFrame, params: &CompareParams) -> Result<Vec<
             multiplier: params.sim_params.multiplier,
             max_positions: params.sim_params.max_positions,
             selector: params.sim_params.selector.clone(),
+            adjustment_rules: vec![],
         };
 
         match run_backtest(df, &backtest_params) {
@@ -350,131 +268,26 @@ pub fn compare_strategies(df: &DataFrame, params: &CompareParams) -> Result<Vec<
     Ok(results)
 }
 
-/// Internal: build trade entries from combined leg DataFrame
-fn build_trade_entries(
-    combined: &DataFrame,
-    strategy_def: &StrategyDef,
-    slippage: &Slippage,
-    commission: &Commission,
-    multiplier: i32,
-    quantity: i32,
-) -> Result<Vec<RawTrade>> {
-    let mut trades = Vec::with_capacity(combined.height());
-
-    // Get quote_datetime and expiration columns
-    let quote_datetimes = combined.column(QUOTE_DATETIME_COL)?;
-    let expirations = combined.column("expiration")?;
-
-    // Get exit_datetime if it exists
-    let exit_datetimes = if combined.schema().contains("exit_datetime") {
-        Some(combined.column("exit_datetime")?)
-    } else {
-        None
-    };
-
-    for row_idx in 0..combined.height() {
-        let mut entry_cost = 0.0;
-        let mut exit_proceeds = 0.0;
-        let mut trade_pnl = 0.0;
-        let mut total_contracts = 0i32;
-
-        for (i, leg) in strategy_def.legs.iter().enumerate() {
-            let bid = combined
-                .column(&format!("bid_{}", i))?
-                .f64()?
-                .get(row_idx)
-                .unwrap_or(0.0);
-            let ask = combined
-                .column(&format!("ask_{}", i))?
-                .f64()?
-                .get(row_idx)
-                .unwrap_or(0.0);
-            let exit_bid = combined
-                .column(&format!("exit_bid_{}", i))?
-                .f64()?
-                .get(row_idx)
-                .unwrap_or(0.0);
-            let exit_ask = combined
-                .column(&format!("exit_ask_{}", i))?
-                .f64()?
-                .get(row_idx)
-                .unwrap_or(0.0);
-
-            let entry_fill = pricing::fill_price(bid, ask, &leg.side, slippage);
-            let exit_side = match leg.side {
-                Side::Long => Side::Short,
-                Side::Short => Side::Long,
-            };
-            let exit_fill = pricing::fill_price(exit_bid, exit_ask, &exit_side, slippage);
-
-            let contracts = leg.qty * quantity;
-            let leg_entry = entry_fill * contracts as f64 * multiplier as f64 * leg.side.multiplier();
-            let leg_exit = exit_fill * contracts as f64 * multiplier as f64 * exit_side.multiplier();
-
-            entry_cost += leg_entry;
-            exit_proceeds += leg_exit;
-            trade_pnl += pricing::leg_pnl(
-                bid, ask, exit_bid, exit_ask, &leg.side, slippage,
-                leg.qty * quantity, multiplier,
-            );
-            total_contracts += (leg.qty * quantity).abs();
-        }
-
-        let commission_cost = commission.calculate(total_contracts) * 2.0;
-        trade_pnl -= commission_cost;
-
-        let entry_dt_str = quote_datetimes.get(row_idx)?.to_string();
-        let exit_dt_str = if let Some(ed) = &exit_datetimes {
-            ed.get(row_idx)?.to_string()
-        } else {
-            expirations.get(row_idx)?.to_string()
-        };
-
-        let entry_dt = parse_datetime_flexible(&entry_dt_str)?;
-        let exit_dt = parse_datetime_flexible(&exit_dt_str)?;
-        let days_held = (exit_dt - entry_dt).num_days();
-
-        trades.push(RawTrade {
-            entry_datetime: entry_dt,
-            exit_datetime: exit_dt,
-            entry_cost,
-            exit_proceeds,
-            pnl: trade_pnl,
-            days_held,
-            exit_type: ExitType::DteExit,
-        });
-    }
-
-    Ok(trades)
-}
-
-/// Parse a datetime string from Polars output, handling both date-only and datetime formats.
-fn parse_datetime_flexible(s: &str) -> Result<chrono::NaiveDateTime> {
-    let s = s.trim_matches('"').trim();
-    // Try datetime formats first
-    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
-        .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S"))
-        .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f"))
-        .or_else(|_| {
-            // Fall back to date-only → midnight
-            chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
-        })
-        .map_err(|e| anyhow::anyhow!("Failed to parse datetime '{}': {}", s, e))
+/// Intermediate trade representation used by legacy exits/simulator modules
+#[derive(Debug, Clone)]
+pub struct RawTrade {
+    pub entry_datetime: chrono::NaiveDateTime,
+    pub exit_datetime: chrono::NaiveDateTime,
+    pub entry_cost: f64,
+    pub exit_proceeds: f64,
+    pub pnl: f64,
+    pub days_held: i64,
+    pub exit_type: ExitType,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::NaiveDate;
-    /// Build a synthetic options DataFrame with enough data to run through the full
-    /// evaluate_strategy and run_backtest pipelines for a single-leg strategy.
+
+    /// Build a synthetic options DataFrame with 2 rows for evaluate_strategy tests
+    /// (which still use the old match_entry_exit pipeline).
     fn make_synthetic_options_df() -> DataFrame {
-        // We need multiple quote dates with the same (expiration, strike, option_type)
-        // so that entry/exit matching can find pairs.
-        //
-        // Entry date: Jan 15 (DTE=32 to Feb 16 expiration)
-        // Exit date:  Feb 11 (DTE=5 to Feb 16 expiration)
         let quote_dates = vec![
             NaiveDate::from_ymd_opt(2024, 1, 15).unwrap().and_hms_opt(0, 0, 0).unwrap(),
             NaiveDate::from_ymd_opt(2024, 2, 11).unwrap().and_hms_opt(0, 0, 0).unwrap(),
@@ -488,8 +301,8 @@ mod tests {
             QUOTE_DATETIME_COL => &quote_dates,
             "option_type" => &["call", "call"],
             "strike" => &[100.0f64, 100.0],
-            "bid" => &[5.0f64, 2.0],     // entry bid=5, exit bid=2
-            "ask" => &[5.50f64, 2.50],    // entry ask=5.50, exit ask=2.50
+            "bid" => &[5.0f64, 2.0],
+            "ask" => &[5.50f64, 2.50],
             "delta" => &[0.50f64, 0.30],
         }
         .unwrap();
@@ -499,6 +312,103 @@ mod tests {
         )
         .unwrap();
         df
+    }
+
+    /// Build a daily options DataFrame with intermediate dates for event-driven backtest.
+    /// Shows price decay from entry to exit for a long call.
+    fn make_daily_options_df() -> DataFrame {
+        let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
+        // 6 days of data: entry at Jan 15 (DTE=32), decay through to Feb 11 (DTE=5)
+        let dates: Vec<_> = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(), // DTE=32
+            NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(), // DTE=25
+            NaiveDate::from_ymd_opt(2024, 1, 29).unwrap(), // DTE=18
+            NaiveDate::from_ymd_opt(2024, 2, 1).unwrap(),  // DTE=15
+            NaiveDate::from_ymd_opt(2024, 2, 5).unwrap(),  // DTE=11
+            NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(), // DTE=5
+        ];
+
+        let quote_dates: Vec<_> = dates.iter().map(|d| d.and_hms_opt(0, 0, 0).unwrap()).collect();
+        let expirations: Vec<_> = dates.iter().map(|_| exp).collect();
+
+        // Simulate time decay: option losing value over time
+        let bids = vec![5.00, 4.50, 3.80, 3.20, 2.60, 2.00f64];
+        let asks = vec![5.50, 5.00, 4.30, 3.70, 3.10, 2.50f64];
+        let deltas = vec![0.50, 0.47, 0.42, 0.38, 0.33, 0.25f64];
+
+        let n = dates.len();
+        let mut df = df! {
+            QUOTE_DATETIME_COL => &quote_dates,
+            "option_type" => vec!["call"; n],
+            "strike" => vec![100.0f64; n],
+            "bid" => &bids,
+            "ask" => &asks,
+            "delta" => &deltas,
+        }
+        .unwrap();
+        df.with_column(
+            DateChunked::from_naive_date(PlSmallStr::from("expiration"), expirations)
+                .into_column(),
+        )
+        .unwrap();
+        df
+    }
+
+    /// Build daily data where price drops sharply to trigger stop loss.
+    fn make_stop_loss_df() -> DataFrame {
+        let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
+        let dates: Vec<_> = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(), // DTE=32, entry
+            NaiveDate::from_ymd_opt(2024, 1, 16).unwrap(), // DTE=31
+            NaiveDate::from_ymd_opt(2024, 1, 17).unwrap(), // DTE=30, big drop → SL
+            NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(), // DTE=25
+            NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(), // DTE=5
+        ];
+
+        let quote_dates: Vec<_> = dates.iter().map(|d| d.and_hms_opt(0, 0, 0).unwrap()).collect();
+        let expirations: Vec<_> = dates.iter().map(|_| exp).collect();
+
+        // Sharp drop on day 3: entry mid=5.25, day 3 mid=1.25 → loss = 400 > 50% of 525 = 262.5
+        let bids = vec![5.00, 4.00, 1.00, 0.80, 0.50f64];
+        let asks = vec![5.50, 4.50, 1.50, 1.30, 1.00f64];
+        let deltas = vec![0.50, 0.45, 0.15, 0.12, 0.08f64];
+
+        let n = dates.len();
+        let mut df = df! {
+            QUOTE_DATETIME_COL => &quote_dates,
+            "option_type" => vec!["call"; n],
+            "strike" => vec![100.0f64; n],
+            "bid" => &bids,
+            "ask" => &asks,
+            "delta" => &deltas,
+        }
+        .unwrap();
+        df.with_column(
+            DateChunked::from_naive_date(PlSmallStr::from("expiration"), expirations)
+                .into_column(),
+        )
+        .unwrap();
+        df
+    }
+
+    fn default_backtest_params() -> BacktestParams {
+        BacktestParams {
+            strategy: "long_call".to_string(),
+            leg_deltas: vec![TargetRange { target: 0.50, min: 0.20, max: 0.80 }],
+            max_entry_dte: 45,
+            exit_dte: 5,
+            slippage: Slippage::Mid,
+            commission: None,
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            capital: 10000.0,
+            quantity: 1,
+            multiplier: 100,
+            max_positions: 5,
+            selector: TradeSelector::First,
+            adjustment_rules: vec![],
+        }
     }
 
     #[test]
@@ -523,30 +433,16 @@ mod tests {
 
     #[test]
     fn run_backtest_e2e_long_call() {
-        let df = make_synthetic_options_df();
-        let params = BacktestParams {
-            strategy: "long_call".to_string(),
-            leg_deltas: vec![TargetRange { target: 0.50, min: 0.20, max: 0.80 }],
-            max_entry_dte: 45,
-            exit_dte: 5,
-            slippage: Slippage::Mid,
-            commission: None,
-            stop_loss: None,
-            take_profit: None,
-            max_hold_days: None,
-            capital: 10000.0,
-            quantity: 1,
-            multiplier: 100,
-            max_positions: 5,
-            selector: TradeSelector::First,
-        };
+        let df = make_daily_options_df();
+        let params = default_backtest_params();
 
         let result = run_backtest(&df, &params);
         assert!(result.is_ok(), "run_backtest failed: {:?}", result.err());
         let bt = result.unwrap();
 
         assert_eq!(bt.trade_count, 1);
-        // Long call: buy at mid 5.25, sell at mid 2.25 → loss of 3.00 per contract × 100 multiplier = -300
+        // Long call: buy at mid 5.25 on Jan 15, DTE exit triggers on Feb 11 (DTE=5)
+        // Sell at mid 2.25 → loss = (2.25 - 5.25) * 100 = -300
         assert!(
             (bt.total_pnl - (-300.0)).abs() < 1.0,
             "Expected ~-300 PnL, got {}",
@@ -554,56 +450,58 @@ mod tests {
         );
         assert!(!bt.equity_curve.is_empty());
         assert_eq!(bt.trade_log.len(), 1);
-        assert_eq!(bt.trade_log[0].days_held, 27); // Jan 15 → Feb 11
+        // Entry Jan 15, exit Feb 11 = 27 days
+        assert_eq!(bt.trade_log[0].days_held, 27);
+    }
+
+    #[test]
+    fn run_backtest_daily_equity_curve_has_all_days() {
+        let df = make_daily_options_df();
+        let params = default_backtest_params();
+
+        let result = run_backtest(&df, &params).unwrap();
+
+        // Should have one equity point per trading day (6 days)
+        assert_eq!(
+            result.equity_curve.len(),
+            6,
+            "Expected 6 equity points (one per trading day), got {}",
+            result.equity_curve.len()
+        );
+
+        // First day equity should include unrealized (entry at mid 5.25, current mid 5.25 → 0 unrealized)
+        assert!(
+            (result.equity_curve[0].equity - 10000.0).abs() < 1.0,
+            "Day 1 equity should be ~10000, got {}",
+            result.equity_curve[0].equity
+        );
     }
 
     #[test]
     fn run_backtest_e2e_with_stop_loss() {
-        let df = make_synthetic_options_df();
-        let params = BacktestParams {
-            strategy: "long_call".to_string(),
-            leg_deltas: vec![TargetRange { target: 0.50, min: 0.20, max: 0.80 }],
-            max_entry_dte: 45,
-            exit_dte: 5,
-            slippage: Slippage::Mid,
-            commission: None,
-            stop_loss: Some(0.50), // 50% stop loss
-            take_profit: None,
-            max_hold_days: None,
-            capital: 10000.0,
-            quantity: 1,
-            multiplier: 100,
-            max_positions: 5,
-            selector: TradeSelector::First,
-        };
+        let df = make_stop_loss_df();
+        let mut params = default_backtest_params();
+        params.stop_loss = Some(0.50); // 50% stop loss
 
         let result = run_backtest(&df, &params);
         assert!(result.is_ok(), "run_backtest with stop loss failed: {:?}", result.err());
         let bt = result.unwrap();
         assert_eq!(bt.trade_count, 1);
-        // Stop loss should cap the loss
-        assert!(bt.total_pnl > -300.0, "Stop loss should cap loss, got {}", bt.total_pnl);
+        // Stop loss fires on day 3 (Jan 17) at real market prices
+        assert!(
+            matches!(bt.trade_log[0].exit_type, ExitType::StopLoss),
+            "Expected StopLoss exit, got {:?}",
+            bt.trade_log[0].exit_type
+        );
+        // Exit on Jan 17 = 2 days held
+        assert_eq!(bt.trade_log[0].days_held, 2);
     }
 
     #[test]
     fn run_backtest_unknown_strategy_errors() {
-        let df = make_synthetic_options_df();
-        let params = BacktestParams {
-            strategy: "nonexistent".to_string(),
-            leg_deltas: vec![TargetRange { target: 0.50, min: 0.20, max: 0.80 }],
-            max_entry_dte: 45,
-            exit_dte: 5,
-            slippage: Slippage::Mid,
-            commission: None,
-            stop_loss: None,
-            take_profit: None,
-            max_hold_days: None,
-            capital: 10000.0,
-            quantity: 1,
-            multiplier: 100,
-            max_positions: 5,
-            selector: TradeSelector::First,
-        };
+        let df = make_daily_options_df();
+        let mut params = default_backtest_params();
+        params.strategy = "nonexistent".to_string();
 
         let result = run_backtest(&df, &params);
         assert!(result.is_err());
@@ -611,10 +509,85 @@ mod tests {
 
     #[test]
     fn run_backtest_wrong_leg_count_errors() {
-        let df = make_synthetic_options_df();
+        let df = make_daily_options_df();
+        let mut params = default_backtest_params();
+        params.leg_deltas = vec![]; // long_call needs 1 delta, providing 0
+
+        let result = run_backtest(&df, &params);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn run_backtest_spread_strategy() {
+        // Build data for a bull call spread: long call at lower strike, short call at higher
+        let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
+        let dates = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(),
+        ];
+
+        let n = dates.len();
+        // Two strikes per date: 100 and 105
+        let mut quote_dates = Vec::new();
+        let mut expirations_vec = Vec::new();
+        let mut option_types = Vec::new();
+        let mut strikes = Vec::new();
+        let mut bids = Vec::new();
+        let mut asks = Vec::new();
+        let mut deltas = Vec::new();
+
+        // Strike 100 data
+        let bids_100 = [5.00, 4.00, 2.00f64];
+        let asks_100 = [5.50, 4.50, 2.50f64];
+        let deltas_100 = [0.50, 0.42, 0.25f64];
+
+        // Strike 105 data
+        let bids_105 = [3.00, 2.20, 1.00f64];
+        let asks_105 = [3.50, 2.70, 1.50f64];
+        let deltas_105 = [0.35, 0.28, 0.15f64];
+
+        for (i, date) in dates.iter().enumerate() {
+            // Strike 100
+            quote_dates.push(date.and_hms_opt(0, 0, 0).unwrap());
+            expirations_vec.push(exp);
+            option_types.push("call");
+            strikes.push(100.0f64);
+            bids.push(bids_100[i]);
+            asks.push(asks_100[i]);
+            deltas.push(deltas_100[i]);
+
+            // Strike 105
+            quote_dates.push(date.and_hms_opt(0, 0, 0).unwrap());
+            expirations_vec.push(exp);
+            option_types.push("call");
+            strikes.push(105.0f64);
+            bids.push(bids_105[i]);
+            asks.push(asks_105[i]);
+            deltas.push(deltas_105[i]);
+        }
+
+        let mut df = df! {
+            QUOTE_DATETIME_COL => &quote_dates,
+            "option_type" => &option_types,
+            "strike" => &strikes,
+            "bid" => &bids,
+            "ask" => &asks,
+            "delta" => &deltas,
+        }
+        .unwrap();
+        df.with_column(
+            DateChunked::from_naive_date(PlSmallStr::from("expiration"), expirations_vec)
+                .into_column(),
+        )
+        .unwrap();
+
         let params = BacktestParams {
-            strategy: "long_call".to_string(),
-            leg_deltas: vec![], // long_call needs 1 delta, providing 0
+            strategy: "bull_call_spread".to_string(),
+            leg_deltas: vec![
+                TargetRange { target: 0.50, min: 0.20, max: 0.80 },
+                TargetRange { target: 0.35, min: 0.10, max: 0.60 },
+            ],
             max_entry_dte: 45,
             exit_dte: 5,
             slippage: Slippage::Mid,
@@ -627,21 +600,15 @@ mod tests {
             multiplier: 100,
             max_positions: 5,
             selector: TradeSelector::First,
+            adjustment_rules: vec![],
         };
 
         let result = run_backtest(&df, &params);
-        assert!(result.is_err());
+        assert!(result.is_ok(), "run_backtest for spread failed: {:?}", result.err());
+        let bt = result.unwrap();
+        assert_eq!(bt.trade_count, 1);
+        // Both legs should be present in the trade
+        assert_eq!(bt.trade_log.len(), 1);
     }
 }
 
-/// Intermediate trade representation before simulation
-#[derive(Debug, Clone)]
-pub struct RawTrade {
-    pub entry_datetime: chrono::NaiveDateTime,
-    pub exit_datetime: chrono::NaiveDateTime,
-    pub entry_cost: f64,
-    pub exit_proceeds: f64,
-    pub pnl: f64,
-    pub days_held: i64,
-    pub exit_type: ExitType,
-}

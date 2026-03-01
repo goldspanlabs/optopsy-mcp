@@ -8,3 +8,4 @@ pub mod output;
 pub mod exits;
 pub mod simulator;
 pub mod metrics;
+pub mod event_sim;

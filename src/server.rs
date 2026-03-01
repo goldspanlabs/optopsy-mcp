@@ -179,6 +179,7 @@ impl OptopsyServer {
             multiplier: params.multiplier.unwrap_or(100),
             max_positions: params.max_positions,
             selector: params.selector.unwrap_or_default(),
+            adjustment_rules: vec![],
         };
 
         match tools::backtest::execute(df, &backtest_params) {
