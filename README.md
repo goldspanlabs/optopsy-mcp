@@ -2,6 +2,30 @@
 
 Options backtesting engine exposed as an MCP server — strategy screening, simulation, and performance metrics for LLM-driven interaction.
 
+## 🎯 Recommended Tool Workflow
+
+When connected to Claude via MCP, follow this **7-phase workflow** for optimal results:
+
+| Phase | Tool | Purpose | Duration | Prerequisites |
+|-------|------|---------|----------|---------------|
+| **0** (opt) | `check_cache_status` | Verify cached data exists before downloading | <1s | — |
+| **0b** (opt) | `fetch_to_parquet` | Download OHLCV price data (for signal filtering only) | 5-10s | — |
+| **1** ✅ | `load_data` | **START HERE** — Load options chain | 1-30s | — |
+| **2a** | `list_strategies` | Browse 32 built-in strategies | <1s | — |
+| **2b** | `list_signals` | Browse 40+ TA indicators | <1s | — |
+| **2c** (opt) | `construct_signal` | Build signal spec from NLP prompt | <1s | fetch_to_parquet |
+| **3** (rec) | `suggest_parameters` | Get data-driven parameter ranges | 1-5s | load_data |
+| **4** ✅ | `evaluate_strategy` | Fast statistical screening (DTE×delta buckets) | 2-10s | load_data |
+| **5** ✅ | `run_backtest` | Full simulation with metrics | 5-30s | load_data |
+| **6** | `compare_strategies` | Compare variations ranked by Sharpe | 10-60s | load_data |
+
+**Key Points**:
+- **✅ Required**: load_data, evaluate_strategy, run_backtest
+- **Recommended**: suggest_parameters (avoids guessing parameters)
+- **Optional**: check_cache_status, fetch_to_parquet, construct_signal, compare_strategies
+- Each tool's description tells you exact prerequisites and suggested next steps
+- LLMs follow this order automatically based on tool descriptions
+
 ## Features
 
 - **Multi-Source Data Integration** — Load options data from EODHD API, local Parquet cache, or S3-compatible storage with fetch-on-miss
@@ -15,19 +39,21 @@ Options backtesting engine exposed as an MCP server — strategy screening, simu
 - **Parameter Validation** — garde-powered input validation with detailed error feedback
 - **HTTP & Stdio Transport** — Deploy locally via stdio or run as HTTP service on cloud platforms
 
-## MCP Tools
+## MCP Tools (10 total)
 
-| Tool | Description |
-|------|-------------|
-| `download_options_data` | Download options data from EODHD API and cache locally |
-| `load_data` | Load options chain data by symbol (auto-fetches from EODHD/S3 if configured) |
-| `list_strategies` | List all 32 available strategies with leg definitions |
-| `list_signals` | List all 40+ available TA signals for entry/exit filtering |
-| `evaluate_strategy` | Statistical evaluation with DTE/delta bucket grouping and aggregate stats |
-| `run_backtest` | Full event-driven simulation with signal support, trade log, and metrics |
-| `compare_strategies` | Side-by-side comparison of multiple strategies ranked by Sharpe ratio |
-| `check_cache_status` | Check if cached parquet data exists for a symbol and last update time |
-| `fetch_to_parquet` | Download historical OHLCV data from Yahoo Finance and save as Parquet |
+| Phase | Tool | Description |
+|-------|------|-------------|
+| 0 | `check_cache_status` | Check if cached parquet data exists (optional, before load_data) |
+| 0b | `fetch_to_parquet` | Download OHLCV data from Yahoo Finance (only if using signals) |
+| 0 | `download_options_data` | Bulk download options data from EODHD API and cache locally |
+| **1** | **`load_data`** | **Load options chain by symbol (START HERE)** |
+| 2a | `list_strategies` | Browse all 32 available strategies |
+| 2b | `list_signals` | Browse all 40+ available TA signals |
+| 2c | `construct_signal` | Build signal spec from natural language (optional) |
+| 3 | `suggest_parameters` | Get data-driven parameter recommendations (recommended) |
+| **4** | **`evaluate_strategy`** | **Fast statistical screening with DTE/delta buckets (required before backtest)** |
+| **5** | **`run_backtest`** | **Full event-driven simulation with metrics (main output)** |
+| 6 | `compare_strategies` | Compare multiple strategies side-by-side |
 
 ## Quick Start
 
