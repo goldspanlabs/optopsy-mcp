@@ -61,9 +61,6 @@ pub fn suggest_parameters(df: &DataFrame, params: &SuggestParams) -> Result<Sugg
     let df = crate::engine::filters::compute_dte(df)?;
     let df = compute_spread_ratio(&df)?;
 
-    // Get unique expiration dates
-    let exp_dates = df.column("expiration")?.unique()?.len();
-
     // Get unique quote dates to understand DTE range
     let total_rows = df.height();
 
@@ -76,6 +73,9 @@ pub fn suggest_parameters(df: &DataFrame, params: &SuggestParams) -> Result<Sugg
             params.risk_preference
         ));
     }
+
+    // Get unique expiration dates from the liquid subset
+    let exp_dates = liquid_df.column("expiration")?.unique()?.len();
 
     // Analyze DTE distribution for the best cluster
     let (max_entry_dte, exit_dte, dte_range_str) = find_best_dte_cluster(&liquid_df)?;
@@ -376,15 +376,9 @@ fn build_rationale(
 ) -> String {
     let mut text = format!(
         "Strategy '{}' analysis based on {} liquid rows out of {} total. \
-         Best DTE zone: {} with {} rows. \
+         Best DTE zone: {}. \
          Max entry DTE set to {} days; exit DTE set to {} days for tighter management.\n",
-        strategy_def.name,
-        liquid_rows,
-        total_rows,
-        dte_range_str,
-        liquid_rows,
-        max_entry_dte,
-        exit_dte
+        strategy_def.name, liquid_rows, total_rows, dte_range_str, max_entry_dte, exit_dte
     );
 
     let _ = writeln!(text, "Leg delta targets (count={}):", leg_deltas.len());
