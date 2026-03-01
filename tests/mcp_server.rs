@@ -85,12 +85,13 @@ async fn tool_router_lists_all_nine_tools() {
     let tools = client.list_all_tools().await.unwrap();
     let tool_names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
 
-    assert_eq!(tools.len(), 9, "Expected 9 tools, got: {tool_names:?}");
+    assert_eq!(tools.len(), 10, "Expected 10 tools, got: {tool_names:?}");
     for expected in [
         "download_options_data",
         "load_data",
         "list_strategies",
         "list_signals",
+        "construct_signal",
         "evaluate_strategy",
         "run_backtest",
         "compare_strategies",
