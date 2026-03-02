@@ -48,6 +48,7 @@ pub fn execute(
 
     Ok(CheckCacheResponse {
         summary,
+        symbol: upper,
         exists,
         last_updated,
         file_path,

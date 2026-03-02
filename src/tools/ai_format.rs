@@ -1,16 +1,17 @@
 use std::collections::HashMap;
 
 use crate::engine::types::{
-    BacktestParams, BacktestQualityStats, BacktestResult, CompareResult, EquityPoint,
-    EvaluateParams, ExitType, GroupStats, TradeRecord,
+    BacktestParams, BacktestQualityStats, BacktestResult, CompareParams, CompareResult,
+    EquityPoint, EvaluateParams, ExitType, GroupStats, TradeRecord,
 };
 
 use crate::data::eodhd::DownloadSummary;
 
 use super::response_types::{
-    BacktestDataQuality, BacktestResponse, CompareResponse, DataQualityReport, DateRange,
-    DownloadResponse, EquityCurveSummary, EvaluateResponse, LoadDataResponse, StrategiesResponse,
-    StrategyInfo, TradeStat, TradeSummary,
+    BacktestDataQuality, BacktestParamsSummary, BacktestResponse, CompareResponse,
+    CompareStrategyEntry, DataQualityReport, DateRange, DownloadResponse, EquityCurveSummary,
+    EvaluateParamsSummary, EvaluateResponse, LoadDataResponse, StrategiesResponse, StrategyInfo,
+    TradeStat, TradeSummary,
 };
 
 fn assess_sharpe(sharpe: f64) -> &'static str {
@@ -355,6 +356,7 @@ fn backtest_key_findings(
     findings
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> BacktestResponse {
     let m = &result.metrics;
     let trade_summary = compute_trade_summary(&result.trade_log, m);
@@ -373,6 +375,30 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
             key_findings: vec![
                 "No trades matched the entry criteria during the backtest period".to_string(),
             ],
+            parameters: BacktestParamsSummary {
+                strategy: params.strategy.clone(),
+                leg_deltas: params.leg_deltas.clone(),
+                max_entry_dte: params.max_entry_dte,
+                exit_dte: params.exit_dte,
+                slippage: params.slippage.clone(),
+                commission: params.commission.clone(),
+                capital: params.capital,
+                quantity: params.quantity,
+                multiplier: params.multiplier,
+                max_positions: params.max_positions,
+                stop_loss: params.stop_loss,
+                take_profit: params.take_profit,
+                max_hold_days: params.max_hold_days,
+                selector: params.selector.clone(),
+                entry_signal: params
+                    .entry_signal
+                    .as_ref()
+                    .map(|s| serde_json::to_value(s).unwrap_or(serde_json::Value::Null)),
+                exit_signal: params
+                    .exit_signal
+                    .as_ref()
+                    .map(|s| serde_json::to_value(s).unwrap_or(serde_json::Value::Null)),
+            },
             metrics: result.metrics,
             trade_summary,
             equity_curve_summary,
@@ -439,6 +465,30 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
         summary,
         assessment: assessment.to_string(),
         key_findings,
+        parameters: BacktestParamsSummary {
+            strategy: params.strategy.clone(),
+            leg_deltas: params.leg_deltas.clone(),
+            max_entry_dte: params.max_entry_dte,
+            exit_dte: params.exit_dte,
+            slippage: params.slippage.clone(),
+            commission: params.commission.clone(),
+            capital: params.capital,
+            quantity: params.quantity,
+            multiplier: params.multiplier,
+            max_positions: params.max_positions,
+            stop_loss: params.stop_loss,
+            take_profit: params.take_profit,
+            max_hold_days: params.max_hold_days,
+            selector: params.selector.clone(),
+            entry_signal: params
+                .entry_signal
+                .as_ref()
+                .map(|s| serde_json::to_value(s).unwrap_or(serde_json::Value::Null)),
+            exit_signal: params
+                .exit_signal
+                .as_ref()
+                .map(|s| serde_json::to_value(s).unwrap_or(serde_json::Value::Null)),
+        },
         metrics: result.metrics,
         trade_summary,
         equity_curve_summary,
@@ -523,6 +573,16 @@ pub fn format_evaluate(
 
     EvaluateResponse {
         summary,
+        parameters: EvaluateParamsSummary {
+            strategy: params.strategy.clone(),
+            leg_deltas: params.leg_deltas.clone(),
+            max_entry_dte: params.max_entry_dte,
+            exit_dte: params.exit_dte,
+            dte_interval: params.dte_interval,
+            delta_interval: params.delta_interval,
+            slippage: params.slippage.clone(),
+            commission: params.commission.clone(),
+        },
         total_buckets,
         total_trades,
         best_bucket,
@@ -534,7 +594,7 @@ pub fn format_evaluate(
     }
 }
 
-pub fn format_compare(results: Vec<CompareResult>) -> CompareResponse {
+pub fn format_compare(results: Vec<CompareResult>, params: &CompareParams) -> CompareResponse {
     // Build index-based rankings to avoid cloning the full results vec
     let mut sharpe_indices: Vec<usize> = (0..results.len()).collect();
     sharpe_indices.sort_by(|&a, &b| {
@@ -599,8 +659,22 @@ pub fn format_compare(results: Vec<CompareResult>) -> CompareResponse {
         ));
     }
 
+    let strategies_compared = params
+        .strategies
+        .iter()
+        .map(|entry| CompareStrategyEntry {
+            name: entry.name.clone(),
+            leg_deltas: entry.leg_deltas.clone(),
+            max_entry_dte: entry.max_entry_dte,
+            exit_dte: entry.exit_dte,
+            slippage: entry.slippage.clone(),
+            commission: entry.commission.clone(),
+        })
+        .collect();
+
     CompareResponse {
         summary,
+        strategies_compared,
         ranking_by_sharpe,
         ranking_by_pnl,
         best_overall,
@@ -610,6 +684,7 @@ pub fn format_compare(results: Vec<CompareResult>) -> CompareResponse {
 }
 
 pub fn format_load_data(
+    symbol: &str,
     rows: usize,
     symbols: Vec<String>,
     date_range: DateRange,
@@ -627,6 +702,7 @@ pub fn format_load_data(
 
     LoadDataResponse {
         summary,
+        symbol: symbol.to_string(),
         rows,
         symbols,
         date_range,
@@ -743,6 +819,7 @@ pub fn format_download(summary: DownloadSummary) -> DownloadResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::types::TradeSelector;
     use chrono::NaiveDateTime;
 
     fn make_trade(pnl: f64, days_held: i64, exit_type: ExitType) -> TradeRecord {
@@ -879,7 +956,20 @@ mod tests {
 
     #[test]
     fn format_compare_empty_results() {
-        let response = format_compare(vec![]);
+        let params = CompareParams {
+            strategies: vec![],
+            sim_params: crate::engine::types::SimParams {
+                capital: 10000.0,
+                quantity: 1,
+                multiplier: 100,
+                max_positions: 5,
+                selector: TradeSelector::default(),
+                stop_loss: None,
+                take_profit: None,
+                max_hold_days: None,
+            },
+        };
+        let response = format_compare(vec![], &params);
         assert_eq!(response.summary, "No strategies to compare.");
         assert!(response.ranking_by_sharpe.is_empty());
         assert!(response.ranking_by_pnl.is_empty());
@@ -926,10 +1016,51 @@ mod tests {
                 total_return_pct: 10.0,
             },
         ];
-        let response = format_compare(results);
+
+        let params = CompareParams {
+            strategies: vec![
+                crate::engine::types::CompareEntry {
+                    name: "alpha".to_string(),
+                    leg_deltas: vec![],
+                    max_entry_dte: 45,
+                    exit_dte: 7,
+                    slippage: crate::engine::types::Slippage::Mid,
+                    commission: None,
+                },
+                crate::engine::types::CompareEntry {
+                    name: "beta".to_string(),
+                    leg_deltas: vec![],
+                    max_entry_dte: 45,
+                    exit_dte: 7,
+                    slippage: crate::engine::types::Slippage::Mid,
+                    commission: None,
+                },
+                crate::engine::types::CompareEntry {
+                    name: "gamma".to_string(),
+                    leg_deltas: vec![],
+                    max_entry_dte: 45,
+                    exit_dte: 7,
+                    slippage: crate::engine::types::Slippage::Mid,
+                    commission: None,
+                },
+            ],
+            sim_params: crate::engine::types::SimParams {
+                capital: 10000.0,
+                quantity: 1,
+                multiplier: 100,
+                max_positions: 5,
+                selector: TradeSelector::default(),
+                stop_loss: None,
+                take_profit: None,
+                max_hold_days: None,
+            },
+        };
+
+        let response = format_compare(results, &params);
         assert_eq!(response.ranking_by_sharpe, vec!["beta", "gamma", "alpha"]);
         assert_eq!(response.ranking_by_pnl, vec!["gamma", "alpha", "beta"]);
         assert_eq!(response.best_overall, Some("beta".to_string()));
+        assert_eq!(response.strategies_compared.len(), 3);
         assert!(response.summary.contains("beta"));
         assert!(response.summary.contains("gamma"));
     }
@@ -1037,6 +1168,7 @@ mod tests {
     #[test]
     fn format_load_data_with_missing_dates() {
         let response = format_load_data(
+            "SPY",
             1000,
             vec!["SPY".to_string()],
             DateRange {
@@ -1046,12 +1178,14 @@ mod tests {
             vec!["col1".to_string()],
         );
         assert_eq!(response.rows, 1000);
+        assert_eq!(response.symbol, "SPY");
         assert!(response.summary.contains("unknown"));
     }
 
     #[test]
     fn format_load_data_empty_symbols_shows_unknown() {
         let response = format_load_data(
+            "QQQ",
             500,
             vec![],
             DateRange {
@@ -1060,6 +1194,7 @@ mod tests {
             },
             vec!["col1".to_string()],
         );
+        assert_eq!(response.symbol, "QQQ");
         assert!(
             response.summary.contains("unknown"),
             "summary should fall back to 'unknown' when symbols is empty, got: {}",
@@ -1071,6 +1206,7 @@ mod tests {
     #[test]
     fn format_load_data_with_dates() {
         let response = format_load_data(
+            "SPY",
             5000,
             vec!["SPY".to_string(), "QQQ".to_string()],
             DateRange {
@@ -1080,6 +1216,7 @@ mod tests {
             vec!["col1".to_string(), "col2".to_string()],
         );
         assert_eq!(response.rows, 5000);
+        assert_eq!(response.symbol, "SPY");
         assert!(response.summary.contains("SPY, QQQ"));
         assert!(response.summary.contains("2024-01-01"));
         assert!(response.summary.contains("2024-12-31"));

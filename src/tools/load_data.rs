@@ -86,10 +86,10 @@ pub async fn execute(
     };
 
     let mut guard = data.write().await;
-    *guard = Some((symbol.to_uppercase(), df));
+    *guard = Some((symbol.clone(), df));
 
     Ok(ai_format::format_load_data(
-        rows, symbols, date_range, columns,
+        &symbol, rows, symbols, date_range, columns,
     ))
 }
 
