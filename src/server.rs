@@ -617,9 +617,14 @@ impl OptopsyServer {
         params
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
-        let data = self.data.read().await;
-        let (_, df) = Self::resolve_symbol(&data, params.symbol.as_deref())
-            .map_err(|e| format!("Error: {e}"))?;
+
+        // Clone DataFrame and drop read lock before expensive analysis
+        let df = {
+            let data = self.data.read().await;
+            let (_, df) = Self::resolve_symbol(&data, params.symbol.as_deref())
+                .map_err(|e| format!("Error: {e}"))?;
+            df.clone()
+        };
 
         let eval_params = EvaluateParams {
             strategy: params.strategy.as_str().to_string(),
@@ -635,7 +640,7 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
-        tools::evaluate::execute(df, &eval_params)
+        tools::evaluate::execute(&df, &eval_params)
             .map(Json)
             .map_err(|e| format!("Error: {e}"))
     }
@@ -670,15 +675,20 @@ impl OptopsyServer {
         params
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
-        let data = self.data.read().await;
-        let (symbol, df) = Self::resolve_symbol(&data, params.symbol.as_deref())
-            .map_err(|e| format!("Error: {e}"))?;
+
+        // Clone symbol and DataFrame, resolve OHLCV path, then drop read lock before expensive backtest
+        let (symbol, df) = {
+            let data = self.data.read().await;
+            let (sym, df) = Self::resolve_symbol(&data, params.symbol.as_deref())
+                .map_err(|e| format!("Error: {e}"))?;
+            (sym.clone(), df.clone())
+        };
 
         // Auto-resolve OHLCV path if signals are requested
         let ohlcv_path = if params.entry_signal.is_some() || params.exit_signal.is_some() {
             let path = self
                 .cache
-                .cache_path(symbol, "prices")
+                .cache_path(&symbol, "prices")
                 .map_err(|e| format!("Error resolving OHLCV path: {e}"))?;
             if !path.exists() {
                 return Err(format!(
@@ -714,7 +724,7 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
-        tools::backtest::execute(df, &backtest_params)
+        tools::backtest::execute(&df, &backtest_params)
             .map(Json)
             .map_err(|e| format!("Error: {e}"))
     }
@@ -743,9 +753,14 @@ impl OptopsyServer {
         params
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
-        let data = self.data.read().await;
-        let (_, df) = Self::resolve_symbol(&data, params.symbol.as_deref())
-            .map_err(|e| format!("Error: {e}"))?;
+
+        // Clone DataFrame and drop read lock before expensive comparison
+        let df = {
+            let data = self.data.read().await;
+            let (_, df) = Self::resolve_symbol(&data, params.symbol.as_deref())
+                .map_err(|e| format!("Error: {e}"))?;
+            df.clone()
+        };
 
         let compare_params = CompareParams {
             strategies: params
@@ -766,7 +781,7 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
-        tools::compare::execute(df, &compare_params)
+        tools::compare::execute(&df, &compare_params)
             .map(Json)
             .map_err(|e| format!("Error: {e}"))
     }
@@ -887,11 +902,15 @@ impl OptopsyServer {
             target_sharpe: params.target_sharpe,
         };
 
-        let data = self.data.read().await;
-        let (_, df) = Self::resolve_symbol(&data, params.symbol.as_deref())
-            .map_err(|e| format!("Error: {e}"))?;
+        // Clone DataFrame and drop read lock before expensive suggestion logic
+        let df = {
+            let data = self.data.read().await;
+            let (_, df) = Self::resolve_symbol(&data, params.symbol.as_deref())
+                .map_err(|e| format!("Error: {e}"))?;
+            df.clone()
+        };
 
-        tools::suggest::execute(df, &suggest_params)
+        tools::suggest::execute(&df, &suggest_params)
             .map(Json)
             .map_err(|e| format!("Error: {e}"))
     }
