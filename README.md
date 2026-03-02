@@ -110,18 +110,17 @@ optopsy-mcp also supports loading data without inflow:
 
 ### Parquet schema
 
-Expects Parquet files with options chain data containing columns:
+Minimum required columns for options chain data:
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `quote_date` | Date | Trading date |
-| `expiration` | Date | Option expiration date |
-| `strike` | Float | Strike price |
+| `quote_date` | Date/Datetime | Trading date |
+| `expiration` | Date/Datetime | Option expiration date |
+| `strike` | Float64 | Strike price |
 | `option_type` | String | `"call"` or `"put"` |
-| `bid` | Float | Bid price |
-| `ask` | Float | Ask price |
-| `delta` | Float | Option delta |
-| `symbol` | String | Underlying symbol |
+| `bid` | Float64 | Bid price |
+| `ask` | Float64 | Ask price |
+| `delta` | Float64 | Option delta |
 
 ## Tech Stack
 
@@ -131,7 +130,6 @@ Expects Parquet files with options chain data containing columns:
 - [Axum](https://github.com/tokio-rs/axum) — HTTP server (optional, via PORT env var)
 - [rust-s3](https://crates.io/crates/rust-s3) — S3-compatible object storage
 - [rust_ti](https://crates.io/crates/rust_ti) — Technical analysis indicators (40+ signals)
-- [blackscholes](https://crates.io/crates/blackscholes) — Options pricing models
 - [garde](https://crates.io/crates/garde) — Input validation framework
 - [serde + serde_json](https://serde.rs/) — JSON serialization
 - [schemars](https://docs.rs/schemars/) — JSON Schema generation for MCP tools
