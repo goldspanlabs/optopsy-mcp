@@ -28,6 +28,15 @@ pub enum OptionType {
     Put,
 }
 
+impl OptionType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            OptionType::Call => "call",
+            OptionType::Put => "put",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ExpirationCycle {
     #[default]
@@ -152,7 +161,9 @@ impl StrategyDef {
     }
 }
 
-fn validate_exit_dte_lt_max(max_entry_dte: &i32) -> impl FnOnce(&i32, &()) -> garde::Result + '_ {
+pub(crate) fn validate_exit_dte_lt_max(
+    max_entry_dte: &i32,
+) -> impl FnOnce(&i32, &()) -> garde::Result + '_ {
     move |exit_dte: &i32, (): &()| {
         if exit_dte >= max_entry_dte {
             return Err(garde::Error::new(format!(
@@ -237,15 +248,15 @@ pub struct BacktestParams {
     pub ohlcv_path: Option<String>,
 }
 
-fn default_multiplier() -> i32 {
+pub(crate) fn default_multiplier() -> i32 {
     100
 }
 
-fn default_dte_interval() -> i32 {
+pub(crate) fn default_dte_interval() -> i32 {
     5
 }
 
-fn default_delta_interval() -> f64 {
+pub(crate) fn default_delta_interval() -> f64 {
     0.10
 }
 

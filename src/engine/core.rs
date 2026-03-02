@@ -13,7 +13,6 @@ use super::pricing;
 use super::rules;
 #[allow(clippy::wildcard_imports)]
 use super::types::*;
-use crate::data::parquet::QUOTE_DATETIME_COL;
 use crate::signals;
 use crate::strategies;
 
@@ -43,13 +42,7 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
         .zip(params.leg_deltas.iter())
         .enumerate()
     {
-        let option_type_str = match leg.option_type {
-            OptionType::Call => "call",
-            OptionType::Put => "put",
-        };
-
-        // Filter by option type
-        let filtered = filters::filter_option_type(df, option_type_str)?;
+        let filtered = filters::filter_option_type(df, leg.option_type.as_str())?;
 
         // Compute DTE
         let with_dte = filters::compute_dte(&filtered)?;
@@ -90,24 +83,7 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
     }
 
     // Join all legs
-    let combined = if is_multi_exp {
-        filters::join_multi_expiration_legs(&leg_dfs)?
-    } else {
-        let mut combined = leg_dfs[0].0.clone();
-        for (leg_df, _) in leg_dfs.iter().skip(1) {
-            let join_cols: Vec<&str> = vec![QUOTE_DATETIME_COL, "expiration"];
-            combined = combined
-                .lazy()
-                .join(
-                    leg_df.clone().lazy(),
-                    join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
-                    join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
-                    JoinArgs::new(JoinType::Inner),
-                )
-                .collect()?;
-        }
-        combined
-    };
+    let combined = filters::join_legs(&leg_dfs, is_multi_exp)?;
 
     if combined.height() == 0 {
         return Ok(vec![]);
@@ -357,6 +333,7 @@ pub fn compare_strategies(df: &DataFrame, params: &CompareParams) -> Result<Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::parquet::QUOTE_DATETIME_COL;
     use chrono::NaiveDate;
 
     /// Build a synthetic options `DataFrame` with 2 rows for `evaluate_strategy` tests

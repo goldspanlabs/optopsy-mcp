@@ -127,12 +127,7 @@ pub fn find_entry_candidates(
         .zip(params.leg_deltas.iter())
         .enumerate()
     {
-        let option_type_str = match leg.option_type {
-            OptionType::Call => "call",
-            OptionType::Put => "put",
-        };
-
-        let filtered = filters::filter_option_type(df, option_type_str)?;
+        let filtered = filters::filter_option_type(df, leg.option_type.as_str())?;
         let with_dte = filters::compute_dte(&filtered)?;
         // For entry candidates, only consider rows where DTE is in the upper entry range.
         // The event loop handles exits via DTE check, so we don't need exit-range rows.
@@ -167,24 +162,7 @@ pub fn find_entry_candidates(
     }
 
     // Join all legs
-    let combined = if is_multi_exp {
-        filters::join_multi_expiration_legs(&leg_dfs)?
-    } else {
-        let mut combined = leg_dfs[0].0.clone();
-        for (leg_df, _) in leg_dfs.iter().skip(1) {
-            let join_cols: Vec<&str> = vec![QUOTE_DATETIME_COL, "expiration"];
-            combined = combined
-                .lazy()
-                .join(
-                    leg_df.clone().lazy(),
-                    join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
-                    join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
-                    JoinArgs::new(JoinType::Inner),
-                )
-                .collect()?;
-        }
-        combined
-    };
+    let combined = filters::join_legs(&leg_dfs, is_multi_exp)?;
 
     if combined.height() == 0 {
         return Ok(BTreeMap::new());
