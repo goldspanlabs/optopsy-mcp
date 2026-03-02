@@ -34,7 +34,7 @@ Control runtime behavior and data sources:
 
 ## Architecture
 
-**optopsy-mcp** is an options backtesting engine exposed as an MCP (Model Context Protocol) server via `rmcp 0.17`. It provides 10 tools for loading options chain data, evaluating strategies statistically, running event-driven backtests, and comparing strategies.
+**optopsy-mcp** is an options backtesting engine exposed as an MCP (Model Context Protocol) server via `rmcp 0.17`. It provides 11 tools for loading options chain data, evaluating strategies statistically, running event-driven backtests, and comparing strategies.
 
 ### Transport (`src/main.rs`)
 - **stdio** (default): for local Claude Desktop integration

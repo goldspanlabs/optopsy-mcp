@@ -18,25 +18,26 @@ Options backtesting engine exposed as an MCP server — strategy screening, simu
 - **32 Built-in Strategies** — Singles, verticals, straddles, strangles, butterflies, condors, iron condors/butterflies, calendars, diagonals (with multi-expiration support)
 - **4 Slippage Models** — Mid, spread, liquidity-based, per-leg fixed
 - **Cache Management Tools** — Check cache status, fetch OHLCV data, validate schema
-- **9 MCP Tools** — All accessible via Claude Desktop or any MCP-compatible client
+- **11 MCP Tools** — All accessible via Claude Desktop or any MCP-compatible client
 - **Parameter Validation** — garde-powered input validation with detailed error feedback
 - **HTTP & Stdio Transport** — Deploy locally via stdio or run as HTTP service on cloud platforms
 
-## MCP Tools (10 total)
+## MCP Tools (11 total)
 
-| Phase | Tool | Description |
-|-------|------|-------------|
-| 0 | `check_cache_status` | Check if cached parquet data exists (optional, before load_data) |
-| 0b | `fetch_to_parquet` | Download OHLCV data from Yahoo Finance (only if using signals) |
-| 0 | `download_options_data` | Bulk download options data from EODHD API and cache locally |
-| **1** | **`load_data`** | **Load options chain by symbol (START HERE)** |
-| 2a | `list_strategies` | Browse all 32 available strategies |
-| 2b | `list_signals` | Browse all 40+ available TA signals |
-| 2c | `construct_signal` | Build signal spec from natural language (optional) |
-| 3 | `suggest_parameters` | Get data-driven parameter recommendations (recommended) |
-| **4** | **`evaluate_strategy`** | **Fast statistical screening with DTE/delta buckets (required before backtest)** |
-| **5** | **`run_backtest`** | **Full event-driven simulation with metrics (main output)** |
-| 6 | `compare_strategies` | Compare multiple strategies side-by-side |
+| Tool | Description |
+|------|-------------|
+| `check_cache_status` | Check if cached parquet data exists (optional, before load_data) |
+| `fetch_to_parquet` | Download OHLCV data from Yahoo Finance (only if using signals) |
+| `download_options_data` | Bulk download options data from EODHD API and cache locally |
+| **`load_data`** | **Load options chain by symbol (START HERE)** |
+| `list_strategies` | Browse all 32 available strategies |
+| `list_signals` | Browse all 40+ available TA signals |
+| `construct_signal` | Build signal spec from natural language (optional) |
+| `suggest_parameters` | Get data-driven parameter recommendations (recommended) |
+| `get_loaded_symbol` | Query in-memory data state (symbol, row count, columns) |
+| **`evaluate_strategy`** | **Fast statistical screening with DTE/delta buckets** |
+| **`run_backtest`** | **Full event-driven simulation with metrics (main output)** |
+| `compare_strategies` | Compare multiple strategies side-by-side |
 
 ## Quick Start
 
