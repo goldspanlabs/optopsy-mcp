@@ -241,7 +241,14 @@ impl OptopsyServer {
     /// Downloads calls + puts across weekly/monthly expirations and caches locally.
     /// Resumable — re-run to extend cache with only new data.
     /// For single ad-hoc loads, just call `load_data` directly (auto-fetches if needed).
-    #[tool(name = "download_options_data")]
+    #[tool(
+        name = "download_options_data",
+        annotations(
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = true
+        )
+    )]
     async fn download_options_data(
         &self,
         Parameters(params): Parameters<DownloadOptionsParams>,
@@ -271,7 +278,14 @@ impl OptopsyServer {
     ///
     /// Automatically handles date column normalization (`quote_date`/`data_date`/`quote_datetime`).
     /// Optional date filtering via `start_date`/`end_date`.
-    #[tool(name = "load_data")]
+    #[tool(
+        name = "load_data",
+        annotations(
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = true
+        )
+    )]
     async fn load_data(
         &self,
         Parameters(params): Parameters<LoadDataParams>,
@@ -300,7 +314,7 @@ impl OptopsyServer {
     /// **Prerequisites**: None (informational, no data required)
     /// **Categories**: singles, spreads, straddles, strangles, butterflies, condors, iron, calendars, diagonals
     /// **Next tools**: `suggest_parameters()` or `evaluate_strategy()` (once you pick a strategy)
-    #[tool(name = "list_strategies")]
+    #[tool(name = "list_strategies", annotations(read_only_hint = true))]
     async fn list_strategies(&self) -> Json<StrategiesResponse> {
         Json(tools::strategies::execute())
     }
@@ -314,7 +328,7 @@ impl OptopsyServer {
     ///   volatility (`BBands`, `ATR`), overlap, price, volume
     /// **Next tool**: `construct_signal()` (if you want to use signals in backtest)
     /// **Note**: Signals are optional — only needed if you want signal-filtered entry/exit
-    #[tool(name = "list_signals")]
+    #[tool(name = "list_signals", annotations(read_only_hint = true))]
     async fn list_signals(&self) -> Json<SignalsResponse> {
         Json(tools::signals::execute())
     }
@@ -332,7 +346,7 @@ impl OptopsyServer {
     ///   the JSON spec from this tool's response
     /// **Example usage**: "RSI oversold" → returns RSI signal spec with threshold=30
     /// **Note**: Signals are optional; `run_backtest` works without them
-    #[tool(name = "construct_signal")]
+    #[tool(name = "construct_signal", annotations(read_only_hint = true))]
     async fn construct_signal(
         &self,
         Parameters(params): Parameters<ConstructSignalParams>,
@@ -360,7 +374,7 @@ impl OptopsyServer {
     ///   - Worst bucket (warning sign)
     ///   - Highest win-rate bucket (consistency indicator)
     ///   - Full bucket grid with mean, std, quartiles, count
-    #[tool(name = "evaluate_strategy")]
+    #[tool(name = "evaluate_strategy", annotations(read_only_hint = true))]
     async fn evaluate_strategy(
         &self,
         Parameters(params): Parameters<EvaluateStrategyParams>,
@@ -414,7 +428,7 @@ impl OptopsyServer {
     ///   - Performance metrics (Sharpe, Sortino, Calmar, `VaR`, max drawdown, win rate, etc.)
     ///   - AI-enriched assessment and suggested next steps
     /// **Time to run**: 5-30 seconds depending on data size
-    #[tool(name = "run_backtest")]
+    #[tool(name = "run_backtest", annotations(read_only_hint = true))]
     async fn run_backtest(
         &self,
         Parameters(params): Parameters<RunBacktestParams>,
@@ -488,7 +502,7 @@ impl OptopsyServer {
     ///   - Compare hybrid parameter sets
     /// **Rankings**: By Sharpe ratio (primary) and total `PnL` (secondary)
     /// **Output**: Metrics for each strategy + recommended best performer
-    #[tool(name = "compare_strategies")]
+    #[tool(name = "compare_strategies", annotations(read_only_hint = true))]
     async fn compare_strategies(
         &self,
         Parameters(params): Parameters<CompareStrategiesParams>,
@@ -528,7 +542,7 @@ impl OptopsyServer {
     ///   - Last update timestamp
     /// **Use case**: Before calling `load_data`/`fetch_to_parquet`, check if you need
     ///   to download fresh data or if cache is recent enough
-    #[tool(name = "check_cache_status")]
+    #[tool(name = "check_cache_status", annotations(read_only_hint = true))]
     async fn check_cache_status(
         &self,
         Parameters(params): Parameters<CheckCacheParams>,
@@ -558,7 +572,14 @@ impl OptopsyServer {
     ///
     /// **Important**: Not needed for basic backtest (no signals).
     ///   Only load if using `construct_signal` → enter signal JSON into `run_backtest`.
-    #[tool(name = "fetch_to_parquet")]
+    #[tool(
+        name = "fetch_to_parquet",
+        annotations(
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = true
+        )
+    )]
     async fn fetch_to_parquet(
         &self,
         Parameters(params): Parameters<FetchToParquetParams>,
@@ -594,7 +615,7 @@ impl OptopsyServer {
     ///   - slippage model recommendation (Mid/Spread/Liquidity)
     ///   - Confidence score (combines data coverage and calendar quality)
     /// **Saves time**: No need to guess parameters; use market-driven recommendations
-    #[tool(name = "suggest_parameters")]
+    #[tool(name = "suggest_parameters", annotations(read_only_hint = true))]
     async fn suggest_parameters(
         &self,
         Parameters(params): Parameters<SuggestParametersParams>,
@@ -637,9 +658,9 @@ impl ServerHandler for OptopsyServer {
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             server_info: Implementation {
                 name: "optopsy-mcp".into(),
-                title: None,
+                title: Some("Optopsy Options Backtesting Engine".into()),
                 version: "0.1.0".into(),
-                description: None,
+                description: Some("Event-driven options backtesting engine with 32 strategies, realistic position management, and AI-compatible analysis tools".into()),
                 icons: None,
                 website_url: None,
             },
