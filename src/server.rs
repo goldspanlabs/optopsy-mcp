@@ -58,6 +58,11 @@ impl OptopsyServer {
         data: &'a HashMap<String, DataFrame>,
         symbol: Option<&str>,
     ) -> Result<(&'a String, &'a DataFrame), String> {
+        // Check if no data is loaded first, regardless of whether symbol was provided
+        if data.is_empty() {
+            return Err("No data loaded. Call load_data first.".to_string());
+        }
+
         match symbol {
             Some(sym) => {
                 let sym_upper = sym.to_uppercase();
@@ -72,10 +77,10 @@ impl OptopsyServer {
                     format!("Symbol '{sym_upper}' not loaded. Loaded: {loaded_list}.")
                 })
             }
-            None => match data.len() {
-                0 => Err("No data loaded. Call load_data first.".to_string()),
-                1 => Ok(data.iter().next().unwrap()),
-                _ => {
+            None => {
+                if data.len() == 1 {
+                    Ok(data.iter().next().unwrap())
+                } else {
                     let mut keys: Vec<&String> = data.keys().collect();
                     keys.sort();
                     let symbols = keys
@@ -87,7 +92,7 @@ impl OptopsyServer {
                         "Multiple symbols loaded: {symbols}. Specify the `symbol` parameter."
                     ))
                 }
-            },
+            }
         }
     }
 }
@@ -272,7 +277,7 @@ pub struct CompareStrategiesParams {
     pub sim_params: SimParams,
     /// Symbol to compare strategies on (required if multiple symbols are loaded; optional if only one is loaded)
     #[serde(default)]
-    #[garde(inner(length(min = 1, max = 64), pattern(r"^[A-Za-z0-9.\-]+$")))]
+    #[garde(inner(length(min = 1, max = 64), pattern(r"^[A-Za-z0-9._-]+$")))]
     pub symbol: Option<String>,
 }
 
