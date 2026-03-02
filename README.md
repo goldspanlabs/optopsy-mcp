@@ -1,13 +1,6 @@
 # optopsy-mcp
 
-Options backtesting engine exposed as an MCP server — strategy screening, simulation, and performance metrics for LLM-driven interaction.
-
-**Key Points**:
-- **✅ Required**: load_data, evaluate_strategy, run_backtest
-- **Recommended**: suggest_parameters (avoids guessing parameters)
-- **Optional**: check_cache_status, fetch_to_parquet, construct_signal, compare_strategies
-- Each tool's description tells you exact prerequisites and suggested next steps
-- LLMs follow this order automatically based on tool descriptions
+An MCP server for options strategy screening and simulation, powered by a high-performance Rust rewrite of the [Optopsy](https://github.com/goldspanlabs/optopsy) engine.
 
 ## Features
 
@@ -29,14 +22,14 @@ Options backtesting engine exposed as an MCP server — strategy screening, simu
 | `check_cache_status` | Check if cached parquet data exists (optional, before load_data) |
 | `fetch_to_parquet` | Download OHLCV data from Yahoo Finance (only if using signals) |
 | `download_options_data` | Bulk download options data from EODHD API and cache locally |
-| **`load_data`** | **Load options chain by symbol (START HERE)** |
+| `load_data` | Load options chain by symbol (START HERE) |
 | `list_strategies` | Browse all 32 available strategies |
 | `list_signals` | Browse all 40+ available TA signals |
 | `construct_signal` | Build signal spec from natural language (optional) |
 | `suggest_parameters` | Get data-driven parameter recommendations (recommended) |
 | `get_loaded_symbol` | Query in-memory data state (symbol, row count, columns) |
-| **`evaluate_strategy`** | **Fast statistical screening with DTE/delta buckets** |
-| **`run_backtest`** | **Full event-driven simulation with metrics (main output)** |
+| `evaluate_strategy` | Fast statistical screening with DTE/delta buckets |
+| `run_backtest` | Full event-driven simulation with metrics (main output) |
 | `compare_strategies` | Compare multiple strategies side-by-side |
 
 ## Quick Start
