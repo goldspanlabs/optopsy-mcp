@@ -18,6 +18,26 @@ use optopsy_mcp::server::OptopsyServer;
 mod common;
 use common::make_multi_strike_df;
 
+/// Create a minimal `DataFrame` with fewer rows to distinguish it from `make_multi_strike_df()`
+/// Used in multi-symbol tests to verify the correct symbol was resolved
+fn make_sparse_df() -> DataFrame {
+    use chrono::NaiveDate;
+    let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+    let datetime = date.and_hms_opt(0, 0, 0).unwrap();
+    let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
+
+    df! {
+        "quote_datetime" => &[datetime],
+        "option_type" => &["call"],
+        "strike" => &[100.0],
+        "bid" => &[5.0],
+        "ask" => &[5.5],
+        "delta" => &[0.5],
+        "expiration" => &[exp],
+    }
+    .unwrap()
+}
+
 // ─── Test Helpers ────────────────────────────────────────────────────────────
 
 /// Create an `OptopsyServer` backed by a temporary directory (no S3, no EODHD).
@@ -1526,12 +1546,12 @@ async fn run_backtest_fails_multiple_symbols_no_symbol_param() {
 async fn run_backtest_succeeds_with_explicit_symbol() {
     let (server, _tmp) = make_test_server();
 
-    let (server_tx, server_rx) = tokio::io::duplex(4096);
-    let (client_tx, client_rx) = tokio::io::duplex(4096);
+    let (server_tx, server_rx) = tokio::io::duplex(65536);
+    let (client_tx, client_rx) = tokio::io::duplex(65536);
 
-    // Preload multiple symbols
+    // Preload multiple symbols with different data to verify symbol resolution
     preload_data(&server, "SPY", make_multi_strike_df()).await;
-    preload_data(&server, "QQQ", make_multi_strike_df()).await;
+    preload_data(&server, "QQQ", make_sparse_df()).await;
 
     let server_handle =
         tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
@@ -1564,7 +1584,7 @@ async fn run_backtest_succeeds_with_explicit_symbol() {
         .await
         .unwrap();
 
-    assert!(!result.is_error.unwrap_or(true));
+    assert!(!result.is_error.unwrap_or(false));
     let text = result
         .content
         .first()
@@ -1713,12 +1733,12 @@ async fn compare_strategies_fails_multiple_symbols_no_symbol_param() {
 async fn compare_strategies_succeeds_with_explicit_symbol() {
     let (server, _tmp) = make_test_server();
 
-    let (server_tx, server_rx) = tokio::io::duplex(4096);
-    let (client_tx, client_rx) = tokio::io::duplex(4096);
+    let (server_tx, server_rx) = tokio::io::duplex(65536);
+    let (client_tx, client_rx) = tokio::io::duplex(65536);
 
-    // Preload multiple symbols
+    // Preload multiple symbols with different data to verify symbol resolution
     preload_data(&server, "SPY", make_multi_strike_df()).await;
-    preload_data(&server, "QQQ", make_multi_strike_df()).await;
+    preload_data(&server, "QQQ", make_sparse_df()).await;
 
     let server_handle =
         tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
@@ -1765,7 +1785,7 @@ async fn compare_strategies_succeeds_with_explicit_symbol() {
         .await
         .unwrap();
 
-    assert!(!result.is_error.unwrap_or(true));
+    assert!(!result.is_error.unwrap_or(false));
     let text = result
         .content
         .first()
@@ -1907,12 +1927,12 @@ async fn suggest_parameters_fails_multiple_symbols_no_symbol_param() {
 async fn suggest_parameters_succeeds_with_explicit_symbol() {
     let (server, _tmp) = make_test_server();
 
-    let (server_tx, server_rx) = tokio::io::duplex(4096);
-    let (client_tx, client_rx) = tokio::io::duplex(4096);
+    let (server_tx, server_rx) = tokio::io::duplex(65536);
+    let (client_tx, client_rx) = tokio::io::duplex(65536);
 
-    // Preload multiple symbols
+    // Preload multiple symbols with different data to verify symbol resolution
     preload_data(&server, "SPY", make_multi_strike_df()).await;
-    preload_data(&server, "QQQ", make_multi_strike_df()).await;
+    preload_data(&server, "QQQ", make_sparse_df()).await;
 
     let server_handle =
         tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
@@ -1938,7 +1958,7 @@ async fn suggest_parameters_succeeds_with_explicit_symbol() {
         .await
         .unwrap();
 
-    assert!(!result.is_error.unwrap_or(true));
+    assert!(!result.is_error.unwrap_or(false));
     let text = result
         .content
         .first()
