@@ -68,7 +68,7 @@ fn server_info_has_correct_metadata() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn tool_router_lists_all_nine_tools() {
+async fn tool_router_lists_all_twelve_tools() {
     let (server, _tmp) = make_test_server();
 
     let (server_tx, server_rx) = tokio::io::duplex(4096);

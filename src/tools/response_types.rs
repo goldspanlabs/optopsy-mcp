@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::engine::types::{
-    CompareResult, EquityPoint, GroupStats, PerformanceMetrics, Slippage, TargetRange, TradeRecord,
+    Commission, CompareResult, EquityPoint, GroupStats, PerformanceMetrics, Slippage, TargetRange,
+    TradeRecord, TradeSelector,
 };
 
 /// Data quality report for `evaluate_strategy`
@@ -57,6 +58,7 @@ pub struct BacktestParamsSummary {
     pub max_entry_dte: i32,
     pub exit_dte: i32,
     pub slippage: Slippage,
+    pub commission: Option<Commission>,
     pub capital: f64,
     pub quantity: i32,
     pub multiplier: i32,
@@ -65,7 +67,7 @@ pub struct BacktestParamsSummary {
     pub take_profit: Option<f64>,
     pub max_hold_days: Option<i32>,
     /// Trade selector used (`Nearest`, `HighestPremium`, `LowestPremium`, or `First`)
-    pub selector: String,
+    pub selector: TradeSelector,
     /// Entry signal specification, if any
     pub entry_signal: Option<serde_json::Value>,
     /// Exit signal specification, if any
@@ -80,7 +82,8 @@ pub struct StatusResponse {
     pub loaded_symbol: Option<String>,
     /// Number of rows in the loaded `DataFrame`, if any
     pub rows: Option<usize>,
-    /// Date range of loaded data
+    /// Date range of loaded data, if available.
+    /// Note: currently not populated by `tools::status::execute` and may be `None`.
     pub date_range: Option<DateRange>,
     /// Available columns in loaded data
     pub columns: Vec<String>,
@@ -144,6 +147,7 @@ pub struct EvaluateParamsSummary {
     pub dte_interval: i32,
     pub delta_interval: f64,
     pub slippage: Slippage,
+    pub commission: Option<Commission>,
 }
 
 /// Parameters for a single strategy comparison entry
@@ -154,6 +158,7 @@ pub struct CompareStrategyEntry {
     pub max_entry_dte: i32,
     pub exit_dte: i32,
     pub slippage: Slippage,
+    pub commission: Option<Commission>,
 }
 
 /// AI-enriched response for `compare_strategies`

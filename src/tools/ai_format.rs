@@ -381,6 +381,7 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
                 max_entry_dte: params.max_entry_dte,
                 exit_dte: params.exit_dte,
                 slippage: params.slippage.clone(),
+                commission: params.commission.clone(),
                 capital: params.capital,
                 quantity: params.quantity,
                 multiplier: params.multiplier,
@@ -388,7 +389,7 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
                 stop_loss: params.stop_loss,
                 take_profit: params.take_profit,
                 max_hold_days: params.max_hold_days,
-                selector: format!("{:?}", params.selector),
+                selector: params.selector.clone(),
                 entry_signal: params
                     .entry_signal
                     .as_ref()
@@ -470,6 +471,7 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
             max_entry_dte: params.max_entry_dte,
             exit_dte: params.exit_dte,
             slippage: params.slippage.clone(),
+            commission: params.commission.clone(),
             capital: params.capital,
             quantity: params.quantity,
             multiplier: params.multiplier,
@@ -477,7 +479,7 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
             stop_loss: params.stop_loss,
             take_profit: params.take_profit,
             max_hold_days: params.max_hold_days,
-            selector: format!("{:?}", params.selector),
+            selector: params.selector.clone(),
             entry_signal: params
                 .entry_signal
                 .as_ref()
@@ -579,6 +581,7 @@ pub fn format_evaluate(
             dte_interval: params.dte_interval,
             delta_interval: params.delta_interval,
             slippage: params.slippage.clone(),
+            commission: params.commission.clone(),
         },
         total_buckets,
         total_trades,
@@ -665,6 +668,7 @@ pub fn format_compare(results: Vec<CompareResult>, params: &CompareParams) -> Co
             max_entry_dte: entry.max_entry_dte,
             exit_dte: entry.exit_dte,
             slippage: entry.slippage.clone(),
+            commission: entry.commission.clone(),
         })
         .collect();
 
