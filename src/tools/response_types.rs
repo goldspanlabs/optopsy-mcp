@@ -78,14 +78,14 @@ pub struct BacktestParamsSummary {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StatusResponse {
     pub summary: String,
-    /// The symbol currently loaded in memory, if any
-    pub loaded_symbol: Option<String>,
-    /// Number of rows in the loaded `DataFrame`, if any
+    /// Symbols currently loaded in memory
+    pub loaded_symbols: Vec<String>,
+    /// Total number of rows across all loaded symbols, if any
     pub rows: Option<usize>,
     /// Date range of loaded data, if available.
     /// Note: currently not populated by `tools::status::execute` and may be `None`.
     pub date_range: Option<DateRange>,
-    /// Available columns in loaded data
+    /// Available columns in loaded data (from first symbol)
     pub columns: Vec<String>,
     pub suggested_next_steps: Vec<String>,
 }

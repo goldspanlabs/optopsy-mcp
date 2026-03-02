@@ -35,7 +35,7 @@ fn make_test_server() -> (OptopsyServer, TempDir) {
 /// Pre-load a `DataFrame` into the server's shared state.
 async fn preload_data(server: &OptopsyServer, symbol: &str, df: DataFrame) {
     let mut guard = server.data.write().await;
-    *guard = Some((symbol.to_uppercase(), df));
+    guard.insert(symbol.to_uppercase(), df);
 }
 
 /// Write a `DataFrame` as a Parquet file in the temp cache directory.
@@ -228,8 +228,8 @@ async fn get_loaded_symbol_no_data_loaded() {
         .unwrap();
     let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
 
-    // When no data loaded, loaded_symbol should be null
-    assert!(resp["loaded_symbol"].is_null());
+    // When no data loaded, loaded_symbols should be empty array
+    assert_eq!(resp["loaded_symbols"], json!([]));
     assert_eq!(resp["rows"], serde_json::Value::Null);
     assert!(resp["summary"].as_str().unwrap().contains("No data"));
 
@@ -272,11 +272,11 @@ async fn get_loaded_symbol_after_load_data() {
         .unwrap();
     let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
 
-    // After preload_data, should return symbol and row count
-    assert_eq!(resp["loaded_symbol"], "SPY");
+    // After preload_data, should return loaded_symbols array with SPY
+    assert_eq!(resp["loaded_symbols"], json!(["SPY"]));
     assert!(resp["rows"].as_u64().unwrap() > 0);
     assert!(!resp["columns"].as_array().unwrap().is_empty());
-    assert!(resp["summary"].as_str().unwrap().contains("SPY"));
+    assert!(resp["summary"].as_str().unwrap().contains("1 symbol"));
 
     client.cancel().await.unwrap();
     server_handle.await.unwrap();
@@ -762,9 +762,8 @@ async fn preload_data_populates_shared_state() {
 
     // Verify shared state
     let guard = server.data.read().await;
-    assert!(guard.is_some());
-    let (sym, loaded_df) = guard.as_ref().unwrap();
-    assert_eq!(sym, "TEST");
+    assert!(!guard.is_empty());
+    let loaded_df = guard.get("TEST").expect("TEST should be in map");
     assert_eq!(loaded_df.height(), rows);
     assert!(loaded_df.width() > 0);
 }
@@ -1239,6 +1238,224 @@ async fn mcp_roundtrip_list_strategies() {
         .unwrap();
     let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
     assert_eq!(resp["total"], 32);
+
+    client.cancel().await.unwrap();
+    server_handle.await.unwrap();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Category 9: Multi-Symbol Support
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_loaded_symbol_with_multiple_symbols() {
+    let (server, _tmp) = make_test_server();
+
+    let (server_tx, server_rx) = tokio::io::duplex(4096);
+    let (client_tx, client_rx) = tokio::io::duplex(4096);
+
+    // Preload multiple symbols
+    preload_data(&server, "SPY", make_multi_strike_df()).await;
+    preload_data(&server, "QQQ", make_multi_strike_df()).await;
+
+    let server_handle =
+        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
+
+    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
+        ().serve((server_rx, client_tx)).await.unwrap();
+
+    let result = client
+        .peer()
+        .call_tool(CallToolRequestParams {
+            meta: None,
+            name: "get_loaded_symbol".into(),
+            arguments: None,
+            task: None,
+        })
+        .await
+        .unwrap();
+
+    let text = result
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .unwrap();
+    let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
+
+    // Should report both symbols (sorted)
+    let loaded_symbols = resp["loaded_symbols"].as_array().unwrap();
+    assert_eq!(loaded_symbols.len(), 2);
+    assert_eq!(loaded_symbols[0], "QQQ");
+    assert_eq!(loaded_symbols[1], "SPY");
+    assert!(resp["summary"].as_str().unwrap().contains("2 symbol"));
+
+    client.cancel().await.unwrap();
+    server_handle.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn evaluate_fails_multiple_symbols_no_symbol_param() {
+    let (server, _tmp) = make_test_server();
+
+    let (server_tx, server_rx) = tokio::io::duplex(4096);
+    let (client_tx, client_rx) = tokio::io::duplex(4096);
+
+    // Preload multiple symbols
+    preload_data(&server, "SPY", make_multi_strike_df()).await;
+    preload_data(&server, "QQQ", make_multi_strike_df()).await;
+
+    let server_handle =
+        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
+
+    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
+        ().serve((server_rx, client_tx)).await.unwrap();
+
+    let result = client
+        .peer()
+        .call_tool(CallToolRequestParams {
+            meta: None,
+            name: "evaluate_strategy".into(),
+            arguments: Some(
+                serde_json::from_value(json!({
+                    "strategy": "long_call",
+                    "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
+                    "max_entry_dte": 45,
+                    "exit_dte": 5,
+                    "dte_interval": 7,
+                    "delta_interval": 0.05,
+                    "slippage": {"type": "Mid"}
+                }))
+                .unwrap(),
+            ),
+            task: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(result.is_error.unwrap_or(false));
+    let text = result
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .unwrap();
+    assert!(
+        text.text.contains("Multiple symbols"),
+        "Expected 'Multiple symbols' error, got: {}",
+        text.text
+    );
+
+    client.cancel().await.unwrap();
+    server_handle.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn evaluate_succeeds_explicit_symbol_param() {
+    let (server, _tmp) = make_test_server();
+
+    let (server_tx, server_rx) = tokio::io::duplex(65536);
+    let (client_tx, client_rx) = tokio::io::duplex(65536);
+
+    // Preload multiple symbols
+    preload_data(&server, "SPY", make_multi_strike_df()).await;
+    preload_data(&server, "QQQ", make_multi_strike_df()).await;
+
+    let server_handle =
+        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
+
+    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
+        ().serve((server_rx, client_tx)).await.unwrap();
+
+    // Call with explicit symbol parameter
+    let result = client
+        .peer()
+        .call_tool(CallToolRequestParams {
+            meta: None,
+            name: "evaluate_strategy".into(),
+            arguments: Some(
+                serde_json::from_value(json!({
+                    "strategy": "long_call",
+                    "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
+                    "max_entry_dte": 45,
+                    "exit_dte": 5,
+                    "dte_interval": 10,
+                    "delta_interval": 0.10,
+                    "slippage": {"type": "Mid"},
+                    "symbol": "QQQ"
+                }))
+                .unwrap(),
+            ),
+            task: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        !result.is_error.unwrap_or(false),
+        "evaluate_strategy returned error: {:?}",
+        result.content
+    );
+    let text = result
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .unwrap();
+    let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
+    assert!(resp["total_buckets"].as_u64().unwrap() > 0);
+
+    client.cancel().await.unwrap();
+    server_handle.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn evaluate_fails_unknown_symbol() {
+    let (server, _tmp) = make_test_server();
+
+    let (server_tx, server_rx) = tokio::io::duplex(4096);
+    let (client_tx, client_rx) = tokio::io::duplex(4096);
+
+    // Preload SPY only
+    preload_data(&server, "SPY", make_multi_strike_df()).await;
+
+    let server_handle =
+        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
+
+    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
+        ().serve((server_rx, client_tx)).await.unwrap();
+
+    let result = client
+        .peer()
+        .call_tool(CallToolRequestParams {
+            meta: None,
+            name: "evaluate_strategy".into(),
+            arguments: Some(
+                serde_json::from_value(json!({
+                    "strategy": "long_call",
+                    "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
+                    "max_entry_dte": 45,
+                    "exit_dte": 5,
+                    "dte_interval": 7,
+                    "delta_interval": 0.05,
+                    "slippage": {"type": "Mid"},
+                    "symbol": "UNKNOWN"
+                }))
+                .unwrap(),
+            ),
+            task: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(result.is_error.unwrap_or(false));
+    let text = result
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .unwrap();
+    assert!(
+        text.text.contains("not loaded"),
+        "Expected 'not loaded' error, got: {}",
+        text.text
+    );
 
     client.cancel().await.unwrap();
     server_handle.await.unwrap();

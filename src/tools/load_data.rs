@@ -1,6 +1,7 @@
 use anyhow::Result;
 use chrono::NaiveDate;
 use polars::prelude::*;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -12,8 +13,9 @@ use crate::data::DataStore;
 use super::ai_format;
 use super::response_types::{DateRange, LoadDataResponse};
 
+#[allow(clippy::implicit_hasher)]
 pub async fn execute(
-    data: &Arc<RwLock<Option<(String, DataFrame)>>>,
+    data: &Arc<RwLock<HashMap<String, DataFrame>>>,
     cache: &Arc<CachedStore>,
     eodhd: Option<&Arc<EodhdProvider>>,
     symbol: &str,
@@ -86,7 +88,7 @@ pub async fn execute(
     };
 
     let mut guard = data.write().await;
-    *guard = Some((symbol.clone(), df));
+    guard.insert(symbol.clone(), df);
 
     Ok(ai_format::format_load_data(
         &symbol, rows, symbols, date_range, columns,
