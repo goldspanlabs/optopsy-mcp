@@ -41,7 +41,7 @@ Control runtime behavior and data sources:
 - **HTTP**: when `PORT` env var is set, runs axum + `StreamableHttpService` on `/mcp` with `/health` endpoint
 
 ### MCP Server (`src/server.rs`)
-Holds shared state: `Arc<RwLock<Option<DataFrame>>>` for loaded options data, `Arc<CachedStore>` for the data layer, and `ToolRouter<Self>` for rmcp routing. Tool handlers delegate to `src/tools/` modules which call into `src/engine/`.
+Holds shared state: `Arc<RwLock<HashMap<String, DataFrame>>>` for multi-symbol data storage, `Arc<CachedStore>` for the data layer, and `ToolRouter<Self>` for rmcp routing. Tool handlers delegate to `src/tools/` modules which call into `src/engine/`. Supports loading multiple symbols simultaneously without losing previous data.
 
 ### Tool Layer (`src/tools/`)
 Each tool has its own module. `ai_format.rs` enriches every response with `summary`, `key_findings`, and `suggested_next_steps`. Response types live in `response_types.rs` and derive both `Serialize` and `JsonSchema`.
@@ -200,7 +200,8 @@ Fast statistical analysis grouped by DTE × delta buckets. Does NOT run backtest
     "per_contract": 0.65,
     "base_fee": 0.0,
     "min_fee": 0.0
-  }
+  },
+  "symbol": "SPY"            // Optional. Required if multiple symbols loaded; auto-selected if only one loaded
 }
 ```
 
@@ -237,7 +238,9 @@ Full event-driven day-by-day simulation with trade log and metrics.
   "selector": "Nearest",       // Trade selector: Nearest|HighestPremium|LowestPremium|First
   "adjustment_rules": [],      // Optional: position adjustments
   "entry_signal": null,        // Optional: SignalSpec for entry filtering
-  "exit_signal": null          // Optional: SignalSpec for early exit
+  "exit_signal": null,         // Optional: SignalSpec for early exit
+
+  "symbol": "SPY"              // Optional. Required if multiple symbols loaded; auto-selected if only one loaded
 }
 ```
 
@@ -280,7 +283,8 @@ Side-by-side comparison of multiple strategies using shared sim params.
     "stop_loss": 0.50,
     "take_profit": 0.80,
     "max_hold_days": 30
-  }
+  },
+  "symbol": "SPY"              // Optional. Required if multiple symbols loaded; auto-selected if only one loaded
 }
 ```
 
