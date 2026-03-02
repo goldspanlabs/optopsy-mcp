@@ -333,8 +333,8 @@ pub fn compare_strategies(df: &DataFrame, params: &CompareParams) -> Result<Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::NaiveDate;
     use crate::data::parquet::QUOTE_DATETIME_COL;
+    use chrono::NaiveDate;
 
     /// Build a synthetic options `DataFrame` with 2 rows for `evaluate_strategy` tests
     /// (which still use the old `match_entry_exit` pipeline).

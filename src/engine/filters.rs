@@ -222,7 +222,10 @@ pub fn join_multi_expiration_legs(leg_dfs: &[(DataFrame, ExpirationCycle)]) -> R
 /// If `is_multi_exp` is true, delegates to `join_multi_expiration_legs`.
 /// Otherwise, performs a sequential inner join of all legs on
 /// `(quote_datetime, expiration)`.
-pub fn join_legs(leg_dfs: &[(DataFrame, ExpirationCycle)], is_multi_exp: bool) -> Result<DataFrame> {
+pub fn join_legs(
+    leg_dfs: &[(DataFrame, ExpirationCycle)],
+    is_multi_exp: bool,
+) -> Result<DataFrame> {
     if is_multi_exp {
         return join_multi_expiration_legs(leg_dfs);
     }

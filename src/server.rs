@@ -13,11 +13,9 @@ use tokio::sync::RwLock;
 use crate::data::cache::CachedStore;
 use crate::data::eodhd::EodhdProvider;
 use crate::engine::types::{
+    default_delta_interval, default_dte_interval, default_multiplier, validate_exit_dte_lt_max,
     BacktestParams, Commission, CompareEntry, CompareParams, EvaluateParams, SimParams, Slippage,
     TargetRange, TradeSelector,
-};
-use crate::engine::types::{
-    default_delta_interval, default_dte_interval, default_multiplier, validate_exit_dte_lt_max,
 };
 use crate::signals::registry::SignalSpec;
 use crate::tools;

@@ -161,7 +161,9 @@ impl StrategyDef {
     }
 }
 
-pub(crate) fn validate_exit_dte_lt_max(max_entry_dte: &i32) -> impl FnOnce(&i32, &()) -> garde::Result + '_ {
+pub(crate) fn validate_exit_dte_lt_max(
+    max_entry_dte: &i32,
+) -> impl FnOnce(&i32, &()) -> garde::Result + '_ {
     move |exit_dte: &i32, (): &()| {
         if exit_dte >= max_entry_dte {
             return Err(garde::Error::new(format!(
