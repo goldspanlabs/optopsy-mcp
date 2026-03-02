@@ -88,6 +88,30 @@ fn default_delta_interval() -> f64 {
     0.10
 }
 
+fn default_max_entry_dte() -> i32 {
+    45
+}
+
+fn default_exit_dte() -> i32 {
+    9
+}
+
+fn default_max_positions() -> i32 {
+    1
+}
+
+fn default_quantity() -> i32 {
+    1
+}
+
+fn default_capital() -> f64 {
+    10000.0
+}
+
+fn default_multiplier() -> i32 {
+    100
+}
+
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct EvaluateStrategyParams {
     /// Strategy name
@@ -96,10 +120,12 @@ pub struct EvaluateStrategyParams {
     /// Per-leg delta targets
     #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
-    /// Maximum DTE at entry
+    /// Maximum DTE at entry (default: 45)
+    #[serde(default = "default_max_entry_dte")]
     #[garde(range(min = 1))]
     pub max_entry_dte: i32,
-    /// DTE at exit
+    /// DTE at exit (default: 9)
+    #[serde(default = "default_exit_dte")]
     #[garde(range(min = 0), custom(validate_exit_dte_lt_max_dte(&self.max_entry_dte)))]
     pub exit_dte: i32,
     /// DTE bucket width (default: 5)
@@ -128,10 +154,12 @@ pub struct RunBacktestParams {
     /// Per-leg delta targets
     #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
-    /// Maximum DTE at entry
+    /// Maximum DTE at entry (default: 45)
+    #[serde(default = "default_max_entry_dte")]
     #[garde(range(min = 1))]
     pub max_entry_dte: i32,
-    /// DTE at exit
+    /// DTE at exit (default: 9)
+    #[serde(default = "default_exit_dte")]
     #[garde(range(min = 0), custom(validate_exit_dte_lt_max_dte(&self.max_entry_dte)))]
     pub exit_dte: i32,
     /// Slippage model (default: Spread)
@@ -151,16 +179,20 @@ pub struct RunBacktestParams {
     /// Maximum days to hold
     #[garde(inner(range(min = 1)))]
     pub max_hold_days: Option<i32>,
-    /// Starting capital
+    /// Starting capital (default: 10000)
+    #[serde(default = "default_capital")]
     #[garde(range(min = 0.01))]
     pub capital: f64,
-    /// Number of contracts per trade
+    /// Number of contracts per trade (default: 1)
+    #[serde(default = "default_quantity")]
     #[garde(range(min = 1))]
     pub quantity: i32,
-    /// Contract multiplier (default 100)
-    #[garde(inner(range(min = 1)))]
-    pub multiplier: Option<i32>,
-    /// Maximum concurrent positions
+    /// Contract multiplier (default: 100)
+    #[serde(default = "default_multiplier")]
+    #[garde(range(min = 1))]
+    pub multiplier: i32,
+    /// Maximum concurrent positions (default: 1)
+    #[serde(default = "default_max_positions")]
     #[garde(range(min = 1))]
     pub max_positions: i32,
     /// Trade selection method
@@ -184,13 +216,15 @@ pub struct ServerCompareEntry {
     /// Per-leg delta targets
     #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
-    /// Maximum DTE at entry
+    /// Maximum DTE at entry (default: 45)
+    #[serde(default = "default_max_entry_dte")]
     #[garde(range(min = 1))]
     pub max_entry_dte: i32,
-    /// DTE at exit
+    /// DTE at exit (default: 9)
+    #[serde(default = "default_exit_dte")]
     #[garde(range(min = 0), custom(validate_exit_dte_lt_max_dte(&self.max_entry_dte)))]
     pub exit_dte: i32,
-    /// Slippage model
+    /// Slippage model (default: Spread)
     #[serde(default)]
     #[garde(dive)]
     pub slippage: Slippage,
@@ -590,7 +624,7 @@ impl OptopsyServer {
             max_hold_days: params.max_hold_days,
             capital: params.capital,
             quantity: params.quantity,
-            multiplier: params.multiplier.unwrap_or(100),
+            multiplier: params.multiplier,
             max_positions: params.max_positions,
             selector: params.selector.unwrap_or_default(),
             adjustment_rules: vec![],
