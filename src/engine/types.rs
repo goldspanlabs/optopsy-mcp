@@ -87,8 +87,8 @@ impl Commission {
 #[serde(tag = "type")]
 #[derive(Default)]
 pub enum Slippage {
-    #[default]
     Mid,
+    #[default]
     Spread,
     Liquidity {
         #[garde(range(min = 0.0, max = 1.0))]
@@ -173,10 +173,13 @@ pub struct EvaluateParams {
     pub max_entry_dte: i32,
     #[garde(range(min = 0), custom(validate_exit_dte_lt_max(&self.max_entry_dte)))]
     pub exit_dte: i32,
+    #[serde(default = "default_dte_interval")]
     #[garde(range(min = 1))]
     pub dte_interval: i32,
+    #[serde(default = "default_delta_interval")]
     #[garde(range(min = 0.001, max = 1.0))]
     pub delta_interval: f64,
+    #[serde(default)]
     #[garde(dive)]
     pub slippage: Slippage,
     #[serde(default)]
@@ -236,6 +239,14 @@ pub struct BacktestParams {
 
 fn default_multiplier() -> i32 {
     100
+}
+
+fn default_dte_interval() -> i32 {
+    5
+}
+
+fn default_delta_interval() -> f64 {
+    0.10
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
