@@ -494,7 +494,7 @@ impl OptopsyServer {
     ///   - `suggest_parameters()` (get data-driven parameter recommendations)
     ///   - `evaluate_strategy()` (fast statistical screening)
     ///
-    /// Automatically handles date column normalization (`quote_date`/`data_date`/`quote_datetime`).
+    /// Automatically handles date column normalization (`quote_date`/`quote_datetime`).
     /// Optional date filtering via `start_date`/`end_date`.
     #[tool(
         name = "load_data",

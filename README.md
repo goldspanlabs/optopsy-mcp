@@ -2,6 +2,35 @@
 
 An MCP server for options strategy screening and simulation, powered by a high-performance Rust rewrite of the [Optopsy](https://github.com/goldspanlabs/optopsy) engine.
 
+## Example Prompts
+
+Once connected via Claude Desktop or any MCP client, try asking:
+
+**Getting started:**
+- "Load SPY options data and tell me what date range is available"
+- "What strategies can I use for income generation?"
+- "What parameters would you recommend for an iron condor on SPY?"
+
+**Strategy screening:**
+- "Evaluate a 30-delta iron condor on SPY with 45 DTE entries and 14 DTE exits"
+- "Which delta range has the highest win rate for short put verticals?"
+- "Screen bull put spreads across different DTE windows and find the sweet spot"
+
+**Backtesting:**
+- "Backtest an iron condor on SPY with $100k capital, max 5 positions, and a 50% stop loss"
+- "Run a short strangle backtest with 16-delta legs and compare it against a 30-delta version"
+- "How does adding a take profit at 50% of max profit affect iron condor performance?"
+
+**Signal-based filtering:**
+- "Backtest a short put vertical that only enters when RSI is below 30"
+- "What momentum signals are available? Build me an entry filter using MACD crossover"
+- "Compare iron condor results with and without a VIX-based entry signal"
+
+**Comparison and research:**
+- "Compare iron condors, iron butterflies, and short strangles side by side on SPY"
+- "Which strategy has the best risk-adjusted returns: jade lizard or iron condor?"
+- "Run the same iron condor backtest with mid, spread, and liquidity slippage models and compare"
+
 ## Features
 
 - **Multi-Source Data Integration** — Load options data from EODHD API, local Parquet cache, or S3-compatible storage with fetch-on-miss
@@ -15,37 +44,13 @@ An MCP server for options strategy screening and simulation, powered by a high-p
 - **Parameter Validation** — garde-powered input validation with detailed error feedback
 - **HTTP & Stdio Transport** — Deploy locally via stdio or run as HTTP service on cloud platforms
 
-## MCP Tools (12 total)
-
-| Tool | Description |
-|------|-------------|
-| `check_cache_status` | Check if cached parquet data exists (optional, before load_data) |
-| `fetch_to_parquet` | Download OHLCV data from Yahoo Finance (only if using signals) |
-| `download_options_data` | Bulk download options data from EODHD API and cache locally |
-| `load_data` | Load options chain by symbol (START HERE) |
-| `list_strategies` | Browse all 32 available strategies |
-| `list_signals` | Browse all 40+ available TA signals |
-| `construct_signal` | Build signal spec from natural language (optional) |
-| `suggest_parameters` | Get data-driven parameter recommendations (recommended) |
-| `get_loaded_symbol` | Query in-memory data state (symbol, row count, columns) |
-| `evaluate_strategy` | Fast statistical screening with DTE/delta buckets |
-| `run_backtest` | Full event-driven simulation with metrics (main output) |
-| `compare_strategies` | Compare multiple strategies side-by-side |
-
 ## Quick Start
 
 ```bash
-# Build
+git clone https://github.com/goldspanlabs/optopsy-mcp.git
+cd optopsy-mcp
 cargo build --release
-
-# Run as MCP server (stdio transport, default)
-cargo run --release
-
-# Or run as HTTP service
-PORT=8000 cargo run --release
 ```
-
-### Claude Desktop Configuration
 
 Add to your Claude Desktop config (`claude_desktop_config.json`):
 
@@ -53,66 +58,55 @@ Add to your Claude Desktop config (`claude_desktop_config.json`):
 {
   "mcpServers": {
     "optopsy": {
-      "command": "/path/to/optopsy-mcp"
+      "command": "/path/to/optopsy-mcp/target/release/optopsy-mcp"
     }
   }
 }
 ```
 
-### Optional Environment Variables
+Populate the data cache with [inflow](https://github.com/goldspanlabs/inflow) before your first session — see the [Data](#data) section below.
 
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `PORT` | Run as HTTP service on this port; if unset, uses stdio | _(unset)_ |
-| `EODHD_API_KEY` | Enable EODHD options data downloads | _(unset)_ |
-| `DATA_ROOT` | Local cache directory for Parquet files | `~/.optopsy/cache` |
-| `S3_BUCKET` | S3 bucket for fallback data fetch | _(unset)_ |
-| `S3_ENDPOINT` | S3-compatible endpoint URL | _(unset)_ |
-| `AWS_ACCESS_KEY_ID` | S3 credentials | _(unset)_ |
-| `AWS_SECRET_ACCESS_KEY` | S3 credentials | _(unset)_ |
+By default, data is read from `~/.optopsy/cache`. To change this, set `DATA_ROOT` in the config:
 
-## Data Layer
+```json
+{
+  "mcpServers": {
+    "optopsy": {
+      "command": "/path/to/optopsy-mcp/target/release/optopsy-mcp",
+      "env": {
+        "DATA_ROOT": "/your/custom/cache/dir"
+      }
+    }
+  }
+}
+```
 
-Data is loaded by **symbol** through a caching layer that supports three sources:
-1. **Local Parquet cache** — fastest; place files in `~/.optopsy/cache/{category}/{SYMBOL}.parquet`
-2. **EODHD API** — automatic download and cache if `EODHD_API_KEY` is set
-3. **S3-compatible storage** — fallback for cache miss if configured
+## Data
 
-Data flows in priority order: Local cache → EODHD (if available) → S3 (if available)
+optopsy-mcp reads options chains and OHLCV prices from a local Parquet cache at `~/.optopsy/cache/`. Use [**inflow**](https://github.com/goldspanlabs/inflow) to download and manage that data.
 
-### Data Source Priorities
+### inflow (recommended)
 
-**1. Local Parquet Cache (fastest)**
+[inflow](https://github.com/goldspanlabs/inflow) is a standalone CLI for downloading and caching market data — options chains from EODHD and OHLCV prices from Yahoo Finance. It writes directly to the same `~/.optopsy/cache/` directory that optopsy-mcp reads from, with concurrent downloads, resume support, and rate limiting. See the [inflow README](https://github.com/goldspanlabs/inflow) for installation and usage.
 
-Place Parquet files in the cache directory following the `{cache_dir}/{category}/{SYMBOL}.parquet` convention:
+### Cache layout
 
 ```
 ~/.optopsy/cache/
-  options/
-    SPY.parquet
-    QQQ.parquet
-  prices/
-    SPY.parquet
+├── options/
+│   ├── SPY.parquet
+│   ├── QQQ.parquet
+│   └── ...
+└── prices/
+    ├── SPY.parquet
+    ├── QQQ.parquet
+    └── ...
 ```
 
-Then load with: `load_data({ symbol: "SPY" })`
+### Other data sources
 
-**2. EODHD API Integration (automatic download)**
-
-If `EODHD_API_KEY` is set, `load_data` will automatically:
-- Check local cache first
-- Download from EODHD if not cached
-- Save to local cache for future use
-
-Also supports manual bulk downloads via `download_options_data` tool.
-
-**3. Yahoo Finance OHLCV Data**
-
-Use `fetch_to_parquet` to download historical price data and cache it locally. Required for signal-based entry/exit filtering in backtests.
-
-**4. S3-Compatible Fallback**
-
-For cloud deployments, configure S3 credentials to enable automatic fetch-on-miss from an S3-compatible bucket (AWS S3, Railway Buckets, Cloudflare R2, MinIO, etc.). Files are downloaded to local cache on first access.
+optopsy-mcp also supports loading data without inflow:
+- **Manual placement** — Drop any Parquet file matching the expected schema into the cache directory
 
 ### Parquet schema
 
@@ -129,292 +123,6 @@ Expects Parquet files with options chain data containing columns:
 | `delta` | Float | Option delta |
 | `symbol` | String | Underlying symbol |
 
-The `quote_date` column is auto-normalized — `quote_date`, `data_date`, and `quote_datetime` are all accepted (Date, Datetime, or String types).
-
-## Example Usage
-
-Once connected via MCP:
-
-**Basic workflow (statistical screening):**
-1. Load data: `load_data({ symbol: "SPY" })`
-2. Browse strategies: `list_strategies()`
-3. Screen: `evaluate_strategy({ strategy: "iron_condor", leg_deltas: [...], max_entry_dte: 45, exit_dte: 14, dte_interval: 7, delta_interval: 0.05, slippage: { type: "Mid" } })`
-4. Validate: `run_backtest({ strategy: "iron_condor", ..., capital: 100000, quantity: 1, max_positions: 5 })`
-
-**Advanced workflow (with signals):**
-1. `fetch_to_parquet({ symbol: "SPY", category: "prices" })` — Get OHLCV data for signals
-2. `list_signals()` — Browse available TA indicators
-3. `run_backtest({ strategy: "iron_condor", ..., entry_signal: "rsi_oversold", exit_signal: "rsi_overbought" })`
-
-**Data management:**
-- `check_cache_status({ symbol: "SPY", category: "options" })` — Check if data is cached
-- `download_options_data({ symbol: "SPY" })` — Bulk download from EODHD
-- `compare_strategies({ strategies: [...], sim_params: {...} })` — Compare multiple strategies
-
-## Architecture & Data Flow
-
-This section explains exactly how data moves through the system during a strategy exploration session.
-
-### System Layers
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│               MCP Client (Claude Desktop, etc.)              │
-│          sends JSON-RPC tool calls via stdio or HTTP         │
-└───────────────────────────┬──────────────────────────────────┘
-                            │
-                            ▼
-┌──────────────────────────────────────────────────────────────┐
-│                  OptopsyServer  (server.rs)                  │
-│   routes tool calls · holds shared DataFrame in RwLock       │
-└──────┬──────────┬────────────────┬───────────────┬───────────┘
-       │          │                │               │
-  load_data  list_strategies  evaluate_strategy  run_backtest /
-  (tools/)    (tools/)          (tools/)         compare_strategies
-       │                          │               (tools/)
-       ▼                          └───────┬───────┘
-┌─────────────┐                          ▼
-│  data/      │               ┌──────────────────────────────┐
-│  cache.rs   │               │       engine/core.rs         │
-│  parquet.rs │               │  orchestrates the pipeline   │
-└──────┬──────┘               └──┬───────────────────────────┘
-       │                         │
-  local Parquet            ┌─────┴────────────────────────────┐
-  S3 fetch-on-miss         │  strategies/  find_strategy()    │
-                           │  engine/filters.rs               │
-                           │  engine/evaluation.rs            │
-                           │  engine/event_sim.rs             │
-                           │  engine/pricing.rs               │
-                           │  engine/metrics.rs               │
-                           └─────┬────────────────────────────┘
-                                 │
-                                 ▼
-                        tools/ai_format.rs
-                    (enriches result with summary,
-                     key findings & suggested next steps)
-                                 │
-                                 ▼
-                       JSON response → MCP client
-```
-
-### Step-by-Step: Strategy Exploration Session
-
-#### Step 1 — Load Data (`load_data`)
-
-```
-Client → load_data({ symbol: "SPY", start_date?, end_date? })
-  → CachedStore.load_options("SPY")
-      → check ~/.optopsy/cache/options/SPY.parquet
-      → if missing and S3 configured: download & cache locally
-  → parquet.rs reads Parquet and normalises the date column
-      (accepts quote_date / data_date / quote_datetime as Date,
-       Datetime, or String — all normalised to quote_datetime)
-  → optional date-range filter applied
-  → resulting DataFrame stored in server's shared Arc<RwLock<Option<DataFrame>>>
-  → returns LoadDataResponse: row count, symbols, date range,
-    column list, suggested next steps
-```
-
-#### Step 2a — Browse Strategies (`list_strategies`)
-
-```
-Client → list_strategies()
-  → strategies::all_strategies() → Vec<StrategyDef>
-      each StrategyDef: name, category, description, legs (multi-expiration support)
-      each LegDef: side (Long/Short), option_type (Call/Put), qty, delta target
-  → grouped by category (singles, spreads, butterflies, condors,
-    iron, calendars, diagonals)
-  → returns StrategiesResponse with suggested next steps
-```
-
-#### Step 2b — Browse Signals (`list_signals`)
-
-```
-Client → list_signals()
-  → signals::all_signals() → Vec<SignalDef>
-      each SignalDef: name, category, description, params
-      categories: momentum (RSI, MACD, Stoch), trend (SMA, EMA, ADX),
-                  volatility (BBands, ATR), overlap, price, volume
-  → returns SignalsResponse with all available indicators
-```
-
-#### Step 3 — Statistical Screen (`evaluate_strategy`)
-
-This path evaluates *historical* P&L across DTE × delta buckets — fast and data-driven, no capital simulation involved.
-
-```
-Client → evaluate_strategy({ strategy, leg_deltas, max_entry_dte,
-                              exit_dte, dte_interval, delta_interval,
-                              slippage, commission? })
-
-engine/core::evaluate_strategy(df, params):
-
-  1. strategies::find_strategy(name) → StrategyDef
-
-  2. Per leg (repeated for every leg in the strategy):
-       a. filters::filter_option_type(df, "call"|"put")
-            → keep only rows matching this leg's option type
-       b. filters::compute_dte(df)
-            → add dte = expiration − quote_datetime (integer days)
-       c. filters::filter_dte_range(df, max_entry_dte, exit_dte)
-            → keep rows with exit_dte ≤ dte ≤ max_entry_dte
-       d. filters::filter_valid_quotes(df)
-            → drop rows with zero bid or ask
-       e. filters::select_closest_delta(df, target)
-            → group by (quote_datetime, expiration)
-            → pick the strike whose |delta| is closest to target,
-              within [target.min, target.max]
-       f. evaluation::match_entry_exit(entries, all_data, exit_dte)
-            → for each entry row, find the exit row with the same
-              (expiration, strike, option_type) whose quote_datetime
-              is closest to (expiration − exit_dte)
-            → returns joined DataFrame with entry & exit prices
-
-  3. Join all leg DataFrames on (quote_datetime, expiration)
-       → one row per trade opportunity that has all legs filled
-
-  4. rules::filter_strike_order(df, num_legs, strict)
-       → enforce ascending strike order across legs
-         (skipped for straddles / iron butterflies)
-
-  5. pricing::leg_pnl(...) per row, per leg
-       → entry_price = mid | ask | liquidity-adjusted | fixed-per-leg
-         (based on chosen Slippage model)
-       → exit_price  = mid | bid | liquidity-adjusted | fixed-per-leg
-       → pnl = (exit_price − entry_price) × side × qty × multiplier
-       → commission subtracted (entry + exit)
-
-  6. output::bin_and_aggregate(df, dte_interval, delta_interval)
-       → create DTE buckets  e.g. [30,37), [37,44) …
-       → create delta buckets e.g. [0.15,0.20), [0.20,0.25) …
-       → per bucket: mean, std, min, q25, median, q75, max,
-         win_rate, profit_factor, count
-
-  → ai_format::format_evaluate()
-       → identify best/worst bucket, highest win-rate bucket
-       → generate natural-language summary & suggested next steps
-  → returns EvaluateResponse with Vec<GroupStats>
-```
-
-#### Step 4 — Full Simulation (`run_backtest`)
-
-This path runs a realistic, capital-constrained, event-driven backtest with optional signal-based filtering.
-
-```
-Client → run_backtest({ strategy, leg_deltas, max_entry_dte,
-                        exit_dte, slippage, commission?,
-                        stop_loss?, take_profit?, max_hold_days?,
-                        capital, quantity, multiplier?, max_positions,
-                        selector?, entry_signal?, exit_signal?,
-                        ohlcv_path? })
-
-engine/core::run_backtest(df, params):
-
-  1. strategies::find_strategy(name) → StrategyDef
-
-  2. event_sim::build_price_table(df)
-       → iterates every row of the DataFrame once
-       → builds HashMap<(date, expiration, strike, OptionType),
-                         QuoteSnapshot{bid, ask, delta}>
-       → also collects sorted Vec<NaiveDate> of all trading days
-
-  3. event_sim::find_entry_candidates(df, strategy_def, params)
-       → applies the same per-leg filter chain as evaluate_strategy
-         (filter_option_type → compute_dte → filter_dte_range →
-          filter_valid_quotes → select_closest_delta)
-       → joins legs, enforces strike order, computes net_premium
-       → returns Vec<EntryCandidate> (one per entry date × expiration)
-
-  3b. signals::apply_signal_filter(candidates, entry_signal, ohlcv_path)
-       → if entry_signal specified: load OHLCV data, compute TA indicators
-       → filter candidates to only those where entry signal triggers on entry_date
-       → optional: apply exit_signal to pre-filter positions for early exit logic
-
-  4. event_sim::run_event_loop(price_table, candidates,
-                               trading_days, params, strategy_def)
-       → iterates day-by-day over trading_days:
-
-         OPEN PHASE:
-           • find candidates with entry_date == today
-           • skip if positions ≥ max_positions
-           • apply TradeSelector (Nearest DTE, HighestPremium,
-             LowestPremium, or First)
-           • create Position from EntryCandidate; charge entry cost
-
-         CLOSE CHECK (for every open position):
-           • look up today's price in PriceTable for each leg
-           • compute current_value = Σ leg current prices × side × qty
-           • check exit conditions in priority order:
-               – DTE exit:    dte ≤ exit_dte       → ExitType::DteExit
-               – Stop loss:   loss > stop_loss × |entry_cost|
-                                                    → ExitType::StopLoss
-               – Take profit: gain > take_profit × |entry_cost|
-                                                    → ExitType::TakeProfit
-               – Max hold:    days_held ≥ max_hold_days
-                                                    → ExitType::MaxHold
-               – Expiration:  today ≥ expiration   → ExitType::Expiration
-
-         EQUITY UPDATE (every day):
-           • realized_pnl = sum of all closed trades
-           • unrealized_pnl = Σ (current_value − entry_cost) for open positions
-           • equity = capital + realized_pnl + unrealized_pnl
-           • appended to equity_curve as EquityPoint{datetime, equity}
-
-       → returns (Vec<TradeRecord>, Vec<EquityPoint>)
-
-  5. metrics::calculate_metrics(equity_curve, trade_log, capital)
-       → daily returns series from equity_curve
-       → Sharpe ratio  (annualised, rf=0)
-       → Sortino ratio (downside deviation only)
-       → max drawdown  (peak-to-trough)
-       → Calmar ratio  (CAGR / max drawdown)
-       → VaR 95%       (5th percentile of daily returns)
-       → CAGR          (compound annual growth rate)
-       → win rate, profit factor
-       → avg P&L, avg winner, avg loser, avg days held
-       → max consecutive losses, expectancy
-
-  → ai_format::format_backtest()
-       → trade summary (exit breakdown, best/worst trade)
-       → equity curve summary (start/end equity, peak, trough)
-       → sampled equity curve (≤50 points for compact transmission)
-       → natural-language assessment of Sharpe quality
-       → key findings & suggested next steps
-  → returns BacktestResponse
-```
-
-#### Step 6 — Strategy Comparison (`compare_strategies`)
-
-```
-Client → compare_strategies({ strategies: [CompareEntry, ...],
-                               sim_params })
-  → for each CompareEntry:
-       → assembles BacktestParams (entry params + shared sim_params)
-       → calls run_backtest() (full pipeline above)
-       → collects CompareResult: strategy, trades, pnl, sharpe,
-         sortino, max_dd, win_rate, profit_factor, calmar,
-         total_return_pct
-  → ai_format::format_compare()
-       → ranks strategies by Sharpe, then by total PnL
-       → identifies overall best performer
-       → returns CompareResponse with suggested next steps
-```
-
-### Key Data Structures
-
-| Structure | Where defined | Role |
-|-----------|---------------|------|
-| `DataFrame` (Polars) | `data/` | Raw options chain — column-oriented, immutable once loaded |
-| `StrategyDef` | `engine/types.rs` | Blueprint: name, category, legs, strike ordering flag |
-| `LegDef` | `engine/types.rs` | Per-leg config: side, option_type, delta target, qty |
-| `EntryCandidate` | `engine/types.rs` | Fully-matched option combo ready to open as a position |
-| `PriceTable` | `engine/types.rs` | `HashMap<(date, exp, strike, type) → QuoteSnapshot>` for O(1) daily lookup |
-| `Position` | `engine/types.rs` | Live position: legs, entry cost, status, quantity |
-| `TradeRecord` | `engine/types.rs` | Closed trade: entry/exit datetime, P&L, days held, exit reason |
-| `EquityPoint` | `engine/types.rs` | Daily equity snapshot (realized + unrealized) |
-| `GroupStats` | `engine/types.rs` | Aggregate stats for one DTE × delta bucket |
-| `PerformanceMetrics` | `engine/types.rs` | Portfolio-level risk/return metrics |
-
 ## Tech Stack
 
 - [Polars](https://pola.rs/) — DataFrame engine for data processing
@@ -427,7 +135,3 @@ Client → compare_strategies({ strategies: [CompareEntry, ...],
 - [garde](https://crates.io/crates/garde) — Input validation framework
 - [serde + serde_json](https://serde.rs/) — JSON serialization
 - [schemars](https://docs.rs/schemars/) — JSON Schema generation for MCP tools
-
-## License
-
-MIT

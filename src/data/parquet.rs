@@ -29,8 +29,6 @@ pub fn normalize_quote_datetime(df: DataFrame) -> Result<DataFrame> {
         ("quote_datetime", c.dtype().clone())
     } else if let Ok(c) = df.column("quote_date") {
         ("quote_date", c.dtype().clone())
-    } else if let Ok(c) = df.column("data_date") {
-        ("data_date", c.dtype().clone())
     } else {
         // No recognized date column — return as-is
         return Ok(df);
@@ -208,23 +206,6 @@ mod tests {
         let result = normalize_quote_datetime(df).unwrap();
         assert!(result.schema().contains(QUOTE_DATETIME_COL));
         assert_eq!(result.height(), 2);
-    }
-
-    #[test]
-    fn normalize_data_date_renamed() {
-        let dates = vec![
-            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 1, 16).unwrap(),
-        ];
-        let df = df! {
-            "data_date" => &dates,
-            "value" => &[1, 2],
-        }
-        .unwrap();
-
-        let result = normalize_quote_datetime(df).unwrap();
-        assert!(result.schema().contains(QUOTE_DATETIME_COL));
-        assert!(!result.schema().contains("data_date"));
     }
 
     #[test]

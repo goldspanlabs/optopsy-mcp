@@ -58,7 +58,7 @@ Key submodules: `filters.rs` (DTE/delta filtering), `evaluation.rs` (entry-exit 
 32 strategies across singles, spreads, butterflies, condors, iron, and calendar categories. Built using helpers (`call_leg`, `put_leg`, `strategy`) in `helpers.rs`. `all_strategies()` returns the full list; `find_strategy(name)` does linear scan. Multi-expiration strategies (calendar/diagonal) use `ExpirationCycle::Primary`/`Secondary` tags on legs.
 
 ### Data Layer (`src/data/`)
-`DataStore` trait with `CachedStore` as default — local Parquet cache at `~/.optopsy/cache/{category}/{SYMBOL}.parquet` with S3 fetch-on-miss. `ParquetStore` handles normalization of date columns (`quote_date`/`data_date`/`quote_datetime` as Date, Datetime, or String → unified `Datetime("quote_datetime")`). Path segments validated against traversal attacks.
+`DataStore` trait with `CachedStore` as default — local Parquet cache at `~/.optopsy/cache/{category}/{SYMBOL}.parquet` with S3 fetch-on-miss. `ParquetStore` handles normalization of date columns (`quote_date`/`quote_datetime` as Date, Datetime, or String → unified `Datetime("quote_datetime")`). Path segments validated against traversal attacks.
 
 ### Signals (`src/signals/`)
 TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, trend, volatility, overlap, price, volume, plus combinators. Signal registry in `registry.rs` contains ~40 indicators. Signals are **fully wired** into backtest entry/exit filtering via `entry_signal` and `exit_signal` params in `BacktestParams`. Usage requires OHLCV data loaded via `fetch_to_parquet` tool.
@@ -359,7 +359,7 @@ Validation happens in tool handlers via `params.validate().map_err(...)?`. Inval
 
 ### ParquetStore (`src/data/parquet.rs`)
 - Reads/writes Parquet with date column normalization
-- Detects and normalizes: `quote_date` (Date), `data_date` (Date), `quote_datetime` (Datetime/String) → unified `Datetime("quote_datetime")`
+- Detects and normalizes: `quote_date` (Date), `quote_datetime` (Datetime/String) → unified `Datetime("quote_datetime")`
 - Lazy scanning for memory efficiency: `scan_parquet().select([...]).filter(...).collect()`
 
 ### EodhdProvider (`src/data/eodhd.rs`)
