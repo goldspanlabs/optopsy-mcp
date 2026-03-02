@@ -82,31 +82,24 @@ fn filter_strike_order_by_cycle(
         }
     }
 
-    let mut lazy = df.clone().lazy();
-
-    // Apply ordering within primary group
-    for w in primary_indices.windows(2) {
-        let prev_col = format!("strike_{}", w[0]);
-        let curr_col = format!("strike_{}", w[1]);
-        if strict {
-            lazy = lazy.filter(col(&curr_col).gt(col(&prev_col)));
-        } else {
-            lazy = lazy.filter(col(&curr_col).gt_eq(col(&prev_col)));
-        }
-    }
-
-    // Apply ordering within secondary group
-    for w in secondary_indices.windows(2) {
-        let prev_col = format!("strike_{}", w[0]);
-        let curr_col = format!("strike_{}", w[1]);
-        if strict {
-            lazy = lazy.filter(col(&curr_col).gt(col(&prev_col)));
-        } else {
-            lazy = lazy.filter(col(&curr_col).gt_eq(col(&prev_col)));
-        }
-    }
-
+    let lazy = df.clone().lazy();
+    let lazy = apply_window_ordering(lazy, &primary_indices, strict);
+    let lazy = apply_window_ordering(lazy, &secondary_indices, strict);
     Ok(lazy.collect()?)
+}
+
+/// Apply sequential strike-ordering filters for a group of leg indices.
+fn apply_window_ordering(mut lazy: LazyFrame, indices: &[usize], strict: bool) -> LazyFrame {
+    for w in indices.windows(2) {
+        let prev_col = format!("strike_{}", w[0]);
+        let curr_col = format!("strike_{}", w[1]);
+        lazy = if strict {
+            lazy.filter(col(&curr_col).gt(col(&prev_col)))
+        } else {
+            lazy.filter(col(&curr_col).gt_eq(col(&prev_col)))
+        };
+    }
+    lazy
 }
 
 #[cfg(test)]

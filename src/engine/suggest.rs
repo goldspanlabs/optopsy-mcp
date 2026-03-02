@@ -235,16 +235,11 @@ fn extract_leg_deltas(
     let mut leg_deltas = Vec::new();
 
     for leg in &strategy_def.legs {
-        let option_type_str = match leg.option_type {
-            crate::engine::types::OptionType::Call => "call",
-            crate::engine::types::OptionType::Put => "put",
-        };
-
         // Filter by option type, DTE range, and OTM range [0.05, 0.50]
         let leg_df = df
             .clone()
             .lazy()
-            .filter(col("option_type").eq(lit(option_type_str)))
+            .filter(col("option_type").eq(lit(leg.option_type.as_str())))
             .filter(col("dte").gt_eq(lit(exit_dte)))
             .filter(col("dte").lt_eq(lit(max_entry_dte)))
             .with_column(col("delta").abs().alias("abs_delta"))
