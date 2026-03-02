@@ -461,20 +461,25 @@ async fn check_cache_rejects_path_traversal() {
             ),
             task: None,
         })
-        .await
-        .unwrap();
+        .await;
 
-    assert!(result.is_error.unwrap_or(false));
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.raw.as_text())
-        .unwrap();
+    // Path traversal is now rejected at deserialization time (enum validation)
+    // or returns an error result if it somehow passes
     assert!(
-        text.text.contains("Validation error"),
-        "Expected validation error for path traversal, got: {}",
-        text.text
+        result.is_err() || result.as_ref().unwrap().is_error.unwrap_or(false),
+        "Expected error for path traversal attempt"
     );
+
+    // If we got a successful call but with error result, check the message
+    if let Ok(result) = result {
+        if let Some(text) = result.content.first().and_then(|c| c.raw.as_text()) {
+            assert!(
+                text.text.contains("unknown variant") || text.text.contains("Validation error"),
+                "Expected deserialization or validation error for path traversal, got: {}",
+                text.text
+            );
+        }
+    }
 
     client.cancel().await.unwrap();
     server_handle.await.unwrap();

@@ -244,14 +244,31 @@ pub struct CompareStrategiesParams {
     pub sim_params: SimParams,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, Validate)]
+#[serde(rename_all = "lowercase")]
+pub enum CategoryParam {
+    Prices,
+    Options,
+}
+
+impl CategoryParam {
+    /// Convert enum variant to lowercase string for data layer
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CategoryParam::Prices => "prices",
+            CategoryParam::Options => "options",
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct CheckCacheParams {
     /// Ticker symbol (e.g. "SPY")
     #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub symbol: String,
-    /// Cache category subdirectory (e.g. "prices", "options")
-    #[garde(length(min = 1), pattern(r"^[A-Za-z0-9._-]+$"))]
-    pub category: String,
+    /// Cache category
+    #[garde(skip)]
+    pub category: CategoryParam,
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
@@ -267,9 +284,9 @@ pub struct FetchToParquetParams {
     /// Ticker symbol (e.g. "SPY")
     #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub symbol: String,
-    /// Cache category subdirectory (e.g. "prices")
-    #[garde(length(min = 1), pattern(r"^[A-Za-z0-9._-]+$"))]
-    pub category: String,
+    /// Cache category
+    #[garde(skip)]
+    pub category: CategoryParam,
     /// Time period to fetch (e.g. "6mo", "1y", "5y", "max"). Defaults to "6mo".
     #[garde(inner(length(min = 1)))]
     pub period: Option<String>,
@@ -716,7 +733,7 @@ impl OptopsyServer {
         params
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
-        tools::cache_status::execute(&self.cache, &params.symbol, &params.category)
+        tools::cache_status::execute(&self.cache, &params.symbol, params.category.as_str())
             .map(Json)
             .map_err(|e| format!("Error: {e}"))
     }
@@ -754,10 +771,15 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
         let period = params.period.as_deref().unwrap_or("6mo");
-        tools::fetch::execute(&self.cache, &params.symbol, &params.category, period)
-            .await
-            .map(Json)
-            .map_err(|e| format!("Error: {e}"))
+        tools::fetch::execute(
+            &self.cache,
+            &params.symbol,
+            params.category.as_str(),
+            period,
+        )
+        .await
+        .map(Json)
+        .map_err(|e| format!("Error: {e}"))
     }
 
     /// Analyze the loaded options chain and suggest data-driven parameters.
