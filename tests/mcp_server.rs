@@ -197,6 +197,91 @@ async fn list_signals_returns_catalog() {
     server_handle.await.unwrap();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_loaded_symbol_no_data_loaded() {
+    let (server, _tmp) = make_test_server();
+
+    let (server_tx, server_rx) = tokio::io::duplex(4096);
+    let (client_tx, client_rx) = tokio::io::duplex(4096);
+
+    let server_handle =
+        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
+
+    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
+        ().serve((server_rx, client_tx)).await.unwrap();
+
+    let result = client
+        .peer()
+        .call_tool(CallToolRequestParams {
+            meta: None,
+            name: "get_loaded_symbol".into(),
+            arguments: None,
+            task: None,
+        })
+        .await
+        .unwrap();
+
+    let text = result
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .unwrap();
+    let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
+
+    // When no data loaded, loaded_symbol should be null
+    assert!(resp["loaded_symbol"].is_null());
+    assert_eq!(resp["rows"], serde_json::Value::Null);
+    assert!(resp["summary"].as_str().unwrap().contains("No data"));
+
+    client.cancel().await.unwrap();
+    server_handle.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_loaded_symbol_after_load_data() {
+    let (server, _tmp) = make_test_server();
+
+    let (server_tx, server_rx) = tokio::io::duplex(4096);
+    let (client_tx, client_rx) = tokio::io::duplex(4096);
+
+    // Preload test data
+    let df = make_multi_strike_df();
+    preload_data(&server, "SPY", df).await;
+
+    let server_handle =
+        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
+
+    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
+        ().serve((server_rx, client_tx)).await.unwrap();
+
+    let result = client
+        .peer()
+        .call_tool(CallToolRequestParams {
+            meta: None,
+            name: "get_loaded_symbol".into(),
+            arguments: None,
+            task: None,
+        })
+        .await
+        .unwrap();
+
+    let text = result
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .unwrap();
+    let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
+
+    // After preload_data, should return symbol and row count
+    assert_eq!(resp["loaded_symbol"], "SPY");
+    assert!(resp["rows"].as_u64().unwrap() > 0);
+    assert!(!resp["columns"].as_array().unwrap().is_empty());
+    assert!(resp["summary"].as_str().unwrap().contains("SPY"));
+
+    client.cancel().await.unwrap();
+    server_handle.await.unwrap();
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Category 3: Parameter Validation — Garde Rejection
 // ═══════════════════════════════════════════════════════════════════════════════

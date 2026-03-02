@@ -4,8 +4,8 @@ use tokio::sync::RwLock;
 
 use super::response_types::StatusResponse;
 
-pub fn execute(data: &Arc<RwLock<Option<(String, DataFrame)>>>) -> StatusResponse {
-    let guard = data.blocking_read();
+pub async fn execute(data: &Arc<RwLock<Option<(String, DataFrame)>>>) -> StatusResponse {
+    let guard = data.read().await;
 
     if let Some((symbol, df)) = guard.as_ref() {
         let rows = df.height();
@@ -60,10 +60,10 @@ pub fn execute(data: &Arc<RwLock<Option<(String, DataFrame)>>>) -> StatusRespons
 mod tests {
     use super::*;
 
-    #[test]
-    fn status_no_data_loaded() {
+    #[tokio::test]
+    async fn status_no_data_loaded() {
         let data = Arc::new(RwLock::new(None));
-        let response = execute(&data);
+        let response = execute(&data).await;
         assert!(response.loaded_symbol.is_none());
         assert!(response.rows.is_none());
         assert_eq!(response.columns.len(), 0);

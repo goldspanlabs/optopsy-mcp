@@ -3,7 +3,6 @@ use crate::data::cache::CachedStore;
 use crate::signals::registry::{SignalSpec, SIGNAL_CATALOG};
 use schemars::schema_for;
 use serde_json::{json, Value};
-use std::sync::Arc;
 
 // OHLCV column name conventions from Yahoo Finance
 const DEFAULT_CLOSE: &str = "adjclose";
@@ -12,11 +11,7 @@ const DEFAULT_HIGH: &str = "high";
 const DEFAULT_LOW: &str = "low";
 const DEFAULT_VOLUME: &str = "volume";
 
-pub fn execute(
-    prompt: &str,
-    symbol: Option<&str>,
-    cache: &Arc<CachedStore>,
-) -> ConstructSignalResponse {
+pub fn execute(prompt: &str, symbol: Option<&str>, cache: &CachedStore) -> ConstructSignalResponse {
     // Fuzzy search SIGNAL_CATALOG for matches
     let (candidates, had_real_matches) = fuzzy_search(prompt);
 
@@ -88,7 +83,7 @@ pub fn execute(
                     suggested_next_steps.insert(
                         0,
                         format!(
-                            "⚠️ OHLCV data for {upper} not cached. Call fetch_to_parquet(symbol: {upper}) first"
+                            "⚠️ OHLCV data for {upper} not cached. Call fetch_to_parquet({{ symbol: \"{upper}\", category: \"prices\" }}) first"
                         ),
                     );
                 }
@@ -97,7 +92,7 @@ pub fn execute(
                 suggested_next_steps.insert(
                     0,
                     format!(
-                        "⚠️ Could not check OHLCV data status for {upper}. Call fetch_to_parquet({upper}) if needed"
+                        "⚠️ Could not check OHLCV data status for {upper}. Call fetch_to_parquet({{ symbol: \"{upper}\", category: \"prices\" }}) if needed"
                     ),
                 );
             }
@@ -105,7 +100,7 @@ pub fn execute(
     } else {
         suggested_next_steps.insert(
             0,
-            "⚠️ Signals require OHLCV data. Call fetch_to_parquet(symbol: ...) first, then call construct_signal again with symbol parameter".to_string(),
+            "⚠️ Signals require OHLCV data. Call fetch_to_parquet({ symbol: \"SPY\", category: \"prices\" }) first, then call construct_signal again with symbol parameter".to_string(),
         );
     }
 
@@ -523,6 +518,7 @@ mod tests {
 
     #[test]
     fn execute_basic() {
+        use std::sync::Arc;
         let cache = Arc::new(CachedStore::new(
             std::env::temp_dir().join("optopsy_test_construct"),
             "prices".to_string(),
