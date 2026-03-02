@@ -80,11 +80,19 @@ pub struct LoadDataParams {
     pub end_date: Option<String>,
 }
 
+fn default_dte_interval() -> i32 {
+    5
+}
+
+fn default_delta_interval() -> f64 {
+    0.10
+}
+
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct EvaluateStrategyParams {
-    /// Strategy name (e.g. '`iron_condor`')
-    #[garde(length(min = 1))]
-    pub strategy: String,
+    /// Strategy name
+    #[garde(skip)]
+    pub strategy: StrategyParam,
     /// Per-leg delta targets
     #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
@@ -94,16 +102,20 @@ pub struct EvaluateStrategyParams {
     /// DTE at exit
     #[garde(range(min = 0), custom(validate_exit_dte_lt_max_dte(&self.max_entry_dte)))]
     pub exit_dte: i32,
-    /// DTE bucket width (e.g. 7)
+    /// DTE bucket width (default: 5)
+    #[serde(default = "default_dte_interval")]
     #[garde(range(min = 1))]
     pub dte_interval: i32,
-    /// Delta bucket width (e.g. 0.05)
+    /// Delta bucket width (default: 0.10)
+    #[serde(default = "default_delta_interval")]
     #[garde(range(min = 0.001, max = 1.0))]
     pub delta_interval: f64,
-    /// Slippage model
+    /// Slippage model (default: Spread)
+    #[serde(default)]
     #[garde(dive)]
     pub slippage: Slippage,
     /// Commission structure (optional)
+    #[serde(default)]
     #[garde(dive)]
     pub commission: Option<Commission>,
 }
@@ -111,8 +123,8 @@ pub struct EvaluateStrategyParams {
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct RunBacktestParams {
     /// Strategy name
-    #[garde(length(min = 1))]
-    pub strategy: String,
+    #[garde(skip)]
+    pub strategy: StrategyParam,
     /// Per-leg delta targets
     #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
@@ -122,10 +134,12 @@ pub struct RunBacktestParams {
     /// DTE at exit
     #[garde(range(min = 0), custom(validate_exit_dte_lt_max_dte(&self.max_entry_dte)))]
     pub exit_dte: i32,
-    /// Slippage model
+    /// Slippage model (default: Spread)
+    #[serde(default)]
     #[garde(dive)]
     pub slippage: Slippage,
     /// Commission structure
+    #[serde(default)]
     #[garde(dive)]
     pub commission: Option<Commission>,
     /// Stop loss threshold (multiplier of entry cost; values > 1.0 allowed)
@@ -162,11 +176,35 @@ pub struct RunBacktestParams {
     pub exit_signal: Option<SignalSpec>,
 }
 
+#[derive(Debug, Clone, Deserialize, JsonSchema, Validate)]
+pub struct ServerCompareEntry {
+    /// Strategy name
+    #[garde(skip)]
+    pub name: StrategyParam,
+    /// Per-leg delta targets
+    #[garde(length(min = 1), dive)]
+    pub leg_deltas: Vec<TargetRange>,
+    /// Maximum DTE at entry
+    #[garde(range(min = 1))]
+    pub max_entry_dte: i32,
+    /// DTE at exit
+    #[garde(range(min = 0), custom(validate_exit_dte_lt_max_dte(&self.max_entry_dte)))]
+    pub exit_dte: i32,
+    /// Slippage model
+    #[serde(default)]
+    #[garde(dive)]
+    pub slippage: Slippage,
+    /// Commission structure
+    #[serde(default)]
+    #[garde(dive)]
+    pub commission: Option<Commission>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct CompareStrategiesParams {
     /// List of strategies with their parameters
     #[garde(length(min = 2), dive)]
-    pub strategies: Vec<CompareEntry>,
+    pub strategies: Vec<ServerCompareEntry>,
     /// Shared simulation parameters
     #[garde(dive)]
     pub sim_params: SimParams,
@@ -211,11 +249,94 @@ pub enum RiskPreferenceParam {
     Aggressive,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, Validate)]
+#[serde(rename_all = "snake_case")]
+pub enum StrategyParam {
+    // Singles
+    LongCall,
+    ShortCall,
+    LongPut,
+    ShortPut,
+    CoveredCall,
+    CashSecuredPut,
+    // Spreads
+    BullCallSpread,
+    BearCallSpread,
+    BullPutSpread,
+    BearPutSpread,
+    LongStraddle,
+    ShortStraddle,
+    LongStrangle,
+    ShortStrangle,
+    // Butterflies
+    LongCallButterfly,
+    ShortCallButterfly,
+    LongPutButterfly,
+    ShortPutButterfly,
+    // Condors
+    LongCallCondor,
+    ShortCallCondor,
+    LongPutCondor,
+    ShortPutCondor,
+    // Iron
+    IronCondor,
+    ReverseIronCondor,
+    IronButterfly,
+    ReverseIronButterfly,
+    // Calendar
+    CallCalendarSpread,
+    PutCalendarSpread,
+    CallDiagonalSpread,
+    PutDiagonalSpread,
+    DoubleCalendar,
+    DoubleDiagonal,
+}
+
+impl StrategyParam {
+    /// Convert enum variant to `snake_case` string for engine
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            StrategyParam::LongCall => "long_call",
+            StrategyParam::ShortCall => "short_call",
+            StrategyParam::LongPut => "long_put",
+            StrategyParam::ShortPut => "short_put",
+            StrategyParam::CoveredCall => "covered_call",
+            StrategyParam::CashSecuredPut => "cash_secured_put",
+            StrategyParam::BullCallSpread => "bull_call_spread",
+            StrategyParam::BearCallSpread => "bear_call_spread",
+            StrategyParam::BullPutSpread => "bull_put_spread",
+            StrategyParam::BearPutSpread => "bear_put_spread",
+            StrategyParam::LongStraddle => "long_straddle",
+            StrategyParam::ShortStraddle => "short_straddle",
+            StrategyParam::LongStrangle => "long_strangle",
+            StrategyParam::ShortStrangle => "short_strangle",
+            StrategyParam::LongCallButterfly => "long_call_butterfly",
+            StrategyParam::ShortCallButterfly => "short_call_butterfly",
+            StrategyParam::LongPutButterfly => "long_put_butterfly",
+            StrategyParam::ShortPutButterfly => "short_put_butterfly",
+            StrategyParam::LongCallCondor => "long_call_condor",
+            StrategyParam::ShortCallCondor => "short_call_condor",
+            StrategyParam::LongPutCondor => "long_put_condor",
+            StrategyParam::ShortPutCondor => "short_put_condor",
+            StrategyParam::IronCondor => "iron_condor",
+            StrategyParam::ReverseIronCondor => "reverse_iron_condor",
+            StrategyParam::IronButterfly => "iron_butterfly",
+            StrategyParam::ReverseIronButterfly => "reverse_iron_butterfly",
+            StrategyParam::CallCalendarSpread => "call_calendar_spread",
+            StrategyParam::PutCalendarSpread => "put_calendar_spread",
+            StrategyParam::CallDiagonalSpread => "call_diagonal_spread",
+            StrategyParam::PutDiagonalSpread => "put_diagonal_spread",
+            StrategyParam::DoubleCalendar => "double_calendar",
+            StrategyParam::DoubleDiagonal => "double_diagonal",
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct SuggestParametersParams {
-    /// Strategy name (e.g. '`iron_condor`')
-    #[garde(length(min = 1))]
-    pub strategy: String,
+    /// Strategy name
+    #[garde(skip)]
+    pub strategy: StrategyParam,
     /// Risk preference: conservative (tight filters), moderate (balanced), or aggressive (loose filters)
     #[garde(skip)]
     pub risk_preference: RiskPreferenceParam,
@@ -388,7 +509,7 @@ impl OptopsyServer {
         };
 
         let eval_params = EvaluateParams {
-            strategy: params.strategy,
+            strategy: params.strategy.as_str().to_string(),
             leg_deltas: params.leg_deltas,
             max_entry_dte: params.max_entry_dte,
             exit_dte: params.exit_dte,
@@ -458,7 +579,7 @@ impl OptopsyServer {
         };
 
         let backtest_params = BacktestParams {
-            strategy: params.strategy,
+            strategy: params.strategy.as_str().to_string(),
             leg_deltas: params.leg_deltas,
             max_entry_dte: params.max_entry_dte,
             exit_dte: params.exit_dte,
@@ -516,7 +637,18 @@ impl OptopsyServer {
         };
 
         let compare_params = CompareParams {
-            strategies: params.strategies,
+            strategies: params
+                .strategies
+                .into_iter()
+                .map(|s| CompareEntry {
+                    name: s.name.as_str().to_string(),
+                    leg_deltas: s.leg_deltas,
+                    max_entry_dte: s.max_entry_dte,
+                    exit_dte: s.exit_dte,
+                    slippage: s.slippage,
+                    commission: s.commission,
+                })
+                .collect(),
             sim_params: params.sim_params,
         };
         compare_params
@@ -633,7 +765,7 @@ impl OptopsyServer {
         };
 
         let suggest_params = crate::engine::suggest::SuggestParams {
-            strategy: params.strategy,
+            strategy: params.strategy.as_str().to_string(),
             risk_preference: risk_pref,
             target_win_rate: params.target_win_rate,
             target_sharpe: params.target_sharpe,
