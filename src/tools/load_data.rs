@@ -89,7 +89,11 @@ pub async fn execute(
     *guard = Some((symbol.to_uppercase(), df));
 
     Ok(ai_format::format_load_data(
-        rows, symbols, date_range, columns,
+        &symbol.to_uppercase(),
+        rows,
+        symbols,
+        date_range,
+        columns,
     ))
 }
 

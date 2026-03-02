@@ -1,7 +1,9 @@
 use super::response_types::{ConstructSignalResponse, SignalCandidate};
+use crate::data::cache::CachedStore;
 use crate::signals::registry::{SignalSpec, SIGNAL_CATALOG};
 use schemars::schema_for;
 use serde_json::{json, Value};
+use std::sync::Arc;
 
 // OHLCV column name conventions from Yahoo Finance
 const DEFAULT_CLOSE: &str = "adjclose";
@@ -10,7 +12,11 @@ const DEFAULT_HIGH: &str = "high";
 const DEFAULT_LOW: &str = "low";
 const DEFAULT_VOLUME: &str = "volume";
 
-pub fn execute(prompt: &str) -> ConstructSignalResponse {
+pub fn execute(
+    prompt: &str,
+    symbol: Option<&str>,
+    cache: &Arc<CachedStore>,
+) -> ConstructSignalResponse {
     // Fuzzy search SIGNAL_CATALOG for matches
     let (candidates, had_real_matches) = fuzzy_search(prompt);
 
@@ -62,11 +68,46 @@ pub fn execute(prompt: &str) -> ConstructSignalResponse {
         )
     };
 
-    let suggested_next_steps = vec![
+    let mut suggested_next_steps = vec![
         format!("Pick a candidate from above or use the schema to construct a custom SignalSpec"),
         format!("Pass the JSON example in entry_signal or exit_signal parameter of run_backtest"),
         format!("Use And/Or combinators to merge multiple signals"),
     ];
+
+    // Add OHLCV data status if symbol provided
+    if let Some(sym) = symbol {
+        let upper = sym.to_uppercase();
+        match cache.cache_path(&upper, "prices") {
+            Ok(path) => {
+                if path.exists() {
+                    suggested_next_steps.insert(
+                        0,
+                        format!("✓ OHLCV data for {upper} is cached and ready to use in backtest"),
+                    );
+                } else {
+                    suggested_next_steps.insert(
+                        0,
+                        format!(
+                            "⚠️ OHLCV data for {upper} not cached. Call fetch_to_parquet(symbol: {upper}) first"
+                        ),
+                    );
+                }
+            }
+            Err(_) => {
+                suggested_next_steps.insert(
+                    0,
+                    format!(
+                        "⚠️ Could not check OHLCV data status for {upper}. Call fetch_to_parquet({upper}) if needed"
+                    ),
+                );
+            }
+        }
+    } else {
+        suggested_next_steps.insert(
+            0,
+            "⚠️ Signals require OHLCV data. Call fetch_to_parquet(symbol: ...) first, then call construct_signal again with symbol parameter".to_string(),
+        );
+    }
 
     ConstructSignalResponse {
         summary,
@@ -482,7 +523,12 @@ mod tests {
 
     #[test]
     fn execute_basic() {
-        let response = execute("RSI oversold");
+        let cache = Arc::new(CachedStore::new(
+            std::env::temp_dir().join("optopsy_test_construct"),
+            "prices".to_string(),
+            None,
+        ));
+        let response = execute("RSI oversold", None, &cache);
         assert!(!response.candidates.is_empty());
         assert!(response.schema != serde_json::Value::Null);
         assert_eq!(response.column_defaults["close"], "adjclose");

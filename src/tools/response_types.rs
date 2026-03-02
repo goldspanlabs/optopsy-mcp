@@ -38,12 +38,52 @@ pub struct BacktestResponse {
     pub summary: String,
     pub assessment: String,
     pub key_findings: Vec<String>,
+    /// Parameters used for this backtest (for context in follow-up questions)
+    pub parameters: BacktestParamsSummary,
     pub metrics: PerformanceMetrics,
     pub trade_summary: TradeSummary,
     pub equity_curve_summary: EquityCurveSummary,
     pub equity_curve: Vec<EquityPoint>,
     pub trade_log: Vec<TradeRecord>,
     pub data_quality: BacktestDataQuality,
+    pub suggested_next_steps: Vec<String>,
+}
+
+/// Summary of backtest parameters for reference in responses
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct BacktestParamsSummary {
+    pub strategy: String,
+    pub leg_deltas: Vec<TargetRange>,
+    pub max_entry_dte: i32,
+    pub exit_dte: i32,
+    pub slippage: Slippage,
+    pub capital: f64,
+    pub quantity: i32,
+    pub multiplier: i32,
+    pub max_positions: i32,
+    pub stop_loss: Option<f64>,
+    pub take_profit: Option<f64>,
+    pub max_hold_days: Option<i32>,
+    /// Trade selector used (`Nearest`, `HighestPremium`, `LowestPremium`, or `First`)
+    pub selector: String,
+    /// Entry signal specification, if any
+    pub entry_signal: Option<serde_json::Value>,
+    /// Exit signal specification, if any
+    pub exit_signal: Option<serde_json::Value>,
+}
+
+/// Status of currently loaded data
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct StatusResponse {
+    pub summary: String,
+    /// The symbol currently loaded in memory, if any
+    pub loaded_symbol: Option<String>,
+    /// Number of rows in the loaded `DataFrame`, if any
+    pub rows: Option<usize>,
+    /// Date range of loaded data
+    pub date_range: Option<DateRange>,
+    /// Available columns in loaded data
+    pub columns: Vec<String>,
     pub suggested_next_steps: Vec<String>,
 }
 
@@ -82,6 +122,8 @@ pub struct EquityCurveSummary {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EvaluateResponse {
     pub summary: String,
+    /// Parameters used for this evaluation (for context in follow-up questions)
+    pub parameters: EvaluateParamsSummary,
     pub total_buckets: usize,
     pub total_trades: usize,
     pub best_bucket: Option<GroupStats>,
@@ -92,10 +134,34 @@ pub struct EvaluateResponse {
     pub suggested_next_steps: Vec<String>,
 }
 
+/// Summary of evaluation parameters for reference in responses
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EvaluateParamsSummary {
+    pub strategy: String,
+    pub leg_deltas: Vec<TargetRange>,
+    pub max_entry_dte: i32,
+    pub exit_dte: i32,
+    pub dte_interval: i32,
+    pub delta_interval: f64,
+    pub slippage: Slippage,
+}
+
+/// Parameters for a single strategy comparison entry
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CompareStrategyEntry {
+    pub name: String,
+    pub leg_deltas: Vec<TargetRange>,
+    pub max_entry_dte: i32,
+    pub exit_dte: i32,
+    pub slippage: Slippage,
+}
+
 /// AI-enriched response for `compare_strategies`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CompareResponse {
     pub summary: String,
+    /// The strategies and parameters that were compared (for reference in follow-up questions)
+    pub strategies_compared: Vec<CompareStrategyEntry>,
     pub ranking_by_sharpe: Vec<String>,
     pub ranking_by_pnl: Vec<String>,
     pub best_overall: Option<String>,
@@ -120,6 +186,8 @@ pub struct DownloadResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LoadDataResponse {
     pub summary: String,
+    /// The symbol that was loaded (for reference in follow-up questions)
+    pub symbol: String,
     pub rows: usize,
     pub symbols: Vec<String>,
     pub date_range: DateRange,
@@ -155,6 +223,8 @@ pub struct StrategyInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CheckCacheResponse {
     pub summary: String,
+    /// The symbol that was checked (for reference in follow-up questions)
+    pub symbol: String,
     pub exists: bool,
     pub last_updated: Option<String>,
     pub file_path: String,

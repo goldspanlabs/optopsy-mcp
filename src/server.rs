@@ -33,8 +33,8 @@ fn validate_exit_dte_lt_max_dte(
 use crate::tools;
 use crate::tools::response_types::{
     BacktestResponse, CheckCacheResponse, CompareResponse, ConstructSignalResponse,
-    DownloadResponse, EvaluateResponse, FetchResponse, LoadDataResponse, StrategiesResponse,
-    SuggestResponse,
+    DownloadResponse, EvaluateResponse, FetchResponse, LoadDataResponse, StatusResponse,
+    StrategiesResponse, SuggestResponse,
 };
 use crate::tools::signals::SignalsResponse;
 
@@ -277,6 +277,11 @@ pub struct ConstructSignalParams {
     /// Must contain at least one non-whitespace character.
     #[garde(length(min = 1, max = 500), pattern(r"[^ \t\n\r]"))]
     pub prompt: String,
+    /// Optional symbol to check if OHLCV data is cached (e.g. "SPY")
+    /// If provided, response will indicate whether data is ready for signal usage
+    #[serde(default)]
+    #[garde(skip)]
+    pub symbol: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
@@ -505,6 +510,19 @@ impl OptopsyServer {
         Json(tools::signals::execute())
     }
 
+    /// Get status of currently loaded data.
+    ///
+    /// **Workflow Phase**: 1c/7 (data context management)
+    /// **When to use**: Check what symbol is currently loaded, row count, available columns
+    /// **Prerequisites**: None (works with or without loaded data)
+    /// **How it works**: Returns details about the in-memory `DataFrame` (symbol, rows, columns, date range)
+    /// **Next tool**: Use `load_data()` to switch symbols, or proceed with `evaluate_strategy()` / `run_backtest()`
+    /// **Example usage**: After loading SPY, call this to confirm it's loaded and see column names
+    #[tool(name = "get_loaded_symbol", annotations(read_only_hint = true))]
+    async fn get_loaded_symbol(&self) -> Json<StatusResponse> {
+        Json(tools::status::execute(&self.data))
+    }
+
     /// Construct a signal specification from natural language.
     ///
     /// **Workflow Phase**: 2c/7 (signal design, optional)
@@ -526,7 +544,11 @@ impl OptopsyServer {
         params
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
-        Ok(Json(tools::construct_signal::execute(&params.prompt)))
+        Ok(Json(tools::construct_signal::execute(
+            &params.prompt,
+            params.symbol.as_deref(),
+            &self.cache,
+        )))
     }
 
     /// Fast statistical screening without capital simulation.
