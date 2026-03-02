@@ -18,11 +18,11 @@ Options backtesting engine exposed as an MCP server — strategy screening, simu
 - **32 Built-in Strategies** — Singles, verticals, straddles, strangles, butterflies, condors, iron condors/butterflies, calendars, diagonals (with multi-expiration support)
 - **4 Slippage Models** — Mid, spread, liquidity-based, per-leg fixed
 - **Cache Management Tools** — Check cache status, fetch OHLCV data, validate schema
-- **11 MCP Tools** — All accessible via Claude Desktop or any MCP-compatible client
+- **12 MCP Tools** — All accessible via Claude Desktop or any MCP-compatible client
 - **Parameter Validation** — garde-powered input validation with detailed error feedback
 - **HTTP & Stdio Transport** — Deploy locally via stdio or run as HTTP service on cloud platforms
 
-## MCP Tools (11 total)
+## MCP Tools (12 total)
 
 | Tool | Description |
 |------|-------------|
