@@ -62,11 +62,14 @@ impl OptopsyServer {
             Some(sym) => {
                 let sym_upper = sym.to_uppercase();
                 data.get_key_value(sym_upper.as_str()).ok_or_else(|| {
-                    format!(
-                        "Symbol '{}' not loaded. Loaded: {:?}.",
-                        sym_upper,
-                        data.keys().collect::<Vec<_>>()
-                    )
+                    let mut loaded: Vec<&String> = data.keys().collect();
+                    loaded.sort();
+                    let loaded_list = loaded
+                        .iter()
+                        .map(|k| k.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("Symbol '{sym_upper}' not loaded. Loaded: {loaded_list}.")
                 })
             }
             None => match data.len() {

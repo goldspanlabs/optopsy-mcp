@@ -85,7 +85,7 @@ pub struct StatusResponse {
     /// Date range of loaded data, if available.
     /// Note: currently not populated by `tools::status::execute` and may be `None`.
     pub date_range: Option<DateRange>,
-    /// Available columns in loaded data (from first symbol)
+    /// Available columns in loaded data (from first symbol when sorted lexicographically)
     pub columns: Vec<String>,
     pub suggested_next_steps: Vec<String>,
 }

@@ -29,11 +29,11 @@ pub async fn execute(data: &Arc<RwLock<HashMap<String, DataFrame>>>) -> StatusRe
         // Aggregate row count
         let total_rows: usize = guard.values().map(DataFrame::height).sum();
 
-        // Get columns from first symbol
-        let cols: Vec<String> = guard
-            .iter()
-            .next()
-            .map(|(_, df)| {
+        // Get columns from first symbol in sorted order (deterministic)
+        let cols: Vec<String> = symbols
+            .first()
+            .and_then(|first_symbol| guard.get(first_symbol))
+            .map(|df| {
                 df.get_column_names()
                     .iter()
                     .map(std::string::ToString::to_string)
