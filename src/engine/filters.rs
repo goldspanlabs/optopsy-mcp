@@ -217,6 +217,31 @@ pub fn join_multi_expiration_legs(leg_dfs: &[(DataFrame, ExpirationCycle)]) -> R
     Ok(combined)
 }
 
+/// Join leg `DataFrame`s, dispatching to the appropriate join strategy.
+///
+/// If `is_multi_exp` is true, delegates to `join_multi_expiration_legs`.
+/// Otherwise, performs a sequential inner join of all legs on
+/// `(quote_datetime, expiration)`.
+pub fn join_legs(leg_dfs: &[(DataFrame, ExpirationCycle)], is_multi_exp: bool) -> Result<DataFrame> {
+    if is_multi_exp {
+        return join_multi_expiration_legs(leg_dfs);
+    }
+    let mut combined = leg_dfs[0].0.clone();
+    let join_cols: Vec<&str> = vec![QUOTE_DATETIME_COL, "expiration"];
+    for (leg_df, _) in leg_dfs.iter().skip(1) {
+        combined = combined
+            .lazy()
+            .join(
+                leg_df.clone().lazy(),
+                join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
+                join_cols.iter().map(|c| col(*c)).collect::<Vec<_>>(),
+                JoinArgs::new(JoinType::Inner),
+            )
+            .collect()?;
+    }
+    Ok(combined)
+}
+
 /// Filter out options with zero or negative bid
 pub fn filter_valid_quotes(df: &DataFrame) -> Result<DataFrame> {
     let result = df

@@ -16,20 +16,10 @@ use crate::engine::types::{
     BacktestParams, Commission, CompareEntry, CompareParams, EvaluateParams, SimParams, Slippage,
     TargetRange, TradeSelector,
 };
+use crate::engine::types::{
+    default_delta_interval, default_dte_interval, default_multiplier, validate_exit_dte_lt_max,
+};
 use crate::signals::registry::SignalSpec;
-
-fn validate_exit_dte_lt_max_dte(
-    max_entry_dte: &i32,
-) -> impl FnOnce(&i32, &()) -> garde::Result + '_ {
-    move |exit_dte: &i32, (): &()| {
-        if exit_dte >= max_entry_dte {
-            return Err(garde::Error::new(format!(
-                "exit_dte ({exit_dte}) must be less than max_entry_dte ({max_entry_dte})"
-            )));
-        }
-        Ok(())
-    }
-}
 use crate::tools;
 use crate::tools::response_types::{
     BacktestResponse, CheckCacheResponse, CompareResponse, ConstructSignalResponse,
@@ -80,14 +70,6 @@ pub struct LoadDataParams {
     pub end_date: Option<String>,
 }
 
-fn default_dte_interval() -> i32 {
-    5
-}
-
-fn default_delta_interval() -> f64 {
-    0.10
-}
-
 fn default_max_entry_dte() -> i32 {
     45
 }
@@ -108,10 +90,6 @@ fn default_capital() -> f64 {
     10000.0
 }
 
-fn default_multiplier() -> i32 {
-    100
-}
-
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct EvaluateStrategyParams {
     /// Strategy name
@@ -126,7 +104,7 @@ pub struct EvaluateStrategyParams {
     pub max_entry_dte: i32,
     /// DTE at exit (default: 9)
     #[serde(default = "default_exit_dte")]
-    #[garde(range(min = 0), custom(validate_exit_dte_lt_max_dte(&self.max_entry_dte)))]
+    #[garde(range(min = 0), custom(validate_exit_dte_lt_max(&self.max_entry_dte)))]
     pub exit_dte: i32,
     /// DTE bucket width (default: 5)
     #[serde(default = "default_dte_interval")]
@@ -160,7 +138,7 @@ pub struct RunBacktestParams {
     pub max_entry_dte: i32,
     /// DTE at exit (default: 9)
     #[serde(default = "default_exit_dte")]
-    #[garde(range(min = 0), custom(validate_exit_dte_lt_max_dte(&self.max_entry_dte)))]
+    #[garde(range(min = 0), custom(validate_exit_dte_lt_max(&self.max_entry_dte)))]
     pub exit_dte: i32,
     /// Slippage model (default: Spread)
     #[serde(default)]
@@ -222,7 +200,7 @@ pub struct ServerCompareEntry {
     pub max_entry_dte: i32,
     /// DTE at exit (default: 9)
     #[serde(default = "default_exit_dte")]
-    #[garde(range(min = 0), custom(validate_exit_dte_lt_max_dte(&self.max_entry_dte)))]
+    #[garde(range(min = 0), custom(validate_exit_dte_lt_max(&self.max_entry_dte)))]
     pub exit_dte: i32,
     /// Slippage model (default: Spread)
     #[serde(default)]
