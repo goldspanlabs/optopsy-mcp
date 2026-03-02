@@ -7,6 +7,7 @@ use rmcp::{
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -26,8 +27,8 @@ use crate::tools::response_types::{
 };
 use crate::tools::signals::SignalsResponse;
 
-/// Loaded data: (symbol, `DataFrame`) tuple so we can auto-resolve OHLCV paths.
-type LoadedData = Option<(String, DataFrame)>;
+/// Loaded data: `HashMap<Symbol, DataFrame>` for multi-symbol support.
+type LoadedData = HashMap<String, DataFrame>;
 
 #[derive(Clone)]
 pub struct OptopsyServer {
@@ -40,10 +41,58 @@ pub struct OptopsyServer {
 impl OptopsyServer {
     pub fn new(cache: Arc<CachedStore>, eodhd: Option<Arc<EodhdProvider>>) -> Self {
         Self {
-            data: Arc::new(RwLock::new(None)),
+            data: Arc::new(RwLock::new(HashMap::new())),
             cache,
             eodhd,
             tool_router: Self::tool_router(),
+        }
+    }
+
+    /// Resolve a symbol from the loaded data.
+    /// If `symbol` is provided, look it up explicitly.
+    /// If `symbol` is None:
+    ///   - If no data is loaded, return error
+    ///   - If exactly one symbol is loaded, use it
+    ///   - If multiple symbols are loaded, return error asking for explicit symbol
+    fn resolve_symbol<'a>(
+        data: &'a HashMap<String, DataFrame>,
+        symbol: Option<&str>,
+    ) -> Result<(&'a String, &'a DataFrame), String> {
+        // Check if no data is loaded first, regardless of whether symbol was provided
+        if data.is_empty() {
+            return Err("No data loaded. Call load_data first.".to_string());
+        }
+
+        match symbol {
+            Some(sym) => {
+                let sym_upper = sym.to_uppercase();
+                data.get_key_value(sym_upper.as_str()).ok_or_else(|| {
+                    let mut loaded: Vec<&String> = data.keys().collect();
+                    loaded.sort();
+                    let loaded_list = loaded
+                        .iter()
+                        .map(|k| k.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("Symbol '{sym_upper}' not loaded. Loaded: {loaded_list}.")
+                })
+            }
+            None => {
+                if data.len() == 1 {
+                    Ok(data.iter().next().unwrap())
+                } else {
+                    let mut keys: Vec<&String> = data.keys().collect();
+                    keys.sort();
+                    let symbols = keys
+                        .iter()
+                        .map(|k| k.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    Err(format!(
+                        "Multiple symbols loaded: {symbols}. Specify the `symbol` parameter."
+                    ))
+                }
+            }
         }
     }
 }
@@ -120,6 +169,10 @@ pub struct EvaluateStrategyParams {
     #[serde(default)]
     #[garde(dive)]
     pub commission: Option<Commission>,
+    /// Symbol to analyze (required if multiple symbols are loaded; optional if only one is loaded)
+    #[serde(default)]
+    #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
+    pub symbol: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
@@ -182,6 +235,10 @@ pub struct RunBacktestParams {
     /// Requires OHLCV data (call `fetch_to_parquet` first).
     #[garde(skip)]
     pub exit_signal: Option<SignalSpec>,
+    /// Symbol to backtest (required if multiple symbols are loaded; optional if only one is loaded)
+    #[serde(default)]
+    #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
+    pub symbol: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema, Validate)]
@@ -218,6 +275,10 @@ pub struct CompareStrategiesParams {
     /// Shared simulation parameters
     #[garde(dive)]
     pub sim_params: SimParams,
+    /// Symbol to compare strategies on (required if multiple symbols are loaded; optional if only one is loaded)
+    #[serde(default)]
+    #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
+    pub symbol: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema, Validate)]
@@ -378,6 +439,10 @@ pub struct SuggestParametersParams {
     /// Target Sharpe ratio, informational only
     #[garde(skip)]
     pub target_sharpe: Option<f64>,
+    /// Symbol to analyze (required if multiple symbols are loaded; optional if only one is loaded)
+    #[serde(default)]
+    #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
+    pub symbol: Option<String>,
 }
 
 use rmcp::handler::server::wrapper::Parameters;
@@ -552,9 +617,13 @@ impl OptopsyServer {
         params
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
-        let data = self.data.read().await;
-        let Some((_, df)) = data.as_ref() else {
-            return Err("Error: No data loaded. Call load_data first.".to_string());
+
+        // Clone DataFrame and drop read lock before expensive analysis
+        let df = {
+            let data = self.data.read().await;
+            let (_, df) = Self::resolve_symbol(&data, params.symbol.as_deref())
+                .map_err(|e| format!("Error: {e}"))?;
+            df.clone()
         };
 
         let eval_params = EvaluateParams {
@@ -571,7 +640,7 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
-        tools::evaluate::execute(df, &eval_params)
+        tools::evaluate::execute(&df, &eval_params)
             .map(Json)
             .map_err(|e| format!("Error: {e}"))
     }
@@ -606,16 +675,20 @@ impl OptopsyServer {
         params
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
-        let data = self.data.read().await;
-        let Some((symbol, df)) = data.as_ref() else {
-            return Err("Error: No data loaded. Call load_data first.".to_string());
+
+        // Clone symbol and DataFrame, resolve OHLCV path, then drop read lock before expensive backtest
+        let (symbol, df) = {
+            let data = self.data.read().await;
+            let (sym, df) = Self::resolve_symbol(&data, params.symbol.as_deref())
+                .map_err(|e| format!("Error: {e}"))?;
+            (sym.clone(), df.clone())
         };
 
         // Auto-resolve OHLCV path if signals are requested
         let ohlcv_path = if params.entry_signal.is_some() || params.exit_signal.is_some() {
             let path = self
                 .cache
-                .cache_path(symbol, "prices")
+                .cache_path(&symbol, "prices")
                 .map_err(|e| format!("Error resolving OHLCV path: {e}"))?;
             if !path.exists() {
                 return Err(format!(
@@ -651,7 +724,7 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
-        tools::backtest::execute(df, &backtest_params)
+        tools::backtest::execute(&df, &backtest_params)
             .map(Json)
             .map_err(|e| format!("Error: {e}"))
     }
@@ -680,9 +753,13 @@ impl OptopsyServer {
         params
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
-        let data = self.data.read().await;
-        let Some((_, df)) = data.as_ref() else {
-            return Err("Error: No data loaded. Call load_data first.".to_string());
+
+        // Clone DataFrame and drop read lock before expensive comparison
+        let df = {
+            let data = self.data.read().await;
+            let (_, df) = Self::resolve_symbol(&data, params.symbol.as_deref())
+                .map_err(|e| format!("Error: {e}"))?;
+            df.clone()
         };
 
         let compare_params = CompareParams {
@@ -704,7 +781,7 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
-        tools::compare::execute(df, &compare_params)
+        tools::compare::execute(&df, &compare_params)
             .map(Json)
             .map_err(|e| format!("Error: {e}"))
     }
@@ -825,12 +902,15 @@ impl OptopsyServer {
             target_sharpe: params.target_sharpe,
         };
 
-        let data = self.data.read().await;
-        let Some((_, df)) = data.as_ref() else {
-            return Err("Error: No data loaded. Call load_data first.".to_string());
+        // Clone DataFrame and drop read lock before expensive suggestion logic
+        let df = {
+            let data = self.data.read().await;
+            let (_, df) = Self::resolve_symbol(&data, params.symbol.as_deref())
+                .map_err(|e| format!("Error: {e}"))?;
+            df.clone()
         };
 
-        tools::suggest::execute(df, &suggest_params)
+        tools::suggest::execute(&df, &suggest_params)
             .map(Json)
             .map_err(|e| format!("Error: {e}"))
     }

@@ -1,50 +1,18 @@
 use polars::prelude::DataFrame;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use super::response_types::StatusResponse;
 
-pub async fn execute(data: &Arc<RwLock<Option<(String, DataFrame)>>>) -> StatusResponse {
+#[allow(clippy::implicit_hasher)]
+pub async fn execute(data: &Arc<RwLock<HashMap<String, DataFrame>>>) -> StatusResponse {
     let guard = data.read().await;
 
-    if let Some((symbol, df)) = guard.as_ref() {
-        let rows = df.height();
-        let cols: Vec<String> = df
-            .get_column_names()
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect();
-
-        // Simple approach: skip detailed date range extraction to avoid complex Polars API calls
-        // The user can see columns are available and inspect the data themselves
-        let date_range = None;
-
-        let summary = format!(
-            "Data loaded in memory: {} ({} rows, {} columns).",
-            symbol,
-            rows,
-            cols.len()
-        );
-
-        StatusResponse {
-            summary,
-            loaded_symbol: Some(symbol.clone()),
-            rows: Some(rows),
-            date_range,
-            columns: cols,
-            suggested_next_steps: vec![
-                format!(
-                    "Use evaluate_strategy to analyze {} across DTE/delta buckets",
-                    symbol
-                ),
-                format!("Use run_backtest to simulate {} trading", symbol),
-                "Use load_data with a different symbol to switch datasets".to_string(),
-            ],
-        }
-    } else {
+    if guard.is_empty() {
         StatusResponse {
             summary: "No data currently loaded in memory.".to_string(),
-            loaded_symbol: None,
+            loaded_symbols: vec![],
             rows: None,
             date_range: None,
             columns: vec![],
@@ -52,6 +20,76 @@ pub async fn execute(data: &Arc<RwLock<Option<(String, DataFrame)>>>) -> StatusR
                 "Use load_data(symbol: ...) to load options chain data into memory".to_string(),
                 "Use check_cache_status to verify data is cached before loading".to_string(),
             ],
+        }
+    } else {
+        // Collect all symbols (sorted)
+        let mut symbols: Vec<String> = guard.keys().cloned().collect();
+        symbols.sort();
+
+        // Aggregate row count
+        let total_rows: usize = guard.values().map(DataFrame::height).sum();
+
+        // Get columns from first symbol in sorted order (deterministic)
+        let cols: Vec<String> = symbols
+            .first()
+            .and_then(|first_symbol| guard.get(first_symbol))
+            .map(|df| {
+                df.get_column_names()
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let date_range = None;
+
+        let summary = format!(
+            "Data loaded in memory: {} symbol(s) ({} total rows, {} columns).",
+            symbols.len(),
+            total_rows,
+            cols.len()
+        );
+
+        // Context-aware suggestions based on number of loaded symbols
+        let suggested_next_steps = if symbols.len() == 1 {
+            // Single symbol: no need to specify symbol parameter
+            vec![
+                "Use evaluate_strategy to analyze current data across DTE/delta buckets"
+                    .to_string(),
+                "Use run_backtest to simulate trading".to_string(),
+                "Use suggest_parameters to get data-driven parameter recommendations".to_string(),
+                "Use load_data with a different symbol to add more datasets".to_string(),
+            ]
+        } else {
+            // Multiple symbols: must specify symbol parameter explicitly
+            vec![
+                format!(
+                    "Use evaluate_strategy (specify symbol: \"{}\") to analyze data across DTE/delta buckets",
+                    symbols[0]
+                ),
+                format!(
+                    "Use run_backtest (specify symbol: \"{}\") to simulate trading",
+                    symbols[0]
+                ),
+                format!(
+                    "Use compare_strategies (specify symbol: \"{}\") to compare strategies side-by-side",
+                    symbols[0]
+                ),
+                format!(
+                    "Use suggest_parameters (specify symbol: \"{}\") for data-driven recommendations",
+                    symbols[0]
+                ),
+                "Use load_data with another symbol to analyze additional datasets".to_string(),
+            ]
+        };
+
+        StatusResponse {
+            summary,
+            loaded_symbols: symbols,
+            rows: Some(total_rows),
+            date_range,
+            columns: cols,
+            suggested_next_steps,
         }
     }
 }
@@ -62,9 +100,9 @@ mod tests {
 
     #[tokio::test]
     async fn status_no_data_loaded() {
-        let data = Arc::new(RwLock::new(None));
+        let data = Arc::new(RwLock::new(HashMap::new()));
         let response = execute(&data).await;
-        assert!(response.loaded_symbol.is_none());
+        assert!(response.loaded_symbols.is_empty());
         assert!(response.rows.is_none());
         assert_eq!(response.columns.len(), 0);
         assert!(response.summary.contains("No data"));
