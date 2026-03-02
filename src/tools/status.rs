@@ -50,18 +50,46 @@ pub async fn execute(data: &Arc<RwLock<HashMap<String, DataFrame>>>) -> StatusRe
             cols.len()
         );
 
+        // Context-aware suggestions based on number of loaded symbols
+        let suggested_next_steps = if symbols.len() == 1 {
+            // Single symbol: no need to specify symbol parameter
+            vec![
+                "Use evaluate_strategy to analyze current data across DTE/delta buckets"
+                    .to_string(),
+                "Use run_backtest to simulate trading".to_string(),
+                "Use suggest_parameters to get data-driven parameter recommendations".to_string(),
+                "Use load_data with a different symbol to add more datasets".to_string(),
+            ]
+        } else {
+            // Multiple symbols: must specify symbol parameter explicitly
+            vec![
+                format!(
+                    "Use evaluate_strategy (specify symbol: \"{}\") to analyze data across DTE/delta buckets",
+                    symbols[0]
+                ),
+                format!(
+                    "Use run_backtest (specify symbol: \"{}\") to simulate trading",
+                    symbols[0]
+                ),
+                format!(
+                    "Use compare_strategies (specify symbol: \"{}\") to compare strategies side-by-side",
+                    symbols[0]
+                ),
+                format!(
+                    "Use suggest_parameters (specify symbol: \"{}\") for data-driven recommendations",
+                    symbols[0]
+                ),
+                "Use load_data with another symbol to analyze additional datasets".to_string(),
+            ]
+        };
+
         StatusResponse {
             summary,
             loaded_symbols: symbols,
             rows: Some(total_rows),
             date_range,
             columns: cols,
-            suggested_next_steps: vec![
-                "Use evaluate_strategy to analyze current data across DTE/delta buckets"
-                    .to_string(),
-                "Use run_backtest to simulate trading".to_string(),
-                "Use load_data with a different symbol to add more datasets".to_string(),
-            ],
+            suggested_next_steps,
         }
     }
 }

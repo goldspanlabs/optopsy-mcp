@@ -171,7 +171,7 @@ pub struct EvaluateStrategyParams {
     pub commission: Option<Commission>,
     /// Symbol to analyze (required if multiple symbols are loaded; optional if only one is loaded)
     #[serde(default)]
-    #[garde(inner(length(min = 1, max = 32), pattern(r"^[A-Za-z0-9._-]+$")))]
+    #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
     pub symbol: Option<String>,
 }
 
@@ -237,7 +237,7 @@ pub struct RunBacktestParams {
     pub exit_signal: Option<SignalSpec>,
     /// Symbol to backtest (required if multiple symbols are loaded; optional if only one is loaded)
     #[serde(default)]
-    #[garde(inner(length(min = 1, max = 32), pattern(r"^[A-Za-z0-9._-]+$")))]
+    #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
     pub symbol: Option<String>,
 }
 
@@ -277,7 +277,7 @@ pub struct CompareStrategiesParams {
     pub sim_params: SimParams,
     /// Symbol to compare strategies on (required if multiple symbols are loaded; optional if only one is loaded)
     #[serde(default)]
-    #[garde(inner(length(min = 1, max = 64), pattern(r"^[A-Za-z0-9._-]+$")))]
+    #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
     pub symbol: Option<String>,
 }
 
@@ -441,7 +441,7 @@ pub struct SuggestParametersParams {
     pub target_sharpe: Option<f64>,
     /// Symbol to analyze (required if multiple symbols are loaded; optional if only one is loaded)
     #[serde(default)]
-    #[garde(inner(length(min = 1, max = 32), pattern(r"^[A-Za-z0-9._-]+$")))]
+    #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
     pub symbol: Option<String>,
 }
 
