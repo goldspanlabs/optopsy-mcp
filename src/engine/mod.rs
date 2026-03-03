@@ -8,3 +8,4 @@ pub mod pricing;
 pub mod rules;
 pub mod suggest;
 pub mod types;
+pub mod vectorized_sim;

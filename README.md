@@ -42,9 +42,7 @@ Benchmarked against the original [Optopsy](https://github.com/goldspanlabs/optop
 
 | Metric | Python (Pandas) | Rust (Polars) |
 |---|---|---|
-| Data load | 0.742s | 0.217s (**3.4x**) |
-| Evaluate (avg) | 0.159s | 0.039s (**4.1x**) |
-| End-to-end | ~0.90s | ~0.26s (**3.5x**) |
+| Evaluate (avg of 5) | 0.155s | 0.038s (**4.1x**) |
 
 The Rust engine also uses fuzzy exit matching — finding the nearest available trading day instead of requiring an exact DTE match. This retains ~28% more trades that Python silently drops due to weekends, holidays, and data gaps.
 
