@@ -22,8 +22,8 @@ use crate::signals::registry::SignalSpec;
 use crate::tools;
 use crate::tools::response_types::{
     BacktestResponse, CheckCacheResponse, CompareResponse, ConstructSignalResponse,
-    DownloadResponse, EvaluateResponse, FetchResponse, LoadDataResponse, StatusResponse,
-    StrategiesResponse, SuggestResponse,
+    DownloadResponse, EvaluateResponse, FetchResponse, LoadDataResponse, RawPricesResponse,
+    StatusResponse, StrategiesResponse, SuggestResponse,
 };
 use crate::tools::signals::SignalsResponse;
 
@@ -97,6 +97,24 @@ impl OptopsyServer {
     }
 }
 
+/// Validate that `end_date >= start_date` when both are present.
+/// Signature uses `&Option<String>` because garde's `custom()` passes `&self.field`.
+#[allow(clippy::ref_option)]
+fn validate_end_date_after_start(
+    start_date: &Option<String>,
+) -> impl FnOnce(&Option<String>, &()) -> garde::Result + '_ {
+    move |end_date: &Option<String>, (): &()| {
+        if let (Some(start), Some(end)) = (start_date, end_date) {
+            if end < start {
+                return Err(garde::Error::new(format!(
+                    "end_date ({end}) must be >= start_date ({start})"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct DownloadOptionsParams {
     /// US stock ticker symbol (e.g. "SPY", "AAPL", "TSLA")
@@ -113,7 +131,7 @@ pub struct LoadDataParams {
     #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))]
     pub start_date: Option<String>,
     /// End date filter (YYYY-MM-DD)
-    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))]
+    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")), custom(validate_end_date_after_start(&self.start_date)))]
     pub end_date: Option<String>,
 }
 
@@ -332,6 +350,30 @@ pub struct FetchToParquetParams {
     /// Time period to fetch (e.g. "6mo", "1y", "5y", "max"). Defaults to "6mo".
     #[garde(inner(length(min = 1)))]
     pub period: Option<String>,
+}
+
+#[allow(clippy::unnecessary_wraps)]
+fn default_price_limit() -> Option<usize> {
+    Some(500)
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+pub struct GetRawPricesParams {
+    /// Ticker symbol (e.g. "SPY")
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
+    pub symbol: String,
+    /// Start date filter (YYYY-MM-DD)
+    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))]
+    pub start_date: Option<String>,
+    /// End date filter (YYYY-MM-DD)
+    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")), custom(validate_end_date_after_start(&self.start_date)))]
+    pub end_date: Option<String>,
+    /// Maximum number of price bars to return (default: 500 if omitted).
+    /// Data is evenly sampled if the total exceeds this limit.
+    /// Pass `null` explicitly to disable the limit and return all bars.
+    #[serde(default = "default_price_limit")]
+    #[garde(skip)]
+    pub limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema, Validate)]
@@ -857,6 +899,43 @@ impl OptopsyServer {
         .map_err(|e| format!("Error: {e}"))
     }
 
+    /// Return raw OHLCV price data for a symbol, ready for chart generation.
+    ///
+    /// **Workflow Phase**: any (utility)
+    /// **When to use**: When an LLM or user needs raw price data to generate charts
+    ///   (candlestick, line, area) or perform custom analysis
+    /// **Prerequisites**: `fetch_to_parquet()` must have been called first to cache OHLCV data
+    /// **Next tools**: Use the returned `prices` array directly for visualization
+    ///
+    /// **Returns**: Array of `{ date, open, high, low, close, adjclose, volume }` bars.
+    /// Data is evenly sampled down to `limit` points (default 500 if omitted) to avoid
+    /// overwhelming LLM context windows. Pass `limit: null` explicitly for the full dataset.
+    ///
+    /// **Use cases**:
+    ///   - Generate candlestick or OHLC charts
+    ///   - Plot price action with close/adjclose line charts
+    ///   - Overlay backtest equity curves on underlying price data
+    ///   - Feed into code interpreters for custom analysis
+    #[tool(name = "get_raw_prices", annotations(read_only_hint = true))]
+    async fn get_raw_prices(
+        &self,
+        Parameters(params): Parameters<GetRawPricesParams>,
+    ) -> Result<Json<RawPricesResponse>, String> {
+        params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
+        tools::raw_prices::load_and_execute(
+            &self.cache,
+            &params.symbol,
+            params.start_date.as_deref(),
+            params.end_date.as_deref(),
+            params.limit,
+        )
+        .await
+        .map(Json)
+        .map_err(|e| format!("Error: {e}"))
+    }
+
     /// Analyze the loaded options chain and suggest data-driven parameters.
     ///
     /// **Workflow Phase**: 3/7 (parameter optimization)
@@ -965,6 +1044,11 @@ impl ServerHandler for OptopsyServer {
                 fetch_to_parquet({ symbol, category: \"prices\" }) first.\
                 \n6. compare_strategies({ strategies: [...], sim_params }) — run the same backtest \
                 pipeline for multiple strategies in parallel and rank them by Sharpe and total P&L.\
+                \n7. get_raw_prices({ symbol, start_date?, end_date?, limit? }) — return raw \
+                OHLCV price bars for a symbol directly in the response. Useful for generating \
+                charts (candlestick, line, area) or custom analysis. Requires fetch_to_parquet \
+                to have been called first. Data is sampled to `limit` points (default 500) to \
+                avoid overwhelming context windows.\
                 \n\nData flow summary: EODHD API → local Parquet cache → DataFrame → per-leg \
                 filter/delta-select → leg join → strike-order validation → P&L calculation → \
                 bucket aggregation (evaluate) or event-loop simulation (backtest) → \

@@ -88,7 +88,7 @@ fn server_info_has_correct_metadata() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn tool_router_lists_all_twelve_tools() {
+async fn tool_router_lists_all_tools() {
     let (server, _tmp) = make_test_server();
 
     let (server_tx, server_rx) = tokio::io::duplex(4096);
@@ -105,7 +105,7 @@ async fn tool_router_lists_all_twelve_tools() {
     let tools = client.list_all_tools().await.unwrap();
     let tool_names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
 
-    assert_eq!(tools.len(), 12, "Expected 12 tools, got: {tool_names:?}");
+    assert_eq!(tools.len(), 13, "Expected 13 tools, got: {tool_names:?}");
     for expected in [
         "download_options_data",
         "load_data",
@@ -119,6 +119,7 @@ async fn tool_router_lists_all_twelve_tools() {
         "compare_strategies",
         "check_cache_status",
         "fetch_to_parquet",
+        "get_raw_prices",
     ] {
         assert!(
             tool_names.contains(&expected.to_string()),
@@ -379,6 +380,52 @@ async fn load_data_rejects_invalid_symbol_chars() {
     assert!(
         text.text.contains("Validation error"),
         "Expected validation error, got: {}",
+        text.text
+    );
+
+    client.cancel().await.unwrap();
+    server_handle.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn load_data_rejects_end_date_before_start_date() {
+    let (server, _tmp) = make_test_server();
+
+    let (server_tx, server_rx) = tokio::io::duplex(4096);
+    let (client_tx, client_rx) = tokio::io::duplex(4096);
+
+    let server_handle =
+        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
+
+    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
+        ().serve((server_rx, client_tx)).await.unwrap();
+
+    let result = client
+        .peer()
+        .call_tool(CallToolRequestParams {
+            meta: None,
+            name: "load_data".into(),
+            arguments: Some(
+                serde_json::from_value(json!({
+                    "symbol": "SPY",
+                    "start_date": "2024-06-01",
+                    "end_date": "2024-01-01"
+                }))
+                .unwrap(),
+            ),
+            task: None,
+        })
+        .await
+        .unwrap();
+
+    let text = result
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .unwrap();
+    assert!(
+        text.text.contains("end_date") && text.text.contains("start_date"),
+        "Expected date range validation error, got: {}",
         text.text
     );
 
@@ -2020,6 +2067,154 @@ async fn suggest_parameters_fails_unknown_symbol() {
         "Expected 'not loaded' error, got: {}",
         text.text
     );
+
+    client.cancel().await.unwrap();
+    server_handle.await.unwrap();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Category: get_raw_prices Integration Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Write a `DataFrame` as a Parquet file under the "prices" category.
+fn write_prices_parquet(cache_dir: &std::path::Path, symbol: &str, df: &mut DataFrame) -> PathBuf {
+    let dir = cache_dir.join("prices");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("{}.parquet", symbol.to_uppercase()));
+    let file = std::fs::File::create(&path).unwrap();
+    ParquetWriter::new(file).finish(df).unwrap();
+    path
+}
+
+/// Build a small OHLCV `DataFrame` for testing.
+fn make_ohlcv_df() -> DataFrame {
+    use chrono::NaiveDate;
+    let dates = DateChunked::from_naive_date(
+        PlSmallStr::from("date"),
+        [
+            NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 3).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 4).unwrap(),
+        ],
+    )
+    .into_column();
+
+    df! {
+        "open"     => &[100.0, 101.0, 102.5_f64],
+        "high"     => &[102.0, 103.0, 104.0_f64],
+        "low"      => &[99.0, 100.5, 102.0_f64],
+        "close"    => &[101.0, 102.5, 103.5_f64],
+        "adjclose" => &[101.0, 102.5, 103.5_f64],
+        "volume"   => &[1_000_000_u64, 1_100_000, 1_050_000],
+    }
+    .unwrap()
+    .hstack(&[dates])
+    .unwrap()
+    .select(["date", "open", "high", "low", "close", "adjclose", "volume"])
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_raw_prices_fails_when_cache_missing() {
+    let (server, _tmp) = make_test_server();
+
+    let (server_tx, server_rx) = tokio::io::duplex(4096);
+    let (client_tx, client_rx) = tokio::io::duplex(4096);
+
+    let server_handle =
+        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
+
+    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
+        ().serve((server_rx, client_tx)).await.unwrap();
+
+    let result = client
+        .peer()
+        .call_tool(CallToolRequestParams {
+            meta: None,
+            name: "get_raw_prices".into(),
+            arguments: Some(
+                serde_json::from_value(json!({
+                    "symbol": "SPY"
+                }))
+                .unwrap(),
+            ),
+            task: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(result.is_error.unwrap_or(false));
+    let text = result
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .unwrap();
+    assert!(
+        text.text.contains("No OHLCV price data cached") && text.text.contains("fetch_to_parquet"),
+        "Expected cache-miss error with fetch_to_parquet hint, got: {}",
+        text.text
+    );
+
+    client.cancel().await.unwrap();
+    server_handle.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_raw_prices_returns_bars() {
+    let (server, tmp) = make_test_server();
+
+    // Write OHLCV parquet to the prices category
+    let mut ohlcv = make_ohlcv_df();
+    write_prices_parquet(tmp.path(), "SPY", &mut ohlcv);
+
+    let (server_tx, server_rx) = tokio::io::duplex(4096);
+    let (client_tx, client_rx) = tokio::io::duplex(4096);
+
+    let server_handle =
+        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
+
+    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
+        ().serve((server_rx, client_tx)).await.unwrap();
+
+    let result = client
+        .peer()
+        .call_tool(CallToolRequestParams {
+            meta: None,
+            name: "get_raw_prices".into(),
+            arguments: Some(
+                serde_json::from_value(json!({
+                    "symbol": "SPY",
+                    "limit": null
+                }))
+                .unwrap(),
+            ),
+            task: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        !result.is_error.unwrap_or(false),
+        "Expected success, got error"
+    );
+    let text = result
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .unwrap();
+    let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
+
+    assert_eq!(resp["symbol"], "SPY");
+    assert_eq!(resp["total_rows"], 3);
+    assert_eq!(resp["returned_rows"], 3);
+    assert_eq!(resp["sampled"], false);
+
+    let prices = resp["prices"].as_array().unwrap();
+    assert_eq!(prices.len(), 3);
+    assert_eq!(prices[0]["date"], "2024-01-02");
+    assert_eq!(prices[0]["open"], 100.0);
+    assert_eq!(prices[2]["date"], "2024-01-04");
+    assert_eq!(prices[2]["close"], 103.5);
 
     client.cancel().await.unwrap();
     server_handle.await.unwrap();

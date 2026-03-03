@@ -10,8 +10,8 @@ use crate::data::eodhd::DownloadSummary;
 use super::response_types::{
     BacktestDataQuality, BacktestParamsSummary, BacktestResponse, CompareResponse,
     CompareStrategyEntry, DataQualityReport, DateRange, DownloadResponse, EquityCurveSummary,
-    EvaluateParamsSummary, EvaluateResponse, LoadDataResponse, StrategiesResponse, StrategyInfo,
-    TradeStat, TradeSummary,
+    EvaluateParamsSummary, EvaluateResponse, LoadDataResponse, PriceBar, RawPricesResponse,
+    StrategiesResponse, StrategyInfo, TradeStat, TradeSummary,
 };
 
 fn assess_sharpe(sharpe: f64) -> &'static str {
@@ -812,6 +812,41 @@ pub fn format_download(summary: DownloadSummary) -> DownloadResponse {
                 summary.symbol,
             ),
             "Use list_strategies to see available options strategies".to_string(),
+        ],
+    }
+}
+
+pub fn format_raw_prices(
+    symbol: &str,
+    total_rows: usize,
+    returned_rows: usize,
+    sampled: bool,
+    date_range: DateRange,
+    prices: Vec<PriceBar>,
+) -> RawPricesResponse {
+    let summary = if sampled {
+        format!(
+            "Returning {returned_rows} sampled price bars for {symbol} (from {total_rows} total). \
+             Use these data points directly to generate charts or perform analysis."
+        )
+    } else {
+        format!(
+            "Returning {returned_rows} price bars for {symbol}. \
+             Use these data points directly to generate charts or perform analysis."
+        )
+    };
+
+    RawPricesResponse {
+        summary,
+        symbol: symbol.to_string(),
+        total_rows,
+        returned_rows,
+        sampled,
+        date_range,
+        prices,
+        suggested_next_steps: vec![
+            "Use the prices array to generate a line chart (close prices), candlestick chart (OHLC), or area chart.".to_string(),
+            "Combine with backtest equity_curve data to overlay strategy performance on price action.".to_string(),
         ],
     }
 }

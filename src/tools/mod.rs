@@ -7,6 +7,7 @@ pub mod download;
 pub mod evaluate;
 pub mod fetch;
 pub mod load_data;
+pub mod raw_prices;
 pub mod response_types;
 pub mod signals;
 pub mod status;
