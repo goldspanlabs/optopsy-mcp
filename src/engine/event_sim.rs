@@ -917,10 +917,7 @@ fn execute_adjustment(
                 close_date: None,
             });
             // Update entry_cost so SL/TP thresholds reflect the new cost basis
-            pos.entry_cost += ep
-                * side.multiplier()
-                * f64::from(*qty)
-                * f64::from(pos.multiplier);
+            pos.entry_cost += ep * side.multiplier() * f64::from(*qty) * f64::from(pos.multiplier);
         }
     }
 }
