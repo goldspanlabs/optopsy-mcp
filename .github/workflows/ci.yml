@@ -42,6 +42,26 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test
 
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-llvm-cov
+      - name: Generate coverage
+        run: |
+          cargo llvm-cov --no-cfg-coverage 2>&1 | tee coverage-output.txt
+          # Extract the summary table (last lines starting from the header)
+          echo '## Coverage Summary' >> $GITHUB_STEP_SUMMARY
+          echo '' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep -E '(^Filename|^----|^TOTAL|\.rs)' coverage-output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
   build:
     name: Build
     runs-on: ubuntu-latest
