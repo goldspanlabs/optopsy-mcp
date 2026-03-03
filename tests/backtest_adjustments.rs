@@ -122,9 +122,10 @@ fn calendar_roll_closes_at_dte_trigger() {
 #[test]
 fn delta_drift_triggers_on_high_delta() {
     // Long call@100: delta=0.50 in the data.
-    // max_delta=0.40 → 0.50 > 0.40 → fires immediately on Jan 15.
-    // But adjustments run after exits, and on entry day the position was just opened,
-    // so adjustment fires on Jan 15 (same day as entry — adjustment phase runs after exits).
+    // max_delta=0.40 → 0.50 > 0.40 → rule is eligible on the first adjustment
+    // phase after the position is opened.
+    // The event loop runs adjustments before processing new entries, so a
+    // position opened on Jan 15 cannot be adjusted until the next trading day.
     let df = make_multi_strike_df();
 
     let mut params = base_params("long_call", vec![delta(0.50)]);

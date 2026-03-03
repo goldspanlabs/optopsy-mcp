@@ -763,6 +763,16 @@ fn trigger_fires(
     }
 }
 
+/// Returns the `position_id` encoded in an `AdjustmentAction`.
+/// A value of `0` is treated as a wildcard (matches any position).
+fn action_position_id(action: &AdjustmentAction) -> usize {
+    match action {
+        AdjustmentAction::Close { position_id, .. }
+        | AdjustmentAction::Roll { position_id, .. }
+        | AdjustmentAction::Add { position_id, .. } => *position_id,
+    }
+}
+
 /// Execute an adjustment action on a position.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn execute_adjustment(
@@ -826,7 +836,7 @@ fn execute_adjustment(
                         last_known,
                         &params.slippage,
                     );
-                    let info = (leg.side, leg.option_type, leg.qty);
+                    let info = (leg.side, leg.option_type, leg.qty, leg.expiration);
                     close_leg(leg, today, cp);
                     Some(info)
                 }
@@ -834,7 +844,7 @@ fn execute_adjustment(
                 None
             };
 
-            if let Some((leg_side, leg_opt_type, leg_qty)) = new_leg_info {
+            if let Some((leg_side, leg_opt_type, leg_qty, old_exp)) = new_leg_info {
                 let ep = lookup_fill_price(
                     *new_expiration,
                     *new_strike,
@@ -857,6 +867,18 @@ fn execute_adjustment(
                     close_price: None,
                     close_date: None,
                 });
+                // Keep position-level expiration fields in sync so that DTE-exit
+                // and expiration-exit logic sees the updated expiration after a roll.
+                // Note: for multi-leg positions where legs may carry different expirations,
+                // only the primary and secondary expiration fields are updated here.
+                // If old_exp matches neither field the rolled leg's expiration is tracked
+                // solely through the leg itself, which is correct for single-expiration
+                // strategies and standard calendar/diagonal rolls.
+                if pos.expiration == old_exp {
+                    pos.expiration = *new_expiration;
+                } else if pos.secondary_expiration == Some(old_exp) {
+                    pos.secondary_expiration = Some(*new_expiration);
+                }
             }
         }
         AdjustmentAction::Add {
@@ -948,6 +970,12 @@ fn check_and_apply_adjustments(
             continue;
         }
         for rule in &params.adjustment_rules {
+            // Skip this rule if it targets a specific position that isn't the current one.
+            // position_id == 0 is the wildcard (matches all positions).
+            let target_id = action_position_id(&rule.action);
+            if target_id != 0 && target_id != pos.id {
+                continue;
+            }
             if !trigger_fires(
                 &rule.trigger,
                 pos,

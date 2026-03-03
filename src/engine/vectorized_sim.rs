@@ -175,16 +175,17 @@ fn build_trade_rows_from_candidates(
                     * f64::from(params.multiplier)
                     * leg_def.side.multiplier();
 
-                // Look up exit prices from price table
-                let exit_key = (
+                // Look up exit prices from price table, falling back to the most recent
+                // quote on or before exit_date for the same contract (carry-forward behavior
+                // matching the event loop's last_known lookup on data gaps).
+                let (exit_bid, exit_ask) = lookup_exit_snap(
+                    price_table,
                     exit_date,
                     cand_leg.expiration,
                     OrderedFloat(cand_leg.strike),
                     cand_leg.option_type,
-                );
-                let (exit_bid, exit_ask) = price_table
-                    .get(&exit_key)
-                    .map_or((0.0, 0.0), |snap| (snap.bid, snap.ask));
+                )
+                .map_or((0.0, 0.0), |snap| (snap.bid, snap.ask));
 
                 legs.push(TradeRowLeg {
                     side: leg_def.side,
@@ -402,26 +403,73 @@ fn apply_early_exits<S: BuildHasher>(
     trades
 }
 
+/// Look up the most recent `QuoteSnapshot` for a given contract on or before `exit_date`.
+///
+/// First tries an exact match; if none, falls back to the most recent quote whose date
+/// is ≤ `exit_date` (carry-forward behavior that matches the event loop's `last_known`
+/// lookup on data gaps).
+///
+/// Note: the carry-forward path scans the entire price table (O(n) in table size).
+/// For most backtests the table is small enough that this is negligible; a secondary
+/// index (e.g. `BTreeMap<(exp, strike, opt, date)>`) could replace it if profiling
+/// shows it as a bottleneck.
+fn lookup_exit_snap(
+    price_table: &PriceTable,
+    exit_date: NaiveDate,
+    expiration: NaiveDate,
+    strike: OrderedFloat<f64>,
+    option_type: OptionType,
+) -> Option<&QuoteSnapshot> {
+    // Exact match first
+    if let Some(snap) = price_table.get(&(exit_date, expiration, strike, option_type)) {
+        return Some(snap);
+    }
+    // Carry-forward: find the most recent quote on or before exit_date
+    let mut best_date: Option<NaiveDate> = None;
+    let mut best_snap: Option<&QuoteSnapshot> = None;
+    for ((date, exp, st, ot), snap) in price_table {
+        if *exp == expiration
+            && *st == strike
+            && *ot == option_type
+            && *date <= exit_date
+            && best_date.is_none_or(|d| *date > d)
+        {
+            best_date = Some(*date);
+            best_snap = Some(snap);
+        }
+    }
+    best_snap
+}
+
 /// Update exit prices for a trade at its current `exit_date` using the price table.
+/// Uses carry-forward (most recent quote on or before `exit_date`) to match the
+/// event loop's behavior. Clears prices to zero if no quote is found at all,
+/// avoiding lookahead bias from a previously set exit price.
 fn update_exit_prices(trade: &mut TradeRow, price_table: &PriceTable) {
+    let exit_date = trade.exit_date;
     for leg in &mut trade.legs {
-        let key = (
-            trade.exit_date,
+        if let Some(snap) = lookup_exit_snap(
+            price_table,
+            exit_date,
             leg.expiration,
             OrderedFloat(leg.strike),
             leg.option_type,
-        );
-        if let Some(snap) = price_table.get(&key) {
+        ) {
             leg.exit_bid = snap.bid;
             leg.exit_ask = snap.ask;
+        } else {
+            // No price found on or before exit_date — zero out to avoid
+            // retaining a stale price from a previously evaluated exit_date.
+            leg.exit_bid = 0.0;
+            leg.exit_ask = 0.0;
         }
-        // If no price found, keep existing exit prices (conservative)
     }
 }
 
 /// Filter overlapping trades: enforce `max_positions` and expiration uniqueness.
 ///
-/// O(n) forward scan over trades sorted by `entry_date`.
+/// Forward scan over trades sorted by `entry_date`. The overlap check scans `selected`
+/// for each trade, so it is O(n²) in the number of selected trades (bounded by `max_positions`).
 fn filter_overlapping_trades(trades: Vec<TradeRow>, max_positions: i32) -> Vec<TradeRow> {
     let mut selected: Vec<TradeRow> = Vec::new();
 
