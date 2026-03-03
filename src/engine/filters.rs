@@ -245,12 +245,16 @@ pub fn join_legs(
     Ok(combined)
 }
 
-/// Filter out options with zero or negative bid
-pub fn filter_valid_quotes(df: &DataFrame) -> Result<DataFrame> {
+/// Filter out options with bid/ask below the minimum threshold
+pub fn filter_valid_quotes(df: &DataFrame, min_bid_ask: f64) -> Result<DataFrame> {
     let result = df
         .clone()
         .lazy()
-        .filter(col("bid").gt(lit(0.0)).and(col("ask").gt(lit(0.0))))
+        .filter(
+            col("bid")
+                .gt(lit(min_bid_ask))
+                .and(col("ask").gt(lit(min_bid_ask))),
+        )
         .collect()?;
     Ok(result)
 }
@@ -386,7 +390,7 @@ mod tests {
     #[test]
     fn filter_valid_quotes_removes_zero_bid() {
         let df = make_options_df();
-        let result = filter_valid_quotes(&df).unwrap();
+        let result = filter_valid_quotes(&df, 0.0).unwrap();
         // Row with bid=0.0 should be filtered out
         assert_eq!(result.height(), 3);
     }
@@ -398,8 +402,20 @@ mod tests {
             "ask" => &[1.0, 3.0],
         }
         .unwrap();
-        let result = filter_valid_quotes(&df).unwrap();
+        let result = filter_valid_quotes(&df, 0.0).unwrap();
         assert_eq!(result.height(), 1);
+    }
+
+    #[test]
+    fn filter_valid_quotes_with_min_threshold() {
+        let df = df! {
+            "bid" => &[0.03, 0.05, 0.10, 2.0],
+            "ask" => &[0.04, 0.06, 0.15, 3.0],
+        }
+        .unwrap();
+        // min_bid_ask=0.05 should filter out rows where bid or ask <= 0.05
+        let result = filter_valid_quotes(&df, 0.05).unwrap();
+        assert_eq!(result.height(), 2); // only 0.10/0.15 and 2.0/3.0 pass
     }
 
     #[test]

@@ -56,7 +56,7 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
         let dte_filtered = filters::filter_dte_range(&with_dte, max_dte, params.exit_dte)?;
 
         // Filter valid quotes
-        let valid = filters::filter_valid_quotes(&dte_filtered)?;
+        let valid = filters::filter_valid_quotes(&dte_filtered, params.min_bid_ask)?;
 
         // Select closest delta
         let selected = filters::select_closest_delta(&valid, delta_target)?;
@@ -280,6 +280,7 @@ pub fn compare_strategies(df: &DataFrame, params: &CompareParams) -> Result<Vec<
             exit_dte: entry.exit_dte,
             slippage: entry.slippage.clone(),
             commission: entry.commission.clone(),
+            min_bid_ask: default_min_bid_ask(),
             stop_loss: params.sim_params.stop_loss,
             take_profit: params.sim_params.take_profit,
             max_hold_days: params.sim_params.max_hold_days,
@@ -463,6 +464,7 @@ mod tests {
             exit_dte: 5,
             slippage: Slippage::Mid,
             commission: None,
+            min_bid_ask: 0.0,
             stop_loss: None,
             take_profit: None,
             max_hold_days: None,
@@ -494,6 +496,7 @@ mod tests {
             delta_interval: 0.10,
             slippage: Slippage::Mid,
             commission: None,
+            min_bid_ask: 0.0,
         };
 
         let result = evaluate_strategy(&df, &params);
@@ -809,6 +812,7 @@ mod tests {
             exit_dte: 5,
             slippage: Slippage::Mid,
             commission: None,
+            min_bid_ask: 0.0,
             stop_loss: None,
             take_profit: None,
             max_hold_days: None,

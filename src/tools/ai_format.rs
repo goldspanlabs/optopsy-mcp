@@ -1111,6 +1111,7 @@ mod tests {
             delta_interval: 0.05,
             slippage: crate::engine::types::Slippage::Mid,
             commission: None,
+            min_bid_ask: 0.05,
         };
         let response = format_evaluate(vec![], &params, None);
         assert_eq!(response.total_buckets, 0);
@@ -1131,6 +1132,7 @@ mod tests {
             delta_interval: 0.05,
             slippage: crate::engine::types::Slippage::Mid,
             commission: None,
+            min_bid_ask: 0.05,
         };
         let groups = vec![
             GroupStats {
@@ -1265,6 +1267,7 @@ mod tests {
             exit_dte: 0,
             slippage: crate::engine::types::Slippage::Mid,
             commission: None,
+            min_bid_ask: 0.0,
             stop_loss: None,
             take_profit: None,
             max_hold_days: None,

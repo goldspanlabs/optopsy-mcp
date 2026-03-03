@@ -25,6 +25,7 @@ fn backtest_params(strategy: &str, leg_deltas: Vec<TargetRange>) -> BacktestPara
         exit_dte: 5,
         slippage: Slippage::Mid,
         commission: None,
+        min_bid_ask: 0.0,
         stop_loss: None,
         take_profit: None,
         max_hold_days: None,
@@ -50,6 +51,7 @@ fn evaluate_params(strategy: &str, leg_deltas: Vec<TargetRange>) -> EvaluatePara
         delta_interval: 0.10,
         slippage: Slippage::Mid,
         commission: None,
+        min_bid_ask: 0.0,
     }
 }
 

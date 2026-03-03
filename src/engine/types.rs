@@ -196,6 +196,9 @@ pub struct EvaluateParams {
     #[serde(default)]
     #[garde(dive)]
     pub commission: Option<Commission>,
+    #[serde(default = "default_min_bid_ask")]
+    #[garde(range(min = 0.0))]
+    pub min_bid_ask: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
@@ -213,6 +216,9 @@ pub struct BacktestParams {
     #[serde(default)]
     #[garde(dive)]
     pub commission: Option<Commission>,
+    #[serde(default = "default_min_bid_ask")]
+    #[garde(range(min = 0.0))]
+    pub min_bid_ask: f64,
     #[garde(inner(range(min = 0.0)))]
     pub stop_loss: Option<f64>,
     #[garde(inner(range(min = 0.0)))]
@@ -253,11 +259,15 @@ pub(crate) fn default_multiplier() -> i32 {
 }
 
 pub(crate) fn default_dte_interval() -> i32 {
-    5
+    7
 }
 
 pub(crate) fn default_delta_interval() -> f64 {
-    0.10
+    0.05
+}
+
+pub(crate) fn default_min_bid_ask() -> f64 {
+    0.05
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
@@ -638,6 +648,7 @@ mod tests {
             exit_dte: 0,
             slippage: Slippage::Mid,
             commission: None,
+            min_bid_ask: 0.0,
             stop_loss: None,
             take_profit: None,
             max_hold_days: None,
@@ -667,6 +678,7 @@ mod tests {
             exit_dte: 0,
             slippage: Slippage::Mid,
             commission: None,
+            min_bid_ask: 0.0,
             stop_loss: None,
             take_profit: None,
             max_hold_days: None,
@@ -696,6 +708,7 @@ mod tests {
             exit_dte: 0,
             slippage: Slippage::Mid,
             commission: None,
+            min_bid_ask: 0.0,
             stop_loss: Some(2.0),
             take_profit: None,
             max_hold_days: None,
@@ -740,6 +753,7 @@ mod tests {
             exit_dte: 0,
             slippage: Slippage::Mid,
             commission: None,
+            min_bid_ask: 0.0,
             stop_loss: None,
             take_profit: None,
             max_hold_days: None,
@@ -781,6 +795,7 @@ mod tests {
             delta_interval: 0.05,
             slippage: Slippage::Mid,
             commission: None,
+            min_bid_ask: 0.05,
         };
         assert!(p.validate().is_err());
     }

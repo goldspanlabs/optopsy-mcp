@@ -52,7 +52,7 @@ Two main execution paths in `core.rs`:
 - **evaluate_strategy()** — Statistical analysis. Filters options per leg (option type → DTE → valid quotes → closest delta), matches entry/exit rows, joins legs, applies strike ordering, computes per-leg P&L, then bins by DTE × delta buckets with aggregate stats.
 - **run_backtest()** — Event-driven simulation. Builds a `HashMap<(date, exp, strike, OptionType), QuoteSnapshot>` price table for O(1) lookups, finds entry candidates, then runs a day-by-day event loop managing position opens (with `max_positions` constraint) and closes (DTE exit, stop loss, take profit, max hold, expiration). Produces trade log, equity curve, and performance metrics (Sharpe, Sortino, CAGR, VaR, etc.).
 
-Key submodules: `filters.rs` (DTE/delta filtering), `evaluation.rs` (entry-exit matching), `event_sim.rs` (backtest event loop), `pricing.rs` (4 slippage models: Mid/Spread/Liquidity/PerLeg), `rules.rs` (strike ordering), `metrics.rs` (performance calculations), `output.rs` (DTE×delta bucketing).
+Key submodules: `filters.rs` (DTE/delta filtering, `filter_valid_quotes(df, min_bid_ask)`), `evaluation.rs` (entry-exit matching), `event_sim.rs` (backtest event loop), `pricing.rs` (4 slippage models: Mid/Spread/Liquidity/PerLeg), `rules.rs` (strike ordering), `metrics.rs` (performance calculations), `output.rs` (DTE×delta bucketing with right-closed `(a, b]` intervals).
 
 ### Strategies (`src/strategies/`)
 32 strategies across singles, spreads, butterflies, condors, iron, and calendar categories. Built using helpers (`call_leg`, `put_leg`, `strategy`) in `helpers.rs`. `all_strategies()` returns the full list; `find_strategy(name)` does linear scan. Multi-expiration strategies (calendar/diagonal) use `ExpirationCycle::Primary`/`Secondary` tags on legs.
@@ -212,14 +212,15 @@ Fast statistical analysis grouped by DTE × delta buckets. Does NOT run backtest
   ],
   "max_entry_dte": 45,       // Max DTE for entries
   "exit_dte": 7,             // Close positions at this DTE
-  "dte_interval": 5,         // Bucket width
-  "delta_interval": 0.10,    // Delta bucket width
+  "dte_interval": 7,         // Bucket width (default: 7)
+  "delta_interval": 0.05,    // Delta bucket width (default: 0.05)
   "slippage": {"type": "Spread"},  // Or: Mid, Liquidity, PerLeg
   "commission": {            // Optional
     "per_contract": 0.65,
     "base_fee": 0.0,
     "min_fee": 0.0
   },
+  "min_bid_ask": 0.05,        // Optional. Min bid/ask threshold (default: 0.05)
   "symbol": "SPY"            // Optional. Required if multiple symbols loaded; auto-selected if only one loaded
 }
 ```
@@ -406,7 +407,7 @@ Validation happens in tool handlers via `params.validate().map_err(...)?`. Inval
 let lazy = df.clone().lazy()
   .filter(col("expiration").is_not_null())
   .filter(col("quote_datetime").is_not_null())
-  .filter(col("bid").gt(0.0).and(col("ask").gt(0.0)))
+  .filter(col("bid").gt(min_bid_ask).and(col("ask").gt(min_bid_ask)))
   .collect()?;
 ```
 

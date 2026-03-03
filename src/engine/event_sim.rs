@@ -140,7 +140,7 @@ pub fn find_entry_candidates(
             params.max_entry_dte
         };
         let dte_filtered = filters::filter_dte_range(&with_dte, max_dte, min_entry_dte)?;
-        let valid = filters::filter_valid_quotes(&dte_filtered)?;
+        let valid = filters::filter_valid_quotes(&dte_filtered, params.min_bid_ask)?;
         let selected = filters::select_closest_delta(&valid, delta_target)?;
 
         if selected.height() == 0 {
@@ -931,6 +931,7 @@ mod tests {
             exit_dte: 15, // DTE exit at 15 days
             slippage: Slippage::Mid,
             commission: None,
+            min_bid_ask: 0.0,
             stop_loss: None,
             take_profit: None,
             max_hold_days: None,
@@ -1024,6 +1025,7 @@ mod tests {
             exit_dte: 5,
             slippage: Slippage::Mid,
             commission: None,
+            min_bid_ask: 0.0,
             stop_loss: Some(0.50), // 50% stop loss
             take_profit: None,
             max_hold_days: None,
@@ -1119,6 +1121,7 @@ mod tests {
             exit_dte: 5,
             slippage: Slippage::Mid,
             commission: None,
+            min_bid_ask: 0.0,
             stop_loss: None,
             take_profit: Some(0.50), // 50% take profit
             max_hold_days: None,
@@ -1210,6 +1213,7 @@ mod tests {
             exit_dte: 5,
             slippage: Slippage::Mid,
             commission: None,
+            min_bid_ask: 0.0,
             stop_loss: None,
             take_profit: None,
             max_hold_days: None,
@@ -1269,6 +1273,7 @@ mod tests {
             exit_dte: 5,
             slippage: Slippage::Mid,
             commission: None,
+            min_bid_ask: 0.0,
             stop_loss: None,
             take_profit: None,
             max_hold_days: None,
@@ -1364,6 +1369,7 @@ mod tests {
             exit_dte: 5,
             slippage: Slippage::Mid,
             commission: None,
+            min_bid_ask: 0.0,
             stop_loss: None,
             take_profit: None,
             max_hold_days: None,
@@ -1440,6 +1446,7 @@ mod tests {
             exit_dte: 5,
             slippage: Slippage::Mid,
             commission: None,
+            min_bid_ask: 0.0,
             stop_loss: None,
             take_profit: None,
             max_hold_days: None,

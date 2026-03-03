@@ -14,7 +14,8 @@ use tokio::sync::RwLock;
 use crate::data::cache::CachedStore;
 use crate::data::eodhd::EodhdProvider;
 use crate::engine::types::{
-    default_delta_interval, default_dte_interval, default_multiplier, validate_exit_dte_lt_max,
+    default_delta_interval, default_dte_interval, default_min_bid_ask, default_multiplier,
+    validate_exit_dte_lt_max,
     BacktestParams, Commission, CompareEntry, CompareParams, EvaluateParams, SimParams, Slippage,
     TargetRange, TradeSelector,
 };
@@ -187,6 +188,10 @@ pub struct EvaluateStrategyParams {
     #[serde(default)]
     #[garde(dive)]
     pub commission: Option<Commission>,
+    /// Minimum bid/ask threshold — options with bid or ask at or below this value are filtered out (default: 0.05)
+    #[serde(default = "default_min_bid_ask")]
+    #[garde(range(min = 0.0))]
+    pub min_bid_ask: f64,
     /// Symbol to analyze (required if multiple symbols are loaded; optional if only one is loaded)
     #[serde(default)]
     #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
@@ -217,6 +222,10 @@ pub struct RunBacktestParams {
     #[serde(default)]
     #[garde(dive)]
     pub commission: Option<Commission>,
+    /// Minimum bid/ask threshold — options with bid or ask at or below this value are filtered out (default: 0.05)
+    #[serde(default = "default_min_bid_ask")]
+    #[garde(range(min = 0.0))]
+    pub min_bid_ask: f64,
     /// Stop loss threshold (multiplier of entry cost; values > 1.0 allowed)
     #[garde(inner(range(min = 0.0)))]
     pub stop_loss: Option<f64>,
@@ -677,6 +686,7 @@ impl OptopsyServer {
             delta_interval: params.delta_interval,
             slippage: params.slippage,
             commission: params.commission,
+            min_bid_ask: params.min_bid_ask,
         };
         eval_params
             .validate()
@@ -749,6 +759,7 @@ impl OptopsyServer {
             exit_dte: params.exit_dte,
             slippage: params.slippage,
             commission: params.commission,
+            min_bid_ask: params.min_bid_ask,
             stop_loss: params.stop_loss,
             take_profit: params.take_profit,
             max_hold_days: params.max_hold_days,
