@@ -7,7 +7,7 @@
 //! 3. Vectorized early exit scanning (`SL/TP/max_hold/exit_signal`)
 //! 4. Position overlap filter + build trade log & equity curve
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::hash::BuildHasher;
 
 use anyhow::Result;
@@ -19,6 +19,22 @@ use super::pricing;
 #[allow(clippy::wildcard_imports)]
 use super::types::*;
 use crate::strategies;
+
+/// Secondary index for O(log n) carry-forward lookups.
+/// Key: (expiration, strike, `option_type`) → sorted map of date → snapshot reference data.
+type CarryIndex = BTreeMap<(NaiveDate, OrderedFloat<f64>, OptionType), BTreeMap<NaiveDate, QuoteSnapshot>>;
+
+/// Build the carry-forward index from the price table.
+fn build_carry_index(price_table: &PriceTable) -> CarryIndex {
+    let mut index = CarryIndex::new();
+    for ((date, exp, strike, opt), snap) in price_table {
+        index
+            .entry((*exp, *strike, *opt))
+            .or_default()
+            .insert(*date, snap.clone());
+    }
+    index
+}
 
 /// Run the vectorized backtest pipeline.
 ///
@@ -33,10 +49,17 @@ pub fn run_vectorized_backtest<S1: BuildHasher, S2: BuildHasher>(
         .ok_or_else(|| anyhow::anyhow!("Unknown strategy: {}", params.strategy))?;
 
     // Build price table and get trading days
+    let t0 = std::time::Instant::now();
     let (price_table, trading_days) = event_sim::build_price_table(df)?;
+    tracing::info!(elapsed_ms = t0.elapsed().as_millis(), entries = price_table.len(), "Price table built");
+
+    // Build secondary index for carry-forward lookups
+    let carry_index = build_carry_index(&price_table);
 
     // Phase 1: Find entry candidates (same pipeline as event loop)
+    let t1 = std::time::Instant::now();
     let mut candidates = event_sim::find_entry_candidates(df, &strategy_def, params)?;
+    tracing::info!(elapsed_ms = t1.elapsed().as_millis(), candidates = candidates.values().map(Vec::len).sum::<usize>(), "Entry candidates found");
 
     // Apply entry signal filter
     if let Some(ref allowed_dates) = entry_dates {
@@ -48,13 +71,16 @@ pub fn run_vectorized_backtest<S1: BuildHasher, S2: BuildHasher>(
     }
 
     // Convert candidates to TradeRows with exit resolution via price table
+    let t2 = std::time::Instant::now();
     let trades = build_trade_rows_from_candidates(
         &candidates,
         &price_table,
+        &carry_index,
         &trading_days,
         &strategy_def,
         params,
     );
+    tracing::info!(elapsed_ms = t2.elapsed().as_millis(), trades = trades.len(), "Trade rows built");
 
     if trades.is_empty() {
         return Ok((vec![], vec![], BacktestQualityStats::default()));
@@ -70,11 +96,13 @@ pub fn run_vectorized_backtest<S1: BuildHasher, S2: BuildHasher>(
         || params.max_hold_days.is_some()
         || exit_dates.is_some();
 
+    let t3 = std::time::Instant::now();
     let trades = if has_early_exit {
-        apply_early_exits(trades, &price_table, &trading_days, params, exit_dates)
+        apply_early_exits(trades, &price_table, &carry_index, &trading_days, params, exit_dates)
     } else {
         trades
     };
+    tracing::info!(elapsed_ms = t3.elapsed().as_millis(), "Early exit scan done");
 
     // Phase 4: Position overlap filter
     let trades = filter_overlapping_trades(trades, params.max_positions);
@@ -93,7 +121,9 @@ pub fn run_vectorized_backtest<S1: BuildHasher, S2: BuildHasher>(
     }
 
     // Build trade log and equity curve
-    let (trade_log, equity_curve) = build_outputs(&trades, &trading_days, &price_table, params);
+    let t4 = std::time::Instant::now();
+    let (trade_log, equity_curve) = build_outputs(&trades, &trading_days, &price_table, &carry_index, params);
+    tracing::info!(elapsed_ms = t4.elapsed().as_millis(), "Outputs built");
 
     let quality = BacktestQualityStats {
         trading_days_total: trading_days.len(),
@@ -137,7 +167,8 @@ struct TradeRowLeg {
 /// where DTE <= `exit_dte` (matching the event loop's DTE exit logic).
 fn build_trade_rows_from_candidates(
     candidates: &std::collections::BTreeMap<NaiveDate, Vec<EntryCandidate>>,
-    price_table: &PriceTable,
+    _price_table: &PriceTable,
+    carry_index: &CarryIndex,
     trading_days: &[NaiveDate],
     strategy_def: &StrategyDef,
     params: &BacktestParams,
@@ -179,7 +210,7 @@ fn build_trade_rows_from_candidates(
                 // quote on or before exit_date for the same contract (carry-forward behavior
                 // matching the event loop's last_known lookup on data gaps).
                 let (exit_bid, exit_ask) = lookup_exit_snap(
-                    price_table,
+                    carry_index,
                     exit_date,
                     cand_leg.expiration,
                     OrderedFloat(cand_leg.strike),
@@ -297,6 +328,7 @@ fn apply_trade_selector(mut trades: Vec<TradeRow>, selector: &TradeSelector) -> 
 fn apply_early_exits<S: BuildHasher>(
     mut trades: Vec<TradeRow>,
     price_table: &PriceTable,
+    carry_index: &CarryIndex,
     trading_days: &[NaiveDate],
     params: &BacktestParams,
     exit_dates: Option<&HashSet<NaiveDate, S>>,
@@ -405,7 +437,7 @@ fn apply_early_exits<S: BuildHasher>(
         if let Some((trigger_date, trigger_type)) = earliest_trigger {
             trade.exit_date = trigger_date;
             trade.exit_type = trigger_type;
-            update_exit_prices(trade, price_table);
+            update_exit_prices(trade, carry_index);
         }
     }
 
@@ -414,51 +446,28 @@ fn apply_early_exits<S: BuildHasher>(
 
 /// Look up the most recent `QuoteSnapshot` for a given contract on or before `exit_date`.
 ///
-/// First tries an exact match; if none, falls back to the most recent quote whose date
-/// is ≤ `exit_date` (carry-forward behavior that matches the event loop's `last_known`
-/// lookup on data gaps).
-///
-/// Note: the carry-forward path scans the entire price table (O(n) in table size).
-/// For most backtests the table is small enough that this is negligible; a secondary
-/// index (e.g. `BTreeMap<(exp, strike, opt, date)>`) could replace it if profiling
-/// shows it as a bottleneck.
+/// Uses the carry-forward index for O(log n) lookups instead of scanning the full price table.
 fn lookup_exit_snap(
-    price_table: &PriceTable,
+    carry_index: &CarryIndex,
     exit_date: NaiveDate,
     expiration: NaiveDate,
     strike: OrderedFloat<f64>,
     option_type: OptionType,
 ) -> Option<&QuoteSnapshot> {
-    // Exact match first
-    if let Some(snap) = price_table.get(&(exit_date, expiration, strike, option_type)) {
-        return Some(snap);
-    }
-    // Carry-forward: find the most recent quote on or before exit_date
-    let mut best_date: Option<NaiveDate> = None;
-    let mut best_snap: Option<&QuoteSnapshot> = None;
-    for ((date, exp, st, ot), snap) in price_table {
-        if *exp == expiration
-            && *st == strike
-            && *ot == option_type
-            && *date <= exit_date
-            && best_date.is_none_or(|d| *date > d)
-        {
-            best_date = Some(*date);
-            best_snap = Some(snap);
-        }
-    }
-    best_snap
+    let dates = carry_index.get(&(expiration, strike, option_type))?;
+    // range(..=exit_date) gives all dates <= exit_date; last() is the most recent
+    dates.range(..=exit_date).next_back().map(|(_, snap)| snap)
 }
 
 /// Update exit prices for a trade at its current `exit_date` using the price table.
 /// Uses carry-forward (most recent quote on or before `exit_date`) to match the
 /// event loop's behavior. Clears prices to zero if no quote is found at all,
 /// avoiding lookahead bias from a previously set exit price.
-fn update_exit_prices(trade: &mut TradeRow, price_table: &PriceTable) {
+fn update_exit_prices(trade: &mut TradeRow, carry_index: &CarryIndex) {
     let exit_date = trade.exit_date;
     for leg in &mut trade.legs {
         if let Some(snap) = lookup_exit_snap(
-            price_table,
+            carry_index,
             exit_date,
             leg.expiration,
             OrderedFloat(leg.strike),
@@ -515,6 +524,7 @@ fn build_outputs(
     trades: &[TradeRow],
     trading_days: &[NaiveDate],
     price_table: &PriceTable,
+    carry_index: &CarryIndex,
     params: &BacktestParams,
 ) -> (Vec<TradeRecord>, Vec<EquityPoint>) {
     let commission = params.commission.clone().unwrap_or_default();
@@ -561,7 +571,7 @@ fn build_outputs(
     }
 
     // Build equity curve
-    let equity_curve = build_equity_curve(&trade_log, trades, trading_days, price_table, params);
+    let equity_curve = build_equity_curve(&trade_log, trades, trading_days, price_table, carry_index, params);
 
     (trade_log, equity_curve)
 }
@@ -572,6 +582,7 @@ fn build_equity_curve(
     trades: &[TradeRow],
     trading_days: &[NaiveDate],
     price_table: &PriceTable,
+    _carry_index: &CarryIndex,
     params: &BacktestParams,
 ) -> Vec<EquityPoint> {
     let mut equity_curve = Vec::with_capacity(trading_days.len());

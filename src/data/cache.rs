@@ -102,6 +102,7 @@ impl CachedStore {
         let path = self.local_path(symbol);
 
         if path.exists() {
+            tracing::info!(%symbol, path = %path.display(), "Cache hit (local parquet)");
             return Ok(path);
         }
 

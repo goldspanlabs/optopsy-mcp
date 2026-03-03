@@ -257,6 +257,12 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
     let strategy_def = strategies::find_strategy(&params.strategy)
         .ok_or_else(|| anyhow::anyhow!("Unknown strategy: {}", params.strategy))?;
 
+    tracing::info!(
+        strategy = %params.strategy,
+        legs = strategy_def.legs.len(),
+        "Strategy resolved"
+    );
+
     if params.leg_deltas.len() != strategy_def.legs.len() {
         bail!(
             "Strategy '{}' has {} legs but {} delta targets provided",
@@ -269,7 +275,18 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
     // Build signal date filters if specified (loads OHLCV at most once)
     let (entry_dates, exit_dates) = build_signal_filters(params)?;
 
-    let (trade_log, equity_curve, quality) = if params.adjustment_rules.is_empty() {
+    if entry_dates.is_some() || exit_dates.is_some() {
+        tracing::info!(
+            entry_signal_dates = entry_dates.as_ref().map_or(0, HashSet::len),
+            exit_signal_dates = exit_dates.as_ref().map_or(0, HashSet::len),
+            "Signal filters loaded"
+        );
+    }
+
+    let use_vectorized = params.adjustment_rules.is_empty();
+    tracing::info!(path = if use_vectorized { "vectorized" } else { "event_loop" }, "Backtest dispatch");
+
+    let (trade_log, equity_curve, quality) = if use_vectorized {
         // Vectorized path — much faster for strategies without adjustments
         vectorized_sim::run_vectorized_backtest(df, params, &entry_dates, exit_dates.as_ref())?
     } else {
@@ -279,9 +296,16 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
 
     let perf_metrics = metrics::calculate_metrics(&equity_curve, &trade_log, params.capital)?;
 
+    let total_pnl: f64 = trade_log.iter().map(|t| t.pnl).sum();
+    tracing::info!(
+        trades = trade_log.len(),
+        total_pnl = format_args!("{total_pnl:.2}"),
+        "Backtest complete"
+    );
+
     Ok(BacktestResult {
         trade_count: trade_log.len(),
-        total_pnl: trade_log.iter().map(|t| t.pnl).sum(),
+        total_pnl,
         metrics: perf_metrics,
         equity_curve,
         trade_log,

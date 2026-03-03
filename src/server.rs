@@ -727,6 +727,16 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
+        tracing::info!(
+            strategy = params.strategy.as_str(),
+            symbol = params.symbol.as_deref().unwrap_or("auto"),
+            max_entry_dte = params.max_entry_dte,
+            exit_dte = params.exit_dte,
+            max_positions = params.max_positions,
+            capital = params.capital,
+            "Backtest request received"
+        );
+
         // Clone symbol and DataFrame, resolve OHLCV path, then drop read lock before expensive backtest
         let (symbol, df) = {
             let data = self.data.read().await;
