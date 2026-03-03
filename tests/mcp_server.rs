@@ -88,7 +88,7 @@ fn server_info_has_correct_metadata() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn tool_router_lists_all_twelve_tools() {
+async fn tool_router_lists_all_tools() {
     let (server, _tmp) = make_test_server();
 
     let (server_tx, server_rx) = tokio::io::duplex(4096);
@@ -105,7 +105,7 @@ async fn tool_router_lists_all_twelve_tools() {
     let tools = client.list_all_tools().await.unwrap();
     let tool_names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
 
-    assert_eq!(tools.len(), 12, "Expected 12 tools, got: {tool_names:?}");
+    assert_eq!(tools.len(), 13, "Expected 13 tools, got: {tool_names:?}");
     for expected in [
         "download_options_data",
         "load_data",
@@ -119,6 +119,7 @@ async fn tool_router_lists_all_twelve_tools() {
         "compare_strategies",
         "check_cache_status",
         "fetch_to_parquet",
+        "get_raw_prices",
     ] {
         assert!(
             tool_names.contains(&expected.to_string()),

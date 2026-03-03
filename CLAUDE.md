@@ -34,7 +34,7 @@ Control runtime behavior and data sources:
 
 ## Architecture
 
-**optopsy-mcp** is an options backtesting engine exposed as an MCP (Model Context Protocol) server via `rmcp 0.17`. It provides 12 tools for loading options chain data, evaluating strategies statistically, running event-driven backtests, and comparing strategies.
+**optopsy-mcp** is an options backtesting engine exposed as an MCP (Model Context Protocol) server via `rmcp 0.17`. It provides 13 tools for loading options chain data, evaluating strategies statistically, running event-driven backtests, comparing strategies, and returning raw price data for charting.
 
 ### Transport (`src/main.rs`)
 - **stdio** (default): for local Claude Desktop integration
@@ -144,6 +144,25 @@ Download historical OHLCV data from Yahoo Finance and save as Parquet. Used to p
 - `summary`, `rows` — OHLCV data summary
 - `file_path` — Local Parquet path
 - `date_range` — Coverage
+
+#### `get_raw_prices`
+Return raw OHLCV price data for a symbol, ready for chart generation by LLMs.
+
+**Parameters:**
+```json
+{
+  "symbol": "SPY",             // Required
+  "start_date": "2024-01-01",  // Optional. YYYY-MM-DD
+  "end_date": "2024-12-31",    // Optional. YYYY-MM-DD
+  "limit": 500                 // Optional. Max bars to return (default: 500). null for no limit.
+}
+```
+
+**Response:** `RawPricesResponse`
+- `symbol`, `total_rows`, `returned_rows`, `sampled` — Metadata
+- `date_range` — Min/max dates
+- `prices` — Array of `{ date, open, high, low, close, adjclose, volume }` bars
+- `suggested_next_steps` — Recommended next actions
 
 ### Strategy Tools
 

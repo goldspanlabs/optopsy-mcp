@@ -248,6 +248,36 @@ pub struct FetchResponse {
     pub suggested_next_steps: Vec<String>,
 }
 
+/// A single OHLCV price bar for `get_raw_prices`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PriceBar {
+    pub date: String,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    /// Adjusted close price (if available)
+    pub adjclose: Option<f64>,
+    pub volume: u64,
+}
+
+/// Response for `get_raw_prices` — returns actual price data points for charting
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RawPricesResponse {
+    pub summary: String,
+    pub symbol: String,
+    /// Total rows in the cached dataset (before sampling)
+    pub total_rows: usize,
+    /// Number of price bars returned in this response
+    pub returned_rows: usize,
+    /// Whether the data was down-sampled to fit the limit
+    pub sampled: bool,
+    pub date_range: DateRange,
+    /// Raw OHLCV price bars — use directly for chart generation
+    pub prices: Vec<PriceBar>,
+    pub suggested_next_steps: Vec<String>,
+}
+
 /// AI-enriched response for `suggest_parameters`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SuggestResponse {
