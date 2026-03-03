@@ -57,10 +57,16 @@ jobs:
         run: |
           cargo llvm-cov --no-cfg-coverage 2>&1 | tee coverage-output.txt
           # Extract the summary table (last lines starting from the header)
+          # Build summary: header + separator, file rows sorted by Lines Cover % desc, separator + TOTAL
+          {
+            grep -E '(^Filename|^---)' coverage-output.txt | head -2
+            grep '\.rs' coverage-output.txt | grep -v 'Running' | awk '{v=$0; gsub(/%/,""); print $10, v}' | sort -rn | cut -d' ' -f2-
+            grep -E '(^----|^TOTAL)' coverage-output.txt | tail -2
+          } > coverage-sorted.txt
           echo '## Coverage Summary' >> $GITHUB_STEP_SUMMARY
           echo '' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          grep -E '(^Filename|^----|^TOTAL|\.rs)' coverage-output.txt | grep -v 'Running' >> $GITHUB_STEP_SUMMARY
+          cat coverage-sorted.txt >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
   build:
