@@ -9,38 +9,12 @@
 
 use chrono::NaiveDate;
 use optopsy_mcp::engine::core::{evaluate_strategy, run_backtest};
-use optopsy_mcp::engine::types::{
-    BacktestParams, EvaluateParams, ExitType, Slippage, TargetRange, TradeSelector,
-};
+use optopsy_mcp::engine::types::{EvaluateParams, ExitType, Slippage, TargetRange};
 
 mod common;
-use common::{delta, make_multi_strike_df};
+use common::{backtest_params, delta, make_multi_strike_df};
 
 // ─── Parameter Helpers ───────────────────────────────────────────────────────
-
-fn backtest_params(strategy: &str, leg_deltas: Vec<TargetRange>) -> BacktestParams {
-    BacktestParams {
-        strategy: strategy.to_string(),
-        leg_deltas,
-        max_entry_dte: 45,
-        exit_dte: 5,
-        slippage: Slippage::Mid,
-        commission: None,
-        min_bid_ask: 0.0,
-        stop_loss: None,
-        take_profit: None,
-        max_hold_days: None,
-        capital: 100_000.0,
-        quantity: 1,
-        multiplier: 100,
-        max_positions: 5,
-        selector: TradeSelector::First,
-        adjustment_rules: vec![],
-        entry_signal: None,
-        exit_signal: None,
-        ohlcv_path: None,
-    }
-}
 
 fn evaluate_params(strategy: &str, leg_deltas: Vec<TargetRange>) -> EvaluateParams {
     EvaluateParams {
