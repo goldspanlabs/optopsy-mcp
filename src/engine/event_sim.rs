@@ -801,6 +801,11 @@ fn execute_adjustment(
                         last_known,
                         &params.slippage,
                     );
+                    // Update entry_cost to reflect the closed leg's cashflow
+                    pos.entry_cost -= leg.entry_price
+                        * leg.side.multiplier()
+                        * f64::from(leg.qty)
+                        * f64::from(pos.multiplier);
                     close_leg(leg, today, cp);
                 }
             }
@@ -836,7 +841,13 @@ fn execute_adjustment(
                         last_known,
                         &params.slippage,
                     );
+                    let old_entry_price = leg.entry_price;
                     let info = (leg.side, leg.option_type, leg.qty, leg.expiration);
+                    // Remove old leg's cost basis from entry_cost
+                    pos.entry_cost -= old_entry_price
+                        * leg.side.multiplier()
+                        * f64::from(leg.qty)
+                        * f64::from(pos.multiplier);
                     close_leg(leg, today, cp);
                     Some(info)
                 }
@@ -855,6 +866,9 @@ fn execute_adjustment(
                     last_known,
                     &params.slippage,
                 );
+                // Update entry_cost: add the new leg's cost basis
+                pos.entry_cost +=
+                    ep * leg_side.multiplier() * f64::from(leg_qty) * f64::from(pos.multiplier);
                 let new_leg = PositionLeg {
                     leg_index: *leg_index,
                     side: leg_side,

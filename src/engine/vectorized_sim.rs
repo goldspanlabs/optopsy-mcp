@@ -317,9 +317,14 @@ fn apply_early_exits<S: BuildHasher>(
         let mut earliest_trigger: Option<(NaiveDate, ExitType)> = None;
 
         for &day in &trading_days[start_idx..] {
-            if day >= trade.exit_date {
+            if day > trade.exit_date {
                 break;
             }
+
+            // On the exit_date itself, only Signal can override (it has highest
+            // priority in the event loop, checked before DTE/expiration exit).
+            // Other triggers (MaxHold/SL/TP) have lower priority than DTE exit.
+            let exit_day = day == trade.exit_date;
 
             // --- Signal (highest priority) ---
             if let Some(signal_dates) = exit_dates {
@@ -331,18 +336,22 @@ fn apply_early_exits<S: BuildHasher>(
             }
 
             // --- MaxHold ---
-            if let Some(max_date) = max_exit {
-                if day >= max_date {
-                    // MaxHold triggers on this day — record if no earlier trigger
-                    if earliest_trigger.is_none() {
-                        earliest_trigger = Some((day, ExitType::MaxHold));
+            // Skip on exit_day: DTE/expiration exit has higher priority
+            if !exit_day {
+                if let Some(max_date) = max_exit {
+                    if day >= max_date {
+                        // MaxHold triggers on this day — record if no earlier trigger
+                        if earliest_trigger.is_none() {
+                            earliest_trigger = Some((day, ExitType::MaxHold));
+                        }
+                        break; // MaxHold is a hard boundary
                     }
-                    break; // MaxHold is a hard boundary
                 }
             }
 
             // --- SL/TP (require price lookup) ---
-            if sl_enabled || tp_enabled {
+            // Skip on exit_day: DTE/expiration exit has higher priority
+            if !exit_day && (sl_enabled || tp_enabled) {
                 let mut mtm = 0.0;
                 let mut all_legs_have_price = true;
 
