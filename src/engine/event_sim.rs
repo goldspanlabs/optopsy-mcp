@@ -855,8 +855,8 @@ fn execute_adjustment(
                     last_known,
                     &params.slippage,
                 );
-                pos.legs.push(PositionLeg {
-                    leg_index: pos.legs.len(),
+                let new_leg = PositionLeg {
+                    leg_index: *leg_index,
                     side: leg_side,
                     option_type: leg_opt_type,
                     strike: *new_strike,
@@ -866,7 +866,14 @@ fn execute_adjustment(
                     closed: false,
                     close_price: None,
                     close_date: None,
-                });
+                };
+                // Replace in-place so DeltaDrift and other index-based triggers
+                // continue to operate on the rolled leg.
+                if let Some(slot) = pos.legs.get_mut(*leg_index) {
+                    *slot = new_leg;
+                } else {
+                    pos.legs.push(new_leg);
+                }
                 // Keep position-level expiration fields in sync so that DTE-exit
                 // and expiration-exit logic sees the updated expiration after a roll.
                 // Note: for multi-leg positions where legs may carry different expirations,
@@ -909,6 +916,11 @@ fn execute_adjustment(
                 close_price: None,
                 close_date: None,
             });
+            // Update entry_cost so SL/TP thresholds reflect the new cost basis
+            pos.entry_cost += ep
+                * side.multiplier()
+                * f64::from(*qty)
+                * f64::from(pos.multiplier);
         }
     }
 }
@@ -928,7 +940,7 @@ fn finalize_if_all_closed(
     if !pos.legs.iter().all(|l| l.closed) {
         return;
     }
-    let pnl = mark_to_market(
+    let mut pnl = mark_to_market(
         pos,
         today,
         price_table,
@@ -936,6 +948,11 @@ fn finalize_if_all_closed(
         &params.slippage,
         pos.multiplier,
     );
+    // Apply commission consistently with normal exits
+    let total_contracts: i32 = pos.legs.iter().map(|l| l.qty.abs()).sum();
+    let commission = params.commission.clone().unwrap_or_default();
+    pnl -= commission.calculate(total_contracts) * 2.0;
+
     *realized_equity += pnl;
     pos.status = PositionStatus::Closed(ExitType::Adjustment);
 
