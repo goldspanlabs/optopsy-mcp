@@ -13,35 +13,30 @@ use super::pricing;
 use super::rules;
 #[allow(clippy::wildcard_imports)]
 use super::types::*;
+use super::vectorized_sim;
 use crate::signals;
 use crate::strategies;
 
-/// Evaluate strategy statistically — returns grouped stats by DTE/delta buckets
-#[allow(clippy::too_many_lines)]
-pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<GroupStats>> {
-    let strategy_def = strategies::find_strategy(&params.strategy)
-        .ok_or_else(|| anyhow::anyhow!("Unknown strategy: {}", params.strategy))?;
-
-    if params.leg_deltas.len() != strategy_def.legs.len() {
-        bail!(
-            "Strategy '{}' has {} legs but {} delta targets provided",
-            params.strategy,
-            strategy_def.legs.len(),
-            params.leg_deltas.len()
-        );
-    }
-
+/// Generate matched trades: filter → select delta → match entry/exit → join legs → apply strike rules.
+///
+/// Returns a `DataFrame` with one row per possible trade, containing entry and exit prices per leg
+/// (columns: `strike_N`, `bid_N`, `ask_N`, `delta_N`, `exit_bid_N`, `exit_ask_N` for each leg N).
+///
+/// Used by `evaluate_strategy` for statistical analysis.
+pub(crate) fn generate_matched_trades(
+    df: &DataFrame,
+    strategy_def: &StrategyDef,
+    leg_deltas: &[TargetRange],
+    max_entry_dte: i32,
+    exit_dte: i32,
+    min_bid_ask: f64,
+) -> Result<DataFrame> {
     let is_multi_exp = strategy_def.is_multi_expiration();
     let base_cols: &[&str] = &["strike", "bid", "ask", "delta", "exit_bid", "exit_ask"];
 
     // Process each leg
     let mut leg_dfs = Vec::new();
-    for (i, (leg, delta_target)) in strategy_def
-        .legs
-        .iter()
-        .zip(params.leg_deltas.iter())
-        .enumerate()
-    {
+    for (i, (leg, delta_target)) in strategy_def.legs.iter().zip(leg_deltas.iter()).enumerate() {
         let filtered = filters::filter_option_type(df, leg.option_type.as_str())?;
 
         // Compute DTE
@@ -49,26 +44,26 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
 
         // Filter DTE range — secondary legs get wider range to find far-term expirations
         let max_dte = if leg.expiration_cycle == ExpirationCycle::Secondary {
-            params.max_entry_dte * 2
+            max_entry_dte * 2
         } else {
-            params.max_entry_dte
+            max_entry_dte
         };
-        let dte_filtered = filters::filter_dte_range(&with_dte, max_dte, params.exit_dte)?;
+        let dte_filtered = filters::filter_dte_range(&with_dte, max_dte, exit_dte)?;
 
         // Filter valid quotes
-        let valid = filters::filter_valid_quotes(&dte_filtered, params.min_bid_ask)?;
+        let valid = filters::filter_valid_quotes(&dte_filtered, min_bid_ask)?;
 
         // Select closest delta
         let selected = filters::select_closest_delta(&valid, delta_target)?;
 
         // Match entry/exit
-        let matched = evaluation::match_entry_exit(&selected, &with_dte, params.exit_dte)?;
+        let matched = evaluation::match_entry_exit(&selected, &with_dte, exit_dte)?;
 
         if matched.height() == 0 {
             bail!(
                 "No trades found for leg {} of strategy '{}'",
                 i,
-                params.strategy
+                strategy_def.name
             );
         }
 
@@ -86,7 +81,7 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
     let combined = filters::join_legs(&leg_dfs, is_multi_exp)?;
 
     if combined.height() == 0 {
-        return Ok(vec![]);
+        return Ok(combined);
     }
 
     // Apply strike ordering rules
@@ -96,11 +91,44 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
         num_legs,
         strategy_def.strict_strike_order,
         if is_multi_exp {
-            Some(&strategy_def)
+            Some(strategy_def)
         } else {
             None
         },
     )?;
+
+    Ok(combined)
+}
+
+/// Evaluate strategy statistically — returns grouped stats by DTE/delta buckets
+#[allow(clippy::too_many_lines)]
+pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<GroupStats>> {
+    let strategy_def = strategies::find_strategy(&params.strategy)
+        .ok_or_else(|| anyhow::anyhow!("Unknown strategy: {}", params.strategy))?;
+
+    if params.leg_deltas.len() != strategy_def.legs.len() {
+        bail!(
+            "Strategy '{}' has {} legs but {} delta targets provided",
+            params.strategy,
+            strategy_def.legs.len(),
+            params.leg_deltas.len()
+        );
+    }
+
+    let is_multi_exp = strategy_def.is_multi_expiration();
+
+    let combined = generate_matched_trades(
+        df,
+        &strategy_def,
+        &params.leg_deltas,
+        params.max_entry_dte,
+        params.exit_dte,
+        params.min_bid_ask,
+    )?;
+
+    if combined.height() == 0 {
+        return Ok(vec![]);
+    }
 
     // Calculate P&L for each trade
     let mut pnl_values = Vec::with_capacity(combined.height());
@@ -221,7 +249,10 @@ fn build_signal_filters(params: &BacktestParams) -> Result<(DateFilter, DateFilt
     Ok((entry_dates, exit_dates))
 }
 
-/// Run a full backtest simulation using event-driven simulation
+/// Run a full backtest simulation.
+///
+/// Dispatches to the vectorized path when no adjustment rules are configured,
+/// falling back to the event-driven day-by-day loop for adjustment rules.
 pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestResult> {
     let strategy_def = strategies::find_strategy(&params.strategy)
         .ok_or_else(|| anyhow::anyhow!("Unknown strategy: {}", params.strategy))?;
@@ -238,22 +269,13 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
     // Build signal date filters if specified (loads OHLCV at most once)
     let (entry_dates, exit_dates) = build_signal_filters(params)?;
 
-    let (price_table, trading_days) = event_sim::build_price_table(df)?;
-    let mut candidates = event_sim::find_entry_candidates(df, &strategy_def, params)?;
-
-    // Filter entry candidates to only dates where the entry signal is active
-    if let Some(ref allowed_dates) = entry_dates {
-        candidates.retain(|date, _| allowed_dates.contains(date));
-    }
-
-    let (trade_log, equity_curve, quality) = event_sim::run_event_loop(
-        &price_table,
-        &candidates,
-        &trading_days,
-        params,
-        &strategy_def,
-        exit_dates.as_ref(),
-    );
+    let (trade_log, equity_curve, quality) = if params.adjustment_rules.is_empty() {
+        // Vectorized path — much faster for strategies without adjustments
+        vectorized_sim::run_vectorized_backtest(df, params, &entry_dates, exit_dates.as_ref())?
+    } else {
+        // Adjustment rules require sequential state — fall back to event loop
+        run_event_loop_path(df, params, &strategy_def, &entry_dates, &exit_dates)?
+    };
 
     let perf_metrics = metrics::calculate_metrics(&equity_curve, &trade_log, params.capital)?;
 
@@ -265,6 +287,34 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
         trade_log,
         quality,
     })
+}
+
+/// Event-loop fallback path for strategies with adjustment rules.
+fn run_event_loop_path(
+    df: &DataFrame,
+    params: &BacktestParams,
+    strategy_def: &StrategyDef,
+    entry_dates: &DateFilter,
+    exit_dates: &DateFilter,
+) -> Result<(Vec<TradeRecord>, Vec<EquityPoint>, BacktestQualityStats)> {
+    let (price_table, trading_days) = event_sim::build_price_table(df)?;
+    let mut candidates = event_sim::find_entry_candidates(df, strategy_def, params)?;
+
+    // Filter entry candidates to only dates where the entry signal is active
+    if let Some(ref allowed_dates) = entry_dates {
+        candidates.retain(|date, _| allowed_dates.contains(date));
+    }
+
+    let (trade_log, equity_curve, quality) = event_sim::run_event_loop(
+        &price_table,
+        &candidates,
+        &trading_days,
+        params,
+        strategy_def,
+        exit_dates.as_ref(),
+    );
+
+    Ok((trade_log, equity_curve, quality))
 }
 
 /// Compare multiple strategies
