@@ -349,6 +349,21 @@ pub fn run_event_loop(
         // Remove closed positions
         positions.retain(|p| matches!(p.status, PositionStatus::Open));
 
+        // Adjustment phase: check rules against remaining open positions
+        if !params.adjustment_rules.is_empty() {
+            check_and_apply_adjustments(
+                &mut positions,
+                today,
+                price_table,
+                &last_known,
+                params,
+                &mut trade_log,
+                &mut trade_id,
+                &mut realized_equity,
+            );
+            positions.retain(|p| matches!(p.status, PositionStatus::Open));
+        }
+
         // Phase 2: Enter new positions
         let open_count = positions.len();
         if open_count < params.max_positions as usize {
@@ -678,6 +693,285 @@ fn select_candidate<'a>(
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
             .copied(),
+    }
+}
+
+/// Look up the fill price for a leg from the price table or last-known cache.
+#[allow(clippy::too_many_arguments)]
+fn lookup_fill_price(
+    leg_exp: NaiveDate,
+    leg_strike: f64,
+    leg_opt_type: OptionType,
+    fill_side: Side,
+    today: NaiveDate,
+    price_table: &PriceTable,
+    last_known: &HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
+    slippage: &Slippage,
+) -> f64 {
+    let key = (today, leg_exp, OrderedFloat(leg_strike), leg_opt_type);
+    let snap = price_table
+        .get(&key)
+        .or_else(|| last_known.get(&(leg_exp, OrderedFloat(leg_strike), leg_opt_type)));
+    snap.map_or(0.0, |s| {
+        pricing::fill_price(s.bid, s.ask, fill_side, slippage)
+    })
+}
+
+/// Close a single leg of a position by setting its close price/date.
+fn close_leg(leg: &mut PositionLeg, today: NaiveDate, close_price: f64) {
+    leg.closed = true;
+    leg.close_price = Some(close_price);
+    leg.close_date = Some(today);
+}
+
+/// Check whether an adjustment trigger fires for a position.
+fn trigger_fires(
+    trigger: &AdjustmentTrigger,
+    pos: &Position,
+    today: NaiveDate,
+    price_table: &PriceTable,
+    last_known: &HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
+    slippage: &Slippage,
+    multiplier: i32,
+) -> bool {
+    match trigger {
+        AdjustmentTrigger::DefensiveRoll { loss_threshold } => {
+            let mtm = mark_to_market(pos, today, price_table, last_known, slippage, multiplier);
+            mtm < -(loss_threshold * pos.entry_cost.abs())
+        }
+        AdjustmentTrigger::CalendarRoll { dte_trigger, .. } => {
+            (pos.expiration - today).num_days() <= i64::from(*dte_trigger)
+        }
+        AdjustmentTrigger::DeltaDrift {
+            leg_index,
+            max_delta,
+        } => pos.legs.get(*leg_index).is_some_and(|leg| {
+            if leg.closed {
+                return false;
+            }
+            let key = (
+                today,
+                leg.expiration,
+                OrderedFloat(leg.strike),
+                leg.option_type,
+            );
+            let snap = price_table.get(&key).or_else(|| {
+                last_known.get(&(leg.expiration, OrderedFloat(leg.strike), leg.option_type))
+            });
+            snap.is_some_and(|s| s.delta.abs() > *max_delta)
+        }),
+    }
+}
+
+/// Execute an adjustment action on a position.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn execute_adjustment(
+    action: &AdjustmentAction,
+    pos: &mut Position,
+    today: NaiveDate,
+    price_table: &PriceTable,
+    last_known: &HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
+    params: &BacktestParams,
+    trade_log: &mut Vec<TradeRecord>,
+    trade_id: &mut usize,
+    realized_equity: &mut f64,
+) {
+    match action {
+        AdjustmentAction::Close { leg_index, .. } => {
+            if let Some(leg) = pos.legs.get_mut(*leg_index) {
+                if !leg.closed {
+                    let exit_side = leg.side.flip();
+                    let cp = lookup_fill_price(
+                        leg.expiration,
+                        leg.strike,
+                        leg.option_type,
+                        exit_side,
+                        today,
+                        price_table,
+                        last_known,
+                        &params.slippage,
+                    );
+                    close_leg(leg, today, cp);
+                }
+            }
+            finalize_if_all_closed(
+                pos,
+                today,
+                price_table,
+                last_known,
+                params,
+                trade_log,
+                trade_id,
+                realized_equity,
+            );
+        }
+        AdjustmentAction::Roll {
+            leg_index,
+            new_strike,
+            new_expiration,
+            ..
+        } => {
+            let new_leg_info = if let Some(leg) = pos.legs.get_mut(*leg_index) {
+                if leg.closed {
+                    None
+                } else {
+                    let exit_side = leg.side.flip();
+                    let cp = lookup_fill_price(
+                        leg.expiration,
+                        leg.strike,
+                        leg.option_type,
+                        exit_side,
+                        today,
+                        price_table,
+                        last_known,
+                        &params.slippage,
+                    );
+                    let info = (leg.side, leg.option_type, leg.qty);
+                    close_leg(leg, today, cp);
+                    Some(info)
+                }
+            } else {
+                None
+            };
+
+            if let Some((leg_side, leg_opt_type, leg_qty)) = new_leg_info {
+                let ep = lookup_fill_price(
+                    *new_expiration,
+                    *new_strike,
+                    leg_opt_type,
+                    leg_side,
+                    today,
+                    price_table,
+                    last_known,
+                    &params.slippage,
+                );
+                pos.legs.push(PositionLeg {
+                    leg_index: pos.legs.len(),
+                    side: leg_side,
+                    option_type: leg_opt_type,
+                    strike: *new_strike,
+                    expiration: *new_expiration,
+                    entry_price: ep,
+                    qty: leg_qty,
+                    closed: false,
+                    close_price: None,
+                    close_date: None,
+                });
+            }
+        }
+        AdjustmentAction::Add {
+            leg: cand_leg,
+            side,
+            qty,
+            ..
+        } => {
+            let ep = lookup_fill_price(
+                cand_leg.expiration,
+                cand_leg.strike,
+                cand_leg.option_type,
+                *side,
+                today,
+                price_table,
+                last_known,
+                &params.slippage,
+            );
+            pos.legs.push(PositionLeg {
+                leg_index: pos.legs.len(),
+                side: *side,
+                option_type: cand_leg.option_type,
+                strike: cand_leg.strike,
+                expiration: cand_leg.expiration,
+                entry_price: ep,
+                qty: *qty,
+                closed: false,
+                close_price: None,
+                close_date: None,
+            });
+        }
+    }
+}
+
+/// If all legs of a position are closed, mark the position as closed with Adjustment exit.
+#[allow(clippy::too_many_arguments)]
+fn finalize_if_all_closed(
+    pos: &mut Position,
+    today: NaiveDate,
+    price_table: &PriceTable,
+    last_known: &HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
+    params: &BacktestParams,
+    trade_log: &mut Vec<TradeRecord>,
+    trade_id: &mut usize,
+    realized_equity: &mut f64,
+) {
+    if !pos.legs.iter().all(|l| l.closed) {
+        return;
+    }
+    let pnl = mark_to_market(
+        pos,
+        today,
+        price_table,
+        last_known,
+        &params.slippage,
+        pos.multiplier,
+    );
+    *realized_equity += pnl;
+    pos.status = PositionStatus::Closed(ExitType::Adjustment);
+
+    *trade_id += 1;
+    trade_log.push(TradeRecord {
+        trade_id: *trade_id,
+        entry_datetime: pos.entry_date.and_hms_opt(0, 0, 0).unwrap(),
+        exit_datetime: today.and_hms_opt(0, 0, 0).unwrap(),
+        entry_cost: pos.entry_cost,
+        exit_proceeds: pos.entry_cost + pnl,
+        pnl,
+        days_held: (today - pos.entry_date).num_days(),
+        exit_type: ExitType::Adjustment,
+    });
+}
+
+/// Check adjustment rules against open positions and apply the first matching rule per position.
+/// Runs between exit checks and new entries.
+#[allow(clippy::too_many_arguments)]
+fn check_and_apply_adjustments(
+    positions: &mut [Position],
+    today: NaiveDate,
+    price_table: &PriceTable,
+    last_known: &HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
+    params: &BacktestParams,
+    trade_log: &mut Vec<TradeRecord>,
+    trade_id: &mut usize,
+    realized_equity: &mut f64,
+) {
+    for pos in positions.iter_mut() {
+        if !matches!(pos.status, PositionStatus::Open) {
+            continue;
+        }
+        for rule in &params.adjustment_rules {
+            if !trigger_fires(
+                &rule.trigger,
+                pos,
+                today,
+                price_table,
+                last_known,
+                &params.slippage,
+                params.multiplier,
+            ) {
+                continue;
+            }
+            execute_adjustment(
+                &rule.action,
+                pos,
+                today,
+                price_table,
+                last_known,
+                params,
+                trade_log,
+                trade_id,
+                realized_equity,
+            );
+            break; // First matching rule wins per position
+        }
     }
 }
 

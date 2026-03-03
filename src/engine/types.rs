@@ -20,6 +20,14 @@ impl Side {
             Side::Short => -1.0,
         }
     }
+
+    #[must_use]
+    pub fn flip(self) -> Self {
+        match self {
+            Side::Long => Side::Short,
+            Side::Short => Side::Long,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
