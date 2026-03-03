@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::engine::types::{
-    Commission, CompareResult, EquityPoint, GroupStats, PerformanceMetrics, Slippage, TargetRange,
-    TradeRecord, TradeSelector,
+    Commission, CompareResult, GroupStats, PerformanceMetrics, Slippage, TargetRange, TradeRecord,
+    TradeSelector,
 };
 
 /// Data quality report for `evaluate_strategy`
@@ -43,8 +43,6 @@ pub struct BacktestResponse {
     pub parameters: BacktestParamsSummary,
     pub metrics: PerformanceMetrics,
     pub trade_summary: TradeSummary,
-    pub equity_curve_summary: EquityCurveSummary,
-    pub equity_curve: Vec<EquityPoint>,
     pub trade_log: Vec<TradeRecord>,
     pub data_quality: BacktestDataQuality,
     pub suggested_next_steps: Vec<String>,
@@ -108,17 +106,6 @@ pub struct TradeSummary {
 pub struct TradeStat {
     pub pnl: f64,
     pub date: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct EquityCurveSummary {
-    pub start_equity: f64,
-    pub end_equity: f64,
-    pub total_return_pct: f64,
-    pub peak_equity: f64,
-    pub trough_equity: f64,
-    pub num_points: usize,
-    pub sampled_curve: Vec<EquityPoint>,
 }
 
 /// AI-enriched response for `evaluate_strategy`

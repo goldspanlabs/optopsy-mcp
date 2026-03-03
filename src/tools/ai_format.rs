@@ -2,14 +2,14 @@ use std::collections::HashMap;
 
 use crate::engine::types::{
     BacktestParams, BacktestQualityStats, BacktestResult, CompareParams, CompareResult,
-    EquityPoint, EvaluateParams, ExitType, GroupStats, TradeRecord,
+    EvaluateParams, ExitType, GroupStats, TradeRecord,
 };
 
 use crate::data::eodhd::DownloadSummary;
 
 use super::response_types::{
     BacktestDataQuality, BacktestParamsSummary, BacktestResponse, CompareResponse,
-    CompareStrategyEntry, DataQualityReport, DateRange, DownloadResponse, EquityCurveSummary,
+    CompareStrategyEntry, DataQualityReport, DateRange, DownloadResponse,
     EvaluateParamsSummary, EvaluateResponse, LoadDataResponse, PriceBar, RawPricesResponse,
     StrategiesResponse, StrategyInfo, TradeStat, TradeSummary,
 };
@@ -46,30 +46,6 @@ fn exit_type_name(exit_type: &ExitType) -> &'static str {
         ExitType::Adjustment => "Adjustment",
         ExitType::Signal => "Signal",
     }
-}
-
-#[allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)]
-fn sample_equity_curve(curve: &[EquityPoint], max_points: usize) -> Vec<EquityPoint> {
-    if max_points == 0 {
-        return vec![];
-    }
-    if max_points == 1 {
-        return curve.last().cloned().into_iter().collect();
-    }
-    if curve.len() <= max_points {
-        return curve.to_vec();
-    }
-    let step = (curve.len() - 1) as f64 / (max_points - 1) as f64;
-    (0..max_points)
-        .map(|i| {
-            let idx = (i as f64 * step).round() as usize;
-            curve[idx.min(curve.len() - 1)].clone()
-        })
-        .collect()
 }
 
 fn compute_trade_summary(
@@ -124,39 +100,6 @@ fn compute_trade_summary(
         exit_breakdown,
         best_trade: to_trade_stat(best),
         worst_trade: to_trade_stat(worst),
-    }
-}
-
-fn compute_equity_summary(
-    curve: &[EquityPoint],
-    capital: f64,
-    metrics: &crate::engine::types::PerformanceMetrics,
-) -> EquityCurveSummary {
-    let start_equity = if curve.is_empty() {
-        capital
-    } else {
-        curve[0].equity
-    };
-    let end_equity = curve.last().map_or(capital, |p| p.equity);
-    let peak_equity = curve
-        .iter()
-        .map(|p| p.equity)
-        .fold(f64::NEG_INFINITY, f64::max)
-        .max(capital);
-    let trough_equity = curve
-        .iter()
-        .map(|p| p.equity)
-        .fold(f64::INFINITY, f64::min)
-        .min(capital);
-
-    EquityCurveSummary {
-        start_equity,
-        end_equity,
-        total_return_pct: metrics.total_return_pct,
-        peak_equity,
-        trough_equity,
-        num_points: curve.len(),
-        sampled_curve: sample_equity_curve(curve, 50),
     }
 }
 
@@ -360,7 +303,6 @@ fn backtest_key_findings(
 pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> BacktestResponse {
     let m = &result.metrics;
     let trade_summary = compute_trade_summary(&result.trade_log, m);
-    let equity_curve_summary = compute_equity_summary(&result.equity_curve, params.capital, m);
     let data_quality = build_backtest_quality(&result.quality);
 
     // Zero-trade early branch: metrics are not meaningful
@@ -401,8 +343,6 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
             },
             metrics: result.metrics,
             trade_summary,
-            equity_curve_summary,
-            equity_curve: result.equity_curve,
             trade_log: result.trade_log,
             data_quality,
             suggested_next_steps: vec![
@@ -491,8 +431,6 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
         },
         metrics: result.metrics,
         trade_summary,
-        equity_curve_summary,
-        equity_curve: result.equity_curve,
         trade_log: result.trade_log,
         data_quality,
         suggested_next_steps,
@@ -846,7 +784,7 @@ pub fn format_raw_prices(
         prices,
         suggested_next_steps: vec![
             "Use the prices array to generate a line chart (close prices), candlestick chart (OHLC), or area chart.".to_string(),
-            "Combine with backtest equity_curve data to overlay strategy performance on price action.".to_string(),
+            "Combine with backtest trade_log data to overlay strategy performance on price action.".to_string(),
         ],
     }
 }
@@ -854,7 +792,7 @@ pub fn format_raw_prices(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::types::TradeSelector;
+    use crate::engine::types::{EquityPoint, TradeSelector};
     use chrono::NaiveDateTime;
 
     fn make_trade(pnl: f64, days_held: i64, exit_type: ExitType) -> TradeRecord {
@@ -868,15 +806,6 @@ mod tests {
             pnl,
             days_held,
             exit_type,
-        }
-    }
-
-    fn make_equity_point(days_offset: i64, equity: f64) -> EquityPoint {
-        let dt = NaiveDateTime::parse_from_str("2024-01-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap()
-            + chrono::Duration::days(days_offset);
-        EquityPoint {
-            datetime: dt,
-            equity,
         }
     }
 
@@ -934,59 +863,6 @@ mod tests {
         assert_eq!(summary.exit_breakdown["Expiration"], 1);
         assert_eq!(summary.exit_breakdown["StopLoss"], 1);
         assert_eq!(summary.exit_breakdown["TakeProfit"], 1);
-    }
-
-    #[test]
-    fn equity_summary_empty_curve() {
-        let metrics = crate::engine::metrics::DEFAULT_METRICS;
-        let summary = compute_equity_summary(&[], 100_000.0, &metrics);
-        assert!((summary.start_equity - 100_000.0).abs() < f64::EPSILON);
-        assert!((summary.end_equity - 100_000.0).abs() < f64::EPSILON);
-        assert!((summary.total_return_pct - 0.0).abs() < f64::EPSILON);
-        assert_eq!(summary.num_points, 0);
-    }
-
-    #[test]
-    fn equity_summary_with_data() {
-        let curve = vec![
-            make_equity_point(0, 100_000.0),
-            make_equity_point(1, 105_000.0),
-            make_equity_point(2, 95_000.0),
-            make_equity_point(3, 110_000.0),
-        ];
-        let metrics = crate::engine::types::PerformanceMetrics {
-            total_return_pct: 10.0,
-            ..crate::engine::metrics::DEFAULT_METRICS
-        };
-        let summary = compute_equity_summary(&curve, 100_000.0, &metrics);
-        assert!((summary.start_equity - 100_000.0).abs() < f64::EPSILON);
-        assert!((summary.end_equity - 110_000.0).abs() < f64::EPSILON);
-        assert!((summary.total_return_pct - 10.0).abs() < 1e-10);
-        assert!((summary.peak_equity - 110_000.0).abs() < f64::EPSILON);
-        assert!((summary.trough_equity - 95_000.0).abs() < f64::EPSILON);
-        assert_eq!(summary.num_points, 4);
-    }
-
-    #[test]
-    fn sample_equity_curve_no_downsample() {
-        let curve = vec![make_equity_point(0, 100.0), make_equity_point(1, 110.0)];
-        let sampled = sample_equity_curve(&curve, 50);
-        assert_eq!(sampled.len(), 2);
-    }
-
-    #[test]
-    fn sample_equity_curve_downsamples() {
-        let curve: Vec<EquityPoint> = (0..100)
-            .map(|i| {
-                let eq = 100.0 + i as f64;
-                make_equity_point(i, eq)
-            })
-            .collect();
-        let sampled = sample_equity_curve(&curve, 10);
-        assert_eq!(sampled.len(), 10);
-        // First and last points should be preserved
-        assert!((sampled[0].equity - 100.0).abs() < 1e-10);
-        assert!((sampled[9].equity - 199.0).abs() < 1e-10);
     }
 
     #[test]
@@ -1453,23 +1329,6 @@ mod tests {
         // Trade summary should have 0 losers
         assert_eq!(response.trade_summary.losers, 0);
         assert_eq!(response.trade_summary.winners, 2);
-    }
-
-    #[test]
-    fn format_backtest_equity_peak_trough_from_curve() {
-        let curve = vec![
-            make_equity_point(0, 100_000.0),
-            make_equity_point(1, 95_000.0),
-            make_equity_point(2, 110_000.0),
-        ];
-        let trades = vec![make_trade(10_000.0, 2, ExitType::Expiration)];
-        let result = make_backtest_result(10_000.0, 1.0, 0.05, 999.99, 2.0, trades, curve);
-        let params = make_backtest_params("test", 100_000.0);
-        let response = format_backtest(result, &params);
-
-        assert!((response.equity_curve_summary.peak_equity - 110_000.0).abs() < f64::EPSILON);
-        assert!((response.equity_curve_summary.trough_equity - 95_000.0).abs() < f64::EPSILON);
-        assert_eq!(response.equity_curve_summary.num_points, 3);
     }
 
     #[test]

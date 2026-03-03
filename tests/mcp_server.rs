@@ -959,7 +959,6 @@ async fn run_backtest_returns_trades_and_metrics() {
         .unwrap();
     let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
     assert!(!resp["trade_log"].as_array().unwrap().is_empty());
-    assert!(!resp["equity_curve"].as_array().unwrap().is_empty());
     assert!(resp["metrics"].is_object());
 
     client.cancel().await.unwrap();
@@ -1087,8 +1086,6 @@ async fn backtest_golden_path_output_shape() {
         "key_findings",
         "metrics",
         "trade_summary",
-        "equity_curve_summary",
-        "equity_curve",
         "trade_log",
         "suggested_next_steps",
     ] {
@@ -1105,15 +1102,6 @@ async fn backtest_golden_path_output_shape() {
     let ts = &resp["trade_summary"];
     for key in ["total", "winners", "losers", "exit_breakdown"] {
         assert!(ts.get(key).is_some(), "Missing trade_summary key: {key}");
-    }
-
-    // Equity curve summary
-    let ecs = &resp["equity_curve_summary"];
-    for key in ["start_equity", "end_equity", "total_return_pct"] {
-        assert!(
-            ecs.get(key).is_some(),
-            "Missing equity_curve_summary key: {key}"
-        );
     }
 
     // Trade log entry shape
