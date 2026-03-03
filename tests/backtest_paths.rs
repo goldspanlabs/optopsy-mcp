@@ -6,10 +6,11 @@
 //! A dummy rule with an impossibly high threshold ensures the event loop is
 //! exercised without actually triggering any adjustment.
 
+use chrono::NaiveDate;
 use optopsy_mcp::engine::core::run_backtest;
 use optopsy_mcp::engine::types::{
-    AdjustmentAction, AdjustmentRule, AdjustmentTrigger, BacktestParams, Slippage, TargetRange,
-    TradeSelector,
+    AdjustmentAction, AdjustmentRule, AdjustmentTrigger, BacktestParams, ExitType, Slippage,
+    TargetRange, TradeSelector,
 };
 
 mod common;
@@ -173,4 +174,104 @@ fn event_loop_dispatch_with_adjustment_rules() {
     let bt = result.unwrap();
     assert!(bt.trade_count > 0, "expected at least 1 trade");
     assert!(!bt.trade_log.is_empty(), "expected non-empty trade log");
+}
+
+// ─── Trade Log Correctness Tests ─────────────────────────────────────────────
+//
+// These tests verify every field of TradeRecord against hand-calculated values,
+// running both vectorized (empty adjustment_rules) and event-loop paths.
+
+/// Assert every field of a single-trade backtest result against expected values.
+fn assert_trade_correctness(
+    label: &str,
+    params: &BacktestParams,
+    expected_entry_cost: f64,
+    expected_exit_proceeds: f64,
+    expected_pnl: f64,
+) {
+    let df = make_multi_strike_df();
+    let bt = run_backtest(&df, params).unwrap_or_else(|e| panic!("{label}: backtest failed: {e}"));
+
+    assert_eq!(bt.trade_count, 1, "{label}: expected 1 trade");
+    let trade = &bt.trade_log[0];
+
+    let entry_date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+    let exit_date = NaiveDate::from_ymd_opt(2024, 2, 11).unwrap();
+
+    assert_eq!(
+        trade.entry_datetime.date(),
+        entry_date,
+        "{label}: entry date"
+    );
+    assert_eq!(trade.exit_datetime.date(), exit_date, "{label}: exit date");
+    assert_eq!(trade.days_held, 27, "{label}: days_held");
+    assert!(
+        matches!(trade.exit_type, ExitType::DteExit),
+        "{label}: expected DteExit, got {:?}",
+        trade.exit_type
+    );
+    assert!(
+        (trade.entry_cost - expected_entry_cost).abs() < 0.01,
+        "{label}: entry_cost expected {expected_entry_cost}, got {}",
+        trade.entry_cost
+    );
+    assert!(
+        (trade.exit_proceeds - expected_exit_proceeds).abs() < 0.01,
+        "{label}: exit_proceeds expected {expected_exit_proceeds}, got {}",
+        trade.exit_proceeds
+    );
+    assert!(
+        (trade.pnl - expected_pnl).abs() < 0.01,
+        "{label}: pnl expected {expected_pnl}, got {}",
+        trade.pnl
+    );
+    // Internal consistency
+    assert!(
+        (trade.exit_proceeds - (trade.entry_cost + trade.pnl)).abs() < 0.01,
+        "{label}: exit_proceeds != entry_cost + pnl"
+    );
+}
+
+#[test]
+fn correctness_long_call_trade_log() {
+    // L Call@100: entry_mid=5.25, exit_mid=2.25
+    // entry_cost = 5.25 × 1 × 100 = 525.0
+    // exit_proceeds = 2.25 × 1 × 100 = 225.0
+    // pnl = 225.0 - 525.0 = -300.0
+    let vectorized = base_params("long_call", vec![delta(0.50)]);
+    assert_trade_correctness("long_call[vec]", &vectorized, 525.0, 225.0, -300.0);
+
+    let mut event_loop = vectorized;
+    event_loop.adjustment_rules = vec![noop_adjustment_rule()];
+    assert_trade_correctness("long_call[evt]", &event_loop, 525.0, 225.0, -300.0);
+}
+
+#[test]
+fn correctness_short_call_trade_log() {
+    // S Call@100: entry_mid=5.25, exit_mid=2.25
+    // entry_cost = 5.25 × (-1) × 100 = -525.0
+    // exit_proceeds = 2.25 × (-1) × 100 = -225.0
+    // pnl = -225.0 - (-525.0) = 300.0
+    let vectorized = base_params("short_call", vec![delta(0.50)]);
+    assert_trade_correctness("short_call[vec]", &vectorized, -525.0, -225.0, 300.0);
+
+    let mut event_loop = vectorized;
+    event_loop.adjustment_rules = vec![noop_adjustment_rule()];
+    assert_trade_correctness("short_call[evt]", &event_loop, -525.0, -225.0, 300.0);
+}
+
+#[test]
+fn correctness_bull_call_spread_trade_log() {
+    // L Call@100 (δ0.50) + S Call@105 (δ0.35)
+    // L Call@100: entry_mid=5.25, exit_mid=2.25 → cost=525, proceeds=225
+    // S Call@105: entry_mid=3.25, exit_mid=1.25 → cost=-325, proceeds=-125
+    // entry_cost = 525 + (-325) = 200.0
+    // exit_proceeds = 225 + (-125) = 100.0
+    // pnl = 100.0 - 200.0 = -100.0
+    let vectorized = base_params("bull_call_spread", vec![delta(0.50), delta(0.35)]);
+    assert_trade_correctness("bull_call_spread[vec]", &vectorized, 200.0, 100.0, -100.0);
+
+    let mut event_loop = vectorized;
+    event_loop.adjustment_rules = vec![noop_adjustment_rule()];
+    assert_trade_correctness("bull_call_spread[evt]", &event_loop, 200.0, 100.0, -100.0);
 }

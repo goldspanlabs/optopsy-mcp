@@ -7,9 +7,10 @@
 //! for near-term) produces deterministic, hand-calculated `PnL`.
 //! Calendar/diagonal strategies use both expirations; all others use near-term only.
 
+use chrono::NaiveDate;
 use optopsy_mcp::engine::core::{evaluate_strategy, run_backtest};
 use optopsy_mcp::engine::types::{
-    BacktestParams, EvaluateParams, Slippage, TargetRange, TradeSelector,
+    BacktestParams, EvaluateParams, ExitType, Slippage, TargetRange, TradeSelector,
 };
 
 mod common;
@@ -55,7 +56,8 @@ fn evaluate_params(strategy: &str, leg_deltas: Vec<TargetRange>) -> EvaluatePara
     }
 }
 
-/// Run a backtest and assert on trade count, `PnL`, and days held.
+/// Run a backtest and assert on trade count, `PnL`, days held, dates, exit type, and
+/// internal consistency (`exit_proceeds` ≈ `entry_cost` + `pnl`).
 fn assert_backtest(strategy: &str, deltas: Vec<TargetRange>, expected_pnl: f64) {
     let df = make_multi_strike_df();
     let params = backtest_params(strategy, deltas);
@@ -78,6 +80,111 @@ fn assert_backtest(strategy: &str, deltas: Vec<TargetRange>, expected_pnl: f64) 
     assert_eq!(
         bt.trade_log[0].days_held, 27,
         "{strategy}: expected 27 days held (Jan 15 → Feb 11)"
+    );
+
+    let trade = &bt.trade_log[0];
+
+    // Entry date must be Jan 15, 2024
+    let expected_entry = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+    assert_eq!(
+        trade.entry_datetime.date(),
+        expected_entry,
+        "{strategy}: expected entry date {expected_entry}, got {}",
+        trade.entry_datetime.date()
+    );
+
+    // Exit date must be Feb 11, 2024
+    let expected_exit = NaiveDate::from_ymd_opt(2024, 2, 11).unwrap();
+    assert_eq!(
+        trade.exit_datetime.date(),
+        expected_exit,
+        "{strategy}: expected exit date {expected_exit}, got {}",
+        trade.exit_datetime.date()
+    );
+
+    // Exit type must be DteExit
+    assert!(
+        matches!(trade.exit_type, ExitType::DteExit),
+        "{strategy}: expected DteExit, got {:?}",
+        trade.exit_type
+    );
+
+    // Internal consistency: exit_proceeds ≈ entry_cost + pnl
+    let expected_exit_proceeds = trade.entry_cost + trade.pnl;
+    assert!(
+        (trade.exit_proceeds - expected_exit_proceeds).abs() < 0.01,
+        "{strategy}: exit_proceeds ({}) != entry_cost ({}) + pnl ({}), expected {expected_exit_proceeds}",
+        trade.exit_proceeds,
+        trade.entry_cost,
+        trade.pnl
+    );
+}
+
+/// Like `assert_backtest` but also verifies `entry_cost` against a hand-calculated value.
+fn assert_backtest_full(
+    strategy: &str,
+    deltas: Vec<TargetRange>,
+    expected_pnl: f64,
+    expected_entry_cost: f64,
+) {
+    let df = make_multi_strike_df();
+    let params = backtest_params(strategy, deltas);
+
+    let result = run_backtest(&df, &params);
+    assert!(
+        result.is_ok(),
+        "{strategy}: run_backtest failed: {:?}",
+        result.err()
+    );
+
+    let bt = result.unwrap();
+    assert_eq!(bt.trade_count, 1, "{strategy}: expected 1 trade");
+
+    let trade = &bt.trade_log[0];
+
+    // All standard assertions
+    assert!(
+        (bt.total_pnl - expected_pnl).abs() < 0.01,
+        "{strategy}: expected PnL {expected_pnl}, got {}",
+        bt.total_pnl
+    );
+    assert_eq!(trade.days_held, 27, "{strategy}: expected 27 days held");
+
+    let expected_entry = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+    assert_eq!(
+        trade.entry_datetime.date(),
+        expected_entry,
+        "{strategy}: expected entry date {expected_entry}"
+    );
+
+    let expected_exit = NaiveDate::from_ymd_opt(2024, 2, 11).unwrap();
+    assert_eq!(
+        trade.exit_datetime.date(),
+        expected_exit,
+        "{strategy}: expected exit date {expected_exit}"
+    );
+
+    assert!(
+        matches!(trade.exit_type, ExitType::DteExit),
+        "{strategy}: expected DteExit, got {:?}",
+        trade.exit_type
+    );
+
+    // Verify entry_cost
+    assert!(
+        (trade.entry_cost - expected_entry_cost).abs() < 0.01,
+        "{strategy}: expected entry_cost {expected_entry_cost}, got {}",
+        trade.entry_cost
+    );
+
+    // Internal consistency
+    let expected_exit_proceeds = trade.entry_cost + trade.pnl;
+    assert!(
+        (trade.exit_proceeds - expected_exit_proceeds).abs() < 0.01,
+        "{strategy}: exit_proceeds ({}) != entry_cost ({}) + pnl ({})",
+        trade.exit_proceeds,
+        trade.entry_cost,
+        trade.pnl
     );
 }
 
@@ -122,6 +229,47 @@ fn backtest_covered_call() {
 fn backtest_cash_secured_put() {
     // S Put@100: same as short_put = +150
     assert_backtest("cash_secured_put", vec![delta(0.40)], 150.0);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FULL FIELD VERIFICATION — representative subset with entry_cost checks
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn backtest_full_long_call() {
+    // L Call@100: entry_mid=5.25, entry_cost = 5.25 × 1 × 100 = 525
+    assert_backtest_full("long_call", vec![delta(0.50)], -300.0, 525.0);
+}
+
+#[test]
+fn backtest_full_short_call() {
+    // S Call@100: entry_cost = 5.25 × (-1) × 100 = -525
+    assert_backtest_full("short_call", vec![delta(0.50)], 300.0, -525.0);
+}
+
+#[test]
+fn backtest_full_bull_call_spread() {
+    // L Call@100 + S Call@105
+    // entry_cost = (5.25 × 1 × 100) + (3.25 × (-1) × 100) = 525 - 325 = 200
+    assert_backtest_full(
+        "bull_call_spread",
+        vec![delta(0.50), delta(0.35)],
+        -100.0,
+        200.0,
+    );
+}
+
+#[test]
+fn backtest_full_iron_condor() {
+    // L Put@95 + S Put@100 + S Call@105 + L Call@110
+    // entry_cost = (1.25 × 1 × 100) + (2.75 × (-1) × 100) + (3.25 × (-1) × 100) + (1.75 × 1 × 100)
+    //            = 125 - 275 - 325 + 175 = -300
+    assert_backtest_full(
+        "iron_condor",
+        vec![delta(0.20), delta(0.40), delta(0.35), delta(0.20)],
+        150.0,
+        -300.0,
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
