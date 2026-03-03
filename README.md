@@ -7,6 +7,10 @@
 
 An MCP server for options strategy screening and simulation, powered by a high-performance Rust rewrite of the [Optopsy](https://github.com/goldspanlabs/optopsy) engine.
 
+> [!NOTE]
+> This project is currently in a pre-release state. We are iterating quickly, which means breaking changes to the API and configuration may occur without prior notice. Use in production environments at your own risk.
+
+
 ## Example Prompts
 
 Once connected via Claude Desktop or any MCP client, try asking:
