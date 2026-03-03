@@ -59,7 +59,7 @@ jobs:
           echo '## Coverage Summary' >> $GITHUB_STEP_SUMMARY
           echo '' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          grep -E '(^Filename|^----|^TOTAL|\.rs)' coverage-output.txt >> $GITHUB_STEP_SUMMARY
+          grep -E '(^Filename|^----|^TOTAL|\.rs)' coverage-output.txt | grep -v 'Running' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
   build:
