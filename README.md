@@ -36,8 +36,6 @@ Once connected via Claude Desktop or any MCP client, try asking:
 - "Which strategy has the best risk-adjusted returns: jade lizard or iron condor?"
 - "Run the same iron condor backtest with mid, spread, and liquidity slippage models and compare"
 
-The Rust engine also uses fuzzy exit matching — finding the nearest available trading day instead of requiring an exact DTE match. This retains ~28% more trades that Python silently drops due to weekends, holidays, and data gaps.
-
 ## Features
 
 - **Multi-Source Data Integration** — Load options data from EODHD API, local Parquet cache, or S3-compatible storage with fetch-on-miss
