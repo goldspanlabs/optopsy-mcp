@@ -1,4 +1,4 @@
-//! Benchmark: optopsy-mcp (Rust) — long_call evaluate on SPY data.
+//! Benchmark: optopsy-mcp (Rust) — `long_call` evaluate on SPY data.
 
 use std::time::Instant;
 
@@ -21,7 +21,7 @@ fn main() {
     let df = normalize_quote_datetime(df).expect("Failed to normalize dates");
     let t_load = t0.elapsed();
     let n_rows = df.height();
-    println!("  Loaded {} rows in {:.3}s", n_rows, t_load.as_secs_f64());
+    println!("  Loaded {n_rows} rows in {:.3}s", t_load.as_secs_f64());
 
     // --- Evaluate: long_call with matching params ---
     let params = EvaluateParams {
@@ -47,29 +47,29 @@ fn main() {
     // Timed runs
     let n_runs = 5;
     let mut times = Vec::new();
-    println!("Running {} timed iterations...", n_runs);
+    println!("Running {n_runs} timed iterations...");
     for i in 0..n_runs {
         let t0 = Instant::now();
         let result = evaluate_strategy(&df, &params).expect("evaluate failed");
         let elapsed = t0.elapsed().as_secs_f64();
         times.push(elapsed);
         if i == n_runs - 1 {
-            println!("  Run {}: {:.3}s ({} groups)", i + 1, elapsed, result.len());
+            println!("  Run {}: {elapsed:.3}s ({} groups)", i + 1, result.len());
         } else {
-            println!("  Run {}: {:.3}s", i + 1, elapsed);
+            println!("  Run {}: {elapsed:.3}s", i + 1);
         }
     }
 
     let avg: f64 = times.iter().sum::<f64>() / times.len() as f64;
-    let best = times.iter().cloned().reduce(f64::min).unwrap();
-    let worst = times.iter().cloned().reduce(f64::max).unwrap();
+    let best = times.iter().copied().reduce(f64::min).unwrap();
+    let worst = times.iter().copied().reduce(f64::max).unwrap();
 
     println!("\n{}", "=".repeat(50));
     println!("optopsy-mcp (Rust) — long_call evaluate");
-    println!("  Data rows : {}", n_rows);
+    println!("  Data rows : {n_rows}");
     println!("  Load time : {:.3}s", t_load.as_secs_f64());
-    println!("  Avg time  : {:.3}s", avg);
-    println!("  Best time : {:.3}s", best);
-    println!("  Worst time: {:.3}s", worst);
+    println!("  Avg time  : {avg:.3}s");
+    println!("  Best time : {best:.3}s");
+    println!("  Worst time: {worst:.3}s");
     println!("{}", "=".repeat(50));
 }

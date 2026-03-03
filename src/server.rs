@@ -15,9 +15,8 @@ use crate::data::cache::CachedStore;
 use crate::data::eodhd::EodhdProvider;
 use crate::engine::types::{
     default_delta_interval, default_dte_interval, default_min_bid_ask, default_multiplier,
-    validate_exit_dte_lt_max,
-    BacktestParams, Commission, CompareEntry, CompareParams, EvaluateParams, SimParams, Slippage,
-    TargetRange, TradeSelector,
+    validate_exit_dte_lt_max, BacktestParams, Commission, CompareEntry, CompareParams,
+    EvaluateParams, SimParams, Slippage, TargetRange, TradeSelector,
 };
 use crate::signals::registry::SignalSpec;
 use crate::tools;
