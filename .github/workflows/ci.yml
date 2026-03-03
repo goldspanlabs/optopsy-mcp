@@ -63,8 +63,6 @@ jobs:
             grep '\.rs' coverage-output.txt | grep -v 'Running' | awk '{v=$0; gsub(/%/,""); print $10, v}' | sort -rn | cut -d' ' -f2-
             grep -E '(^----|^TOTAL)' coverage-output.txt | tail -2
           } > coverage-sorted.txt
-          echo '## Coverage Summary' >> $GITHUB_STEP_SUMMARY
-          echo '' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           cat coverage-sorted.txt >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
