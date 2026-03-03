@@ -44,7 +44,6 @@ Once connected via Claude Desktop or any MCP client, try asking:
 - **Signal-Based Entry/Exit** — Filter trades using 40+ technical analysis indicators (momentum, trend, volatility, overlap, price, volume)
 - **32 Built-in Strategies** — Singles, verticals, straddles, strangles, butterflies, condors, iron condors/butterflies, calendars, diagonals (with multi-expiration support)
 - **4 Slippage Models** — Mid, spread, liquidity-based, per-leg fixed
-- **Cache Management Tools** — Check cache status, fetch OHLCV data, validate schema
 - **12 MCP Tools** — All accessible via Claude Desktop or any MCP-compatible client
 - **Parameter Validation** — garde-powered input validation with detailed error feedback
 - **HTTP & Stdio Transport** — Deploy locally via stdio or run as HTTP service on cloud platforms
