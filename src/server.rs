@@ -368,9 +368,9 @@ pub struct GetRawPricesParams {
     /// End date filter (YYYY-MM-DD)
     #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")), custom(validate_end_date_after_start(&self.start_date)))]
     pub end_date: Option<String>,
-    /// Maximum number of price bars to return (default: 500).
+    /// Maximum number of price bars to return (default: 500 if omitted).
     /// Data is evenly sampled if the total exceeds this limit.
-    /// Set to null/omit for no limit.
+    /// Pass `null` explicitly to disable the limit and return all bars.
     #[serde(default = "default_price_limit")]
     #[garde(skip)]
     pub limit: Option<usize>,
@@ -908,8 +908,8 @@ impl OptopsyServer {
     /// **Next tools**: Use the returned `prices` array directly for visualization
     ///
     /// **Returns**: Array of `{ date, open, high, low, close, adjclose, volume }` bars.
-    /// Data is evenly sampled down to `limit` points (default 500) to avoid
-    /// overwhelming LLM context windows. Set `limit: null` for the full dataset.
+    /// Data is evenly sampled down to `limit` points (default 500 if omitted) to avoid
+    /// overwhelming LLM context windows. Pass `limit: null` explicitly for the full dataset.
     ///
     /// **Use cases**:
     ///   - Generate candlestick or OHLC charts

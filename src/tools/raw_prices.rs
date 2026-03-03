@@ -7,6 +7,9 @@ use crate::data::cache::CachedStore;
 use super::ai_format;
 use super::response_types::{DateRange, PriceBar, RawPricesResponse};
 
+/// Epoch offset: days from CE to 1970-01-01 (matches `event_sim::extract_date_from_column`).
+const EPOCH_DAYS_CE: i32 = 719_163;
+
 pub fn execute(
     df: &DataFrame,
     symbol: &str,
@@ -39,14 +42,16 @@ pub fn execute(
     // Sample if limit is specified and data exceeds it
     let (output_df, sampled) = if let Some(max) = limit {
         if total_rows > max && max > 0 {
-            let step = total_rows as f64 / max as f64;
-            let mut indices: Vec<u32> = (0..max).map(|i| (i as f64 * step) as u32).collect();
-            // Always include the last point
-            let last = (total_rows - 1) as u32;
-            if indices.last() != Some(&last) {
-                indices.pop();
-                indices.push(last);
-            }
+            // Use integer math to produce evenly-spaced, deduplicated indices.
+            // Always include the first and last row.
+            let mut indices: Vec<u32> = if max == 1 {
+                vec![(total_rows - 1) as u32]
+            } else {
+                (0..max)
+                    .map(|i| (i * (total_rows - 1) / (max - 1)) as u32)
+                    .collect()
+            };
+            indices.dedup();
             let idx = IdxCa::new(PlSmallStr::from("idx"), &indices);
             (filtered.take(&idx)?, true)
         } else {
@@ -74,15 +79,14 @@ pub fn execute(
 
     let mut bars: Vec<PriceBar> = Vec::with_capacity(rows);
     for i in 0..rows {
-        let date = dates
+        let days_since_epoch = dates
             .phys
             .get(i)
-            .map(|d| {
-                let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
-                let date = epoch + chrono::Duration::days(i64::from(d));
-                date.format("%Y-%m-%d").to_string()
-            })
-            .unwrap_or_default();
+            .ok_or_else(|| anyhow::anyhow!("Null date at row {i}; OHLCV data may be corrupted"))?;
+        let date = chrono::NaiveDate::from_num_days_from_ce_opt(days_since_epoch + EPOCH_DAYS_CE)
+            .ok_or_else(|| anyhow::anyhow!("Invalid date value at row {i}"))?
+            .format("%Y-%m-%d")
+            .to_string();
 
         bars.push(PriceBar {
             date,
@@ -230,5 +234,33 @@ mod tests {
         let df = make_test_df();
         let resp = execute(&df, "SPY", None, None, None).unwrap();
         assert_eq!(resp.prices[0].adjclose, Some(101.0));
+    }
+
+    #[test]
+    fn limit_one_returns_last_row() {
+        let df = make_test_df();
+        let resp = execute(&df, "SPY", None, None, Some(1)).unwrap();
+
+        assert_eq!(resp.returned_rows, 1);
+        assert!(resp.sampled);
+        assert_eq!(resp.prices[0].date, "2024-01-08");
+    }
+
+    #[test]
+    fn sampling_no_duplicate_indices() {
+        let df = make_test_df();
+        // limit=4 from 5 rows — should produce 4 unique indices with no duplicates
+        let resp = execute(&df, "SPY", None, None, Some(4)).unwrap();
+
+        assert_eq!(resp.returned_rows, 4);
+        assert!(resp.sampled);
+        // First and last should be included
+        assert_eq!(resp.prices[0].date, "2024-01-02");
+        assert_eq!(resp.prices[3].date, "2024-01-08");
+        // All dates should be unique
+        let dates: Vec<&str> = resp.prices.iter().map(|p| p.date.as_str()).collect();
+        let mut deduped = dates.clone();
+        deduped.dedup();
+        assert_eq!(dates, deduped, "Sampling produced duplicate dates");
     }
 }
