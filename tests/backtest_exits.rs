@@ -114,7 +114,10 @@ fn dte_exit_is_baseline_exit() {
         "expected DteExit, got {:?}",
         trade.exit_type
     );
-    assert_eq!(trade.days_held, 27, "expected 27 days held (Jan 15 → Feb 11)");
+    assert_eq!(
+        trade.days_held, 27,
+        "expected 27 days held (Jan 15 → Feb 11)"
+    );
     assert!(
         (trade.pnl - (-300.0)).abs() < 0.01,
         "expected PnL -300.0, got {}",

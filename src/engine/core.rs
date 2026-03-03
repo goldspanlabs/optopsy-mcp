@@ -11,9 +11,9 @@ use super::metrics;
 use super::output;
 use super::pricing;
 use super::rules;
-use super::vectorized_sim;
 #[allow(clippy::wildcard_imports)]
 use super::types::*;
+use super::vectorized_sim;
 use crate::signals;
 use crate::strategies;
 
@@ -36,12 +36,7 @@ pub(crate) fn generate_matched_trades(
 
     // Process each leg
     let mut leg_dfs = Vec::new();
-    for (i, (leg, delta_target)) in strategy_def
-        .legs
-        .iter()
-        .zip(leg_deltas.iter())
-        .enumerate()
-    {
+    for (i, (leg, delta_target)) in strategy_def.legs.iter().zip(leg_deltas.iter()).enumerate() {
         let filtered = filters::filter_option_type(df, leg.option_type.as_str())?;
 
         // Compute DTE

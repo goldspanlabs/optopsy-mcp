@@ -8,8 +8,8 @@
 
 use optopsy_mcp::engine::core::run_backtest;
 use optopsy_mcp::engine::types::{
-    AdjustmentAction, AdjustmentRule, AdjustmentTrigger, BacktestParams, Slippage,
-    TargetRange, TradeSelector,
+    AdjustmentAction, AdjustmentRule, AdjustmentTrigger, BacktestParams, Slippage, TargetRange,
+    TradeSelector,
 };
 
 mod common;

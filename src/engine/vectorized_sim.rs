@@ -93,8 +93,7 @@ pub fn run_vectorized_backtest<S1: BuildHasher, S2: BuildHasher>(
     }
 
     // Build trade log and equity curve
-    let (trade_log, equity_curve) =
-        build_outputs(&trades, &trading_days, &price_table, params);
+    let (trade_log, equity_curve) = build_outputs(&trades, &trading_days, &price_table, params);
 
     let quality = BacktestQualityStats {
         trading_days_total: trading_days.len(),
@@ -167,11 +166,7 @@ fn build_trade_rows_from_candidates(
             let mut legs = Vec::new();
             let mut entry_cost = 0.0;
 
-            for (cand_leg, leg_def) in candidate
-                .legs
-                .iter()
-                .zip(strategy_def.legs.iter())
-            {
+            for (cand_leg, leg_def) in candidate.legs.iter().zip(strategy_def.legs.iter()) {
                 let contracts = leg_def.qty * params.quantity;
                 let entry_price =
                     pricing::fill_price(cand_leg.bid, cand_leg.ask, leg_def.side, &params.slippage);
@@ -271,22 +266,18 @@ fn apply_trade_selector(mut trades: Vec<TradeRow>, selector: &TradeSelector) -> 
 
         let pick = match selector {
             TradeSelector::First | TradeSelector::Nearest => group.first(),
-            TradeSelector::HighestPremium => group
-                .iter()
-                .max_by(|a, b| {
-                    a.entry_cost
-                        .abs()
-                        .partial_cmp(&b.entry_cost.abs())
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                }),
-            TradeSelector::LowestPremium => group
-                .iter()
-                .min_by(|a, b| {
-                    a.entry_cost
-                        .abs()
-                        .partial_cmp(&b.entry_cost.abs())
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                }),
+            TradeSelector::HighestPremium => group.iter().max_by(|a, b| {
+                a.entry_cost
+                    .abs()
+                    .partial_cmp(&b.entry_cost.abs())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
+            TradeSelector::LowestPremium => group.iter().min_by(|a, b| {
+                a.entry_cost
+                    .abs()
+                    .partial_cmp(&b.entry_cost.abs())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
         };
 
         if let Some(trade) = pick {
