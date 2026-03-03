@@ -97,6 +97,24 @@ impl OptopsyServer {
     }
 }
 
+/// Validate that `end_date >= start_date` when both are present.
+/// Signature uses `&Option<String>` because garde's `custom()` passes `&self.field`.
+#[allow(clippy::ref_option)]
+fn validate_end_date_after_start(
+    start_date: &Option<String>,
+) -> impl FnOnce(&Option<String>, &()) -> garde::Result + '_ {
+    move |end_date: &Option<String>, (): &()| {
+        if let (Some(start), Some(end)) = (start_date, end_date) {
+            if end < start {
+                return Err(garde::Error::new(format!(
+                    "end_date ({end}) must be >= start_date ({start})"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct DownloadOptionsParams {
     /// US stock ticker symbol (e.g. "SPY", "AAPL", "TSLA")
@@ -113,7 +131,7 @@ pub struct LoadDataParams {
     #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))]
     pub start_date: Option<String>,
     /// End date filter (YYYY-MM-DD)
-    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))]
+    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")), custom(validate_end_date_after_start(&self.start_date)))]
     pub end_date: Option<String>,
 }
 
@@ -348,7 +366,7 @@ pub struct GetRawPricesParams {
     #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))]
     pub start_date: Option<String>,
     /// End date filter (YYYY-MM-DD)
-    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))]
+    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")), custom(validate_end_date_after_start(&self.start_date)))]
     pub end_date: Option<String>,
     /// Maximum number of price bars to return (default: 500).
     /// Data is evenly sampled if the total exceeds this limit.

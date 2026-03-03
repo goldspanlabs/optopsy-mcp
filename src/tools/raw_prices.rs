@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::data::cache::CachedStore;
 
+use super::ai_format;
 use super::response_types::{DateRange, PriceBar, RawPricesResponse};
 
 pub fn execute(
@@ -39,9 +40,8 @@ pub fn execute(
     let (output_df, sampled) = if let Some(max) = limit {
         if total_rows > max && max > 0 {
             let step = total_rows as f64 / max as f64;
-            let indices: Vec<u32> = (0..max).map(|i| (i as f64 * step) as u32).collect();
+            let mut indices: Vec<u32> = (0..max).map(|i| (i as f64 * step) as u32).collect();
             // Always include the last point
-            let mut indices = indices;
             let last = (total_rows - 1) as u32;
             if indices.last() != Some(&last) {
                 indices.pop();
@@ -99,35 +99,19 @@ pub fn execute(
     let first_date = bars.first().map(|b| b.date.clone());
     let last_date = bars.last().map(|b| b.date.clone());
 
-    let upper = symbol.to_uppercase();
-    let summary = if sampled {
-        format!(
-            "Returning {rows} sampled price bars for {upper} (from {total_rows} total). \
-             Use these data points directly to generate charts or perform analysis."
-        )
-    } else {
-        format!(
-            "Returning {rows} price bars for {upper}. \
-             Use these data points directly to generate charts or perform analysis."
-        )
+    let date_range = DateRange {
+        start: first_date,
+        end: last_date,
     };
 
-    Ok(RawPricesResponse {
-        summary,
-        symbol: upper,
+    Ok(ai_format::format_raw_prices(
+        &symbol.to_uppercase(),
         total_rows,
-        returned_rows: rows,
+        rows,
         sampled,
-        date_range: DateRange {
-            start: first_date,
-            end: last_date,
-        },
-        prices: bars,
-        suggested_next_steps: vec![
-            "Use the prices array to generate a line chart (close prices), candlestick chart (OHLC), or area chart.".to_string(),
-            "Combine with backtest equity_curve data to overlay strategy performance on price action.".to_string(),
-        ],
-    })
+        date_range,
+        bars,
+    ))
 }
 
 /// Load OHLCV parquet from cache and return raw prices.

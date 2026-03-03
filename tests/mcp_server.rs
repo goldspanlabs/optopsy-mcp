@@ -388,6 +388,52 @@ async fn load_data_rejects_invalid_symbol_chars() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn load_data_rejects_end_date_before_start_date() {
+    let (server, _tmp) = make_test_server();
+
+    let (server_tx, server_rx) = tokio::io::duplex(4096);
+    let (client_tx, client_rx) = tokio::io::duplex(4096);
+
+    let server_handle =
+        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
+
+    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
+        ().serve((server_rx, client_tx)).await.unwrap();
+
+    let result = client
+        .peer()
+        .call_tool(CallToolRequestParams {
+            meta: None,
+            name: "load_data".into(),
+            arguments: Some(
+                serde_json::from_value(json!({
+                    "symbol": "SPY",
+                    "start_date": "2024-06-01",
+                    "end_date": "2024-01-01"
+                }))
+                .unwrap(),
+            ),
+            task: None,
+        })
+        .await
+        .unwrap();
+
+    let text = result
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .unwrap();
+    assert!(
+        text.text.contains("end_date") && text.text.contains("start_date"),
+        "Expected date range validation error, got: {}",
+        text.text
+    );
+
+    client.cancel().await.unwrap();
+    server_handle.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn evaluate_rejects_zero_max_entry_dte() {
     let (server, _tmp) = make_test_server();
 
