@@ -135,6 +135,20 @@ pub struct LoadDataParams {
     pub end_date: Option<String>,
 }
 
+/// Resolve `leg_deltas`: use provided deltas or fall back to strategy defaults.
+fn resolve_leg_deltas(
+    leg_deltas: Option<Vec<TargetRange>>,
+    strategy_name: &str,
+) -> Result<Vec<TargetRange>, String> {
+    if let Some(deltas) = leg_deltas {
+        Ok(deltas)
+    } else {
+        let strategy_def = crate::strategies::find_strategy(strategy_name)
+            .ok_or_else(|| format!("Unknown strategy: {strategy_name}"))?;
+        Ok(strategy_def.default_deltas())
+    }
+}
+
 fn default_entry_dte() -> DteRange {
     DteRange {
         target: 45,
@@ -164,9 +178,10 @@ pub struct EvaluateStrategyParams {
     /// Strategy name
     #[garde(skip)]
     pub strategy: StrategyParam,
-    /// Per-leg delta targets
-    #[garde(length(min = 1), dive)]
-    pub leg_deltas: Vec<TargetRange>,
+    /// Per-leg delta targets (optional — uses strategy-specific defaults if omitted)
+    #[serde(default)]
+    #[garde(dive)]
+    pub leg_deltas: Option<Vec<TargetRange>>,
     /// Entry DTE range: { target, min, max } (default: { target: 45, min: 30, max: 60 })
     #[serde(default = "default_entry_dte")]
     #[garde(dive)]
@@ -206,9 +221,10 @@ pub struct RunBacktestParams {
     /// Strategy name
     #[garde(skip)]
     pub strategy: StrategyParam,
-    /// Per-leg delta targets
-    #[garde(length(min = 1), dive)]
-    pub leg_deltas: Vec<TargetRange>,
+    /// Per-leg delta targets (optional — uses strategy-specific defaults if omitted)
+    #[serde(default)]
+    #[garde(dive)]
+    pub leg_deltas: Option<Vec<TargetRange>>,
     /// Entry DTE range: { target, min, max } (default: { target: 45, min: 30, max: 60 })
     #[serde(default = "default_entry_dte")]
     #[garde(dive)]
@@ -276,9 +292,10 @@ pub struct ServerCompareEntry {
     /// Strategy name
     #[garde(skip)]
     pub name: StrategyParam,
-    /// Per-leg delta targets
-    #[garde(length(min = 1), dive)]
-    pub leg_deltas: Vec<TargetRange>,
+    /// Per-leg delta targets (optional — uses strategy-specific defaults if omitted)
+    #[serde(default)]
+    #[garde(dive)]
+    pub leg_deltas: Option<Vec<TargetRange>>,
     /// Entry DTE range: { target, min, max } (default: { target: 45, min: 30, max: 60 })
     #[serde(default = "default_entry_dte")]
     #[garde(dive)]
@@ -359,7 +376,7 @@ pub struct FetchToParquetParams {
     /// Cache category
     #[garde(skip)]
     pub category: CategoryParam,
-    /// Time period to fetch (e.g. "6mo", "1y", "5y", "max"). Defaults to "6mo".
+    /// Time period to fetch (e.g. "6mo", "1y", "5y", "max"). Defaults to "5y".
     #[garde(inner(length(min = 1)))]
     pub period: Option<String>,
 }
@@ -680,9 +697,12 @@ impl OptopsyServer {
             df.clone()
         };
 
+        let strategy_name = params.strategy.as_str();
+        let leg_deltas = resolve_leg_deltas(params.leg_deltas, strategy_name)?;
+
         let eval_params = EvaluateParams {
-            strategy: params.strategy.as_str().to_string(),
-            leg_deltas: params.leg_deltas,
+            strategy: strategy_name.to_string(),
+            leg_deltas,
             entry_dte: params.entry_dte,
             exit_dte: params.exit_dte,
             dte_interval: params.dte_interval,
@@ -767,9 +787,12 @@ impl OptopsyServer {
             None
         };
 
+        let strategy_name = params.strategy.as_str();
+        let leg_deltas = resolve_leg_deltas(params.leg_deltas, strategy_name)?;
+
         let backtest_params = BacktestParams {
-            strategy: params.strategy.as_str().to_string(),
-            leg_deltas: params.leg_deltas,
+            strategy: strategy_name.to_string(),
+            leg_deltas,
             entry_dte: params.entry_dte,
             exit_dte: params.exit_dte,
             slippage: params.slippage,
@@ -834,15 +857,19 @@ impl OptopsyServer {
             strategies: params
                 .strategies
                 .into_iter()
-                .map(|s| CompareEntry {
-                    name: s.name.as_str().to_string(),
-                    leg_deltas: s.leg_deltas,
-                    entry_dte: s.entry_dte,
-                    exit_dte: s.exit_dte,
-                    slippage: s.slippage,
-                    commission: s.commission,
+                .map(|s| {
+                    let strategy_name = s.name.as_str();
+                    let leg_deltas = resolve_leg_deltas(s.leg_deltas, strategy_name)?;
+                    Ok(CompareEntry {
+                        name: strategy_name.to_string(),
+                        leg_deltas,
+                        entry_dte: s.entry_dte,
+                        exit_dte: s.exit_dte,
+                        slippage: s.slippage,
+                        commission: s.commission,
+                    })
                 })
-                .collect(),
+                .collect::<Result<Vec<_>, String>>()?,
             sim_params: params.sim_params,
         };
         compare_params
@@ -893,7 +920,7 @@ impl OptopsyServer {
     ///   - `fetch_to_parquet()` loads price bars (OHLCV) for TA indicators
     ///   - Both can be loaded simultaneously
     /// **Categories**: Use "prices" for standard price data
-    /// **Periods**: "6mo" (default), "1y", "5y", "max"
+    /// **Periods**: "5y" (default), "6mo", "1y", "max"
     /// **Performance**: Downloads to ~/.optopsy/cache/prices/{SYMBOL}.parquet
     ///
     /// **Important**: Not needed for basic backtest (no signals).
@@ -913,7 +940,7 @@ impl OptopsyServer {
         params
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
-        let period = params.period.as_deref().unwrap_or("6mo");
+        let period = params.period.as_deref().unwrap_or("5y");
         tools::fetch::execute(
             &self.cache,
             &params.symbol,

@@ -1,4 +1,7 @@
-use super::helpers::{call_leg, put_leg, strategy, strategy_relaxed, Side, StrategyDef};
+use super::helpers::{
+    call_leg, default_atm_delta, default_delta, default_otm_delta, put_leg, strategy,
+    strategy_relaxed, Side, StrategyDef,
+};
 
 // Vertical spreads
 pub fn bull_call_spread() -> StrategyDef {
@@ -6,7 +9,10 @@ pub fn bull_call_spread() -> StrategyDef {
         "bull_call_spread",
         "Spreads",
         "Buy lower strike call, sell higher strike call",
-        vec![call_leg(Side::Long, 1), call_leg(Side::Short, 1)],
+        vec![
+            call_leg(Side::Long, 1, default_atm_delta()),
+            call_leg(Side::Short, 1, default_otm_delta()),
+        ],
     )
 }
 
@@ -15,7 +21,10 @@ pub fn bear_call_spread() -> StrategyDef {
         "bear_call_spread",
         "Spreads",
         "Sell lower strike call, buy higher strike call",
-        vec![call_leg(Side::Short, 1), call_leg(Side::Long, 1)],
+        vec![
+            call_leg(Side::Short, 1, default_atm_delta()),
+            call_leg(Side::Long, 1, default_otm_delta()),
+        ],
     )
 }
 
@@ -24,7 +33,10 @@ pub fn bull_put_spread() -> StrategyDef {
         "bull_put_spread",
         "Spreads",
         "Sell higher strike put, buy lower strike put",
-        vec![put_leg(Side::Short, 1), put_leg(Side::Long, 1)],
+        vec![
+            put_leg(Side::Short, 1, default_atm_delta()),
+            put_leg(Side::Long, 1, default_otm_delta()),
+        ],
     )
 }
 
@@ -33,7 +45,10 @@ pub fn bear_put_spread() -> StrategyDef {
         "bear_put_spread",
         "Spreads",
         "Buy higher strike put, sell lower strike put",
-        vec![put_leg(Side::Long, 1), put_leg(Side::Short, 1)],
+        vec![
+            put_leg(Side::Long, 1, default_atm_delta()),
+            put_leg(Side::Short, 1, default_otm_delta()),
+        ],
     )
 }
 
@@ -43,7 +58,10 @@ pub fn long_straddle() -> StrategyDef {
         "long_straddle",
         "Spreads",
         "Buy ATM call and put at same strike",
-        vec![call_leg(Side::Long, 1), put_leg(Side::Long, 1)],
+        vec![
+            call_leg(Side::Long, 1, default_atm_delta()),
+            put_leg(Side::Long, 1, default_atm_delta()),
+        ],
     )
 }
 
@@ -52,7 +70,10 @@ pub fn short_straddle() -> StrategyDef {
         "short_straddle",
         "Spreads",
         "Sell ATM call and put at same strike",
-        vec![call_leg(Side::Short, 1), put_leg(Side::Short, 1)],
+        vec![
+            call_leg(Side::Short, 1, default_atm_delta()),
+            put_leg(Side::Short, 1, default_atm_delta()),
+        ],
     )
 }
 
@@ -62,7 +83,10 @@ pub fn long_strangle() -> StrategyDef {
         "long_strangle",
         "Spreads",
         "Buy OTM call and OTM put",
-        vec![call_leg(Side::Long, 1), put_leg(Side::Long, 1)],
+        vec![
+            call_leg(Side::Long, 1, default_delta()),
+            put_leg(Side::Long, 1, default_delta()),
+        ],
     )
 }
 
@@ -71,7 +95,10 @@ pub fn short_strangle() -> StrategyDef {
         "short_strangle",
         "Spreads",
         "Sell OTM call and OTM put",
-        vec![call_leg(Side::Short, 1), put_leg(Side::Short, 1)],
+        vec![
+            call_leg(Side::Short, 1, default_delta()),
+            put_leg(Side::Short, 1, default_delta()),
+        ],
     )
 }
 

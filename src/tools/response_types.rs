@@ -209,6 +209,8 @@ pub struct StrategyInfo {
     pub category: String,
     pub legs: usize,
     pub description: String,
+    /// Default per-leg delta targets for this strategy (used when `leg_deltas` is omitted)
+    pub default_deltas: Vec<TargetRange>,
 }
 
 /// Response for `check_cache_status`
