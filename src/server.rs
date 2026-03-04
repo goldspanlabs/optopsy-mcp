@@ -15,8 +15,8 @@ use crate::data::cache::CachedStore;
 use crate::data::eodhd::EodhdProvider;
 use crate::engine::types::{
     default_delta_interval, default_dte_interval, default_min_bid_ask, default_multiplier,
-    validate_exit_dte_lt_max, BacktestParams, Commission, CompareEntry, CompareParams,
-    EvaluateParams, SimParams, Slippage, TargetRange, TradeSelector,
+    validate_exit_dte_lt_entry_min, BacktestParams, Commission, CompareEntry, CompareParams,
+    DteRange, EvaluateParams, SimParams, Slippage, TargetRange, TradeSelector,
 };
 use crate::signals::registry::SignalSpec;
 use crate::tools;
@@ -135,8 +135,12 @@ pub struct LoadDataParams {
     pub end_date: Option<String>,
 }
 
-fn default_max_entry_dte() -> i32 {
-    45
+fn default_entry_dte() -> DteRange {
+    DteRange {
+        target: 45,
+        min: 30,
+        max: 60,
+    }
 }
 
 fn default_exit_dte() -> i32 {
@@ -163,13 +167,13 @@ pub struct EvaluateStrategyParams {
     /// Per-leg delta targets
     #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
-    /// Maximum DTE at entry (default: 45)
-    #[serde(default = "default_max_entry_dte")]
-    #[garde(range(min = 1))]
-    pub max_entry_dte: i32,
+    /// Entry DTE range: { target, min, max } (default: { target: 45, min: 30, max: 60 })
+    #[serde(default = "default_entry_dte")]
+    #[garde(dive)]
+    pub entry_dte: DteRange,
     /// DTE at exit (default: 9)
     #[serde(default = "default_exit_dte")]
-    #[garde(range(min = 0), custom(validate_exit_dte_lt_max(&self.max_entry_dte)))]
+    #[garde(range(min = 0), custom(validate_exit_dte_lt_entry_min(&self.entry_dte)))]
     pub exit_dte: i32,
     /// DTE bucket width (default: 5)
     #[serde(default = "default_dte_interval")]
@@ -205,13 +209,13 @@ pub struct RunBacktestParams {
     /// Per-leg delta targets
     #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
-    /// Maximum DTE at entry (default: 45)
-    #[serde(default = "default_max_entry_dte")]
-    #[garde(range(min = 1))]
-    pub max_entry_dte: i32,
+    /// Entry DTE range: { target, min, max } (default: { target: 45, min: 30, max: 60 })
+    #[serde(default = "default_entry_dte")]
+    #[garde(dive)]
+    pub entry_dte: DteRange,
     /// DTE at exit (default: 9)
     #[serde(default = "default_exit_dte")]
-    #[garde(range(min = 0), custom(validate_exit_dte_lt_max(&self.max_entry_dte)))]
+    #[garde(range(min = 0), custom(validate_exit_dte_lt_entry_min(&self.entry_dte)))]
     pub exit_dte: i32,
     /// Slippage model (default: Spread)
     #[serde(default)]
@@ -275,13 +279,13 @@ pub struct ServerCompareEntry {
     /// Per-leg delta targets
     #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
-    /// Maximum DTE at entry (default: 45)
-    #[serde(default = "default_max_entry_dte")]
-    #[garde(range(min = 1))]
-    pub max_entry_dte: i32,
+    /// Entry DTE range: { target, min, max } (default: { target: 45, min: 30, max: 60 })
+    #[serde(default = "default_entry_dte")]
+    #[garde(dive)]
+    pub entry_dte: DteRange,
     /// DTE at exit (default: 9)
     #[serde(default = "default_exit_dte")]
-    #[garde(range(min = 0), custom(validate_exit_dte_lt_max(&self.max_entry_dte)))]
+    #[garde(range(min = 0), custom(validate_exit_dte_lt_entry_min(&self.entry_dte)))]
     pub exit_dte: i32,
     /// Slippage model (default: Spread)
     #[serde(default)]
@@ -679,7 +683,7 @@ impl OptopsyServer {
         let eval_params = EvaluateParams {
             strategy: params.strategy.as_str().to_string(),
             leg_deltas: params.leg_deltas,
-            max_entry_dte: params.max_entry_dte,
+            entry_dte: params.entry_dte,
             exit_dte: params.exit_dte,
             dte_interval: params.dte_interval,
             delta_interval: params.delta_interval,
@@ -730,7 +734,9 @@ impl OptopsyServer {
         tracing::info!(
             strategy = params.strategy.as_str(),
             symbol = params.symbol.as_deref().unwrap_or("auto"),
-            max_entry_dte = params.max_entry_dte,
+            entry_dte_target = params.entry_dte.target,
+            entry_dte_min = params.entry_dte.min,
+            entry_dte_max = params.entry_dte.max,
             exit_dte = params.exit_dte,
             max_positions = params.max_positions,
             capital = params.capital,
@@ -764,7 +770,7 @@ impl OptopsyServer {
         let backtest_params = BacktestParams {
             strategy: params.strategy.as_str().to_string(),
             leg_deltas: params.leg_deltas,
-            max_entry_dte: params.max_entry_dte,
+            entry_dte: params.entry_dte,
             exit_dte: params.exit_dte,
             slippage: params.slippage,
             commission: params.commission,
@@ -831,7 +837,7 @@ impl OptopsyServer {
                 .map(|s| CompareEntry {
                     name: s.name.as_str().to_string(),
                     leg_deltas: s.leg_deltas,
-                    max_entry_dte: s.max_entry_dte,
+                    entry_dte: s.entry_dte,
                     exit_dte: s.exit_dte,
                     slippage: s.slippage,
                     commission: s.commission,
@@ -972,7 +978,7 @@ impl OptopsyServer {
     /// **Risk preferences**: Conservative (tight filters), Moderate (balanced), Aggressive (loose)
     /// **Output**:
     ///   - `leg_deltas` array (optimized delta targets/ranges per leg)
-    ///   - `max_entry_dte` (maximum viable entry DTE from data)
+    ///   - `entry_dte` (target/min/max entry DTE range from data)
     ///   - `exit_dte` (recommended exit DTE)
     ///   - slippage model recommendation (Mid/Spread/Liquidity)
     ///   - Confidence score (combines data coverage and calendar quality)
@@ -1049,7 +1055,7 @@ impl ServerHandler for OptopsyServer {
                 \n3. list_signals() — browse all available TA signals grouped by category \
                 (momentum, overlap, trend, volatility, price, volume). Signals can be used as \
                 entry_signal and exit_signal in run_backtest.\
-                \n4. evaluate_strategy({ strategy, leg_deltas, max_entry_dte, exit_dte, \
+                \n4. evaluate_strategy({ strategy, leg_deltas, entry_dte, exit_dte, \
                 dte_interval, delta_interval, slippage }) — fast statistical screen that \
                 groups historical trades into DTE × delta buckets and returns mean P&L, \
                 win rate, profit factor, and distribution stats per bucket. \

@@ -7,8 +7,8 @@
 use chrono::NaiveDate;
 use optopsy_mcp::engine::core::run_backtest;
 use optopsy_mcp::engine::types::{
-    AdjustmentAction, AdjustmentRule, AdjustmentTrigger, BacktestParams, ExitType, Slippage,
-    TargetRange, TradeSelector,
+    AdjustmentAction, AdjustmentRule, AdjustmentTrigger, BacktestParams, DteRange, ExitType,
+    Slippage, TargetRange, TradeSelector,
 };
 
 mod common;
@@ -20,7 +20,11 @@ fn base_params(strategy: &str, leg_deltas: Vec<TargetRange>) -> BacktestParams {
     BacktestParams {
         strategy: strategy.to_string(),
         leg_deltas,
-        max_entry_dte: 45,
+        entry_dte: DteRange {
+            target: 45,
+            min: 10,
+            max: 45,
+        },
         exit_dte: 5,
         slippage: Slippage::Mid,
         commission: None,

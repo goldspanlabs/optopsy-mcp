@@ -2,7 +2,7 @@
 
 use chrono::NaiveDate;
 use optopsy_mcp::data::parquet::QUOTE_DATETIME_COL;
-use optopsy_mcp::engine::types::{BacktestParams, Slippage, TargetRange, TradeSelector};
+use optopsy_mcp::engine::types::{BacktestParams, DteRange, Slippage, TargetRange, TradeSelector};
 use polars::prelude::*;
 
 /// Build a rich synthetic options `DataFrame` with calls+puts at 4 strikes across 3 dates,
@@ -126,13 +126,17 @@ pub fn delta(target: f64) -> TargetRange {
     }
 }
 
-/// Default backtest params for synthetic data: `max_entry_dte=45`, `exit_dte=5`,
+/// Default backtest params for synthetic data: `entry_dte={target:45, min:10, max:45}`, `exit_dte=5`,
 /// `Slippage::Mid`, `quantity=1`, `multiplier=100`.
 pub fn backtest_params(strategy: &str, leg_deltas: Vec<TargetRange>) -> BacktestParams {
     BacktestParams {
         strategy: strategy.to_string(),
         leg_deltas,
-        max_entry_dte: 45,
+        entry_dte: DteRange {
+            target: 45,
+            min: 10,
+            max: 45,
+        },
         exit_dte: 5,
         slippage: Slippage::Mid,
         commission: None,

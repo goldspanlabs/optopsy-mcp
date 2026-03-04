@@ -2,7 +2,7 @@ use anyhow::{bail, Result};
 use polars::prelude::*;
 use std::fmt::Write as _;
 
-use super::types::{Slippage, StrategyDef, TargetRange};
+use super::types::{DteRange, Slippage, StrategyDef, TargetRange};
 use crate::engine::types::Side;
 use crate::strategies;
 
@@ -25,7 +25,7 @@ pub struct SuggestParams {
 pub struct SuggestResult {
     pub strategy: String,
     pub leg_deltas: Vec<TargetRange>,
-    pub max_entry_dte: i32,
+    pub entry_dte: DteRange,
     pub exit_dte: i32,
     pub slippage: Slippage,
     pub rationale: String,
@@ -78,10 +78,10 @@ pub fn suggest_parameters(df: &DataFrame, params: &SuggestParams) -> Result<Sugg
     // Get unique expiration dates from the liquid subset
     let exp_dates = liquid_df.column("expiration")?.unique()?.len();
     // Analyze DTE distribution for the best cluster
-    let (max_entry_dte, exit_dte, dte_range_str) = find_best_dte_cluster(&liquid_df)?;
+    let (entry_dte, exit_dte, dte_range_str) = find_best_dte_cluster(&liquid_df)?;
 
     // Analyze delta distribution for each leg's option type
-    let leg_deltas = extract_leg_deltas(&liquid_df, &strategy_def, max_entry_dte, exit_dte)?;
+    let leg_deltas = extract_leg_deltas(&liquid_df, &strategy_def, entry_dte.max, entry_dte.min)?;
 
     // Infer slippage from median spread_ratio
     let slippage = infer_slippage(&liquid_df)?;
@@ -98,7 +98,7 @@ pub fn suggest_parameters(df: &DataFrame, params: &SuggestParams) -> Result<Sugg
     // Build rationale text
     let rationale = build_rationale(
         &strategy_def,
-        max_entry_dte,
+        &entry_dte,
         exit_dte,
         liquid_rows,
         total_rows,
@@ -137,7 +137,7 @@ pub fn suggest_parameters(df: &DataFrame, params: &SuggestParams) -> Result<Sugg
     Ok(SuggestResult {
         strategy: params.strategy.clone(),
         leg_deltas,
-        max_entry_dte,
+        entry_dte,
         exit_dte,
         slippage,
         rationale,
@@ -185,16 +185,24 @@ fn apply_liquidity_filter(
     Ok((liquid_count, filtered))
 }
 
-/// Compute `exit_dte` based on `max_entry_dte` with sensible bounds.
-/// Formula: 20% of `max_entry_dte`, clamped to [7, 21] and always < `max_entry_dte`.
-fn compute_exit_dte(max_entry_dte: i32) -> i32 {
-    let raw = (f64::from(max_entry_dte) * 0.20).round() as i32;
-    raw.clamp(7, 21).min(max_entry_dte.saturating_sub(1))
+/// Compute `exit_dte` based on `entry_dte_min` with sensible bounds.
+/// Formula: 20% of `entry_dte_min`, clamped to [7, 21] and then capped so that
+/// `exit_dte < entry_dte_min`. For very small `entry_dte_min`, this may relax
+/// the effective lower bound implied by the [7, 21] clamp.
+fn compute_exit_dte(entry_dte_min: i32) -> i32 {
+    let raw = (f64::from(entry_dte_min) * 0.20).round() as i32;
+    let clamped = raw.clamp(7, 21);
+    if entry_dte_min > clamped {
+        clamped.min(entry_dte_min.saturating_sub(1))
+    } else {
+        // For very low entry_dte_min, prioritize exit_dte < entry_dte_min
+        entry_dte_min.saturating_sub(1)
+    }
 }
 
 /// Find the best DTE cluster (most continuous coverage) and suggest `exit_dte`.
-/// Returns (`max_entry_dte`, `exit_dte`, `dte_range_string`).
-fn find_best_dte_cluster(df: &DataFrame) -> Result<(i32, i32, String)> {
+/// Returns (`entry_dte: DteRange`, `exit_dte`, `dte_range_string`).
+fn find_best_dte_cluster(df: &DataFrame) -> Result<(DteRange, i32, String)> {
     let dte_col = df.column("dte")?.i32()?;
     #[allow(clippy::filter_map_identity)]
     let mut dtes: Vec<i32> = dte_col
@@ -207,30 +215,43 @@ fn find_best_dte_cluster(df: &DataFrame) -> Result<(i32, i32, String)> {
         bail!("No strictly positive DTE values in filtered data");
     }
 
-    // Use percentile of raw (non-deduped) DTE values.
+    // Use percentiles of raw (non-deduped) DTE values.
     // High-volume DTE zones dominate; liquid theta-decay options (7-60 DTE) are the bulk.
     dtes.sort_unstable();
     let n = dtes.len();
+    let p25_idx = ((n as f64 * 0.25) as usize).min(n - 1);
+    let p50_idx = ((n as f64 * 0.50) as usize).min(n - 1);
     let p75_idx = ((n as f64 * 0.75) as usize).min(n - 1);
-    let p05_idx = ((n as f64 * 0.05) as usize).min(n - 1);
 
-    let max_entry_dte = dtes[p75_idx].clamp(7, 180);
-    let min_rep_dte = dtes[p05_idx];
-    let dte_range_str = format!("{min_rep_dte}-{max_entry_dte} days (p5-p75 of liquid DTE rows)");
+    let dte_min = dtes[p25_idx].clamp(7, 180);
+    let dte_target = dtes[p50_idx].clamp(7, 180);
+    let dte_max = dtes[p75_idx].clamp(7, 180).max(dte_min);
+    // Ensure target is within [min, max]
+    let dte_target = dte_target.clamp(dte_min, dte_max);
 
-    // Compute exit_dte from max_entry_dte using sensible formula
-    let exit_dte = compute_exit_dte(max_entry_dte);
+    let entry_dte = DteRange {
+        target: dte_target,
+        min: dte_min,
+        max: dte_max,
+    };
 
-    Ok((max_entry_dte, exit_dte, dte_range_str))
+    let dte_range_str =
+        format!("{dte_min}-{dte_max} days (p25-p75 of liquid DTE rows, target={dte_target})");
+
+    // Compute exit_dte from entry_dte.min using sensible formula
+    let exit_dte = compute_exit_dte(entry_dte.min);
+
+    Ok((entry_dte, exit_dte, dte_range_str))
 }
 
 /// Extract recommended delta ranges for each leg based on option type and side analysis.
-/// Filters to the DTE zone [`exit_dte`, `max_entry_dte`] and uses side-aware percentile bands.
+/// Filters to the entry DTE zone [`min_entry_dte`, `max_entry_dte`] and uses side-aware
+/// percentile bands.
 fn extract_leg_deltas(
     df: &DataFrame,
     strategy_def: &StrategyDef,
     max_entry_dte: i32,
-    exit_dte: i32,
+    min_entry_dte: i32,
 ) -> Result<Vec<TargetRange>> {
     let mut leg_deltas = Vec::new();
 
@@ -240,7 +261,7 @@ fn extract_leg_deltas(
             .clone()
             .lazy()
             .filter(col("option_type").eq(lit(leg.option_type.as_str())))
-            .filter(col("dte").gt_eq(lit(exit_dte)))
+            .filter(col("dte").gt_eq(lit(min_entry_dte)))
             .filter(col("dte").lt_eq(lit(max_entry_dte)))
             .with_column(col("delta").abs().alias("abs_delta"))
             .filter(col("abs_delta").gt_eq(lit(0.05_f64)))
@@ -376,7 +397,7 @@ fn compute_confidence(
 #[allow(clippy::too_many_arguments)]
 fn build_rationale(
     strategy_def: &StrategyDef,
-    max_entry_dte: i32,
+    entry_dte: &DteRange,
     exit_dte: i32,
     liquid_rows: usize,
     total_rows: usize,
@@ -388,8 +409,15 @@ fn build_rationale(
     let mut text = format!(
         "Strategy '{}' analysis based on {} liquid rows out of {} total. \
          Best DTE zone: {}. \
-         Max entry DTE set to {} days; exit DTE set to {} days for tighter management.\n",
-        strategy_def.name, liquid_rows, total_rows, dte_range_str, max_entry_dte, exit_dte
+         Entry DTE target={}, range [{}, {}]; exit DTE set to {} days.\n",
+        strategy_def.name,
+        liquid_rows,
+        total_rows,
+        dte_range_str,
+        entry_dte.target,
+        entry_dte.min,
+        entry_dte.max,
+        exit_dte
     );
 
     let _ = writeln!(text, "Leg delta targets (count={}):", leg_deltas.len());

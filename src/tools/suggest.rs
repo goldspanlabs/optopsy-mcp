@@ -17,9 +17,11 @@ fn format_suggest(result: SuggestResult) -> SuggestResponse {
     };
 
     let summary = format!(
-        "Suggested parameters for '{}': max_entry_dte={}, exit_dte={}, confidence={:.1}%, liquidity={:.1}%",
+        "Suggested parameters for '{}': entry_dte={{target={}, min={}, max={}}}, exit_dte={}, confidence={:.1}%, liquidity={:.1}%",
         result.strategy,
-        result.max_entry_dte,
+        result.entry_dte.target,
+        result.entry_dte.min,
+        result.entry_dte.max,
         result.exit_dte,
         result.confidence * 100.0,
         liquidity_pct
@@ -53,7 +55,7 @@ fn format_suggest(result: SuggestResult) -> SuggestResponse {
         summary,
         strategy: result.strategy,
         leg_deltas: result.leg_deltas,
-        max_entry_dte: result.max_entry_dte,
+        entry_dte: result.entry_dte,
         exit_dte: result.exit_dte,
         slippage: result.slippage,
         rationale: result.rationale,

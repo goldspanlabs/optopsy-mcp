@@ -434,7 +434,7 @@ async fn load_data_rejects_end_date_before_start_date() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn evaluate_rejects_zero_max_entry_dte() {
+async fn evaluate_rejects_zero_entry_dte_min() {
     let (server, _tmp) = make_test_server();
 
     let (server_tx, server_rx) = tokio::io::duplex(4096);
@@ -455,7 +455,7 @@ async fn evaluate_rejects_zero_max_entry_dte() {
                 serde_json::from_value(json!({
                     "strategy": "long_call",
                     "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                    "max_entry_dte": 0,
+                    "entry_dte": {"target": 0, "min": 0, "max": 0},
                     "exit_dte": 0,
                     "dte_interval": 7,
                     "delta_interval": 0.05,
@@ -476,7 +476,7 @@ async fn evaluate_rejects_zero_max_entry_dte() {
         .unwrap();
     assert!(
         text.text.contains("Validation error"),
-        "Expected validation error for zero max_entry_dte, got: {}",
+        "Expected validation error for zero entry_dte values, got: {}",
         text.text
     );
 
@@ -485,7 +485,7 @@ async fn evaluate_rejects_zero_max_entry_dte() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn evaluate_rejects_exit_dte_gte_max_entry_dte() {
+async fn evaluate_rejects_exit_dte_gte_entry_min() {
     let (server, _tmp) = make_test_server();
 
     let (server_tx, server_rx) = tokio::io::duplex(4096);
@@ -506,8 +506,8 @@ async fn evaluate_rejects_exit_dte_gte_max_entry_dte() {
                 serde_json::from_value(json!({
                     "strategy": "long_call",
                     "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                    "max_entry_dte": 30,
-                    "exit_dte": 30,
+                    "entry_dte": {"target": 30, "min": 20, "max": 40},
+                    "exit_dte": 25,
                     "dte_interval": 7,
                     "delta_interval": 0.05,
                     "slippage": {"type": "Mid"}
@@ -526,8 +526,8 @@ async fn evaluate_rejects_exit_dte_gte_max_entry_dte() {
         .and_then(|c| c.raw.as_text())
         .unwrap();
     assert!(
-        text.text.contains("exit_dte") && text.text.contains("max_entry_dte"),
-        "Expected custom validator error about exit_dte >= max_entry_dte, got: {}",
+        text.text.contains("exit_dte") && text.text.contains("entry_dte"),
+        "Expected custom validator error about exit_dte >= entry_dte.min, got: {}",
         text.text
     );
 
@@ -557,7 +557,7 @@ async fn backtest_rejects_zero_capital() {
                 serde_json::from_value(json!({
                     "strategy": "short_put",
                     "leg_deltas": [{"target": 0.4, "min": 0.01, "max": 0.99}],
-                    "max_entry_dte": 45,
+                    "entry_dte": {"target": 45, "min": 30, "max": 60},
                     "exit_dte": 5,
                     "slippage": {"type": "Mid"},
                     "capital": 0.0,
@@ -664,7 +664,7 @@ async fn evaluate_fails_without_loaded_data() {
                 serde_json::from_value(json!({
                     "strategy": "long_call",
                     "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                    "max_entry_dte": 45,
+                    "entry_dte": {"target": 45, "min": 30, "max": 60},
                     "exit_dte": 5,
                     "dte_interval": 7,
                     "delta_interval": 0.05,
@@ -715,7 +715,7 @@ async fn backtest_fails_without_loaded_data() {
                 serde_json::from_value(json!({
                     "strategy": "short_put",
                     "leg_deltas": [{"target": 0.4, "min": 0.01, "max": 0.99}],
-                    "max_entry_dte": 45,
+                    "entry_dte": {"target": 45, "min": 30, "max": 60},
                     "exit_dte": 5,
                     "slippage": {"type": "Mid"},
                     "capital": 100_000.0,
@@ -769,14 +769,14 @@ async fn compare_fails_without_loaded_data() {
                         {
                             "name": "short_put",
                             "leg_deltas": [{"target": 0.4, "min": 0.01, "max": 0.99}],
-                            "max_entry_dte": 45,
+                            "entry_dte": {"target": 45, "min": 30, "max": 60},
                             "exit_dte": 5,
                             "slippage": {"type": "Mid"}
                         },
                         {
                             "name": "short_call",
                             "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                            "max_entry_dte": 45,
+                            "entry_dte": {"target": 45, "min": 30, "max": 60},
                             "exit_dte": 5,
                             "slippage": {"type": "Mid"}
                         }
@@ -878,7 +878,7 @@ async fn evaluate_strategy_returns_buckets() {
                 serde_json::from_value(json!({
                     "strategy": "long_call",
                     "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                    "max_entry_dte": 45,
+                    "entry_dte": {"target": 45, "min": 30, "max": 60},
                     "exit_dte": 5,
                     "dte_interval": 10,
                     "delta_interval": 0.10,
@@ -933,7 +933,7 @@ async fn run_backtest_returns_trades_and_metrics() {
                 serde_json::from_value(json!({
                     "strategy": "short_put",
                     "leg_deltas": [{"target": 0.4, "min": 0.01, "max": 0.99}],
-                    "max_entry_dte": 45,
+                    "entry_dte": {"target": 45, "min": 30, "max": 60},
                     "exit_dte": 5,
                     "slippage": {"type": "Mid"},
                     "capital": 100_000.0,
@@ -990,14 +990,14 @@ async fn compare_strategies_ranks_results() {
                         {
                             "name": "short_put",
                             "leg_deltas": [{"target": 0.4, "min": 0.01, "max": 0.99}],
-                            "max_entry_dte": 45,
+                            "entry_dte": {"target": 45, "min": 30, "max": 60},
                             "exit_dte": 5,
                             "slippage": {"type": "Mid"}
                         },
                         {
                             "name": "short_call",
                             "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                            "max_entry_dte": 45,
+                            "entry_dte": {"target": 45, "min": 30, "max": 60},
                             "exit_dte": 5,
                             "slippage": {"type": "Mid"}
                         }
@@ -1057,7 +1057,7 @@ async fn backtest_golden_path_output_shape() {
                 serde_json::from_value(json!({
                     "strategy": "short_put",
                     "leg_deltas": [{"target": 0.4, "min": 0.01, "max": 0.99}],
-                    "max_entry_dte": 45,
+                    "entry_dte": {"target": 45, "min": 30, "max": 60},
                     "exit_dte": 5,
                     "slippage": {"type": "Mid"},
                     "capital": 100_000.0,
@@ -1374,7 +1374,7 @@ async fn evaluate_fails_multiple_symbols_no_symbol_param() {
                 serde_json::from_value(json!({
                     "strategy": "long_call",
                     "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                    "max_entry_dte": 45,
+                    "entry_dte": {"target": 45, "min": 30, "max": 60},
                     "exit_dte": 5,
                     "dte_interval": 7,
                     "delta_interval": 0.05,
@@ -1430,7 +1430,7 @@ async fn evaluate_succeeds_explicit_symbol_param() {
                 serde_json::from_value(json!({
                     "strategy": "long_call",
                     "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                    "max_entry_dte": 45,
+                    "entry_dte": {"target": 45, "min": 30, "max": 60},
                     "exit_dte": 5,
                     "dte_interval": 10,
                     "delta_interval": 0.10,
@@ -1486,7 +1486,7 @@ async fn evaluate_fails_unknown_symbol() {
                 serde_json::from_value(json!({
                     "strategy": "long_call",
                     "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                    "max_entry_dte": 45,
+                    "entry_dte": {"target": 45, "min": 30, "max": 60},
                     "exit_dte": 5,
                     "dte_interval": 7,
                     "delta_interval": 0.05,
@@ -1546,7 +1546,7 @@ async fn run_backtest_fails_multiple_symbols_no_symbol_param() {
                 serde_json::from_value(json!({
                     "strategy": "long_call",
                     "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                    "max_entry_dte": 45,
+                    "entry_dte": {"target": 45, "min": 30, "max": 60},
                     "exit_dte": 5,
                     "slippage": {"type": "Mid"},
                     "capital": 10000.0,
@@ -1603,7 +1603,7 @@ async fn run_backtest_succeeds_with_explicit_symbol() {
                 serde_json::from_value(json!({
                     "strategy": "long_call",
                     "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                    "max_entry_dte": 45,
+                    "entry_dte": {"target": 45, "min": 30, "max": 60},
                     "exit_dte": 5,
                     "slippage": {"type": "Mid"},
                     "capital": 10000.0,
@@ -1661,7 +1661,7 @@ async fn run_backtest_fails_unknown_symbol() {
                 serde_json::from_value(json!({
                     "strategy": "long_call",
                     "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                    "max_entry_dte": 45,
+                    "entry_dte": {"target": 45, "min": 30, "max": 60},
                     "exit_dte": 5,
                     "slippage": {"type": "Mid"},
                     "capital": 10000.0,
@@ -1721,14 +1721,14 @@ async fn compare_strategies_fails_multiple_symbols_no_symbol_param() {
                         {
                             "name": "long_call",
                             "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                            "max_entry_dte": 45,
+                            "entry_dte": {"target": 45, "min": 30, "max": 60},
                             "exit_dte": 5,
                             "slippage": {"type": "Mid"}
                         },
                         {
                             "name": "long_put",
                             "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                            "max_entry_dte": 45,
+                            "entry_dte": {"target": 45, "min": 30, "max": 60},
                             "exit_dte": 5,
                             "slippage": {"type": "Mid"}
                         }
@@ -1792,14 +1792,14 @@ async fn compare_strategies_succeeds_with_explicit_symbol() {
                         {
                             "name": "long_call",
                             "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                            "max_entry_dte": 45,
+                            "entry_dte": {"target": 45, "min": 30, "max": 60},
                             "exit_dte": 5,
                             "slippage": {"type": "Mid"}
                         },
                         {
                             "name": "long_put",
                             "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                            "max_entry_dte": 45,
+                            "entry_dte": {"target": 45, "min": 30, "max": 60},
                             "exit_dte": 5,
                             "slippage": {"type": "Mid"}
                         }
@@ -1864,14 +1864,14 @@ async fn compare_strategies_fails_unknown_symbol() {
                         {
                             "name": "long_call",
                             "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                            "max_entry_dte": 45,
+                            "entry_dte": {"target": 45, "min": 30, "max": 60},
                             "exit_dte": 5,
                             "slippage": {"type": "Mid"}
                         },
                         {
                             "name": "long_put",
                             "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                            "max_entry_dte": 45,
+                            "entry_dte": {"target": 45, "min": 30, "max": 60},
                             "exit_dte": 5,
                             "slippage": {"type": "Mid"}
                         }
