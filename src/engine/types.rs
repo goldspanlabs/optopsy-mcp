@@ -205,6 +205,11 @@ impl StrategyDef {
             .iter()
             .any(|l| l.expiration_cycle == ExpirationCycle::Secondary)
     }
+
+    /// Returns the per-leg default delta targets embedded in the strategy definition.
+    pub fn default_deltas(&self) -> Vec<TargetRange> {
+        self.legs.iter().map(|l| l.delta.clone()).collect()
+    }
 }
 
 pub(crate) fn validate_exit_dte_lt_entry_min(
