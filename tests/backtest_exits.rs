@@ -256,7 +256,7 @@ fn low_dte_floor_produces_one_day_trade() {
     let mut params = base_params("long_call", vec![delta(0.50)]);
     params.entry_dte = DteRange {
         target: 6,
-        min: 6,   // old floor: exit_dte + 1
+        min: 6, // old floor: exit_dte + 1
         max: 50,
     };
     params.exit_dte = 5;

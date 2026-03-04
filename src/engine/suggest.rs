@@ -81,7 +81,7 @@ pub fn suggest_parameters(df: &DataFrame, params: &SuggestParams) -> Result<Sugg
     let (entry_dte, exit_dte, dte_range_str) = find_best_dte_cluster(&liquid_df)?;
 
     // Analyze delta distribution for each leg's option type
-    let leg_deltas = extract_leg_deltas(&liquid_df, &strategy_def, entry_dte.max, exit_dte)?;
+    let leg_deltas = extract_leg_deltas(&liquid_df, &strategy_def, entry_dte.max, entry_dte.min)?;
 
     // Infer slippage from median spread_ratio
     let slippage = infer_slippage(&liquid_df)?;
@@ -186,10 +186,16 @@ fn apply_liquidity_filter(
 }
 
 /// Compute `exit_dte` based on `entry_dte_min` with sensible bounds.
-/// Formula: 20% of `entry_dte_min`, clamped to [7, 21] and always < `entry_dte_min`.
+/// Formula: 20% of `entry_dte_min`, clamped to [7, 21] and capped to be < `entry_dte_min`
+/// when that is compatible with the [7, 21] bound.
 fn compute_exit_dte(entry_dte_min: i32) -> i32 {
     let raw = (f64::from(entry_dte_min) * 0.20).round() as i32;
-    raw.clamp(7, 21).min(entry_dte_min.saturating_sub(1))
+    let clamped = raw.clamp(7, 21);
+    if entry_dte_min > 7 {
+        clamped.min(entry_dte_min.saturating_sub(1))
+    } else {
+        clamped
+    }
 }
 
 /// Find the best DTE cluster (most continuous coverage) and suggest `exit_dte`.
@@ -242,7 +248,7 @@ fn extract_leg_deltas(
     df: &DataFrame,
     strategy_def: &StrategyDef,
     max_entry_dte: i32,
-    exit_dte: i32,
+    min_entry_dte: i32,
 ) -> Result<Vec<TargetRange>> {
     let mut leg_deltas = Vec::new();
 
@@ -252,7 +258,7 @@ fn extract_leg_deltas(
             .clone()
             .lazy()
             .filter(col("option_type").eq(lit(leg.option_type.as_str())))
-            .filter(col("dte").gt_eq(lit(exit_dte)))
+            .filter(col("dte").gt_eq(lit(min_entry_dte)))
             .filter(col("dte").lt_eq(lit(max_entry_dte)))
             .with_column(col("delta").abs().alias("abs_delta"))
             .filter(col("abs_delta").gt_eq(lit(0.05_f64)))

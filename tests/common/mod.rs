@@ -126,7 +126,7 @@ pub fn delta(target: f64) -> TargetRange {
     }
 }
 
-/// Default backtest params for synthetic data: `entry_dte={target:45, min:10, max:60}`, `exit_dte=5`,
+/// Default backtest params for synthetic data: `entry_dte={target:45, min:10, max:45}`, `exit_dte=5`,
 /// `Slippage::Mid`, `quantity=1`, `multiplier=100`.
 pub fn backtest_params(strategy: &str, leg_deltas: Vec<TargetRange>) -> BacktestParams {
     BacktestParams {

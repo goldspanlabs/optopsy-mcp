@@ -120,7 +120,7 @@ fn build_evaluate_quality(
     median_spread: Option<f64>,
 ) -> DataQualityReport {
     let dte_steps = {
-        let diff = params.entry_dte.max - params.exit_dte;
+        let diff = params.entry_dte.max - params.entry_dte.min;
         ((f64::from(diff)) / f64::from(params.dte_interval)).ceil() as usize
     };
     let delta_steps = {

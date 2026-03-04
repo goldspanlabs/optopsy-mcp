@@ -48,7 +48,7 @@ pub(crate) fn generate_matched_trades(
         } else {
             entry_dte.max
         };
-        let dte_filtered = filters::filter_dte_range(&with_dte, max_dte, exit_dte)?;
+        let dte_filtered = filters::filter_dte_range(&with_dte, max_dte, entry_dte.min)?;
 
         // Filter valid quotes
         let valid = filters::filter_valid_quotes(&dte_filtered, min_bid_ask)?;
