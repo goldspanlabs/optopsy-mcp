@@ -186,6 +186,7 @@ fn apply_liquidity_filter(
 }
 
 /// Compute `exit_dte` based on `entry_dte_min` with sensible bounds.
+<<<<<<< HEAD
 /// Formula: 20% of `entry_dte_min`, clamped to [7, 21] and then capped so that
 /// `exit_dte < entry_dte_min`. For very small `entry_dte_min`, this may relax
 /// the effective lower bound implied by the [7, 21] clamp.
