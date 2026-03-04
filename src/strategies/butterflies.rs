@@ -1,5 +1,5 @@
 use super::helpers::{
-    call_leg, default_atm_delta, default_itm_delta, default_otm_delta, put_leg, strategy, Side,
+    call_leg, default_atm_delta, default_itm_delta, default_deep_otm_delta, put_leg, strategy, Side,
     StrategyDef,
 };
 
@@ -11,7 +11,7 @@ pub fn long_call_butterfly() -> StrategyDef {
         vec![
             call_leg(Side::Long, 1, default_itm_delta()),
             call_leg(Side::Short, 2, default_atm_delta()),
-            call_leg(Side::Long, 1, default_otm_delta()),
+            call_leg(Side::Long, 1, default_deep_otm_delta()),
         ],
     )
 }
@@ -24,7 +24,7 @@ pub fn short_call_butterfly() -> StrategyDef {
         vec![
             call_leg(Side::Short, 1, default_itm_delta()),
             call_leg(Side::Long, 2, default_atm_delta()),
-            call_leg(Side::Short, 1, default_otm_delta()),
+            call_leg(Side::Short, 1, default_deep_otm_delta()),
         ],
     )
 }
@@ -37,7 +37,7 @@ pub fn long_put_butterfly() -> StrategyDef {
         vec![
             put_leg(Side::Long, 1, default_itm_delta()),
             put_leg(Side::Short, 2, default_atm_delta()),
-            put_leg(Side::Long, 1, default_otm_delta()),
+            put_leg(Side::Long, 1, default_deep_otm_delta()),
         ],
     )
 }
@@ -50,7 +50,7 @@ pub fn short_put_butterfly() -> StrategyDef {
         vec![
             put_leg(Side::Short, 1, default_itm_delta()),
             put_leg(Side::Long, 2, default_atm_delta()),
-            put_leg(Side::Short, 1, default_otm_delta()),
+            put_leg(Side::Short, 1, default_deep_otm_delta()),
         ],
     )
 }

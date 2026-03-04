@@ -5,7 +5,7 @@ pub use crate::engine::types::{
 // --- Default delta constants (from original optopsy Python library) ---
 
 /// Body/spread legs (e.g., short legs of condors, strangle legs)
-pub fn default_delta() -> TargetRange {
+pub fn default_otm_delta() -> TargetRange {
     TargetRange {
         target: 0.30,
         min: 0.20,
@@ -23,7 +23,7 @@ pub fn default_atm_delta() -> TargetRange {
 }
 
 /// Far OTM wings (protective wings of condors/iron strategies)
-pub fn default_otm_delta() -> TargetRange {
+pub fn default_deep_otm_delta() -> TargetRange {
     TargetRange {
         target: 0.10,
         min: 0.05,
@@ -31,21 +31,12 @@ pub fn default_otm_delta() -> TargetRange {
     }
 }
 
-/// Wing legs (butterfly wings, moderate OTM)
-pub fn default_wing_delta() -> TargetRange {
-    TargetRange {
-        target: 0.20,
-        min: 0.10,
-        max: 0.30,
-    }
-}
-
 /// Deep ITM delta (covered call stock proxy)
 pub fn default_deep_itm_delta() -> TargetRange {
     TargetRange {
         target: 0.80,
-        min: 0.60,
-        max: 0.95,
+        min: 0.70,
+        max: 0.90,
     }
 }
 

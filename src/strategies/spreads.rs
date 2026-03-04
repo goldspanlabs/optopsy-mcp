@@ -1,5 +1,5 @@
 use super::helpers::{
-    call_leg, default_atm_delta, default_delta, default_otm_delta, put_leg, strategy,
+    call_leg, default_atm_delta, default_otm_delta, default_deep_otm_delta, put_leg, strategy,
     strategy_relaxed, Side, StrategyDef,
 };
 
@@ -11,7 +11,7 @@ pub fn bull_call_spread() -> StrategyDef {
         "Buy lower strike call, sell higher strike call",
         vec![
             call_leg(Side::Long, 1, default_atm_delta()),
-            call_leg(Side::Short, 1, default_otm_delta()),
+            call_leg(Side::Short, 1, default_deep_otm_delta()),
         ],
     )
 }
@@ -23,7 +23,7 @@ pub fn bear_call_spread() -> StrategyDef {
         "Sell lower strike call, buy higher strike call",
         vec![
             call_leg(Side::Short, 1, default_atm_delta()),
-            call_leg(Side::Long, 1, default_otm_delta()),
+            call_leg(Side::Long, 1, default_deep_otm_delta()),
         ],
     )
 }
@@ -35,7 +35,7 @@ pub fn bull_put_spread() -> StrategyDef {
         "Sell higher strike put, buy lower strike put",
         vec![
             put_leg(Side::Short, 1, default_atm_delta()),
-            put_leg(Side::Long, 1, default_otm_delta()),
+            put_leg(Side::Long, 1, default_deep_otm_delta()),
         ],
     )
 }
@@ -47,7 +47,7 @@ pub fn bear_put_spread() -> StrategyDef {
         "Buy higher strike put, sell lower strike put",
         vec![
             put_leg(Side::Long, 1, default_atm_delta()),
-            put_leg(Side::Short, 1, default_otm_delta()),
+            put_leg(Side::Short, 1, default_deep_otm_delta()),
         ],
     )
 }
@@ -84,8 +84,8 @@ pub fn long_strangle() -> StrategyDef {
         "Spreads",
         "Buy OTM call and OTM put",
         vec![
-            call_leg(Side::Long, 1, default_delta()),
-            put_leg(Side::Long, 1, default_delta()),
+            call_leg(Side::Long, 1, default_otm_delta()),
+            put_leg(Side::Long, 1, default_otm_delta()),
         ],
     )
 }
@@ -96,8 +96,8 @@ pub fn short_strangle() -> StrategyDef {
         "Spreads",
         "Sell OTM call and OTM put",
         vec![
-            call_leg(Side::Short, 1, default_delta()),
-            put_leg(Side::Short, 1, default_delta()),
+            call_leg(Side::Short, 1, default_otm_delta()),
+            put_leg(Side::Short, 1, default_otm_delta()),
         ],
     )
 }
