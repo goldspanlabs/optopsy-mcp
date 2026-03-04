@@ -186,15 +186,17 @@ fn apply_liquidity_filter(
 }
 
 /// Compute `exit_dte` based on `entry_dte_min` with sensible bounds.
-/// Formula: 20% of `entry_dte_min`, clamped to [7, 21] and capped to be < `entry_dte_min`
-/// when that is compatible with the [7, 21] bound.
+/// Formula: 20% of `entry_dte_min`, clamped to [7, 21] and then capped so that
+/// `exit_dte < entry_dte_min`. For very small `entry_dte_min`, this may relax
+/// the effective lower bound implied by the [7, 21] clamp.
 fn compute_exit_dte(entry_dte_min: i32) -> i32 {
     let raw = (f64::from(entry_dte_min) * 0.20).round() as i32;
     let clamped = raw.clamp(7, 21);
-    if entry_dte_min > 7 {
+    if entry_dte_min > clamped {
         clamped.min(entry_dte_min.saturating_sub(1))
     } else {
-        clamped
+        // For very low entry_dte_min, prioritize exit_dte < entry_dte_min
+        entry_dte_min.saturating_sub(1)
     }
 }
 
@@ -243,7 +245,8 @@ fn find_best_dte_cluster(df: &DataFrame) -> Result<(DteRange, i32, String)> {
 }
 
 /// Extract recommended delta ranges for each leg based on option type and side analysis.
-/// Filters to the DTE zone [`exit_dte`, `max_entry_dte`] and uses side-aware percentile bands.
+/// Filters to the entry DTE zone [`min_entry_dte`, `max_entry_dte`] and uses side-aware
+/// percentile bands.
 fn extract_leg_deltas(
     df: &DataFrame,
     strategy_def: &StrategyDef,

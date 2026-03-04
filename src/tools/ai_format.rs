@@ -120,8 +120,16 @@ fn build_evaluate_quality(
     median_spread: Option<f64>,
 ) -> DataQualityReport {
     let dte_steps = {
-        let diff = params.entry_dte.max - params.entry_dte.min;
-        ((f64::from(diff)) / f64::from(params.dte_interval)).ceil() as usize
+        let interval = params.dte_interval;
+        if interval == 0 {
+            0
+        } else {
+            let min_adj = params.entry_dte.min.saturating_sub(1);
+            let max_adj = params.entry_dte.max.saturating_sub(1);
+            let min_bin = (min_adj / interval) * interval;
+            let max_bin = (max_adj / interval) * interval;
+            ((max_bin - min_bin) / interval + 1) as usize
+        }
     };
     let delta_steps = {
         let min_range = params
