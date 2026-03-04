@@ -8,8 +8,8 @@ pub use crate::engine::types::{
 pub fn default_otm_delta() -> TargetRange {
     TargetRange {
         target: 0.30,
-        min: 0.20,
-        max: 0.40,
+        min: 0.25,
+        max: 0.35,
     }
 }
 
@@ -17,8 +17,8 @@ pub fn default_otm_delta() -> TargetRange {
 pub fn default_atm_delta() -> TargetRange {
     TargetRange {
         target: 0.50,
-        min: 0.40,
-        max: 0.60,
+        min: 0.45,
+        max: 0.55,
     }
 }
 
@@ -27,7 +27,7 @@ pub fn default_deep_otm_delta() -> TargetRange {
     TargetRange {
         target: 0.10,
         min: 0.05,
-        max: 0.20,
+        max: 0.15,
     }
 }
 
@@ -35,8 +35,8 @@ pub fn default_deep_otm_delta() -> TargetRange {
 pub fn default_deep_itm_delta() -> TargetRange {
     TargetRange {
         target: 0.80,
-        min: 0.70,
-        max: 0.90,
+        min: 0.75,
+        max: 0.85,
     }
 }
 
@@ -44,8 +44,8 @@ pub fn default_deep_itm_delta() -> TargetRange {
 pub fn default_itm_delta() -> TargetRange {
     TargetRange {
         target: 0.40,
-        min: 0.30,
-        max: 0.50,
+        min: 0.35,
+        max: 0.45,
     }
 }
 
