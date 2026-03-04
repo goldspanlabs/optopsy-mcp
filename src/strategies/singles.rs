@@ -1,11 +1,11 @@
-use super::helpers::{call_leg, put_leg, strategy, Side, StrategyDef};
+use super::helpers::{call_leg, default_otm_delta, put_leg, strategy, Side, StrategyDef};
 
 pub fn long_call() -> StrategyDef {
     strategy(
         "long_call",
         "Singles",
         "Buy a call option",
-        vec![call_leg(Side::Long, 1)],
+        vec![call_leg(Side::Long, 1, default_otm_delta())],
     )
 }
 
@@ -14,7 +14,7 @@ pub fn short_call() -> StrategyDef {
         "short_call",
         "Singles",
         "Sell a call option",
-        vec![call_leg(Side::Short, 1)],
+        vec![call_leg(Side::Short, 1, default_otm_delta())],
     )
 }
 
@@ -23,7 +23,7 @@ pub fn long_put() -> StrategyDef {
         "long_put",
         "Singles",
         "Buy a put option",
-        vec![put_leg(Side::Long, 1)],
+        vec![put_leg(Side::Long, 1, default_otm_delta())],
     )
 }
 
@@ -32,7 +32,7 @@ pub fn short_put() -> StrategyDef {
         "short_put",
         "Singles",
         "Sell a put option (cash-secured put)",
-        vec![put_leg(Side::Short, 1)],
+        vec![put_leg(Side::Short, 1, default_otm_delta())],
     )
 }
 
@@ -41,7 +41,7 @@ pub fn covered_call() -> StrategyDef {
         "covered_call",
         "Singles",
         "Sell a call against long stock",
-        vec![call_leg(Side::Short, 1)],
+        vec![call_leg(Side::Short, 1, default_otm_delta())],
     )
 }
 
@@ -50,7 +50,7 @@ pub fn cash_secured_put() -> StrategyDef {
         "cash_secured_put",
         "Singles",
         "Sell a put with cash collateral",
-        vec![put_leg(Side::Short, 1)],
+        vec![put_leg(Side::Short, 1, default_otm_delta())],
     )
 }
 

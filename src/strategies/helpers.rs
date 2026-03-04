@@ -2,48 +2,87 @@ pub use crate::engine::types::{
     ExpirationCycle, LegDef, OptionType, Side, StrategyDef, TargetRange,
 };
 
-pub fn leg(side: Side, option_type: OptionType, qty: i32) -> LegDef {
+// --- Default delta constants (from original optopsy Python library) ---
+
+/// Body/spread legs (e.g., short legs of condors, strangle legs)
+pub fn default_otm_delta() -> TargetRange {
+    TargetRange {
+        target: 0.30,
+        min: 0.25,
+        max: 0.35,
+    }
+}
+
+/// ATM legs (straddles, vertical spreads near the money)
+pub fn default_atm_delta() -> TargetRange {
+    TargetRange {
+        target: 0.50,
+        min: 0.45,
+        max: 0.55,
+    }
+}
+
+/// Far OTM wings (protective wings of condors/iron strategies)
+pub fn default_deep_otm_delta() -> TargetRange {
+    TargetRange {
+        target: 0.10,
+        min: 0.05,
+        max: 0.15,
+    }
+}
+
+/// Deep ITM delta (covered call stock proxy)
+pub fn default_deep_itm_delta() -> TargetRange {
+    TargetRange {
+        target: 0.80,
+        min: 0.75,
+        max: 0.85,
+    }
+}
+
+/// ITM delta (butterfly near wings, ITM legs)
+pub fn default_itm_delta() -> TargetRange {
+    TargetRange {
+        target: 0.40,
+        min: 0.35,
+        max: 0.45,
+    }
+}
+
+pub fn leg(side: Side, option_type: OptionType, qty: i32, delta: TargetRange) -> LegDef {
     LegDef {
         side,
         option_type,
-        delta: TargetRange {
-            target: 0.0,
-            min: 0.0,
-            max: 1.0,
-        },
+        delta,
         qty,
         expiration_cycle: ExpirationCycle::Primary,
     }
 }
 
-fn leg_secondary(side: Side, option_type: OptionType, qty: i32) -> LegDef {
+fn leg_secondary(side: Side, option_type: OptionType, qty: i32, delta: TargetRange) -> LegDef {
     LegDef {
         side,
         option_type,
-        delta: TargetRange {
-            target: 0.0,
-            min: 0.0,
-            max: 1.0,
-        },
+        delta,
         qty,
         expiration_cycle: ExpirationCycle::Secondary,
     }
 }
 
-pub fn call_leg(side: Side, qty: i32) -> LegDef {
-    leg(side, OptionType::Call, qty)
+pub fn call_leg(side: Side, qty: i32, delta: TargetRange) -> LegDef {
+    leg(side, OptionType::Call, qty, delta)
 }
 
-pub fn put_leg(side: Side, qty: i32) -> LegDef {
-    leg(side, OptionType::Put, qty)
+pub fn put_leg(side: Side, qty: i32, delta: TargetRange) -> LegDef {
+    leg(side, OptionType::Put, qty, delta)
 }
 
-pub fn call_leg_secondary(side: Side, qty: i32) -> LegDef {
-    leg_secondary(side, OptionType::Call, qty)
+pub fn call_leg_secondary(side: Side, qty: i32, delta: TargetRange) -> LegDef {
+    leg_secondary(side, OptionType::Call, qty, delta)
 }
 
-pub fn put_leg_secondary(side: Side, qty: i32) -> LegDef {
-    leg_secondary(side, OptionType::Put, qty)
+pub fn put_leg_secondary(side: Side, qty: i32, delta: TargetRange) -> LegDef {
+    leg_secondary(side, OptionType::Put, qty, delta)
 }
 
 pub fn strategy(name: &str, category: &str, description: &str, legs: Vec<LegDef>) -> StrategyDef {

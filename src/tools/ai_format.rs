@@ -1085,18 +1085,21 @@ mod tests {
                 category: "Singles".to_string(),
                 legs: 1,
                 description: "Buy a call".to_string(),
+                default_deltas: vec![],
             },
             StrategyInfo {
                 name: "short_put".to_string(),
                 category: "Singles".to_string(),
                 legs: 1,
                 description: "Sell a put".to_string(),
+                default_deltas: vec![],
             },
             StrategyInfo {
                 name: "bull_call_spread".to_string(),
                 category: "Spreads".to_string(),
                 legs: 2,
                 description: "Bullish spread".to_string(),
+                default_deltas: vec![],
             },
         ];
         let response = format_strategies(strategies);
