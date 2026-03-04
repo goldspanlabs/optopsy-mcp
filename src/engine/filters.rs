@@ -24,15 +24,15 @@ pub fn compute_dte(df: &DataFrame) -> Result<DataFrame> {
     Ok(result)
 }
 
-/// Filter by DTE range [`exit_dte`, `max_entry_dte`]
-pub fn filter_dte_range(df: &DataFrame, max_entry_dte: i32, exit_dte: i32) -> Result<DataFrame> {
+/// Filter by DTE range [`min_dte`, `max_dte`]
+pub fn filter_dte_range(df: &DataFrame, max_dte: i32, min_dte: i32) -> Result<DataFrame> {
     let result = df
         .clone()
         .lazy()
         .filter(
             col("dte")
-                .gt_eq(lit(exit_dte))
-                .and(col("dte").lt_eq(lit(max_entry_dte))),
+                .gt_eq(lit(min_dte))
+                .and(col("dte").lt_eq(lit(max_dte))),
         )
         .collect()?;
     Ok(result)

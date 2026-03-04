@@ -144,7 +144,7 @@ fn resolve_leg_deltas(
         Ok(deltas)
     } else {
         let strategy_def = crate::strategies::find_strategy(strategy_name)
-            .ok_or_else(|| format!("Unknown strategy: {strategy_name}"))?;
+            .ok_or_else(|| format!("Error: Unknown strategy: {strategy_name}"))?;
         Ok(strategy_def.default_deltas())
     }
 }
@@ -180,7 +180,7 @@ pub struct EvaluateStrategyParams {
     pub strategy: StrategyParam,
     /// Per-leg delta targets (optional — uses strategy-specific defaults if omitted)
     #[serde(default)]
-    #[garde(dive)]
+    #[garde(inner(length(min = 1)))]
     pub leg_deltas: Option<Vec<TargetRange>>,
     /// Entry DTE range: { target, min, max } (default: { target: 45, min: 30, max: 60 })
     #[serde(default = "default_entry_dte")]
@@ -223,7 +223,7 @@ pub struct RunBacktestParams {
     pub strategy: StrategyParam,
     /// Per-leg delta targets (optional — uses strategy-specific defaults if omitted)
     #[serde(default)]
-    #[garde(dive)]
+    #[garde(inner(length(min = 1)))]
     pub leg_deltas: Option<Vec<TargetRange>>,
     /// Entry DTE range: { target, min, max } (default: { target: 45, min: 30, max: 60 })
     #[serde(default = "default_entry_dte")]
@@ -294,7 +294,7 @@ pub struct ServerCompareEntry {
     pub name: StrategyParam,
     /// Per-leg delta targets (optional — uses strategy-specific defaults if omitted)
     #[serde(default)]
-    #[garde(dive)]
+    #[garde(inner(length(min = 1)))]
     pub leg_deltas: Option<Vec<TargetRange>>,
     /// Entry DTE range: { target, min, max } (default: { target: 45, min: 30, max: 60 })
     #[serde(default = "default_entry_dte")]
