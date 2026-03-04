@@ -1,5 +1,5 @@
 use super::helpers::{
-    call_leg, default_atm_delta, default_otm_delta, default_deep_otm_delta, put_leg, strategy,
+    call_leg, default_atm_delta, default_deep_otm_delta, default_otm_delta, put_leg, strategy,
     strategy_relaxed, Side, StrategyDef,
 };
 
@@ -10,8 +10,8 @@ pub fn iron_condor() -> StrategyDef {
         "Sell OTM put spread + sell OTM call spread",
         vec![
             put_leg(Side::Long, 1, default_deep_otm_delta()), // buy lower put (wing)
-            put_leg(Side::Short, 1, default_otm_delta()),    // sell higher put
-            call_leg(Side::Short, 1, default_otm_delta()),   // sell lower call
+            put_leg(Side::Short, 1, default_otm_delta()),     // sell higher put
+            call_leg(Side::Short, 1, default_otm_delta()),    // sell lower call
             call_leg(Side::Long, 1, default_deep_otm_delta()), // buy higher call (wing)
         ],
     )
@@ -38,8 +38,8 @@ pub fn iron_butterfly() -> StrategyDef {
         "Sell ATM straddle + buy OTM strangle",
         vec![
             put_leg(Side::Long, 1, default_deep_otm_delta()), // buy lower put (wing)
-            put_leg(Side::Short, 1, default_atm_delta()), // sell ATM put
-            call_leg(Side::Short, 1, default_atm_delta()), // sell ATM call
+            put_leg(Side::Short, 1, default_atm_delta()),     // sell ATM put
+            call_leg(Side::Short, 1, default_atm_delta()),    // sell ATM call
             call_leg(Side::Long, 1, default_deep_otm_delta()), // buy higher call (wing)
         ],
     )

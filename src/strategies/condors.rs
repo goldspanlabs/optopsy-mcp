@@ -1,5 +1,5 @@
 use super::helpers::{
-    call_leg, default_otm_delta, default_deep_otm_delta, put_leg, strategy, Side, StrategyDef,
+    call_leg, default_deep_otm_delta, default_otm_delta, put_leg, strategy, Side, StrategyDef,
 };
 
 pub fn long_call_condor() -> StrategyDef {

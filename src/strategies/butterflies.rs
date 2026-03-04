@@ -1,6 +1,6 @@
 use super::helpers::{
-    call_leg, default_atm_delta, default_itm_delta, default_deep_otm_delta, put_leg, strategy, Side,
-    StrategyDef,
+    call_leg, default_atm_delta, default_deep_otm_delta, default_itm_delta, put_leg, strategy,
+    Side, StrategyDef,
 };
 
 pub fn long_call_butterfly() -> StrategyDef {

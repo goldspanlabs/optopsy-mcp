@@ -1,5 +1,5 @@
 use super::helpers::{
-    call_leg, default_atm_delta, default_otm_delta, default_deep_otm_delta, put_leg, strategy,
+    call_leg, default_atm_delta, default_deep_otm_delta, default_otm_delta, put_leg, strategy,
     strategy_relaxed, Side, StrategyDef,
 };
 
