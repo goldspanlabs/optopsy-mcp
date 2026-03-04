@@ -144,7 +144,7 @@ fn resolve_leg_deltas(
         Ok(deltas)
     } else {
         let strategy_def = crate::strategies::find_strategy(strategy_name)
-            .ok_or_else(|| format!("Unknown strategy: {strategy_name}"))?;
+            .ok_or_else(|| format!("Error: Unknown strategy: {strategy_name}"))?;
         Ok(strategy_def.default_deltas())
     }
 }
