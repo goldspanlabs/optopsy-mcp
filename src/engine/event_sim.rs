@@ -15,20 +15,129 @@ use crate::data::parquet::QUOTE_DATETIME_COL;
 /// Build a price lookup table from the raw options `DataFrame`.
 /// Returns the table and a sorted list of unique trading dates.
 pub fn build_price_table(df: &DataFrame) -> Result<(PriceTable, Vec<NaiveDate>)> {
-    let quote_dates = df.column(QUOTE_DATETIME_COL)?;
-    let expirations = df.column("expiration")?;
+    let quote_col = df.column(QUOTE_DATETIME_COL)?;
+    let exp_col = df.column("expiration")?;
+
+    // Try fast path: downcast typed columns once, iterate via phys iterators
+    if let (Ok(quote_ca), Ok(exp_ca)) = (quote_col.datetime(), exp_col.date()) {
+        return build_price_table_fast(df, quote_ca, exp_ca);
+    }
+
+    // Fallback: per-row extract_date_from_column for non-normalized data
+    build_price_table_slow(df, quote_col, exp_col)
+}
+
+/// Fast path: columns already typed as Datetime/Date after `ParquetStore` normalization.
+/// Uses `cont_slice()` for zero-copy raw value access when possible.
+fn build_price_table_fast(
+    df: &DataFrame,
+    quote_ca: &DatetimeChunked,
+    exp_ca: &DateChunked,
+) -> Result<(PriceTable, Vec<NaiveDate>)> {
     let strikes = df.column("strike")?.f64()?;
     let option_types = df.column("option_type")?.str()?;
     let bids = df.column("bid")?.f64()?;
     let asks = df.column("ask")?.f64()?;
     let deltas = df.column("delta")?.f64()?;
 
-    let mut table = PriceTable::new();
+    let micros_per_day: i64 = match quote_ca.time_unit() {
+        TimeUnit::Microseconds => 86_400_000_000,
+        TimeUnit::Milliseconds => 86_400_000,
+        TimeUnit::Nanoseconds => 86_400_000_000_000,
+    };
+
+    let n = df.height();
+    let mut table = PriceTable::with_capacity_and_hasher(n, rustc_hash::FxBuildHasher);
+    let mut dates_vec: Vec<NaiveDate> = Vec::with_capacity(n);
+
+    // Try contiguous slice access (zero-copy, no Option wrapping, no chunk navigation).
+    // This works when columns have no nulls and are stored in a single chunk.
+    if let (Ok(q_vals), Ok(e_vals), Ok(s_vals), Ok(b_vals), Ok(a_vals), Ok(d_vals)) = (
+        quote_ca.phys.cont_slice(),
+        exp_ca.phys.cont_slice(),
+        strikes.cont_slice(),
+        bids.cont_slice(),
+        asks.cont_slice(),
+        deltas.cont_slice(),
+    ) {
+        for i in 0..n {
+            let ot = match option_types.get(i) {
+                Some("call") => OptionType::Call,
+                Some("put") => OptionType::Put,
+                _ => continue,
+            };
+            let quote_date = NaiveDate::from_num_days_from_ce_opt(
+                (q_vals[i].div_euclid(micros_per_day)) as i32 + 719_163,
+            )
+            .ok_or_else(|| anyhow::anyhow!("Invalid quote_datetime value"))?;
+            let exp_date = NaiveDate::from_num_days_from_ce_opt(e_vals[i] + 719_163)
+                .ok_or_else(|| anyhow::anyhow!("Invalid expiration value"))?;
+
+            table.insert(
+                (quote_date, exp_date, OrderedFloat(s_vals[i]), ot),
+                QuoteSnapshot { bid: b_vals[i], ask: a_vals[i], delta: d_vals[i] },
+            );
+            dates_vec.push(quote_date);
+        }
+    } else {
+        // Chunked iterator fallback (handles nulls / multi-chunk arrays)
+        for (((((quote_raw, exp_raw), strike), opt_str), bid), (ask, delta)) in quote_ca
+            .phys
+            .iter()
+            .zip(exp_ca.phys.iter())
+            .zip(strikes.iter())
+            .zip(option_types.iter())
+            .zip(bids.iter())
+            .zip(asks.iter().zip(deltas.iter()))
+        {
+            let (Some(qv), Some(ev), Some(strike_val), Some(ot_str), Some(bid_val), Some(ask_val), Some(delta_val)) =
+                (quote_raw, exp_raw, strike, opt_str, bid, ask, delta)
+            else {
+                continue;
+            };
+            let opt_type = match ot_str {
+                "call" => OptionType::Call,
+                "put" => OptionType::Put,
+                _ => continue,
+            };
+            let quote_date = NaiveDate::from_num_days_from_ce_opt(
+                (qv.div_euclid(micros_per_day)) as i32 + 719_163,
+            )
+            .ok_or_else(|| anyhow::anyhow!("Invalid quote_datetime value"))?;
+            let exp_date = NaiveDate::from_num_days_from_ce_opt(ev + 719_163)
+                .ok_or_else(|| anyhow::anyhow!("Invalid expiration value"))?;
+
+            table.insert(
+                (quote_date, exp_date, OrderedFloat(strike_val), opt_type),
+                QuoteSnapshot { bid: bid_val, ask: ask_val, delta: delta_val },
+            );
+            dates_vec.push(quote_date);
+        }
+    }
+
+    dates_vec.sort_unstable();
+    dates_vec.dedup();
+    Ok((table, dates_vec))
+}
+
+/// Slow fallback: per-row type dispatch via `extract_date_from_column`.
+fn build_price_table_slow(
+    df: &DataFrame,
+    quote_col: &Column,
+    exp_col: &Column,
+) -> Result<(PriceTable, Vec<NaiveDate>)> {
+    let strikes = df.column("strike")?.f64()?;
+    let option_types = df.column("option_type")?.str()?;
+    let bids = df.column("bid")?.f64()?;
+    let asks = df.column("ask")?.f64()?;
+    let deltas = df.column("delta")?.f64()?;
+
+    let mut table = PriceTable::with_capacity_and_hasher(df.height(), rustc_hash::FxBuildHasher);
     let mut dates_set = std::collections::BTreeSet::new();
 
     for i in 0..df.height() {
-        let quote_date = extract_date_from_column(quote_dates, i)?;
-        let exp_date = extract_date_from_column(expirations, i)?;
+        let quote_date = extract_date_from_column(quote_col, i)?;
+        let exp_date = extract_date_from_column(exp_col, i)?;
         let strike = strikes.get(i).unwrap_or(0.0);
         let opt_type_str = option_types.get(i).unwrap_or("");
         let opt_type = match opt_type_str {
@@ -1050,7 +1159,7 @@ mod tests {
     use super::*;
 
     fn make_price_table_simple() -> (PriceTable, Vec<NaiveDate>) {
-        let mut table = PriceTable::new();
+        let mut table = PriceTable::with_hasher(rustc_hash::FxBuildHasher);
         let d1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
         let d2 = NaiveDate::from_ymd_opt(2024, 1, 22).unwrap();
         let d3 = NaiveDate::from_ymd_opt(2024, 1, 29).unwrap();
@@ -1142,7 +1251,7 @@ mod tests {
 
     #[test]
     fn mark_to_market_short_put() {
-        let mut table = PriceTable::new();
+        let mut table = PriceTable::with_hasher(rustc_hash::FxBuildHasher);
         let d1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
         let d2 = NaiveDate::from_ymd_opt(2024, 1, 22).unwrap();
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
@@ -1308,7 +1417,7 @@ mod tests {
 
     #[test]
     fn run_event_loop_stop_loss() {
-        let mut table = PriceTable::new();
+        let mut table = PriceTable::with_hasher(rustc_hash::FxBuildHasher);
         let d1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
         let d2 = NaiveDate::from_ymd_opt(2024, 1, 16).unwrap();
         let d3 = NaiveDate::from_ymd_opt(2024, 1, 17).unwrap();
@@ -1406,7 +1515,7 @@ mod tests {
 
     #[test]
     fn run_event_loop_take_profit() {
-        let mut table = PriceTable::new();
+        let mut table = PriceTable::with_hasher(rustc_hash::FxBuildHasher);
         let d1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
         let d2 = NaiveDate::from_ymd_opt(2024, 1, 16).unwrap();
         let d3 = NaiveDate::from_ymd_opt(2024, 1, 17).unwrap();
@@ -1502,7 +1611,7 @@ mod tests {
 
     #[test]
     fn run_event_loop_max_positions() {
-        let mut table = PriceTable::new();
+        let mut table = PriceTable::with_hasher(rustc_hash::FxBuildHasher);
         let d1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
         let d2 = NaiveDate::from_ymd_opt(2024, 1, 16).unwrap();
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();

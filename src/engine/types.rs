@@ -3,6 +3,7 @@ use garde::Validate;
 use ordered_float::OrderedFloat;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use rustc_hash::FxBuildHasher;
 use std::collections::HashMap;
 
 use crate::signals::registry::SignalSpec;
@@ -419,8 +420,8 @@ pub struct CompareResult {
 /// Key for looking up option quotes: (`quote_date`, expiration, strike, `option_type`)
 pub type PriceKey = (NaiveDate, NaiveDate, OrderedFloat<f64>, OptionType);
 
-/// Lookup table mapping `PriceKey` to quote snapshot
-pub type PriceTable = HashMap<PriceKey, QuoteSnapshot>;
+/// Lookup table mapping `PriceKey` to quote snapshot (`FxHash` for speed on fixed-size keys)
+pub type PriceTable = HashMap<PriceKey, QuoteSnapshot, FxBuildHasher>;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]

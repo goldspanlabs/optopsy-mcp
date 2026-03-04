@@ -2072,6 +2072,7 @@ dependencies = [
  "rmcp",
  "rust-s3",
  "rust_ti",
+ "rustc-hash",
  "schemars",
  "serde",
  "serde_json",
