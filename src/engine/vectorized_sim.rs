@@ -101,7 +101,7 @@ pub fn run_vectorized_backtest<S1: BuildHasher, S2: BuildHasher>(
 
     // Phase 2: Apply trade selector (already one per date from find_entry_candidates,
     // but multiple expirations may exist per date)
-    let trades = apply_trade_selector(trades, &params.selector);
+    let trades = apply_trade_selector(trades, &params.selector, params.entry_dte.target);
 
     // Phase 3: Early exit scanning (SL/TP/max_hold/exit_signal)
     let has_early_exit = params.stop_loss.is_some()
@@ -299,7 +299,11 @@ fn find_exit_date(
 }
 
 /// Pick one trade per entry date based on the `TradeSelector`.
-fn apply_trade_selector(mut trades: Vec<TradeRow>, selector: &TradeSelector) -> Vec<TradeRow> {
+fn apply_trade_selector(
+    mut trades: Vec<TradeRow>,
+    selector: &TradeSelector,
+    target_dte: i32,
+) -> Vec<TradeRow> {
     // Sort by entry_date, then by expiration for determinism
     trades.sort_by(|a, b| {
         a.entry_date
@@ -321,7 +325,11 @@ fn apply_trade_selector(mut trades: Vec<TradeRow>, selector: &TradeSelector) -> 
         let group = &trades[start..i];
 
         let pick = match selector {
-            TradeSelector::First | TradeSelector::Nearest => group.first(),
+            TradeSelector::Nearest => group.iter().min_by_key(|t| {
+                let candidate_dte = (t.expiration - t.entry_date).num_days() as i32;
+                (candidate_dte - target_dte).abs()
+            }),
+            TradeSelector::First => group.first(),
             TradeSelector::HighestPremium => group.iter().max_by(|a, b| {
                 a.entry_cost
                     .abs()

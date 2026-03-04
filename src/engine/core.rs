@@ -27,7 +27,7 @@ pub(crate) fn generate_matched_trades(
     df: &DataFrame,
     strategy_def: &StrategyDef,
     leg_deltas: &[TargetRange],
-    max_entry_dte: i32,
+    entry_dte: &DteRange,
     exit_dte: i32,
     min_bid_ask: f64,
 ) -> Result<DataFrame> {
@@ -44,9 +44,9 @@ pub(crate) fn generate_matched_trades(
 
         // Filter DTE range — secondary legs get wider range to find far-term expirations
         let max_dte = if leg.expiration_cycle == ExpirationCycle::Secondary {
-            max_entry_dte * 2
+            entry_dte.max * 2
         } else {
-            max_entry_dte
+            entry_dte.max
         };
         let dte_filtered = filters::filter_dte_range(&with_dte, max_dte, exit_dte)?;
 
@@ -121,7 +121,7 @@ pub fn evaluate_strategy(df: &DataFrame, params: &EvaluateParams) -> Result<Vec<
         df,
         &strategy_def,
         &params.leg_deltas,
-        params.max_entry_dte,
+        &params.entry_dte,
         params.exit_dte,
         params.min_bid_ask,
     )?;
@@ -357,7 +357,7 @@ pub fn compare_strategies(df: &DataFrame, params: &CompareParams) -> Result<Vec<
         let backtest_params = BacktestParams {
             strategy: entry.name.clone(),
             leg_deltas: entry.leg_deltas.clone(),
-            max_entry_dte: entry.max_entry_dte,
+            entry_dte: entry.entry_dte.clone(),
             exit_dte: entry.exit_dte,
             slippage: entry.slippage.clone(),
             commission: entry.commission.clone(),
@@ -541,7 +541,11 @@ mod tests {
                 min: 0.20,
                 max: 0.80,
             }],
-            max_entry_dte: 45,
+            entry_dte: DteRange {
+                target: 45,
+                min: 10,
+                max: 60,
+            },
             exit_dte: 5,
             slippage: Slippage::Mid,
             commission: None,
@@ -571,7 +575,11 @@ mod tests {
                 min: 0.20,
                 max: 0.80,
             }],
-            max_entry_dte: 45,
+            entry_dte: DteRange {
+                target: 45,
+                min: 10,
+                max: 60,
+            },
             exit_dte: 5,
             dte_interval: 10,
             delta_interval: 0.10,
@@ -889,7 +897,11 @@ mod tests {
                     max: 0.60,
                 },
             ],
-            max_entry_dte: 45,
+            entry_dte: DteRange {
+                target: 45,
+                min: 10,
+                max: 60,
+            },
             exit_dte: 5,
             slippage: Slippage::Mid,
             commission: None,

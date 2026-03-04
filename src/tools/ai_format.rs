@@ -120,7 +120,7 @@ fn build_evaluate_quality(
     median_spread: Option<f64>,
 ) -> DataQualityReport {
     let dte_steps = {
-        let diff = params.max_entry_dte - params.exit_dte;
+        let diff = params.entry_dte.max - params.exit_dte;
         ((f64::from(diff)) / f64::from(params.dte_interval)).ceil() as usize
     };
     let delta_steps = {
@@ -320,7 +320,7 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
             parameters: BacktestParamsSummary {
                 strategy: params.strategy.clone(),
                 leg_deltas: params.leg_deltas.clone(),
-                max_entry_dte: params.max_entry_dte,
+                entry_dte: params.entry_dte.clone(),
                 exit_dte: params.exit_dte,
                 slippage: params.slippage.clone(),
                 commission: params.commission.clone(),
@@ -408,7 +408,7 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
         parameters: BacktestParamsSummary {
             strategy: params.strategy.clone(),
             leg_deltas: params.leg_deltas.clone(),
-            max_entry_dte: params.max_entry_dte,
+            entry_dte: params.entry_dte.clone(),
             exit_dte: params.exit_dte,
             slippage: params.slippage.clone(),
             commission: params.commission.clone(),
@@ -514,7 +514,7 @@ pub fn format_evaluate(
         parameters: EvaluateParamsSummary {
             strategy: params.strategy.clone(),
             leg_deltas: params.leg_deltas.clone(),
-            max_entry_dte: params.max_entry_dte,
+            entry_dte: params.entry_dte.clone(),
             exit_dte: params.exit_dte,
             dte_interval: params.dte_interval,
             delta_interval: params.delta_interval,
@@ -603,7 +603,7 @@ pub fn format_compare(results: Vec<CompareResult>, params: &CompareParams) -> Co
         .map(|entry| CompareStrategyEntry {
             name: entry.name.clone(),
             leg_deltas: entry.leg_deltas.clone(),
-            max_entry_dte: entry.max_entry_dte,
+            entry_dte: entry.entry_dte.clone(),
             exit_dte: entry.exit_dte,
             slippage: entry.slippage.clone(),
             commission: entry.commission.clone(),
@@ -792,7 +792,7 @@ pub fn format_raw_prices(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::types::{EquityPoint, TradeSelector};
+    use crate::engine::types::{DteRange, EquityPoint, TradeSelector};
     use chrono::NaiveDateTime;
 
     fn make_trade(pnl: f64, days_held: i64, exit_type: ExitType) -> TradeRecord {
@@ -933,7 +933,11 @@ mod tests {
                 crate::engine::types::CompareEntry {
                     name: "alpha".to_string(),
                     leg_deltas: vec![],
-                    max_entry_dte: 45,
+                    entry_dte: DteRange {
+                        target: 45,
+                        min: 30,
+                        max: 60,
+                    },
                     exit_dte: 7,
                     slippage: crate::engine::types::Slippage::Mid,
                     commission: None,
@@ -941,7 +945,11 @@ mod tests {
                 crate::engine::types::CompareEntry {
                     name: "beta".to_string(),
                     leg_deltas: vec![],
-                    max_entry_dte: 45,
+                    entry_dte: DteRange {
+                        target: 45,
+                        min: 30,
+                        max: 60,
+                    },
                     exit_dte: 7,
                     slippage: crate::engine::types::Slippage::Mid,
                     commission: None,
@@ -949,7 +957,11 @@ mod tests {
                 crate::engine::types::CompareEntry {
                     name: "gamma".to_string(),
                     leg_deltas: vec![],
-                    max_entry_dte: 45,
+                    entry_dte: DteRange {
+                        target: 45,
+                        min: 30,
+                        max: 60,
+                    },
                     exit_dte: 7,
                     slippage: crate::engine::types::Slippage::Mid,
                     commission: None,
@@ -981,7 +993,11 @@ mod tests {
         let params = EvaluateParams {
             strategy: "test_strat".to_string(),
             leg_deltas: vec![],
-            max_entry_dte: 45,
+            entry_dte: DteRange {
+                target: 45,
+                min: 10,
+                max: 60,
+            },
             exit_dte: 0,
             dte_interval: 7,
             delta_interval: 0.05,
@@ -1002,7 +1018,11 @@ mod tests {
         let params = EvaluateParams {
             strategy: "test_strat".to_string(),
             leg_deltas: vec![],
-            max_entry_dte: 45,
+            entry_dte: DteRange {
+                target: 45,
+                min: 10,
+                max: 60,
+            },
             exit_dte: 0,
             dte_interval: 7,
             delta_interval: 0.05,
@@ -1139,7 +1159,11 @@ mod tests {
         BacktestParams {
             strategy: strategy.to_string(),
             leg_deltas: vec![],
-            max_entry_dte: 45,
+            entry_dte: DteRange {
+                target: 45,
+                min: 10,
+                max: 60,
+            },
             exit_dte: 0,
             slippage: crate::engine::types::Slippage::Mid,
             commission: None,

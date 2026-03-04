@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::engine::types::{
-    Commission, CompareResult, GroupStats, PerformanceMetrics, Slippage, TargetRange, TradeRecord,
-    TradeSelector,
+    Commission, CompareResult, DteRange, GroupStats, PerformanceMetrics, Slippage, TargetRange,
+    TradeRecord, TradeSelector,
 };
 
 /// Data quality report for `evaluate_strategy`
@@ -53,7 +53,7 @@ pub struct BacktestResponse {
 pub struct BacktestParamsSummary {
     pub strategy: String,
     pub leg_deltas: Vec<TargetRange>,
-    pub max_entry_dte: i32,
+    pub entry_dte: DteRange,
     pub exit_dte: i32,
     pub slippage: Slippage,
     pub commission: Option<Commission>,
@@ -129,7 +129,7 @@ pub struct EvaluateResponse {
 pub struct EvaluateParamsSummary {
     pub strategy: String,
     pub leg_deltas: Vec<TargetRange>,
-    pub max_entry_dte: i32,
+    pub entry_dte: DteRange,
     pub exit_dte: i32,
     pub dte_interval: i32,
     pub delta_interval: f64,
@@ -142,7 +142,7 @@ pub struct EvaluateParamsSummary {
 pub struct CompareStrategyEntry {
     pub name: String,
     pub leg_deltas: Vec<TargetRange>,
-    pub max_entry_dte: i32,
+    pub entry_dte: DteRange,
     pub exit_dte: i32,
     pub slippage: Slippage,
     pub commission: Option<Commission>,
@@ -271,7 +271,7 @@ pub struct SuggestResponse {
     pub summary: String,
     pub strategy: String,
     pub leg_deltas: Vec<TargetRange>,
-    pub max_entry_dte: i32,
+    pub entry_dte: DteRange,
     pub exit_dte: i32,
     pub slippage: Slippage,
     pub rationale: String,

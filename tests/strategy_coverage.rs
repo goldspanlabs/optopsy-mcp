@@ -9,7 +9,7 @@
 
 use chrono::NaiveDate;
 use optopsy_mcp::engine::core::{evaluate_strategy, run_backtest};
-use optopsy_mcp::engine::types::{EvaluateParams, ExitType, Slippage, TargetRange};
+use optopsy_mcp::engine::types::{DteRange, EvaluateParams, ExitType, Slippage, TargetRange};
 
 mod common;
 use common::{backtest_params, delta, make_multi_strike_df};
@@ -20,7 +20,11 @@ fn evaluate_params(strategy: &str, leg_deltas: Vec<TargetRange>) -> EvaluatePara
     EvaluateParams {
         strategy: strategy.to_string(),
         leg_deltas,
-        max_entry_dte: 45,
+        entry_dte: DteRange {
+            target: 45,
+            min: 10,
+            max: 60,
+        },
         exit_dte: 5,
         dte_interval: 10,
         delta_interval: 0.10,

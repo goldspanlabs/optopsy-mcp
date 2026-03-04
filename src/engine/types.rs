@@ -77,6 +77,30 @@ fn validate_max_gte_min(min: &f64) -> impl FnOnce(&f64, &()) -> garde::Result + 
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+pub struct DteRange {
+    /// Preferred entry DTE
+    #[garde(range(min = 1))]
+    pub target: i32,
+    /// Minimum entry DTE (must be > `exit_dte`)
+    #[garde(range(min = 1))]
+    pub min: i32,
+    /// Maximum entry DTE
+    #[garde(range(min = 1), custom(validate_dte_max_gte_min(&self.min)))]
+    pub max: i32,
+}
+
+fn validate_dte_max_gte_min(min: &i32) -> impl FnOnce(&i32, &()) -> garde::Result + '_ {
+    move |max: &i32, (): &()| {
+        if min > max {
+            return Err(garde::Error::new(format!(
+                "min ({min}) must be <= max ({max})"
+            )));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct Commission {
     #[garde(range(min = 0.0))]
     pub per_contract: f64,
@@ -172,13 +196,14 @@ impl StrategyDef {
     }
 }
 
-pub(crate) fn validate_exit_dte_lt_max(
-    max_entry_dte: &i32,
+pub(crate) fn validate_exit_dte_lt_entry_min(
+    entry_dte: &DteRange,
 ) -> impl FnOnce(&i32, &()) -> garde::Result + '_ {
+    let entry_min = entry_dte.min;
     move |exit_dte: &i32, (): &()| {
-        if exit_dte >= max_entry_dte {
+        if *exit_dte >= entry_min {
             return Err(garde::Error::new(format!(
-                "exit_dte ({exit_dte}) must be less than max_entry_dte ({max_entry_dte})"
+                "exit_dte ({exit_dte}) must be less than entry_dte.min ({entry_min})"
             )));
         }
         Ok(())
@@ -191,9 +216,9 @@ pub struct EvaluateParams {
     pub strategy: String,
     #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
-    #[garde(range(min = 1))]
-    pub max_entry_dte: i32,
-    #[garde(range(min = 0), custom(validate_exit_dte_lt_max(&self.max_entry_dte)))]
+    #[garde(dive)]
+    pub entry_dte: DteRange,
+    #[garde(range(min = 0), custom(validate_exit_dte_lt_entry_min(&self.entry_dte)))]
     pub exit_dte: i32,
     #[serde(default = "default_dte_interval")]
     #[garde(range(min = 1))]
@@ -218,9 +243,9 @@ pub struct BacktestParams {
     pub strategy: String,
     #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
-    #[garde(range(min = 1))]
-    pub max_entry_dte: i32,
-    #[garde(range(min = 0), custom(validate_exit_dte_lt_max(&self.max_entry_dte)))]
+    #[garde(dive)]
+    pub entry_dte: DteRange,
+    #[garde(range(min = 0), custom(validate_exit_dte_lt_entry_min(&self.entry_dte)))]
     pub exit_dte: i32,
     #[garde(dive)]
     pub slippage: Slippage,
@@ -295,9 +320,9 @@ pub struct CompareEntry {
     pub name: String,
     #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
-    #[garde(range(min = 1))]
-    pub max_entry_dte: i32,
-    #[garde(range(min = 0), custom(validate_exit_dte_lt_max(&self.max_entry_dte)))]
+    #[garde(dive)]
+    pub entry_dte: DteRange,
+    #[garde(range(min = 0), custom(validate_exit_dte_lt_entry_min(&self.entry_dte)))]
     pub exit_dte: i32,
     #[garde(dive)]
     pub slippage: Slippage,
@@ -655,7 +680,11 @@ mod tests {
                 min: 0.2,
                 max: 0.8,
             }],
-            max_entry_dte: 45,
+            entry_dte: DteRange {
+                target: 45,
+                min: 30,
+                max: 60,
+            },
             exit_dte: 0,
             slippage: Slippage::Mid,
             commission: None,
@@ -685,7 +714,11 @@ mod tests {
                 min: 0.2,
                 max: 0.8,
             }],
-            max_entry_dte: 45,
+            entry_dte: DteRange {
+                target: 45,
+                min: 30,
+                max: 60,
+            },
             exit_dte: 0,
             slippage: Slippage::Mid,
             commission: None,
@@ -715,7 +748,11 @@ mod tests {
                 min: 0.2,
                 max: 0.8,
             }],
-            max_entry_dte: 45,
+            entry_dte: DteRange {
+                target: 45,
+                min: 30,
+                max: 60,
+            },
             exit_dte: 0,
             slippage: Slippage::Mid,
             commission: None,
@@ -760,7 +797,11 @@ mod tests {
                 min: 0.2,
                 max: 0.8,
             }],
-            max_entry_dte: 45,
+            entry_dte: DteRange {
+                target: 45,
+                min: 30,
+                max: 60,
+            },
             exit_dte: 0,
             slippage: Slippage::Mid,
             commission: None,
@@ -792,7 +833,7 @@ mod tests {
     }
 
     #[test]
-    fn evaluate_params_rejects_exit_dte_gte_max_entry_dte() {
+    fn evaluate_params_rejects_exit_dte_gte_entry_min() {
         let p = EvaluateParams {
             strategy: "long_call".to_string(),
             leg_deltas: vec![TargetRange {
@@ -800,8 +841,12 @@ mod tests {
                 min: 0.2,
                 max: 0.8,
             }],
-            max_entry_dte: 30,
-            exit_dte: 45,
+            entry_dte: DteRange {
+                target: 30,
+                min: 20,
+                max: 40,
+            },
+            exit_dte: 25,
             dte_interval: 7,
             delta_interval: 0.05,
             slippage: Slippage::Mid,

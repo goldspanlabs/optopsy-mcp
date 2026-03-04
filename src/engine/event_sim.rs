@@ -253,17 +253,14 @@ pub fn find_entry_candidates(
     {
         let filtered = filters::filter_option_type(df, leg.option_type.as_str())?;
         let with_dte = filters::compute_dte(&filtered)?;
-        // For entry candidates, only consider rows where DTE is in the upper entry range.
-        // The event loop handles exits via DTE check, so we don't need exit-range rows.
-        // Use exit_dte + 1 as minimum to avoid entering trades that would immediately exit.
-        let min_entry_dte = params.exit_dte + 1;
+        // For entry candidates, use entry_dte.min as lower bound.
         // Secondary legs get wider DTE range to find far-term expirations
         let max_dte = if leg.expiration_cycle == ExpirationCycle::Secondary {
-            params.max_entry_dte * 2
+            params.entry_dte.max * 2
         } else {
-            params.max_entry_dte
+            params.entry_dte.max
         };
-        let dte_filtered = filters::filter_dte_range(&with_dte, max_dte, min_entry_dte)?;
+        let dte_filtered = filters::filter_dte_range(&with_dte, max_dte, params.entry_dte.min)?;
         let valid = filters::filter_valid_quotes(&dte_filtered, params.min_bid_ask)?;
         let selected = filters::select_closest_delta(&valid, delta_target)?;
 
@@ -506,7 +503,9 @@ pub fn run_event_loop(
                         })
                     })
                     .collect();
-                if let Some(candidate) = select_candidate(&available, &params.selector) {
+                if let Some(candidate) =
+                    select_candidate(&available, &params.selector, params.entry_dte.target)
+                {
                     // Collect entry spread percentages
                     for leg in &candidate.legs {
                         if leg.bid > 0.0 && leg.ask > 0.0 {
@@ -792,13 +791,21 @@ fn open_position(
 fn select_candidate<'a>(
     candidates: &[&'a EntryCandidate],
     selector: &TradeSelector,
+    target_dte: i32,
 ) -> Option<&'a EntryCandidate> {
     if candidates.is_empty() {
         return None;
     }
 
     match selector {
-        TradeSelector::First | TradeSelector::Nearest => candidates.first().copied(),
+        TradeSelector::Nearest => candidates
+            .iter()
+            .min_by_key(|c| {
+                let dte = (c.expiration - c.entry_date).num_days() as i32;
+                (dte - target_dte).abs()
+            })
+            .copied(),
+        TradeSelector::First => candidates.first().copied(),
         TradeSelector::HighestPremium => candidates
             .iter()
             .max_by(|a, b| {
@@ -1401,7 +1408,11 @@ mod tests {
                 min: 0.20,
                 max: 0.80,
             }],
-            max_entry_dte: 45,
+            entry_dte: DteRange {
+                target: 45,
+                min: 10,
+                max: 60,
+            },
             exit_dte: 15, // DTE exit at 15 days
             slippage: Slippage::Mid,
             commission: None,
@@ -1495,7 +1506,11 @@ mod tests {
                 min: 0.20,
                 max: 0.80,
             }],
-            max_entry_dte: 45,
+            entry_dte: DteRange {
+                target: 45,
+                min: 10,
+                max: 60,
+            },
             exit_dte: 5,
             slippage: Slippage::Mid,
             commission: None,
@@ -1591,7 +1606,11 @@ mod tests {
                 min: 0.20,
                 max: 0.80,
             }],
-            max_entry_dte: 45,
+            entry_dte: DteRange {
+                target: 45,
+                min: 10,
+                max: 60,
+            },
             exit_dte: 5,
             slippage: Slippage::Mid,
             commission: None,
@@ -1683,7 +1702,11 @@ mod tests {
                 min: 0.20,
                 max: 0.80,
             }],
-            max_entry_dte: 45,
+            entry_dte: DteRange {
+                target: 45,
+                min: 10,
+                max: 60,
+            },
             exit_dte: 5,
             slippage: Slippage::Mid,
             commission: None,
@@ -1743,7 +1766,11 @@ mod tests {
                 min: 0.20,
                 max: 0.80,
             }],
-            max_entry_dte: 45,
+            entry_dte: DteRange {
+                target: 45,
+                min: 10,
+                max: 60,
+            },
             exit_dte: 5,
             slippage: Slippage::Mid,
             commission: None,
@@ -1839,7 +1866,11 @@ mod tests {
                 min: 0.10,
                 max: 0.80,
             }],
-            max_entry_dte: 45,
+            entry_dte: DteRange {
+                target: 45,
+                min: 10,
+                max: 60,
+            },
             exit_dte: 5,
             slippage: Slippage::Mid,
             commission: None,
@@ -1916,7 +1947,11 @@ mod tests {
                     max: 0.99,
                 },
             ],
-            max_entry_dte: 45,
+            entry_dte: DteRange {
+                target: 45,
+                min: 10,
+                max: 60,
+            },
             exit_dte: 5,
             slippage: Slippage::Mid,
             commission: None,

@@ -4,7 +4,9 @@
 //! consistency, and focus on asserting exit type priorities.
 
 use optopsy_mcp::engine::core::run_backtest;
-use optopsy_mcp::engine::types::{BacktestParams, ExitType, Slippage, TargetRange, TradeSelector};
+use optopsy_mcp::engine::types::{
+    BacktestParams, DteRange, ExitType, Slippage, TargetRange, TradeSelector,
+};
 
 mod common;
 use common::{delta, make_multi_strike_df};
@@ -15,7 +17,11 @@ fn base_params(strategy: &str, leg_deltas: Vec<TargetRange>) -> BacktestParams {
     BacktestParams {
         strategy: strategy.to_string(),
         leg_deltas,
-        max_entry_dte: 45,
+        entry_dte: DteRange {
+            target: 45,
+            min: 10,
+            max: 45,
+        },
         exit_dte: 5,
         slippage: Slippage::Mid,
         commission: None,

@@ -210,7 +210,7 @@ Fast statistical analysis grouped by DTE × delta buckets. Does NOT run backtest
     {"target": 0.30, "min": 0.20, "max": 0.40},  // Call spread
     {"target": 0.70, "min": 0.60, "max": 0.80}   // Put spread
   ],
-  "max_entry_dte": 45,       // Max DTE for entries
+  "entry_dte": {"target": 45, "min": 30, "max": 60},  // Entry DTE range
   "exit_dte": 7,             // Close positions at this DTE
   "dte_interval": 7,         // Bucket width (default: 7)
   "delta_interval": 0.05,    // Delta bucket width (default: 0.05)
@@ -241,7 +241,7 @@ Full event-driven day-by-day simulation with trade log and metrics.
     {"target": 0.30, "min": 0.20, "max": 0.40},
     {"target": 0.70, "min": 0.60, "max": 0.80}
   ],
-  "max_entry_dte": 45,
+  "entry_dte": {"target": 45, "min": 30, "max": 60},
   "exit_dte": 7,
   "slippage": {"type": "Spread"},
   "commission": null,
@@ -282,14 +282,14 @@ Side-by-side comparison of multiple strategies using shared sim params.
     {
       "name": "Iron Condor",
       "leg_deltas": [...],
-      "max_entry_dte": 45,
+      "entry_dte": {"target": 45, "min": 30, "max": 60},
       "exit_dte": 7,
       "slippage": {"type": "Spread"}
     },
     {
       "name": "Vertical Spread",
       "leg_deltas": [...],
-      "max_entry_dte": 30,
+      "entry_dte": {"target": 30, "min": 20, "max": 40},
       "exit_dte": 5,
       "slippage": {"type": "Mid"}
     }
@@ -341,6 +341,11 @@ Side-by-side comparison of multiple strategies using shared sim params.
 
 **`TargetRange`**: `{ target: 0.0..=1.0, min: 0.0..=1.0, max: 0.0..=1.0 }` where `min ≤ max`
 - Used for delta targeting per leg (e.g., `target: 0.30, min: 0.20, max: 0.40`)
+
+**`DteRange`**: `{ target: i32 >= 1, min: i32 >= 1, max: i32 >= 1 }` where `min ≤ max`
+- Used for entry DTE range (e.g., `target: 45, min: 30, max: 60`)
+- `exit_dte` must be less than `entry_dte.min`
+- `TradeSelector::Nearest` picks candidates closest to `target`
 
 **`Commission`**: `{ per_contract: f64, base_fee: f64, min_fee: f64 }`
 - `calculate(num_contracts)` returns `max(base_fee + per_contract * num_contracts, min_fee)`
