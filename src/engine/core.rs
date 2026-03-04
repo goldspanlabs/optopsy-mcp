@@ -284,7 +284,14 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
     }
 
     let use_vectorized = params.adjustment_rules.is_empty();
-    tracing::info!(path = if use_vectorized { "vectorized" } else { "event_loop" }, "Backtest dispatch");
+    tracing::info!(
+        path = if use_vectorized {
+            "vectorized"
+        } else {
+            "event_loop"
+        },
+        "Backtest dispatch"
+    );
 
     let (trade_log, equity_curve, quality) = if use_vectorized {
         // Vectorized path — much faster for strategies without adjustments

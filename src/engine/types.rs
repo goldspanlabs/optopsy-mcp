@@ -1,9 +1,9 @@
 use chrono::{NaiveDate, NaiveDateTime};
 use garde::Validate;
 use ordered_float::OrderedFloat;
+use rustc_hash::FxBuildHasher;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use rustc_hash::FxBuildHasher;
 use std::collections::HashMap;
 
 use crate::signals::registry::SignalSpec;
@@ -31,7 +31,9 @@ impl Side {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 pub enum OptionType {
     Call,
     Put,

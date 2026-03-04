@@ -9,9 +9,9 @@ use crate::data::eodhd::DownloadSummary;
 
 use super::response_types::{
     BacktestDataQuality, BacktestParamsSummary, BacktestResponse, CompareResponse,
-    CompareStrategyEntry, DataQualityReport, DateRange, DownloadResponse,
-    EvaluateParamsSummary, EvaluateResponse, LoadDataResponse, PriceBar, RawPricesResponse,
-    StrategiesResponse, StrategyInfo, TradeStat, TradeSummary,
+    CompareStrategyEntry, DataQualityReport, DateRange, DownloadResponse, EvaluateParamsSummary,
+    EvaluateResponse, LoadDataResponse, PriceBar, RawPricesResponse, StrategiesResponse,
+    StrategyInfo, TradeStat, TradeSummary,
 };
 
 fn assess_sharpe(sharpe: f64) -> &'static str {

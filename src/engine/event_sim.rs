@@ -75,7 +75,11 @@ fn build_price_table_fast(
 
             table.insert(
                 (quote_date, exp_date, OrderedFloat(s_vals[i]), ot),
-                QuoteSnapshot { bid: b_vals[i], ask: a_vals[i], delta: d_vals[i] },
+                QuoteSnapshot {
+                    bid: b_vals[i],
+                    ask: a_vals[i],
+                    delta: d_vals[i],
+                },
             );
             dates_vec.push(quote_date);
         }
@@ -90,8 +94,15 @@ fn build_price_table_fast(
             .zip(bids.iter())
             .zip(asks.iter().zip(deltas.iter()))
         {
-            let (Some(qv), Some(ev), Some(strike_val), Some(ot_str), Some(bid_val), Some(ask_val), Some(delta_val)) =
-                (quote_raw, exp_raw, strike, opt_str, bid, ask, delta)
+            let (
+                Some(qv),
+                Some(ev),
+                Some(strike_val),
+                Some(ot_str),
+                Some(bid_val),
+                Some(ask_val),
+                Some(delta_val),
+            ) = (quote_raw, exp_raw, strike, opt_str, bid, ask, delta)
             else {
                 continue;
             };
@@ -109,7 +120,11 @@ fn build_price_table_fast(
 
             table.insert(
                 (quote_date, exp_date, OrderedFloat(strike_val), opt_type),
-                QuoteSnapshot { bid: bid_val, ask: ask_val, delta: delta_val },
+                QuoteSnapshot {
+                    bid: bid_val,
+                    ask: ask_val,
+                    delta: delta_val,
+                },
             );
             dates_vec.push(quote_date);
         }
