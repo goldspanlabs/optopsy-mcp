@@ -49,8 +49,8 @@ pub fn default_deep_itm_delta() -> TargetRange {
     }
 }
 
-/// ITM wing delta (butterfly ITM wings)
-pub fn default_itm_wing_delta() -> TargetRange {
+/// ITM delta (butterfly near wings, ITM legs)
+pub fn default_itm_delta() -> TargetRange {
     TargetRange {
         target: 0.40,
         min: 0.30,
