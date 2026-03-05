@@ -592,8 +592,14 @@ mod tests {
         };
         let result = signal.evaluate(&df).unwrap();
         let bools = result.bool().unwrap();
-        assert!(bools.get(5).unwrap(), "crossover should be detected at index 5");
-        assert!(!bools.get(6).unwrap(), "after crossover row should be false");
+        assert!(
+            bools.get(5).unwrap(),
+            "crossover should be detected at index 5"
+        );
+        assert!(
+            !bools.get(6).unwrap(),
+            "after crossover row should be false"
+        );
     }
 
     #[test]
@@ -610,8 +616,14 @@ mod tests {
         };
         let result = signal.evaluate(&df).unwrap();
         let bools = result.bool().unwrap();
-        assert!(bools.get(5).unwrap(), "crossunder should be detected at index 5");
-        assert!(!bools.get(6).unwrap(), "after crossunder row should be false");
+        assert!(
+            bools.get(5).unwrap(),
+            "crossunder should be detected at index 5"
+        );
+        assert!(
+            !bools.get(6).unwrap(),
+            "after crossunder row should be false"
+        );
     }
 
     #[test]
@@ -630,7 +642,10 @@ mod tests {
         let bools = result.bool().unwrap();
         // At least one crossover event must be detected after the price jump
         let has_crossover = bools.into_no_null_iter().any(|b| b);
-        assert!(has_crossover, "EMA crossover should be detected after price jump");
+        assert!(
+            has_crossover,
+            "EMA crossover should be detected after price jump"
+        );
     }
 
     #[test]
@@ -639,8 +654,8 @@ mod tests {
         // period) stays above the slow EMA; when prices crash the fast EMA falls below
         // the slow EMA first, producing a clear crossunder signal.
         let prices: Vec<f64> = [
-            100.0, 105.0, 110.0, 115.0, 120.0, 125.0, 130.0, 135.0, 140.0, 145.0, 50.0, 50.0,
-            50.0, 50.0, 50.0,
+            100.0, 105.0, 110.0, 115.0, 120.0, 125.0, 130.0, 135.0, 140.0, 145.0, 50.0, 50.0, 50.0,
+            50.0, 50.0,
         ]
         .into_iter()
         .collect();
@@ -653,6 +668,9 @@ mod tests {
         let result = signal.evaluate(&df).unwrap();
         let bools = result.bool().unwrap();
         let has_crossunder = bools.into_no_null_iter().any(|b| b);
-        assert!(has_crossunder, "EMA crossunder should be detected after price drop");
+        assert!(
+            has_crossunder,
+            "EMA crossunder should be detected after price drop"
+        );
     }
 }

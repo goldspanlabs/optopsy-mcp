@@ -448,7 +448,10 @@ mod tests {
         let result = signal.evaluate(&df).unwrap();
         let bools = result.bool().unwrap();
         let has_uptrend = bools.into_no_null_iter().any(|b| b);
-        assert!(has_uptrend, "Aroon should detect an uptrend in rising price data");
+        assert!(
+            has_uptrend,
+            "Aroon should detect an uptrend in rising price data"
+        );
     }
 
     #[test]
@@ -456,12 +459,8 @@ mod tests {
         // In a clear downtrend the most recent low is always the lowest in each window,
         // making Aroon Down = 100 and Aroon Up < 100, so the oscillator < 0.
         let n = 20_i32;
-        let high: Vec<f64> = (0..n)
-            .map(|i| 200.0 - f64::from(i) * 2.0)
-            .collect();
-        let low: Vec<f64> = (0..n)
-            .map(|i| 195.0 - f64::from(i) * 2.0)
-            .collect();
+        let high: Vec<f64> = (0..n).map(|i| 200.0 - f64::from(i) * 2.0).collect();
+        let low: Vec<f64> = (0..n).map(|i| 195.0 - f64::from(i) * 2.0).collect();
         let df = df! {
             "high" => &high,
             "low" => &low,
@@ -475,6 +474,9 @@ mod tests {
         let result = signal.evaluate(&df).unwrap();
         let bools = result.bool().unwrap();
         let has_downtrend = bools.into_no_null_iter().any(|b| b);
-        assert!(has_downtrend, "Aroon should detect a downtrend in falling price data");
+        assert!(
+            has_downtrend,
+            "Aroon should detect a downtrend in falling price data"
+        );
     }
 }
