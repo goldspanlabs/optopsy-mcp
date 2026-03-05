@@ -260,8 +260,14 @@ fn formula_help() -> FormulaHelp {
                 "std(col, period)".to_string(),
                 "Rolling Standard Deviation".to_string(),
             ),
-            ("max(col, period)".to_string(), "Rolling Maximum".to_string()),
-            ("min(col, period)".to_string(), "Rolling Minimum".to_string()),
+            (
+                "max(col, period)".to_string(),
+                "Rolling Maximum".to_string(),
+            ),
+            (
+                "min(col, period)".to_string(),
+                "Rolling Minimum".to_string(),
+            ),
             ("abs(expr)".to_string(), "Absolute value".to_string()),
             (
                 "change(col, period)".to_string(),
@@ -272,7 +278,12 @@ fn formula_help() -> FormulaHelp {
                 "(col - col[period]) / col[period]".to_string(),
             ),
         ]),
-        operators: vec!["+".to_string(), "-".to_string(), "*".to_string(), "/".to_string()],
+        operators: vec![
+            "+".to_string(),
+            "-".to_string(),
+            "*".to_string(),
+            "/".to_string(),
+        ],
         comparisons: vec![
             ">".to_string(),
             "<".to_string(),

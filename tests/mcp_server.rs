@@ -2254,13 +2254,16 @@ async fn build_signal_validate_valid_formula() {
         .unwrap();
     let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
 
-    assert_eq!(resp["success"], true, "validate should succeed for valid formula");
-    assert!(resp["formula_help"].is_null(), "formula_help should be absent on success");
+    assert_eq!(
+        resp["success"], true,
+        "validate should succeed for valid formula"
+    );
     assert!(
-        resp["summary"]
-            .as_str()
-            .unwrap_or("")
-            .contains("valid"),
+        resp["formula_help"].is_null(),
+        "formula_help should be absent on success"
+    );
+    assert!(
+        resp["summary"].as_str().unwrap_or("").contains("valid"),
         "summary should mention validity"
     );
 
@@ -2309,7 +2312,10 @@ async fn build_signal_validate_invalid_formula() {
         .unwrap();
     let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
 
-    assert_eq!(resp["success"], false, "validate should fail for unknown column 'foo'");
+    assert_eq!(
+        resp["success"], false,
+        "validate should fail for unknown column 'foo'"
+    );
     assert!(
         !resp["formula_help"].is_null(),
         "formula_help should be present on validation error"
