@@ -2,6 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::combinators::{AndSignal, OrSignal};
+use super::custom::FormulaSignal;
 use super::helpers::SignalFn;
 use super::momentum::{
     MacdBearish, MacdBullish, MacdCrossover, RsiOverbought, RsiOversold, StochasticOverbought,
@@ -236,6 +237,29 @@ pub enum SignalSpec {
         period: usize,
     },
 
+    // -- Custom (user-defined formula) --
+    /// User-defined formula signal. The `formula` field contains an expression
+    /// using price columns (close, open, high, low, volume) with operators and
+    /// comparisons. Examples:
+    /// - `"close > sma(close, 20)"` — price above 20-day SMA
+    /// - `"close > close[1] * 1.02"` — 2% gap up from previous close
+    /// - `"(close - low) / (high - low) < 0.2"` — near session lows
+    /// - `"volume > sma(volume, 20) * 2.0"` — volume spike
+    Custom {
+        /// Human-readable name for this signal
+        name: String,
+        /// Formula expression that evaluates to a boolean series
+        formula: String,
+        /// Optional description of what this signal detects
+        description: Option<String>,
+    },
+
+    // -- Saved (reference to a previously saved custom signal by name) --
+    Saved {
+        /// Name of a previously saved custom signal
+        name: String,
+    },
+
     // -- Combinators --
     And {
         left: Box<SignalSpec>,
@@ -250,6 +274,18 @@ pub enum SignalSpec {
 /// Convert a `SignalSpec` into a concrete `Box<dyn SignalFn>`.
 #[allow(clippy::too_many_lines)]
 pub fn build_signal(spec: &SignalSpec) -> Box<dyn SignalFn> {
+    build_signal_depth(spec, 0)
+}
+
+#[allow(clippy::too_many_lines)]
+fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
+    const MAX_DEPTH: usize = 8;
+    // Depth 8 accommodates deeply nested And/Or combinator trees and multi-level
+    // Saved signal references while still catching pathological cycles early.
+    if depth >= MAX_DEPTH {
+        tracing::error!("Signal recursion limit ({MAX_DEPTH}) exceeded — possible cycle in Saved signal references");
+        return Box::new(FormulaSignal::new("false".to_string()));
+    }
     match spec {
         // Momentum
         SignalSpec::RsiOversold { column, threshold } => Box::new(RsiOversold {
@@ -585,14 +621,42 @@ pub fn build_signal(spec: &SignalSpec) -> Box<dyn SignalFn> {
             period: *period,
         }),
 
+        // Custom formula
+        SignalSpec::Custom {
+            name: _,
+            formula,
+            description: _,
+        } => Box::new(FormulaSignal::new(formula.clone())),
+        // Saved signal — resolve from storage at build time
+        SignalSpec::Saved { name } => {
+            match super::storage::load_signal(name) {
+                Ok(spec) => {
+                    // Reject loaded specs that are themselves Saved to prevent cycles
+                    if matches!(spec, SignalSpec::Saved { .. }) {
+                        tracing::error!(
+                            "Saved signal '{}' references another Saved signal — cycle rejected",
+                            name
+                        );
+                        return Box::new(FormulaSignal::new("false".to_string()));
+                    }
+                    build_signal_depth(&spec, depth + 1)
+                }
+                Err(e) => {
+                    tracing::error!("Failed to load saved signal '{}': {}", name, e);
+                    // Propagate as always-false to avoid silently corrupting backtest results
+                    Box::new(FormulaSignal::new("false".to_string()))
+                }
+            }
+        }
+
         // Combinators
         SignalSpec::And { left, right } => Box::new(AndSignal {
-            left: build_signal(left),
-            right: build_signal(right),
+            left: build_signal_depth(left, depth + 1),
+            right: build_signal_depth(right, depth + 1),
         }),
         SignalSpec::Or { left, right } => Box::new(OrSignal {
-            left: build_signal(left),
-            right: build_signal(right),
+            left: build_signal_depth(left, depth + 1),
+            right: build_signal_depth(right, depth + 1),
         }),
     }
 }

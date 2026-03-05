@@ -21,9 +21,9 @@ use crate::engine::types::{
 use crate::signals::registry::SignalSpec;
 use crate::tools;
 use crate::tools::response_types::{
-    BacktestResponse, CheckCacheResponse, CompareResponse, ConstructSignalResponse,
-    DownloadResponse, EvaluateResponse, FetchResponse, LoadDataResponse, RawPricesResponse,
-    StatusResponse, StrategiesResponse, SuggestResponse,
+    BacktestResponse, BuildSignalResponse, CheckCacheResponse, CompareResponse,
+    ConstructSignalResponse, DownloadResponse, EvaluateResponse, FetchResponse, LoadDataResponse,
+    RawPricesResponse, StatusResponse, StrategiesResponse, SuggestResponse,
 };
 use crate::tools::signals::SignalsResponse;
 
@@ -368,6 +368,50 @@ pub struct ConstructSignalParams {
     pub symbol: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, Validate)]
+#[serde(rename_all = "snake_case")]
+pub enum BuildSignalAction {
+    /// Create a new custom signal from a formula (optionally save it)
+    Create,
+    /// List all saved custom signals
+    List,
+    /// Delete a saved signal by name
+    Delete,
+    /// Validate a formula without saving
+    Validate,
+    /// Load a saved signal and return its spec
+    Get,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+pub struct BuildSignalParams {
+    /// Action to perform
+    #[garde(skip)]
+    pub action: BuildSignalAction,
+    /// Signal name (required for create, delete, get)
+    #[serde(default)]
+    #[garde(inner(length(min = 1, max = 64), pattern(r"^[A-Za-z0-9_-]+$")))]
+    pub name: Option<String>,
+    /// Formula expression (required for create, validate).
+    /// Uses price columns (close, open, high, low, volume) with operators and functions.
+    /// Examples: "close > sma(close, 20)", "volume > sma(volume, 20) * 2.0"
+    #[serde(default)]
+    #[garde(inner(length(min = 1, max = 2000)))]
+    pub formula: Option<String>,
+    /// Optional description of what this signal detects
+    #[serde(default)]
+    #[garde(inner(length(max = 500)))]
+    pub description: Option<String>,
+    /// Whether to persist the signal to disk (default: true for create)
+    #[serde(default = "default_save")]
+    #[garde(skip)]
+    pub save: bool,
+}
+
+fn default_save() -> bool {
+    true
+}
+
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct FetchToParquetParams {
     /// Ticker symbol (e.g. "SPY")
@@ -661,6 +705,86 @@ impl OptopsyServer {
             params.symbol.as_deref(),
             self.cache.as_ref(),
         )))
+    }
+
+    /// Build, validate, save, list, and manage custom formula-based signals.
+    ///
+    /// **Workflow Phase**: 2d/7 (signal builder, optional)
+    /// **When to use**: When built-in signals don't cover your needs and you want to
+    ///   define custom entry/exit conditions using price column formulas
+    /// **Prerequisites**: None (formulas are validated at parse time, data needed only at backtest)
+    ///
+    /// **Actions**:
+    ///   - `create` — Build a signal from a formula, optionally save for later use
+    ///   - `validate` — Check formula syntax without saving
+    ///   - `list` — Show all saved custom signals
+    ///   - `get` — Load a saved signal's spec
+    ///   - `delete` — Remove a saved signal
+    ///
+    /// **Formula syntax**:
+    ///   - Columns: `close`, `open`, `high`, `low`, `volume`, `adjclose`
+    ///   - Lookback: `close[1]` (previous bar), `close[5]` (5 bars ago)
+    ///   - Functions: `sma(col, N)`, `ema(col, N)`, `std(col, N)`, `max(col, N)`,
+    ///     `min(col, N)`, `abs(expr)`, `change(col, N)`, `pct_change(col, N)`
+    ///   - Operators: `+`, `-`, `*`, `/`, `>`, `<`, `>=`, `<=`, `==`, `!=`
+    ///   - Logical: `and`, `or`, `not`
+    ///
+    /// **Examples**: `"close > sma(close, 20)"`, `"volume > sma(volume, 20) * 2.0"`,
+    ///   `"close > close[1] * 1.02"`, `"pct_change(close, 1) > 0.03"`
+    ///
+    /// **Next tool**: `run_backtest()` with `entry_signal`/`exit_signal` set to the returned spec,
+    ///   or use `{ "type": "Saved", "name": "signal_name" }` to reference saved signals
+    #[tool(
+        name = "build_signal",
+        annotations(
+            destructive_hint = true,
+            idempotent_hint = false,
+            read_only_hint = false
+        )
+    )]
+    async fn build_signal(
+        &self,
+        Parameters(params): Parameters<BuildSignalParams>,
+    ) -> Result<Json<BuildSignalResponse>, String> {
+        params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
+
+        let action = match params.action {
+            BuildSignalAction::Create => {
+                let name = params
+                    .name
+                    .ok_or("'name' is required for action='create'")?;
+                let formula = params
+                    .formula
+                    .ok_or("'formula' is required for action='create'")?;
+                tools::build_signal::Action::Create {
+                    name,
+                    formula,
+                    description: params.description,
+                    save: params.save,
+                }
+            }
+            BuildSignalAction::List => tools::build_signal::Action::List,
+            BuildSignalAction::Delete => {
+                let name = params
+                    .name
+                    .ok_or("'name' is required for action='delete'")?;
+                tools::build_signal::Action::Delete { name }
+            }
+            BuildSignalAction::Validate => {
+                let formula = params
+                    .formula
+                    .ok_or("'formula' is required for action='validate'")?;
+                tools::build_signal::Action::Validate { formula }
+            }
+            BuildSignalAction::Get => {
+                let name = params.name.ok_or("'name' is required for action='get'")?;
+                tools::build_signal::Action::Get { name }
+            }
+        };
+
+        Ok(Json(tools::build_signal::execute(action)))
     }
 
     /// Fast statistical screening without capital simulation.

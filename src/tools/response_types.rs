@@ -6,6 +6,7 @@ use crate::engine::types::{
     Commission, CompareResult, DteRange, GroupStats, PerformanceMetrics, Slippage, TargetRange,
     TradeRecord, TradeSelector,
 };
+use crate::signals::registry::SignalSpec;
 
 /// Data quality report for `evaluate_strategy`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -289,6 +290,51 @@ pub struct DataCoverage {
     pub dte_range: String,
     pub expiration_count: usize,
     pub warnings: Vec<String>,
+}
+
+/// Entry representing a saved signal in the `list` action response.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SavedSignalEntry {
+    pub name: String,
+    pub formula: Option<String>,
+    pub description: Option<String>,
+    /// JSON snippet showing how to reference this signal as a `Saved` spec.
+    pub usage: SavedSignalUsage,
+}
+
+/// Usage hint embedded in each `SavedSignalEntry`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SavedSignalUsage {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub name: String,
+}
+
+/// Formula syntax reference returned when a validation error occurs.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct FormulaHelp {
+    pub columns: Vec<String>,
+    pub lookback: String,
+    pub functions: HashMap<String, String>,
+    pub operators: Vec<String>,
+    pub comparisons: Vec<String>,
+    pub logical: Vec<String>,
+    pub examples: Vec<String>,
+}
+
+/// Response for `build_signal`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct BuildSignalResponse {
+    pub summary: String,
+    /// Whether the operation succeeded
+    pub success: bool,
+    /// The resolved signal spec (for create/get actions)
+    pub signal_spec: Option<SignalSpec>,
+    /// List of saved signals (for list action); empty when not applicable
+    pub saved_signals: Vec<SavedSignalEntry>,
+    /// Formula syntax help (shown on validation errors)
+    pub formula_help: Option<FormulaHelp>,
+    pub suggested_next_steps: Vec<String>,
 }
 
 /// Signal candidate from `construct_signal`

@@ -1,5 +1,6 @@
 pub mod ai_format;
 pub mod backtest;
+pub mod build_signal;
 pub mod cache_status;
 pub mod compare;
 pub mod construct_signal;

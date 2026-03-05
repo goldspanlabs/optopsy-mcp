@@ -105,7 +105,7 @@ async fn tool_router_lists_all_tools() {
     let tools = client.list_all_tools().await.unwrap();
     let tool_names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
 
-    assert_eq!(tools.len(), 13, "Expected 13 tools, got: {tool_names:?}");
+    assert_eq!(tools.len(), 14, "Expected 14 tools, got: {tool_names:?}");
     for expected in [
         "download_options_data",
         "load_data",
@@ -120,6 +120,7 @@ async fn tool_router_lists_all_tools() {
         "check_cache_status",
         "fetch_to_parquet",
         "get_raw_prices",
+        "build_signal",
     ] {
         assert!(
             tool_names.contains(&expected.to_string()),
@@ -2203,6 +2204,189 @@ async fn get_raw_prices_returns_bars() {
     assert_eq!(prices[0]["open"], 100.0);
     assert_eq!(prices[2]["date"], "2024-01-04");
     assert_eq!(prices[2]["close"], 103.5);
+
+    client.cancel().await.unwrap();
+    server_handle.await.unwrap();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Category: build_signal Integration Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn build_signal_validate_valid_formula() {
+    let (server, _tmp) = make_test_server();
+
+    let (server_tx, server_rx) = tokio::io::duplex(4096);
+    let (client_tx, client_rx) = tokio::io::duplex(4096);
+
+    let server_handle =
+        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
+
+    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
+        ().serve((server_rx, client_tx)).await.unwrap();
+
+    let result = client
+        .peer()
+        .call_tool(CallToolRequestParams {
+            meta: None,
+            name: "build_signal".into(),
+            arguments: Some(
+                serde_json::from_value(json!({
+                    "action": "validate",
+                    "formula": "close > sma(close, 20)"
+                }))
+                .unwrap(),
+            ),
+            task: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        !result.is_error.unwrap_or(false),
+        "Expected success, got error"
+    );
+    let text = result
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .unwrap();
+    let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
+
+    assert_eq!(
+        resp["success"], true,
+        "validate should succeed for valid formula"
+    );
+    assert!(
+        resp["formula_help"].is_null(),
+        "formula_help should be absent on success"
+    );
+    assert!(
+        resp["summary"].as_str().unwrap_or("").contains("valid"),
+        "summary should mention validity"
+    );
+
+    client.cancel().await.unwrap();
+    server_handle.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn build_signal_validate_invalid_formula() {
+    let (server, _tmp) = make_test_server();
+
+    let (server_tx, server_rx) = tokio::io::duplex(4096);
+    let (client_tx, client_rx) = tokio::io::duplex(4096);
+
+    let server_handle =
+        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
+
+    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
+        ().serve((server_rx, client_tx)).await.unwrap();
+
+    let result = client
+        .peer()
+        .call_tool(CallToolRequestParams {
+            meta: None,
+            name: "build_signal".into(),
+            arguments: Some(
+                serde_json::from_value(json!({
+                    "action": "validate",
+                    "formula": "foo > 10"
+                }))
+                .unwrap(),
+            ),
+            task: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        !result.is_error.unwrap_or(false),
+        "Expected success response (not MCP error)"
+    );
+    let text = result
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .unwrap();
+    let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
+
+    assert_eq!(
+        resp["success"], false,
+        "validate should fail for unknown column 'foo'"
+    );
+    assert!(
+        !resp["formula_help"].is_null(),
+        "formula_help should be present on validation error"
+    );
+    let columns = resp["formula_help"]["columns"].as_array().unwrap();
+    assert!(
+        columns.iter().any(|v| v.as_str() == Some("close")),
+        "formula_help should list 'close' as a valid column"
+    );
+
+    client.cancel().await.unwrap();
+    server_handle.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn build_signal_create_without_save() {
+    let (server, _tmp) = make_test_server();
+
+    let (server_tx, server_rx) = tokio::io::duplex(4096);
+    let (client_tx, client_rx) = tokio::io::duplex(4096);
+
+    let server_handle =
+        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
+
+    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
+        ().serve((server_rx, client_tx)).await.unwrap();
+
+    let result = client
+        .peer()
+        .call_tool(CallToolRequestParams {
+            meta: None,
+            name: "build_signal".into(),
+            arguments: Some(
+                serde_json::from_value(json!({
+                    "action": "create",
+                    "name": "my_test_signal",
+                    "formula": "close > close[1]",
+                    "description": "Price higher than previous close",
+                    "save": false
+                }))
+                .unwrap(),
+            ),
+            task: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        !result.is_error.unwrap_or(false),
+        "Expected success, got error"
+    );
+    let text = result
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .unwrap();
+    let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
+
+    assert_eq!(resp["success"], true);
+    // signal_spec should be present and be a Custom variant
+    let spec = &resp["signal_spec"];
+    assert!(!spec.is_null(), "signal_spec should be present");
+    assert_eq!(spec["type"], "Custom");
+    assert_eq!(spec["formula"], "close > close[1]");
+    assert_eq!(spec["name"], "my_test_signal");
+    // saved_signals should be empty (not saved)
+    assert_eq!(
+        resp["saved_signals"].as_array().unwrap().len(),
+        0,
+        "saved_signals should be empty when save=false"
+    );
 
     client.cancel().await.unwrap();
     server_handle.await.unwrap();
