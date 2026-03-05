@@ -84,7 +84,7 @@ fn server_info_has_correct_metadata() {
     assert!(info.capabilities.tools.is_some());
     assert!(info.instructions.is_some());
     let instructions = info.instructions.unwrap();
-    assert!(instructions.contains("load_data"));
+    assert!(instructions.contains("run_backtest"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -105,16 +105,14 @@ async fn tool_router_lists_all_tools() {
     let tools = client.list_all_tools().await.unwrap();
     let tool_names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
 
-    assert_eq!(tools.len(), 14, "Expected 14 tools, got: {tool_names:?}");
+    assert_eq!(tools.len(), 12, "Expected 12 tools, got: {tool_names:?}");
     for expected in [
         "download_options_data",
-        "load_data",
         "list_strategies",
         "list_signals",
         "get_loaded_symbol",
         "construct_signal",
         "suggest_parameters",
-        "evaluate_strategy",
         "run_backtest",
         "compare_strategies",
         "check_cache_status",
@@ -309,234 +307,6 @@ async fn get_loaded_symbol_after_load_data() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn load_data_rejects_empty_symbol() {
-    let (server, _tmp) = make_test_server();
-
-    let (server_tx, server_rx) = tokio::io::duplex(4096);
-    let (client_tx, client_rx) = tokio::io::duplex(4096);
-
-    let server_handle =
-        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
-
-    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
-        ().serve((server_rx, client_tx)).await.unwrap();
-
-    let result = client
-        .peer()
-        .call_tool(CallToolRequestParams {
-            meta: None,
-            name: "load_data".into(),
-            arguments: Some(serde_json::from_value(json!({"symbol": ""})).unwrap()),
-            task: None,
-        })
-        .await
-        .unwrap();
-
-    assert!(result.is_error.unwrap_or(false));
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.raw.as_text())
-        .unwrap();
-    assert!(
-        text.text.contains("Validation error") || text.text.contains("validation"),
-        "Expected validation error, got: {}",
-        text.text
-    );
-
-    client.cancel().await.unwrap();
-    server_handle.await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn load_data_rejects_invalid_symbol_chars() {
-    let (server, _tmp) = make_test_server();
-
-    let (server_tx, server_rx) = tokio::io::duplex(4096);
-    let (client_tx, client_rx) = tokio::io::duplex(4096);
-
-    let server_handle =
-        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
-
-    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
-        ().serve((server_rx, client_tx)).await.unwrap();
-
-    let result = client
-        .peer()
-        .call_tool(CallToolRequestParams {
-            meta: None,
-            name: "load_data".into(),
-            arguments: Some(serde_json::from_value(json!({"symbol": "../etc"})).unwrap()),
-            task: None,
-        })
-        .await
-        .unwrap();
-
-    assert!(result.is_error.unwrap_or(false));
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.raw.as_text())
-        .unwrap();
-    assert!(
-        text.text.contains("Validation error"),
-        "Expected validation error, got: {}",
-        text.text
-    );
-
-    client.cancel().await.unwrap();
-    server_handle.await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn load_data_rejects_end_date_before_start_date() {
-    let (server, _tmp) = make_test_server();
-
-    let (server_tx, server_rx) = tokio::io::duplex(4096);
-    let (client_tx, client_rx) = tokio::io::duplex(4096);
-
-    let server_handle =
-        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
-
-    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
-        ().serve((server_rx, client_tx)).await.unwrap();
-
-    let result = client
-        .peer()
-        .call_tool(CallToolRequestParams {
-            meta: None,
-            name: "load_data".into(),
-            arguments: Some(
-                serde_json::from_value(json!({
-                    "symbol": "SPY",
-                    "start_date": "2024-06-01",
-                    "end_date": "2024-01-01"
-                }))
-                .unwrap(),
-            ),
-            task: None,
-        })
-        .await
-        .unwrap();
-
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.raw.as_text())
-        .unwrap();
-    assert!(
-        text.text.contains("end_date") && text.text.contains("start_date"),
-        "Expected date range validation error, got: {}",
-        text.text
-    );
-
-    client.cancel().await.unwrap();
-    server_handle.await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn evaluate_rejects_zero_entry_dte_min() {
-    let (server, _tmp) = make_test_server();
-
-    let (server_tx, server_rx) = tokio::io::duplex(4096);
-    let (client_tx, client_rx) = tokio::io::duplex(4096);
-
-    let server_handle =
-        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
-
-    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
-        ().serve((server_rx, client_tx)).await.unwrap();
-
-    let result = client
-        .peer()
-        .call_tool(CallToolRequestParams {
-            meta: None,
-            name: "evaluate_strategy".into(),
-            arguments: Some(
-                serde_json::from_value(json!({
-                    "strategy": "long_call",
-                    "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                    "entry_dte": {"target": 0, "min": 0, "max": 0},
-                    "exit_dte": 0,
-                    "dte_interval": 7,
-                    "delta_interval": 0.05,
-                    "slippage": {"type": "Mid"}
-                }))
-                .unwrap(),
-            ),
-            task: None,
-        })
-        .await
-        .unwrap();
-
-    assert!(result.is_error.unwrap_or(false));
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.raw.as_text())
-        .unwrap();
-    assert!(
-        text.text.contains("Validation error"),
-        "Expected validation error for zero entry_dte values, got: {}",
-        text.text
-    );
-
-    client.cancel().await.unwrap();
-    server_handle.await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn evaluate_rejects_exit_dte_gte_entry_min() {
-    let (server, _tmp) = make_test_server();
-
-    let (server_tx, server_rx) = tokio::io::duplex(4096);
-    let (client_tx, client_rx) = tokio::io::duplex(4096);
-
-    let server_handle =
-        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
-
-    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
-        ().serve((server_rx, client_tx)).await.unwrap();
-
-    let result = client
-        .peer()
-        .call_tool(CallToolRequestParams {
-            meta: None,
-            name: "evaluate_strategy".into(),
-            arguments: Some(
-                serde_json::from_value(json!({
-                    "strategy": "long_call",
-                    "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                    "entry_dte": {"target": 30, "min": 20, "max": 40},
-                    "exit_dte": 25,
-                    "dte_interval": 7,
-                    "delta_interval": 0.05,
-                    "slippage": {"type": "Mid"}
-                }))
-                .unwrap(),
-            ),
-            task: None,
-        })
-        .await
-        .unwrap();
-
-    assert!(result.is_error.unwrap_or(false));
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.raw.as_text())
-        .unwrap();
-    assert!(
-        text.text.contains("exit_dte") && text.text.contains("entry_dte"),
-        "Expected custom validator error about exit_dte >= entry_dte.min, got: {}",
-        text.text
-    );
-
-    client.cancel().await.unwrap();
-    server_handle.await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn backtest_rejects_zero_capital() {
     let (server, _tmp) = make_test_server();
 
@@ -642,57 +412,6 @@ async fn check_cache_rejects_path_traversal() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // Category 4: "No Data Loaded" Error Path
 // ═══════════════════════════════════════════════════════════════════════════════
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn evaluate_fails_without_loaded_data() {
-    let (server, _tmp) = make_test_server();
-
-    let (server_tx, server_rx) = tokio::io::duplex(4096);
-    let (client_tx, client_rx) = tokio::io::duplex(4096);
-
-    let server_handle =
-        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
-
-    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
-        ().serve((server_rx, client_tx)).await.unwrap();
-
-    let result = client
-        .peer()
-        .call_tool(CallToolRequestParams {
-            meta: None,
-            name: "evaluate_strategy".into(),
-            arguments: Some(
-                serde_json::from_value(json!({
-                    "strategy": "long_call",
-                    "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                    "entry_dte": {"target": 45, "min": 30, "max": 60},
-                    "exit_dte": 5,
-                    "dte_interval": 7,
-                    "delta_interval": 0.05,
-                    "slippage": {"type": "Mid"}
-                }))
-                .unwrap(),
-            ),
-            task: None,
-        })
-        .await
-        .unwrap();
-
-    assert!(result.is_error.unwrap_or(false));
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.raw.as_text())
-        .unwrap();
-    assert!(
-        text.text.contains("No data loaded"),
-        "Expected 'No data loaded' error, got: {}",
-        text.text
-    );
-
-    client.cancel().await.unwrap();
-    server_handle.await.unwrap();
-}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn backtest_fails_without_loaded_data() {
@@ -854,61 +573,6 @@ fn write_test_parquet_creates_valid_file() {
     // Verify cache_path resolves correctly
     let resolved = cache.cache_path("TEST", "options").unwrap();
     assert_eq!(path, resolved);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn evaluate_strategy_returns_buckets() {
-    let (server, _tmp) = make_test_server();
-    preload_data(&server, "TEST", make_multi_strike_df()).await;
-
-    let (server_tx, server_rx) = tokio::io::duplex(65536);
-    let (client_tx, client_rx) = tokio::io::duplex(65536);
-
-    let server_handle =
-        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
-
-    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
-        ().serve((server_rx, client_tx)).await.unwrap();
-
-    let result = client
-        .peer()
-        .call_tool(CallToolRequestParams {
-            meta: None,
-            name: "evaluate_strategy".into(),
-            arguments: Some(
-                serde_json::from_value(json!({
-                    "strategy": "long_call",
-                    "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                    "entry_dte": {"target": 45, "min": 30, "max": 60},
-                    "exit_dte": 5,
-                    "dte_interval": 10,
-                    "delta_interval": 0.10,
-                    "slippage": {"type": "Mid"}
-                }))
-                .unwrap(),
-            ),
-            task: None,
-        })
-        .await
-        .unwrap();
-
-    assert!(
-        !result.is_error.unwrap_or(false),
-        "evaluate_strategy returned error: {:?}",
-        result.content
-    );
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.raw.as_text())
-        .unwrap();
-    let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
-    assert!(resp["total_buckets"].as_u64().unwrap() > 0);
-    assert!(!resp["groups"].as_array().unwrap().is_empty());
-    assert!(resp["summary"].as_str().is_some());
-
-    client.cancel().await.unwrap();
-    server_handle.await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1349,174 +1013,6 @@ async fn get_loaded_symbol_with_multiple_symbols() {
     server_handle.await.unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn evaluate_fails_multiple_symbols_no_symbol_param() {
-    let (server, _tmp) = make_test_server();
-
-    let (server_tx, server_rx) = tokio::io::duplex(4096);
-    let (client_tx, client_rx) = tokio::io::duplex(4096);
-
-    // Preload multiple symbols
-    preload_data(&server, "SPY", make_multi_strike_df()).await;
-    preload_data(&server, "QQQ", make_multi_strike_df()).await;
-
-    let server_handle =
-        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
-
-    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
-        ().serve((server_rx, client_tx)).await.unwrap();
-
-    let result = client
-        .peer()
-        .call_tool(CallToolRequestParams {
-            meta: None,
-            name: "evaluate_strategy".into(),
-            arguments: Some(
-                serde_json::from_value(json!({
-                    "strategy": "long_call",
-                    "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                    "entry_dte": {"target": 45, "min": 30, "max": 60},
-                    "exit_dte": 5,
-                    "dte_interval": 7,
-                    "delta_interval": 0.05,
-                    "slippage": {"type": "Mid"}
-                }))
-                .unwrap(),
-            ),
-            task: None,
-        })
-        .await
-        .unwrap();
-
-    assert!(result.is_error.unwrap_or(false));
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.raw.as_text())
-        .unwrap();
-    assert!(
-        text.text.contains("Multiple symbols"),
-        "Expected 'Multiple symbols' error, got: {}",
-        text.text
-    );
-
-    client.cancel().await.unwrap();
-    server_handle.await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn evaluate_succeeds_explicit_symbol_param() {
-    let (server, _tmp) = make_test_server();
-
-    let (server_tx, server_rx) = tokio::io::duplex(65536);
-    let (client_tx, client_rx) = tokio::io::duplex(65536);
-
-    // Preload multiple symbols
-    preload_data(&server, "SPY", make_multi_strike_df()).await;
-    preload_data(&server, "QQQ", make_multi_strike_df()).await;
-
-    let server_handle =
-        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
-
-    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
-        ().serve((server_rx, client_tx)).await.unwrap();
-
-    // Call with explicit symbol parameter
-    let result = client
-        .peer()
-        .call_tool(CallToolRequestParams {
-            meta: None,
-            name: "evaluate_strategy".into(),
-            arguments: Some(
-                serde_json::from_value(json!({
-                    "strategy": "long_call",
-                    "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                    "entry_dte": {"target": 45, "min": 30, "max": 60},
-                    "exit_dte": 5,
-                    "dte_interval": 10,
-                    "delta_interval": 0.10,
-                    "slippage": {"type": "Mid"},
-                    "symbol": "QQQ"
-                }))
-                .unwrap(),
-            ),
-            task: None,
-        })
-        .await
-        .unwrap();
-
-    assert!(
-        !result.is_error.unwrap_or(false),
-        "evaluate_strategy returned error: {:?}",
-        result.content
-    );
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.raw.as_text())
-        .unwrap();
-    let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
-    assert!(resp["total_buckets"].as_u64().unwrap() > 0);
-
-    client.cancel().await.unwrap();
-    server_handle.await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn evaluate_fails_unknown_symbol() {
-    let (server, _tmp) = make_test_server();
-
-    let (server_tx, server_rx) = tokio::io::duplex(4096);
-    let (client_tx, client_rx) = tokio::io::duplex(4096);
-
-    // Preload SPY only
-    preload_data(&server, "SPY", make_multi_strike_df()).await;
-
-    let server_handle =
-        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
-
-    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
-        ().serve((server_rx, client_tx)).await.unwrap();
-
-    let result = client
-        .peer()
-        .call_tool(CallToolRequestParams {
-            meta: None,
-            name: "evaluate_strategy".into(),
-            arguments: Some(
-                serde_json::from_value(json!({
-                    "strategy": "long_call",
-                    "leg_deltas": [{"target": 0.5, "min": 0.01, "max": 0.99}],
-                    "entry_dte": {"target": 45, "min": 30, "max": 60},
-                    "exit_dte": 5,
-                    "dte_interval": 7,
-                    "delta_interval": 0.05,
-                    "slippage": {"type": "Mid"},
-                    "symbol": "UNKNOWN"
-                }))
-                .unwrap(),
-            ),
-            task: None,
-        })
-        .await
-        .unwrap();
-
-    assert!(result.is_error.unwrap_or(false));
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.raw.as_text())
-        .unwrap();
-    assert!(
-        text.text.contains("not loaded"),
-        "Expected 'not loaded' error, got: {}",
-        text.text
-    );
-
-    client.cancel().await.unwrap();
-    server_handle.await.unwrap();
-}
-
 // ─────────────────────────────────────────────────────────────────────────────────
 // Multi-symbol integration tests for run_backtest, compare_strategies, suggest_parameters
 // ─────────────────────────────────────────────────────────────────────────────────
@@ -1685,8 +1181,8 @@ async fn run_backtest_fails_unknown_symbol() {
         .and_then(|c| c.raw.as_text())
         .unwrap();
     assert!(
-        text.text.contains("not loaded"),
-        "Expected 'not loaded' error, got: {}",
+        text.text.contains("not loaded") || text.text.contains("auto-load"),
+        "Expected symbol error, got: {}",
         text.text
     );
 
@@ -1900,8 +1396,8 @@ async fn compare_strategies_fails_unknown_symbol() {
         .and_then(|c| c.raw.as_text())
         .unwrap();
     assert!(
-        text.text.contains("not loaded"),
-        "Expected 'not loaded' error, got: {}",
+        text.text.contains("not loaded") || text.text.contains("auto-load"),
+        "Expected symbol error, got: {}",
         text.text
     );
 
@@ -2052,8 +1548,8 @@ async fn suggest_parameters_fails_unknown_symbol() {
         .and_then(|c| c.raw.as_text())
         .unwrap();
     assert!(
-        text.text.contains("not loaded"),
-        "Expected 'not loaded' error, got: {}",
+        text.text.contains("not loaded") || text.text.contains("auto-load"),
+        "Expected symbol error, got: {}",
         text.text
     );
 

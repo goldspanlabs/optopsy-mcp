@@ -22,7 +22,7 @@ use crate::signals::registry::SignalSpec;
 use crate::tools;
 use crate::tools::response_types::{
     BacktestResponse, BuildSignalResponse, CheckCacheResponse, CompareResponse,
-    ConstructSignalResponse, DownloadResponse, EvaluateResponse, FetchResponse, LoadDataResponse,
+    ConstructSignalResponse, DownloadResponse, EvaluateResponse, FetchResponse,
     RawPricesResponse, StatusResponse, StrategiesResponse, SuggestResponse,
 };
 use crate::tools::signals::SignalsResponse;
@@ -48,6 +48,71 @@ impl OptopsyServer {
         }
     }
 
+    /// Ensure options data is loaded for a symbol, auto-loading from cache/EODHD if needed.
+    /// Returns `(symbol, DataFrame)`.
+    async fn ensure_data_loaded(
+        &self,
+        symbol: Option<&str>,
+    ) -> Result<(String, DataFrame), String> {
+        // First check if already loaded
+        {
+            let data = self.data.read().await;
+            match Self::resolve_symbol(&data, symbol) {
+                Ok((sym, df)) => return Ok((sym.clone(), df.clone())),
+                Err(e) if !data.is_empty() => {
+                    // Data exists but wrong symbol or ambiguous — propagate the error as-is
+                    return Err(format!("Error: {e}"));
+                }
+                Err(_) => {} // No data loaded — proceed to auto-load
+            }
+        }
+
+        // Auto-load requires a symbol
+        let sym = symbol.ok_or_else(|| {
+            "No data loaded and no symbol provided. Pass a symbol (e.g. \"SPY\").".to_string()
+        })?;
+
+        tracing::info!(symbol = %sym, "Auto-loading options data from cache");
+
+        tools::load_data::execute(
+            &self.data,
+            &self.cache,
+            self.eodhd.as_ref(),
+            sym,
+            None,
+            None,
+        )
+        .await
+        .map_err(|e| format!("Failed to auto-load data for {sym}: {e}"))?;
+
+        // Read back the loaded data
+        let data = self.data.read().await;
+        let (s, df) = Self::resolve_symbol(&data, symbol)
+            .map_err(|e| format!("Error after auto-load: {e}"))?;
+        Ok((s.clone(), df.clone()))
+    }
+
+    /// Ensure OHLCV price data exists for a symbol, auto-fetching from Yahoo Finance if needed.
+    /// Returns the parquet file path.
+    async fn ensure_ohlcv(&self, symbol: &str) -> Result<String, String> {
+        let path = self
+            .cache
+            .cache_path(symbol, "prices")
+            .map_err(|e| format!("Error resolving OHLCV path: {e}"))?;
+
+        if path.exists() {
+            return Ok(path.to_string_lossy().to_string());
+        }
+
+        tracing::info!(symbol = %symbol, "Auto-fetching OHLCV data for signal evaluation");
+
+        tools::fetch::execute(&self.cache, symbol, "prices", "5y")
+            .await
+            .map_err(|e| format!("Failed to auto-fetch OHLCV data for {symbol}: {e}"))?;
+
+        Ok(path.to_string_lossy().to_string())
+    }
+
     /// Resolve a symbol from the loaded data.
     /// If `symbol` is provided, look it up explicitly.
     /// If `symbol` is None:
@@ -60,7 +125,7 @@ impl OptopsyServer {
     ) -> Result<(&'a String, &'a DataFrame), String> {
         // Check if no data is loaded first, regardless of whether symbol was provided
         if data.is_empty() {
-            return Err("No data loaded. Call load_data first.".to_string());
+            return Err("No data loaded. Pass a symbol parameter (e.g. \"SPY\").".to_string());
         }
 
         match symbol {
@@ -122,17 +187,15 @@ pub struct DownloadOptionsParams {
     pub symbol: String,
 }
 
-#[derive(Debug, Deserialize, JsonSchema, Validate)]
-pub struct LoadDataParams {
-    /// Ticker symbol (e.g. "SPY")
-    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
-    pub symbol: String,
-    /// Start date filter (YYYY-MM-DD)
-    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))]
-    pub start_date: Option<String>,
-    /// End date filter (YYYY-MM-DD)
-    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")), custom(validate_end_date_after_start(&self.start_date)))]
-    pub end_date: Option<String>,
+/// Extract a required strategy from `Option<StrategyParam>`, returning a clear error if null.
+fn require_strategy(strategy: Option<StrategyParam>) -> Result<StrategyParam, String> {
+    strategy.ok_or_else(|| {
+        "strategy is REQUIRED — it defines WHAT option legs to trade. \
+         Signals only filter WHEN to trade, not WHAT. \
+         Pick one: short_put, iron_condor, short_strangle, bull_call_spread, etc. \
+         Call list_strategies to see all 32 options."
+            .to_string()
+    })
 }
 
 /// Resolve `leg_deltas`: use provided deltas or fall back to strategy defaults.
@@ -175,9 +238,9 @@ fn default_capital() -> f64 {
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct EvaluateStrategyParams {
-    /// Strategy name
+    /// REQUIRED — strategy name (e.g. `short_put`, `iron_condor`). Call `list_strategies` to see options.
     #[garde(skip)]
-    pub strategy: StrategyParam,
+    pub strategy: Option<StrategyParam>,
     /// Per-leg delta targets (optional — uses strategy-specific defaults if omitted)
     #[serde(default)]
     #[garde(inner(length(min = 1)))]
@@ -218,12 +281,12 @@ pub struct EvaluateStrategyParams {
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct RunBacktestParams {
-    /// REQUIRED — the option strategy defining what legs to trade (e.g. `long_call`,
-    /// `short_put`, `iron_condor`, `short_strangle`). CANNOT be null or omitted.
+    /// REQUIRED — the option strategy defining what legs to trade (e.g. `short_put`,
+    /// `iron_condor`, `short_strangle`). Call `list_strategies` to see all 32 options.
     /// Signals (`entry_signal`/`exit_signal`) only filter WHEN to trade — they do NOT
-    /// replace the strategy. Use `list_strategies` if unsure which to pick.
+    /// replace the strategy. **NEVER pass null.**
     #[garde(skip)]
-    pub strategy: StrategyParam,
+    pub strategy: Option<StrategyParam>,
     /// Per-leg delta targets (optional — uses strategy-specific defaults if omitted)
     #[serde(default)]
     #[garde(inner(length(min = 1)))]
@@ -545,9 +608,9 @@ impl StrategyParam {
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct SuggestParametersParams {
-    /// Strategy name
+    /// REQUIRED — strategy name (e.g. `short_put`, `iron_condor`). Call `list_strategies` to see options.
     #[garde(skip)]
-    pub strategy: StrategyParam,
+    pub strategy: Option<StrategyParam>,
     /// Risk preference: conservative (tight filters), moderate (balanced), or aggressive (loose filters)
     #[garde(skip)]
     pub risk_preference: RiskPreferenceParam,
@@ -598,55 +661,10 @@ impl OptopsyServer {
             .map_err(|e| format!("Error: {e}"))
     }
 
-    /// Load options chain data by symbol. **START HERE for any new analysis.**
-    ///
-    /// **Workflow Phase**: 1/7 (entry point)
-    /// **When to use**: Always run this first; all other tools require data to be loaded
-    /// **Prerequisites**: None
-    /// **Data sources** (in priority order):
-    ///   1. Local Parquet cache (~/.optopsy/cache/options/{SYMBOL}.parquet)
-    ///   2. EODHD API (if `EODHD_API_KEY` set) — auto-downloads & caches
-    ///   3. S3-compatible storage (if S3 credentials configured)
-    /// **Next tools**:
-    ///   - `list_strategies()` or `list_signals()` (explore available options)
-    ///   - `suggest_parameters()` (get data-driven parameter recommendations)
-    ///   - `evaluate_strategy()` (fast statistical screening)
-    ///
-    /// Automatically handles date column normalization (`quote_date`/`quote_datetime`).
-    /// Optional date filtering via `start_date`/`end_date`.
-    #[tool(
-        name = "load_data",
-        annotations(
-            destructive_hint = false,
-            idempotent_hint = false,
-            open_world_hint = true
-        )
-    )]
-    async fn load_data(
-        &self,
-        Parameters(params): Parameters<LoadDataParams>,
-    ) -> Result<Json<LoadDataResponse>, String> {
-        params
-            .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
-        let symbol = params.symbol.clone();
-        tools::load_data::execute(
-            &self.data,
-            &self.cache,
-            self.eodhd.as_ref(),
-            &symbol,
-            params.start_date.as_deref(),
-            params.end_date.as_deref(),
-        )
-        .await
-        .map(Json)
-        .map_err(|e| format!("Error: {e}"))
-    }
-
     /// Browse all 32 built-in options strategies grouped by category.
     ///
     /// **Workflow Phase**: 2a/7 (exploration)
-    /// **When to use**: After `load_data`, to choose a strategy for analysis
+    /// **When to use**: To choose a strategy for analysis
     /// **Prerequisites**: None (informational, no data required)
     /// **Categories**: singles, spreads, straddles, strangles, butterflies, condors, iron, calendars, diagonals
     /// **Next tools**: `suggest_parameters()` or `evaluate_strategy()` (once you pick a strategy)
@@ -792,10 +810,10 @@ impl OptopsyServer {
 
     /// Fast statistical screening without capital simulation.
     ///
-    /// **Workflow Phase**: 4/7 (statistical validation)
+    /// **Workflow Phase**: 3/5 (statistical validation)
     /// **When to use**: Before `run_backtest`, to validate strategy parameters and identify
     ///   promising DTE/delta ranges from historical data
-    /// **Prerequisites**: `load_data()` must have been called first
+    /// **Prerequisites**: None — data is auto-loaded from cache when you pass a symbol
     /// **Why use this**: Avoid wasting time on backtest simulations with poor parameter choices;
     ///   groups historical P&L by DTE × delta buckets to find winners
     /// **Next tool**: `run_backtest()` with parameters refined from results
@@ -807,7 +825,8 @@ impl OptopsyServer {
     ///   - Worst bucket (warning sign)
     ///   - Highest win-rate bucket (consistency indicator)
     ///   - Full bucket grid with mean, std, quartiles, count
-    #[tool(name = "evaluate_strategy", annotations(read_only_hint = true))]
+    // Tool deregistered — kept as internal method for potential future use.
+    #[allow(dead_code)]
     async fn evaluate_strategy(
         &self,
         Parameters(params): Parameters<EvaluateStrategyParams>,
@@ -816,15 +835,10 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
-        // Clone DataFrame and drop read lock before expensive analysis
-        let df = {
-            let data = self.data.read().await;
-            let (_, df) = Self::resolve_symbol(&data, params.symbol.as_deref())
-                .map_err(|e| format!("Error: {e}"))?;
-            df.clone()
-        };
+        let strategy = require_strategy(params.strategy)?;
+        let (_, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
 
-        let strategy_name = params.strategy.as_str();
+        let strategy_name = strategy.as_str();
         let leg_deltas = resolve_leg_deltas(params.leg_deltas, strategy_name)?;
 
         let eval_params = EvaluateParams {
@@ -854,7 +868,7 @@ impl OptopsyServer {
     /// **Workflow Phase**: 5/7 (full validation)
     /// **When to use**: After `evaluate_strategy()` to validate strategy performance in capital-constrained scenario
     /// **Prerequisites**:
-    ///   - `load_data()` MUST have been called (Phase 1)
+    ///   - Data is auto-loaded from cache when you pass a symbol
     ///   - `evaluate_strategy()` MUST be called first to validate parameters (Phase 4)
     ///   - `strategy` is REQUIRED — must be a valid strategy name (e.g. `long_call`, `short_put`, `iron_condor`). **NEVER pass null.**
     ///   - ⚠️  **SIGNAL PREREQUISITE**: If `entry_signal` or `exit_signal` is provided, you MUST call
@@ -887,8 +901,10 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
+        let strategy = require_strategy(params.strategy)?;
+
         tracing::info!(
-            strategy = params.strategy.as_str(),
+            strategy = strategy.as_str(),
             symbol = params.symbol.as_deref().unwrap_or("auto"),
             entry_dte_target = params.entry_dte.target,
             entry_dte_min = params.entry_dte.min,
@@ -899,31 +915,17 @@ impl OptopsyServer {
             "Backtest request received"
         );
 
-        // Clone symbol and DataFrame, resolve OHLCV path, then drop read lock before expensive backtest
-        let (symbol, df) = {
-            let data = self.data.read().await;
-            let (sym, df) = Self::resolve_symbol(&data, params.symbol.as_deref())
-                .map_err(|e| format!("Error: {e}"))?;
-            (sym.clone(), df.clone())
-        };
+        // Auto-load options data if not already loaded
+        let (symbol, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
 
-        // Auto-resolve OHLCV path if signals are requested
+        // Auto-fetch OHLCV data if signals are requested
         let ohlcv_path = if params.entry_signal.is_some() || params.exit_signal.is_some() {
-            let path = self
-                .cache
-                .cache_path(&symbol, "prices")
-                .map_err(|e| format!("Error resolving OHLCV path: {e}"))?;
-            if !path.exists() {
-                return Err(format!(
-                    "OHLCV data not found for {symbol}. Call fetch_to_parquet({{ symbol: \"{symbol}\", category: \"prices\" }}) first."
-                ));
-            }
-            Some(path.to_string_lossy().to_string())
+            Some(self.ensure_ohlcv(&symbol).await?)
         } else {
             None
         };
 
-        let strategy_name = params.strategy.as_str();
+        let strategy_name = strategy.as_str();
         let leg_deltas = resolve_leg_deltas(params.leg_deltas, strategy_name)?;
 
         let backtest_params = BacktestParams {
@@ -965,7 +967,7 @@ impl OptopsyServer {
     /// **Workflow Phase**: 6/7 (comparison & optimization)
     /// **When to use**: After validating one strategy via `run_backtest()`, to test
     ///   parameter variations and find the best-performing approach
-    /// **Prerequisites**: `load_data()` must have been called
+    /// **Prerequisites**: None — data is auto-loaded from cache when you pass a symbol
     /// **Why use this**: Compare different delta targets, DTE parameters, or strategies
     ///   side-by-side in a single call (faster than running multiple backtests)
     /// **Next tools**: pick best performer and iterate further, or conclude analysis
@@ -985,13 +987,7 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
-        // Clone DataFrame and drop read lock before expensive comparison
-        let df = {
-            let data = self.data.read().await;
-            let (_, df) = Self::resolve_symbol(&data, params.symbol.as_deref())
-                .map_err(|e| format!("Error: {e}"))?;
-            df.clone()
-        };
+        let (_, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
 
         let compare_params = CompareParams {
             strategies: params
@@ -1134,9 +1130,9 @@ impl OptopsyServer {
     /// Analyze the loaded options chain and suggest data-driven parameters.
     ///
     /// **Workflow Phase**: 3/7 (parameter optimization)
-    /// **When to use**: After `load_data()`, to get intelligent parameter suggestions
+    /// **When to use**: To get intelligent parameter suggestions
     ///   based on actual market data (DTE coverage, spread quality, delta distribution)
-    /// **Prerequisites**: `load_data()` must have been called first
+    /// **Prerequisites**: None — data is auto-loaded from cache when you pass a symbol
     /// **Next tools**: `evaluate_strategy()` or `run_backtest()` with suggested parameters
     ///
     /// **What it analyzes**:
@@ -1161,6 +1157,8 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
+        let strategy = require_strategy(params.strategy)?;
+
         let risk_pref = match params.risk_preference {
             RiskPreferenceParam::Conservative => {
                 crate::engine::suggest::RiskPreference::Conservative
@@ -1170,19 +1168,13 @@ impl OptopsyServer {
         };
 
         let suggest_params = crate::engine::suggest::SuggestParams {
-            strategy: params.strategy.as_str().to_string(),
+            strategy: strategy.as_str().to_string(),
             risk_preference: risk_pref,
             target_win_rate: params.target_win_rate,
             target_sharpe: params.target_sharpe,
         };
 
-        // Clone DataFrame and drop read lock before expensive suggestion logic
-        let df = {
-            let data = self.data.read().await;
-            let (_, df) = Self::resolve_symbol(&data, params.symbol.as_deref())
-                .map_err(|e| format!("Error: {e}"))?;
-            df.clone()
-        };
+        let (_, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
 
         tokio::task::spawn_blocking(move || tools::suggest::execute(&df, &suggest_params))
             .await
@@ -1207,51 +1199,32 @@ impl ServerHandler for OptopsyServer {
                 website_url: None,
             },
             instructions: Some(
-                "Options backtesting engine.\
-                \n\n## MANDATORY WORKFLOW — Follow these phases IN ORDER for every analysis.\
-                \nDo NOT skip phases. Do NOT jump ahead. Each phase builds on the previous one.\
+                "Options backtesting engine. Data is auto-loaded when you call any analysis tool — \
+                just pass the symbol parameter.\
+                \n\n## WORKFLOW\
                 \n\
-                \n### Phase 0: Data Preparation (optional, run if needed)\
-                \n  0a. check_cache_status({ symbol, category: \"options\" }) — verify options data is cached\
-                \n  0b. check_cache_status({ symbol, category: \"prices\" }) — verify OHLCV data is cached (only if using signals)\
-                \n  0c. fetch_to_parquet({ symbol, category: \"prices\" }) — download OHLCV data (only if 0b shows missing AND you plan to use entry_signal/exit_signal)\
-                \n  0d. download_options_data({ symbol }) — bulk download from EODHD (only if 0a shows missing)\
+                \n### 1. Explore Strategies\
+                \n  - list_strategies() — browse all 32 strategies by category\
+                \n  - list_signals() / construct_signal() / build_signal() — optional: TA signal filters\
                 \n\
-                \n### Phase 1: Load Data (REQUIRED — always start here)\
-                \n  1. load_data({ symbol }) — load options chain into memory. NOTHING works without this.\
+                \n### 2. Get Parameters (recommended)\
+                \n  - suggest_parameters({ strategy, symbol }) — data-driven recommendations\
                 \n\
-                \n### Phase 2: Explore Strategies (REQUIRED — choose what to test)\
-                \n  2a. list_strategies() — browse all 32 strategies by category\
-                \n  2b. list_signals() — browse TA signals (only if planning signal-filtered backtest)\
-                \n  2c. construct_signal({ prompt }) — build signal JSON (only if using signals)\
-                \n  2d. build_signal({ action: \"create\", ... }) — custom formula signals (only if built-in signals insufficient)\
+                \n### 3. Statistical Screening (recommended)\
+                \n  - evaluate_strategy({ strategy, symbol }) — fast DTE×delta bucket analysis\
                 \n\
-                \n### Phase 3: Get Parameters (RECOMMENDED — avoid guessing)\
-                \n  3. suggest_parameters({ strategy, risk_preference }) — data-driven DTE/delta/slippage recommendations\
+                \n### 4. Full Simulation\
+                \n  - run_backtest({ strategy, symbol, ... }) — event-driven backtest with trade log and metrics\
+                \n  - OHLCV data is auto-fetched when signals are used\
                 \n\
-                \n### Phase 4: Statistical Screening (RECOMMENDED — validate before slow backtest)\
-                \n  4. evaluate_strategy({ strategy, ... }) — fast DTE×delta bucket analysis. Identifies best parameter zones.\
-                \n\
-                \n### Phase 5: Full Simulation (the main goal)\
-                \n  5. run_backtest({ strategy, ... }) — event-driven backtest with equity curve, trade log, and metrics\
-                \n\
-                \n### Phase 6: Compare & Optimize (optional — test variations)\
-                \n  6. compare_strategies({ strategies, sim_params }) — side-by-side ranking by Sharpe/PnL\
-                \n\
-                \n### Phase 7: Visualize (optional)\
-                \n  7. get_raw_prices({ symbol }) — OHLCV price bars for chart generation\
+                \n### 5. Compare & Optimize (optional)\
+                \n  - compare_strategies({ strategies, sim_params, symbol }) — side-by-side ranking\
                 \n\
                 \n## RULES\
-                \n- ALWAYS call load_data FIRST before any analysis tool\
-                \n- ALWAYS call list_strategies to select a strategy before evaluate/backtest\
-                \n- ALWAYS call evaluate_strategy BEFORE run_backtest to validate parameters\
-                \n- NEVER call run_backtest without completing Phases 1-4\
-                \n- If using signals: MUST call fetch_to_parquet BEFORE run_backtest\
-                \n- Each tool response includes suggested_next_steps — follow them\
-                \n\
-                \nData flow: EODHD API → local Parquet cache → DataFrame → per-leg filter/delta-select → \
-                leg join → strike-order validation → P&L calculation → bucket aggregation (evaluate) \
-                or event-loop simulation (backtest) → AI-enriched JSON response."
+                \n- strategy is ALWAYS REQUIRED for evaluate/backtest/suggest — signals do NOT replace strategies\
+                \n- Signals only filter WHEN to trade; the strategy defines WHAT option legs to trade\
+                \n- NEVER pass strategy: null — pick one like short_put, iron_condor, etc.\
+                \n- Each tool response includes suggested_next_steps — follow them"
                     .into(),
             ),
         }
