@@ -78,15 +78,31 @@ fn validate_max_gte_min(min: &f64) -> impl FnOnce(&f64, &()) -> garde::Result + 
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct DteRange {
-    /// Preferred entry DTE (must be within `[min, max]`)
+    /// Preferred entry DTE (must be within `[min, max]`). Default: 45
+    #[serde(default = "default_dte_target")]
+    #[schemars(default = "default_dte_target")]
     #[garde(range(min = 1), custom(validate_dte_target_in_range(self.min, self.max)))]
     pub target: i32,
-    /// Minimum entry DTE (must be > `exit_dte`)
+    /// Minimum entry DTE (must be > `exit_dte`). Default: 30
+    #[serde(default = "default_dte_min")]
+    #[schemars(default = "default_dte_min")]
     #[garde(range(min = 1))]
     pub min: i32,
-    /// Maximum entry DTE
+    /// Maximum entry DTE. Default: 60
+    #[serde(default = "default_dte_max")]
+    #[schemars(default = "default_dte_max")]
     #[garde(range(min = 1), custom(validate_dte_max_gte_min(&self.min)))]
     pub max: i32,
+}
+
+fn default_dte_target() -> i32 {
+    45
+}
+fn default_dte_min() -> i32 {
+    30
+}
+fn default_dte_max() -> i32 {
+    60
 }
 
 fn validate_dte_target_in_range(min: i32, max: i32) -> impl FnOnce(&i32, &()) -> garde::Result {

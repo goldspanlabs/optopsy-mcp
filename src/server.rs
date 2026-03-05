@@ -842,7 +842,9 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
-        tools::evaluate::execute(&df, &eval_params)
+        tokio::task::spawn_blocking(move || tools::evaluate::execute(&df, &eval_params))
+            .await
+            .map_err(|e| format!("Evaluate task panicked: {e}"))?
             .map(Json)
             .map_err(|e| format!("Error: {e}"))
     }
@@ -949,7 +951,11 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
-        tools::backtest::execute(&df, &backtest_params)
+        // Run backtest on a blocking thread — the engine performs synchronous
+        // Polars I/O (scan_parquet) which conflicts with the tokio runtime.
+        tokio::task::spawn_blocking(move || tools::backtest::execute(&df, &backtest_params))
+            .await
+            .map_err(|e| format!("Backtest task panicked: {e}"))?
             .map(Json)
             .map_err(|e| format!("Error: {e}"))
     }
@@ -1010,7 +1016,9 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
-        tools::compare::execute(&df, &compare_params)
+        tokio::task::spawn_blocking(move || tools::compare::execute(&df, &compare_params))
+            .await
+            .map_err(|e| format!("Compare task panicked: {e}"))?
             .map(Json)
             .map_err(|e| format!("Error: {e}"))
     }
@@ -1176,7 +1184,9 @@ impl OptopsyServer {
             df.clone()
         };
 
-        tools::suggest::execute(&df, &suggest_params)
+        tokio::task::spawn_blocking(move || tools::suggest::execute(&df, &suggest_params))
+            .await
+            .map_err(|e| format!("Suggest task panicked: {e}"))?
             .map(Json)
             .map_err(|e| format!("Error: {e}"))
     }
