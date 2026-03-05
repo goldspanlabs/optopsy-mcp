@@ -546,4 +546,42 @@ mod tests {
         };
         assert_eq!(signal.name(), "keltner_upper_break");
     }
+
+    #[test]
+    fn bollinger_upper_touch_detects_extreme_high() {
+        // The last price equals the upper Bollinger Band:
+        //   window [100,100,100,100,200]: mean=120, pop-std=40, upper=120+2*40=200.
+        // price[4]=200 >= upper → should be true.
+        let prices = vec![100.0f64, 100.0, 100.0, 100.0, 200.0];
+        let df = df! { "close" => &prices }.unwrap();
+        let signal = BollingerUpperTouch {
+            column: "close".into(),
+            period: 5,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(
+            bools.get(4).unwrap(),
+            "price at upper Bollinger Band should be detected"
+        );
+    }
+
+    #[test]
+    fn bollinger_lower_touch_detects_extreme_low() {
+        // The last price equals the lower Bollinger Band:
+        //   window [200,200,200,200,100]: mean=180, pop-std=40, lower=180-2*40=100.
+        // price[4]=100 <= lower → should be true.
+        let prices = vec![200.0f64, 200.0, 200.0, 200.0, 100.0];
+        let df = df! { "close" => &prices }.unwrap();
+        let signal = BollingerLowerTouch {
+            column: "close".into(),
+            period: 5,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(
+            bools.get(4).unwrap(),
+            "price at lower Bollinger Band should be detected"
+        );
+    }
 }

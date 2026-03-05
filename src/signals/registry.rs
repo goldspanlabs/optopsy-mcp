@@ -879,7 +879,12 @@ mod tests {
         };
         let json = serde_json::to_string(&spec).unwrap();
         let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
-        assert!(matches!(parsed, SignalSpec::RsiOversold { .. }));
+        if let SignalSpec::RsiOversold { column, threshold } = parsed {
+            assert_eq!(column, "close");
+            assert_eq!(threshold, 30.0);
+        } else {
+            panic!("expected RsiOversold");
+        }
     }
 
     #[test]
@@ -1290,7 +1295,11 @@ mod tests {
         };
         let json = serde_json::to_string(&spec).unwrap();
         let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
-        assert!(matches!(parsed, SignalSpec::MacdBullish { .. }));
+        if let SignalSpec::MacdBullish { column } = parsed {
+            assert_eq!(column, "close");
+        } else {
+            panic!("expected MacdBullish");
+        }
     }
 
     #[test]
@@ -1307,7 +1316,12 @@ mod tests {
         };
         let json = serde_json::to_string(&spec).unwrap();
         let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
-        assert!(matches!(parsed, SignalSpec::And { .. }));
+        if let SignalSpec::And { left, right } = parsed {
+            assert!(matches!(*left, SignalSpec::RsiOversold { .. }));
+            assert!(matches!(*right, SignalSpec::PriceAboveSma { .. }));
+        } else {
+            panic!("expected And");
+        }
     }
 
     #[test]
@@ -1326,7 +1340,23 @@ mod tests {
         };
         let json = serde_json::to_string(&spec).unwrap();
         let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
-        assert!(matches!(parsed, SignalSpec::Or { .. }));
+        if let SignalSpec::Or { left, right } = parsed {
+            if let SignalSpec::GapUp {
+                open_col,
+                close_col,
+                threshold,
+            } = *left
+            {
+                assert_eq!(open_col, "open");
+                assert_eq!(close_col, "close");
+                assert_eq!(threshold, 0.02);
+            } else {
+                panic!("expected GapUp on left");
+            }
+            assert!(matches!(*right, SignalSpec::GapDown { .. }));
+        } else {
+            panic!("expected Or");
+        }
     }
 
     #[test]
@@ -1340,7 +1370,22 @@ mod tests {
         };
         let json = serde_json::to_string(&spec).unwrap();
         let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
-        assert!(matches!(parsed, SignalSpec::StochasticOversold { .. }));
+        if let SignalSpec::StochasticOversold {
+            close_col,
+            high_col,
+            low_col,
+            period,
+            threshold,
+        } = parsed
+        {
+            assert_eq!(close_col, "close");
+            assert_eq!(high_col, "high");
+            assert_eq!(low_col, "low");
+            assert_eq!(period, 14);
+            assert_eq!(threshold, 20.0);
+        } else {
+            panic!("expected StochasticOversold");
+        }
     }
 
     #[test]
@@ -1354,7 +1399,22 @@ mod tests {
         };
         let json = serde_json::to_string(&spec).unwrap();
         let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
-        assert!(matches!(parsed, SignalSpec::KeltnerUpperBreak { .. }));
+        if let SignalSpec::KeltnerUpperBreak {
+            close_col,
+            high_col,
+            low_col,
+            period,
+            multiplier,
+        } = parsed
+        {
+            assert_eq!(close_col, "close");
+            assert_eq!(high_col, "high");
+            assert_eq!(low_col, "low");
+            assert_eq!(period, 20);
+            assert_eq!(multiplier, 2.0);
+        } else {
+            panic!("expected KeltnerUpperBreak");
+        }
     }
 
     #[test]
@@ -1365,7 +1425,16 @@ mod tests {
         };
         let json = serde_json::to_string(&spec).unwrap();
         let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
-        assert!(matches!(parsed, SignalSpec::ObvRising { .. }));
+        if let SignalSpec::ObvRising {
+            price_col,
+            volume_col,
+        } = parsed
+        {
+            assert_eq!(price_col, "close");
+            assert_eq!(volume_col, "volume");
+        } else {
+            panic!("expected ObvRising");
+        }
     }
 
     #[test]
