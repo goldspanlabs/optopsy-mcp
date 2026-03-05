@@ -879,12 +879,590 @@ mod tests {
         };
         let json = serde_json::to_string(&spec).unwrap();
         let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
-        assert!(matches!(parsed, SignalSpec::RsiOversold { .. }));
+        if let SignalSpec::RsiOversold { column, threshold } = parsed {
+            assert_eq!(column, "close");
+            assert_eq!(threshold, 30.0);
+        } else {
+            panic!("expected RsiOversold");
+        }
     }
 
     #[test]
     fn catalog_has_all_signals() {
         // 38 signals (excluding And/Or combinators)
         assert_eq!(SIGNAL_CATALOG.len(), 38);
+    }
+
+    #[test]
+    fn build_signal_round_trip_rsi_overbought() {
+        let spec = SignalSpec::RsiOverbought {
+            column: "close".into(),
+            threshold: 70.0,
+        };
+        let signal = build_signal(&spec);
+        assert_eq!(signal.name(), "rsi_overbought");
+    }
+
+    #[test]
+    fn build_signal_macd_bullish() {
+        let signal = build_signal(&SignalSpec::MacdBullish {
+            column: "close".into(),
+        });
+        assert_eq!(signal.name(), "macd_bullish");
+    }
+
+    #[test]
+    fn build_signal_macd_bearish() {
+        let signal = build_signal(&SignalSpec::MacdBearish {
+            column: "close".into(),
+        });
+        assert_eq!(signal.name(), "macd_bearish");
+    }
+
+    #[test]
+    fn build_signal_macd_crossover() {
+        let signal = build_signal(&SignalSpec::MacdCrossover {
+            column: "close".into(),
+        });
+        assert_eq!(signal.name(), "macd_crossover");
+    }
+
+    #[test]
+    fn build_signal_stochastic_oversold() {
+        let signal = build_signal(&SignalSpec::StochasticOversold {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 14,
+            threshold: 20.0,
+        });
+        assert_eq!(signal.name(), "stochastic_oversold");
+    }
+
+    #[test]
+    fn build_signal_stochastic_overbought() {
+        let signal = build_signal(&SignalSpec::StochasticOverbought {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 14,
+            threshold: 80.0,
+        });
+        assert_eq!(signal.name(), "stochastic_overbought");
+    }
+
+    #[test]
+    fn build_signal_price_above_sma() {
+        let signal = build_signal(&SignalSpec::PriceAboveSma {
+            column: "close".into(),
+            period: 20,
+        });
+        assert_eq!(signal.name(), "price_above_sma");
+    }
+
+    #[test]
+    fn build_signal_price_below_sma() {
+        let signal = build_signal(&SignalSpec::PriceBelowSma {
+            column: "close".into(),
+            period: 20,
+        });
+        assert_eq!(signal.name(), "price_below_sma");
+    }
+
+    #[test]
+    fn build_signal_price_above_ema() {
+        let signal = build_signal(&SignalSpec::PriceAboveEma {
+            column: "close".into(),
+            period: 20,
+        });
+        assert_eq!(signal.name(), "price_above_ema");
+    }
+
+    #[test]
+    fn build_signal_price_below_ema() {
+        let signal = build_signal(&SignalSpec::PriceBelowEma {
+            column: "close".into(),
+            period: 20,
+        });
+        assert_eq!(signal.name(), "price_below_ema");
+    }
+
+    #[test]
+    fn build_signal_sma_crossover() {
+        let signal = build_signal(&SignalSpec::SmaCrossover {
+            column: "close".into(),
+            fast_period: 5,
+            slow_period: 20,
+        });
+        assert_eq!(signal.name(), "sma_crossover");
+    }
+
+    #[test]
+    fn build_signal_sma_crossunder() {
+        let signal = build_signal(&SignalSpec::SmaCrossunder {
+            column: "close".into(),
+            fast_period: 5,
+            slow_period: 20,
+        });
+        assert_eq!(signal.name(), "sma_crossunder");
+    }
+
+    #[test]
+    fn build_signal_ema_crossover() {
+        let signal = build_signal(&SignalSpec::EmaCrossover {
+            column: "close".into(),
+            fast_period: 5,
+            slow_period: 20,
+        });
+        assert_eq!(signal.name(), "ema_crossover");
+    }
+
+    #[test]
+    fn build_signal_ema_crossunder() {
+        let signal = build_signal(&SignalSpec::EmaCrossunder {
+            column: "close".into(),
+            fast_period: 5,
+            slow_period: 20,
+        });
+        assert_eq!(signal.name(), "ema_crossunder");
+    }
+
+    #[test]
+    fn build_signal_aroon_uptrend() {
+        let signal = build_signal(&SignalSpec::AroonUptrend {
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 14,
+        });
+        assert_eq!(signal.name(), "aroon_uptrend");
+    }
+
+    #[test]
+    fn build_signal_aroon_downtrend() {
+        let signal = build_signal(&SignalSpec::AroonDowntrend {
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 14,
+        });
+        assert_eq!(signal.name(), "aroon_downtrend");
+    }
+
+    #[test]
+    fn build_signal_aroon_up_above() {
+        let signal = build_signal(&SignalSpec::AroonUpAbove {
+            high_col: "high".into(),
+            period: 14,
+            threshold: 70.0,
+        });
+        assert_eq!(signal.name(), "aroon_up_above");
+    }
+
+    #[test]
+    fn build_signal_supertrend_bullish() {
+        let signal = build_signal(&SignalSpec::SupertrendBullish {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 10,
+            multiplier: 3.0,
+        });
+        assert_eq!(signal.name(), "supertrend_bullish");
+    }
+
+    #[test]
+    fn build_signal_supertrend_bearish() {
+        let signal = build_signal(&SignalSpec::SupertrendBearish {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 10,
+            multiplier: 3.0,
+        });
+        assert_eq!(signal.name(), "supertrend_bearish");
+    }
+
+    #[test]
+    fn build_signal_atr_above() {
+        let signal = build_signal(&SignalSpec::AtrAbove {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 14,
+            threshold: 2.0,
+        });
+        assert_eq!(signal.name(), "atr_above");
+    }
+
+    #[test]
+    fn build_signal_atr_below() {
+        let signal = build_signal(&SignalSpec::AtrBelow {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 14,
+            threshold: 2.0,
+        });
+        assert_eq!(signal.name(), "atr_below");
+    }
+
+    #[test]
+    fn build_signal_bollinger_lower() {
+        let signal = build_signal(&SignalSpec::BollingerLowerTouch {
+            column: "close".into(),
+            period: 20,
+        });
+        assert_eq!(signal.name(), "bollinger_lower_touch");
+    }
+
+    #[test]
+    fn build_signal_bollinger_upper() {
+        let signal = build_signal(&SignalSpec::BollingerUpperTouch {
+            column: "close".into(),
+            period: 20,
+        });
+        assert_eq!(signal.name(), "bollinger_upper_touch");
+    }
+
+    #[test]
+    fn build_signal_keltner_lower() {
+        let signal = build_signal(&SignalSpec::KeltnerLowerBreak {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 20,
+            multiplier: 2.0,
+        });
+        assert_eq!(signal.name(), "keltner_lower_break");
+    }
+
+    #[test]
+    fn build_signal_keltner_upper() {
+        let signal = build_signal(&SignalSpec::KeltnerUpperBreak {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 20,
+            multiplier: 2.0,
+        });
+        assert_eq!(signal.name(), "keltner_upper_break");
+    }
+
+    #[test]
+    fn build_signal_gap_up() {
+        let signal = build_signal(&SignalSpec::GapUp {
+            open_col: "open".into(),
+            close_col: "close".into(),
+            threshold: 0.02,
+        });
+        assert_eq!(signal.name(), "gap_up");
+    }
+
+    #[test]
+    fn build_signal_gap_down() {
+        let signal = build_signal(&SignalSpec::GapDown {
+            open_col: "open".into(),
+            close_col: "close".into(),
+            threshold: 0.02,
+        });
+        assert_eq!(signal.name(), "gap_down");
+    }
+
+    #[test]
+    fn build_signal_drawdown() {
+        let signal = build_signal(&SignalSpec::DrawdownBelow {
+            column: "close".into(),
+            window: 20,
+            threshold: 0.05,
+        });
+        assert_eq!(signal.name(), "drawdown_below");
+    }
+
+    #[test]
+    fn build_signal_consecutive_up() {
+        let signal = build_signal(&SignalSpec::ConsecutiveUp {
+            column: "close".into(),
+            count: 3,
+        });
+        assert_eq!(signal.name(), "consecutive_up");
+    }
+
+    #[test]
+    fn build_signal_consecutive_down() {
+        let signal = build_signal(&SignalSpec::ConsecutiveDown {
+            column: "close".into(),
+            count: 3,
+        });
+        assert_eq!(signal.name(), "consecutive_down");
+    }
+
+    #[test]
+    fn build_signal_rate_of_change() {
+        let signal = build_signal(&SignalSpec::RateOfChange {
+            column: "close".into(),
+            period: 10,
+            threshold: 0.05,
+        });
+        assert_eq!(signal.name(), "rate_of_change");
+    }
+
+    #[test]
+    fn build_signal_mfi_oversold() {
+        let signal = build_signal(&SignalSpec::MfiOversold {
+            high_col: "high".into(),
+            low_col: "low".into(),
+            close_col: "close".into(),
+            volume_col: "volume".into(),
+            period: 14,
+            threshold: 20.0,
+        });
+        assert_eq!(signal.name(), "mfi_oversold");
+    }
+
+    #[test]
+    fn build_signal_mfi_overbought() {
+        let signal = build_signal(&SignalSpec::MfiOverbought {
+            high_col: "high".into(),
+            low_col: "low".into(),
+            close_col: "close".into(),
+            volume_col: "volume".into(),
+            period: 14,
+            threshold: 80.0,
+        });
+        assert_eq!(signal.name(), "mfi_overbought");
+    }
+
+    #[test]
+    fn build_signal_obv_rising() {
+        let signal = build_signal(&SignalSpec::ObvRising {
+            price_col: "close".into(),
+            volume_col: "volume".into(),
+        });
+        assert_eq!(signal.name(), "obv_rising");
+    }
+
+    #[test]
+    fn build_signal_obv_falling() {
+        let signal = build_signal(&SignalSpec::ObvFalling {
+            price_col: "close".into(),
+            volume_col: "volume".into(),
+        });
+        assert_eq!(signal.name(), "obv_falling");
+    }
+
+    #[test]
+    fn build_signal_cmf_positive() {
+        let signal = build_signal(&SignalSpec::CmfPositive {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            volume_col: "volume".into(),
+            period: 20,
+        });
+        assert_eq!(signal.name(), "cmf_positive");
+    }
+
+    #[test]
+    fn build_signal_cmf_negative() {
+        let signal = build_signal(&SignalSpec::CmfNegative {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            volume_col: "volume".into(),
+            period: 20,
+        });
+        assert_eq!(signal.name(), "cmf_negative");
+    }
+
+    #[test]
+    fn build_signal_or_combinator() {
+        let spec = SignalSpec::Or {
+            left: Box::new(SignalSpec::RsiOversold {
+                column: "close".into(),
+                threshold: 30.0,
+            }),
+            right: Box::new(SignalSpec::MacdBullish {
+                column: "close".into(),
+            }),
+        };
+        let signal = build_signal(&spec);
+        assert_eq!(signal.name(), "or");
+    }
+
+    #[test]
+    fn signal_spec_serde_round_trip_macd() {
+        let spec = SignalSpec::MacdBullish {
+            column: "close".into(),
+        };
+        let json = serde_json::to_string(&spec).unwrap();
+        let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
+        if let SignalSpec::MacdBullish { column } = parsed {
+            assert_eq!(column, "close");
+        } else {
+            panic!("expected MacdBullish");
+        }
+    }
+
+    #[test]
+    fn signal_spec_serde_round_trip_and_combinator() {
+        let spec = SignalSpec::And {
+            left: Box::new(SignalSpec::RsiOversold {
+                column: "close".into(),
+                threshold: 30.0,
+            }),
+            right: Box::new(SignalSpec::PriceAboveSma {
+                column: "close".into(),
+                period: 20,
+            }),
+        };
+        let json = serde_json::to_string(&spec).unwrap();
+        let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
+        if let SignalSpec::And { left, right } = parsed {
+            assert!(matches!(*left, SignalSpec::RsiOversold { .. }));
+            assert!(matches!(*right, SignalSpec::PriceAboveSma { .. }));
+        } else {
+            panic!("expected And");
+        }
+    }
+
+    #[test]
+    fn signal_spec_serde_round_trip_or_combinator() {
+        let spec = SignalSpec::Or {
+            left: Box::new(SignalSpec::GapUp {
+                open_col: "open".into(),
+                close_col: "close".into(),
+                threshold: 0.02,
+            }),
+            right: Box::new(SignalSpec::GapDown {
+                open_col: "open".into(),
+                close_col: "close".into(),
+                threshold: 0.02,
+            }),
+        };
+        let json = serde_json::to_string(&spec).unwrap();
+        let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
+        if let SignalSpec::Or { left, right } = parsed {
+            if let SignalSpec::GapUp {
+                open_col,
+                close_col,
+                threshold,
+            } = *left
+            {
+                assert_eq!(open_col, "open");
+                assert_eq!(close_col, "close");
+                assert_eq!(threshold, 0.02);
+            } else {
+                panic!("expected GapUp on left");
+            }
+            assert!(matches!(*right, SignalSpec::GapDown { .. }));
+        } else {
+            panic!("expected Or");
+        }
+    }
+
+    #[test]
+    fn signal_spec_serde_round_trip_stochastic() {
+        let spec = SignalSpec::StochasticOversold {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 14,
+            threshold: 20.0,
+        };
+        let json = serde_json::to_string(&spec).unwrap();
+        let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
+        if let SignalSpec::StochasticOversold {
+            close_col,
+            high_col,
+            low_col,
+            period,
+            threshold,
+        } = parsed
+        {
+            assert_eq!(close_col, "close");
+            assert_eq!(high_col, "high");
+            assert_eq!(low_col, "low");
+            assert_eq!(period, 14);
+            assert_eq!(threshold, 20.0);
+        } else {
+            panic!("expected StochasticOversold");
+        }
+    }
+
+    #[test]
+    fn signal_spec_serde_round_trip_keltner() {
+        let spec = SignalSpec::KeltnerUpperBreak {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 20,
+            multiplier: 2.0,
+        };
+        let json = serde_json::to_string(&spec).unwrap();
+        let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
+        if let SignalSpec::KeltnerUpperBreak {
+            close_col,
+            high_col,
+            low_col,
+            period,
+            multiplier,
+        } = parsed
+        {
+            assert_eq!(close_col, "close");
+            assert_eq!(high_col, "high");
+            assert_eq!(low_col, "low");
+            assert_eq!(period, 20);
+            assert_eq!(multiplier, 2.0);
+        } else {
+            panic!("expected KeltnerUpperBreak");
+        }
+    }
+
+    #[test]
+    fn signal_spec_serde_round_trip_volume() {
+        let spec = SignalSpec::ObvRising {
+            price_col: "close".into(),
+            volume_col: "volume".into(),
+        };
+        let json = serde_json::to_string(&spec).unwrap();
+        let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
+        if let SignalSpec::ObvRising {
+            price_col,
+            volume_col,
+        } = parsed
+        {
+            assert_eq!(price_col, "close");
+            assert_eq!(volume_col, "volume");
+        } else {
+            panic!("expected ObvRising");
+        }
+    }
+
+    #[test]
+    fn catalog_entries_have_non_empty_fields() {
+        for info in SIGNAL_CATALOG {
+            assert!(!info.name.is_empty());
+            assert!(!info.category.is_empty());
+            assert!(!info.description.is_empty());
+            assert!(!info.params.is_empty());
+        }
+    }
+
+    #[test]
+    fn catalog_categories_are_valid() {
+        let valid_categories = [
+            "momentum",
+            "overlap",
+            "trend",
+            "volatility",
+            "price",
+            "volume",
+        ];
+        for info in SIGNAL_CATALOG {
+            assert!(
+                valid_categories.contains(&info.category),
+                "unexpected category: {}",
+                info.category
+            );
+        }
     }
 }

@@ -222,4 +222,261 @@ mod tests {
         let bools = result.bool().unwrap();
         assert!(bools.into_no_null_iter().all(|b| !b));
     }
+
+    #[test]
+    fn aroon_downtrend_correct_length() {
+        let n = 30;
+        // Downtrend: highs and lows decreasing
+        let high: Vec<f64> = (0..30_i32).map(|i| 130.0 - f64::from(i) + 2.0).collect();
+        let low: Vec<f64> = (0..30_i32).map(|i| 130.0 - f64::from(i) - 2.0).collect();
+        let df = df! {
+            "high" => &high,
+            "low" => &low,
+        }
+        .unwrap();
+        let signal = AroonDowntrend {
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 5,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), n);
+    }
+
+    #[test]
+    fn aroon_downtrend_insufficient_data() {
+        let df = df! {
+            "high" => &[100.0, 101.0],
+            "low" => &[99.0, 100.0],
+        }
+        .unwrap();
+        let signal = AroonDowntrend {
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 10,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn aroon_uptrend_insufficient_data() {
+        let df = df! {
+            "high" => &[100.0, 101.0],
+            "low" => &[99.0, 100.0],
+        }
+        .unwrap();
+        let signal = AroonUptrend {
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 10,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn aroon_up_above_correct_length() {
+        let n = 30;
+        let high: Vec<f64> = (0..30_i32).map(|i| 100.0 + f64::from(i)).collect();
+        let df = df! {
+            "high" => &high,
+        }
+        .unwrap();
+        let signal = AroonUpAbove {
+            high_col: "high".into(),
+            period: 5,
+            threshold: 50.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), n);
+    }
+
+    #[test]
+    fn aroon_up_above_insufficient_data() {
+        let df = df! {
+            "high" => &[100.0, 101.0],
+        }
+        .unwrap();
+        let signal = AroonUpAbove {
+            high_col: "high".into(),
+            period: 10,
+            threshold: 50.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn supertrend_bearish_insufficient_data() {
+        let df = df! {
+            "close" => &[100.0, 102.0, 101.0],
+            "high" => &[103.0, 104.0, 103.0],
+            "low" => &[97.0, 99.0, 98.0],
+        }
+        .unwrap();
+        let signal = SupertrendBearish {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 10,
+            multiplier: 3.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn supertrend_bullish_correct_length() {
+        let close: Vec<f64> = (0..30).map(|i| 100.0 + f64::from(i)).collect();
+        let high: Vec<f64> = close.iter().map(|c| c + 2.0).collect();
+        let low: Vec<f64> = close.iter().map(|c| c - 2.0).collect();
+        let df = df! {
+            "close" => &close,
+            "high" => &high,
+            "low" => &low,
+        }
+        .unwrap();
+        let signal = SupertrendBullish {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 5,
+            multiplier: 2.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 30);
+    }
+
+    #[test]
+    fn supertrend_bearish_correct_length() {
+        let close: Vec<f64> = (0..30).map(|i| 130.0 - f64::from(i)).collect();
+        let high: Vec<f64> = close.iter().map(|c| c + 2.0).collect();
+        let low: Vec<f64> = close.iter().map(|c| c - 2.0).collect();
+        let df = df! {
+            "close" => &close,
+            "high" => &high,
+            "low" => &low,
+        }
+        .unwrap();
+        let signal = SupertrendBearish {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 5,
+            multiplier: 2.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 30);
+    }
+
+    #[test]
+    fn aroon_uptrend_name() {
+        let signal = AroonUptrend {
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 5,
+        };
+        assert_eq!(signal.name(), "aroon_uptrend");
+    }
+
+    #[test]
+    fn aroon_downtrend_name() {
+        let signal = AroonDowntrend {
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 5,
+        };
+        assert_eq!(signal.name(), "aroon_downtrend");
+    }
+
+    #[test]
+    fn aroon_up_above_name() {
+        let signal = AroonUpAbove {
+            high_col: "high".into(),
+            period: 5,
+            threshold: 50.0,
+        };
+        assert_eq!(signal.name(), "aroon_up_above");
+    }
+
+    #[test]
+    fn supertrend_bullish_name() {
+        let signal = SupertrendBullish {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 5,
+            multiplier: 2.0,
+        };
+        assert_eq!(signal.name(), "supertrend_bullish");
+    }
+
+    #[test]
+    fn supertrend_bearish_name() {
+        let signal = SupertrendBearish {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 5,
+            multiplier: 2.0,
+        };
+        assert_eq!(signal.name(), "supertrend_bearish");
+    }
+
+    #[test]
+    fn aroon_uptrend_detects_uptrend() {
+        // In a clear uptrend the most recent high is always the highest in each window,
+        // making Aroon Up = 100 and Aroon Down < 100, so the oscillator > 0.
+        let n = 20_i32;
+        let high: Vec<f64> = (0..n).map(|i| 100.0 + f64::from(i) * 2.0).collect();
+        let low: Vec<f64> = (0..n).map(|i| 95.0 + f64::from(i) * 2.0).collect();
+        let df = df! {
+            "high" => &high,
+            "low" => &low,
+        }
+        .unwrap();
+        let signal = AroonUptrend {
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 5,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        let has_uptrend = bools.into_no_null_iter().any(|b| b);
+        assert!(
+            has_uptrend,
+            "Aroon should detect an uptrend in rising price data"
+        );
+    }
+
+    #[test]
+    fn aroon_downtrend_detects_downtrend() {
+        // In a clear downtrend the most recent low is always the lowest in each window,
+        // making Aroon Down = 100 and Aroon Up < 100, so the oscillator < 0.
+        let n = 20_i32;
+        let high: Vec<f64> = (0..n).map(|i| 200.0 - f64::from(i) * 2.0).collect();
+        let low: Vec<f64> = (0..n).map(|i| 195.0 - f64::from(i) * 2.0).collect();
+        let df = df! {
+            "high" => &high,
+            "low" => &low,
+        }
+        .unwrap();
+        let signal = AroonDowntrend {
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 5,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        let has_downtrend = bools.into_no_null_iter().any(|b| b);
+        assert!(
+            has_downtrend,
+            "Aroon should detect a downtrend in falling price data"
+        );
+    }
 }
