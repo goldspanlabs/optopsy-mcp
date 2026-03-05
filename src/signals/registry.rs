@@ -274,6 +274,18 @@ pub enum SignalSpec {
 /// Convert a `SignalSpec` into a concrete `Box<dyn SignalFn>`.
 #[allow(clippy::too_many_lines)]
 pub fn build_signal(spec: &SignalSpec) -> Box<dyn SignalFn> {
+    build_signal_depth(spec, 0)
+}
+
+#[allow(clippy::too_many_lines)]
+fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
+    const MAX_DEPTH: usize = 8;
+    // Depth 8 accommodates deeply nested And/Or combinator trees and multi-level
+    // Saved signal references while still catching pathological cycles early.
+    if depth > MAX_DEPTH {
+        tracing::error!("Signal recursion limit ({MAX_DEPTH}) exceeded — possible cycle in Saved signal references");
+        return Box::new(FormulaSignal::new("false".to_string()));
+    }
     match spec {
         // Momentum
         SignalSpec::RsiOversold { column, threshold } => Box::new(RsiOversold {
@@ -618,10 +630,20 @@ pub fn build_signal(spec: &SignalSpec) -> Box<dyn SignalFn> {
         // Saved signal — resolve from storage at build time
         SignalSpec::Saved { name } => {
             match super::storage::load_signal(name) {
-                Ok(spec) => build_signal(&spec),
+                Ok(spec) => {
+                    // Reject loaded specs that are themselves Saved to prevent cycles
+                    if matches!(spec, SignalSpec::Saved { .. }) {
+                        tracing::error!(
+                            "Saved signal '{}' references another Saved signal — cycle rejected",
+                            name
+                        );
+                        return Box::new(FormulaSignal::new("false".to_string()));
+                    }
+                    build_signal_depth(&spec, depth + 1)
+                }
                 Err(e) => {
-                    // Return a signal that always produces false if not found
-                    tracing::warn!("Failed to load saved signal '{}': {}", name, e);
+                    tracing::error!("Failed to load saved signal '{}': {}", name, e);
+                    // Propagate as always-false to avoid silently corrupting backtest results
                     Box::new(FormulaSignal::new("false".to_string()))
                 }
             }
@@ -629,12 +651,12 @@ pub fn build_signal(spec: &SignalSpec) -> Box<dyn SignalFn> {
 
         // Combinators
         SignalSpec::And { left, right } => Box::new(AndSignal {
-            left: build_signal(left),
-            right: build_signal(right),
+            left: build_signal_depth(left, depth + 1),
+            right: build_signal_depth(right, depth + 1),
         }),
         SignalSpec::Or { left, right } => Box::new(OrSignal {
-            left: build_signal(left),
-            right: build_signal(right),
+            left: build_signal_depth(left, depth + 1),
+            right: build_signal_depth(right, depth + 1),
         }),
     }
 }

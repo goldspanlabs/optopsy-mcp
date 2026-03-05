@@ -10,7 +10,7 @@
 //!
 //! **Functions**:
 //! - `sma(col, period)` — Simple Moving Average
-//! - `ema(col, period)` — Exponential Moving Average
+//! - `ema(col, period)` — Exponential Moving Average (true EWM with alpha=2/(period+1))
 //! - `std(col, period)` — Rolling Standard Deviation
 //! - `max(col, period)` — Rolling Maximum
 //! - `min(col, period)` — Rolling Minimum
@@ -62,6 +62,13 @@ impl SignalFn for FormulaSignal {
         let result = df.clone().lazy().select([expr.alias("signal")]).collect()?;
 
         let col = result.column("signal")?;
+
+        // Broadcast scalar results (e.g. `lit(true)`) to the full DataFrame length
+        let col = if col.len() == 1 && df.height() > 1 {
+            col.new_from_index(0, df.height())
+        } else {
+            col.clone()
+        };
 
         // Ensure boolean output
         if col.dtype() == &DataType::Boolean {
@@ -425,6 +432,16 @@ impl Parser {
                     match self.advance() {
                         Some(Token::Number(n)) => {
                             self.expect(&Token::RBracket)?;
+                            if n.fract() != 0.0 || n < 0.0 {
+                                return Err(format!(
+                                    "Lookback index must be a non-negative integer, got {n}"
+                                ));
+                            }
+                            if n > 10_000.0 {
+                                return Err(format!(
+                                    "Lookback index too large (max 10000), got {n}"
+                                ));
+                            }
                             let shift = n as i64;
                             Ok(col(&*name).shift(lit(shift)))
                         }
@@ -480,13 +497,14 @@ impl Parser {
                 }))
             }
             "ema" => {
-                // EMA approximated using SMA (ewma feature not enabled in polars).
-                // For a true EMA, use the built-in EmaCrossover/PriceAboveEma signals.
                 let (col_expr, period) = extract_col_period(&args, "ema")?;
-                Ok(col_expr.rolling_mean(RollingOptionsFixedWindow {
-                    window_size: period,
+                let alpha = 2.0f64 / (period as f64 + 1.0);
+                Ok(col_expr.ewm_mean(EWMOptions {
+                    alpha,
+                    adjust: true,
+                    bias: false,
                     min_periods: period,
-                    ..Default::default()
+                    ignore_nulls: true,
                 }))
             }
             "std" => {
@@ -643,8 +661,8 @@ mod tests {
         let signal = FormulaSignal::new("close > close[1]".to_string());
         let result = signal.evaluate(&df).unwrap();
         let bools = result.bool().unwrap();
-        // close[0]=100, close[1]=102 (102>100=T), close[2]=101 (101>102=F), ...
-        assert_eq!(bools.get(0), Some(false)); // null shifted
+        // close[0] is null after lookback shift, so comparison yields null (None)
+        assert_eq!(bools.get(0), None);
         assert_eq!(bools.get(1), Some(true)); // 102 > 100
         assert_eq!(bools.get(2), Some(false)); // 101 > 102 = F
     }
@@ -724,5 +742,18 @@ mod tests {
         assert!(validate_formula("").is_err());
         assert!(validate_formula("close >").is_err());
         assert!(validate_formula("unknown_func(close)").is_err());
+    }
+
+    #[test]
+    fn lookback_invalid_values() {
+        // Fractional index should be rejected
+        assert!(validate_formula("close[1.5]").is_err());
+        // Negative index should be rejected
+        assert!(validate_formula("close[-1]").is_err());
+        // Excessively large index should be rejected
+        assert!(validate_formula("close[99999]").is_err());
+        // Valid integer lookbacks should be accepted
+        assert!(validate_formula("close[0]").is_ok());
+        assert!(validate_formula("close[10000]").is_ok());
     }
 }
