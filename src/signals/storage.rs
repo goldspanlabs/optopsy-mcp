@@ -11,8 +11,14 @@ use super::registry::SignalSpec;
 
 /// Get the signals storage directory, creating it if needed.
 fn signals_dir() -> Result<PathBuf> {
-    let expanded = shellexpand::tilde("~/.optopsy/signals");
-    let dir = PathBuf::from(expanded.as_ref());
+    const TEMPLATE: &str = "~/.optopsy/signals";
+    let expanded = shellexpand::tilde(TEMPLATE);
+    // If tilde was not expanded (no HOME set), fall back to a tmp-based path
+    let dir = if expanded.as_ref() == TEMPLATE {
+        std::env::temp_dir().join("optopsy").join("signals")
+    } else {
+        PathBuf::from(expanded.as_ref())
+    };
     if !dir.exists() {
         fs::create_dir_all(&dir).context("Failed to create signals directory")?;
     }

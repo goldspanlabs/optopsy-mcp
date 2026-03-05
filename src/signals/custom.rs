@@ -234,6 +234,9 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
 // Recursive descent parser → Polars Expr
 // ---------------------------------------------------------------------------
 
+/// Columns valid for use in formula expressions.
+const VALID_COLUMNS: &[&str] = &["close", "open", "high", "low", "volume", "adjclose"];
+
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
@@ -246,6 +249,10 @@ impl Parser {
 
     fn peek(&self) -> Option<&Token> {
         self.tokens.get(self.pos)
+    }
+
+    fn peek_ahead(&self, offset: usize) -> Option<&Token> {
+        self.tokens.get(self.pos + offset)
     }
 
     fn advance(&mut self) -> Option<Token> {
@@ -428,6 +435,12 @@ impl Parser {
                 }
                 // Check for lookback: ident "[" number "]"
                 else if self.peek() == Some(&Token::LBracket) {
+                    // Validate column name before processing lookback
+                    if !VALID_COLUMNS.contains(&name.to_lowercase().as_str()) {
+                        return Err(format!(
+                            "Unknown column '{name}'. Valid columns are: close, open, high, low, volume, adjclose"
+                        ));
+                    }
                     self.advance();
                     match self.advance() {
                         Some(Token::Number(n)) => {
@@ -448,7 +461,12 @@ impl Parser {
                         other => Err(format!("Expected number in lookback, got {other:?}")),
                     }
                 } else {
-                    // Plain column reference
+                    // Plain column reference — whitelist to avoid silent typos
+                    if !VALID_COLUMNS.contains(&name.to_lowercase().as_str()) {
+                        return Err(format!(
+                            "Unknown column '{name}'. Valid columns are: close, open, high, low, volume, adjclose"
+                        ));
+                    }
                     Ok(col(&*name))
                 }
             }
@@ -475,15 +493,27 @@ impl Parser {
     }
 
     fn parse_func_arg(&mut self) -> Result<FuncArg, String> {
-        // Try to parse as a plain number (for period arguments)
-        if let Some(Token::Number(n)) = self.peek() {
-            let n = *n;
-            self.advance();
-            Ok(FuncArg::Number(n))
-        } else {
-            let expr = self.parse_expr()?;
-            Ok(FuncArg::Expression(expr))
+        // Use two-token lookahead: if the next token is a bare number followed immediately by
+        // a comma or closing paren, treat it as a plain period/literal (FuncArg::Number).
+        // Otherwise parse a full expression, which handles cases like `abs(1 + close)`.
+        let is_pure_number = matches!(
+            (self.peek(), self.peek_ahead(1)),
+            (
+                Some(Token::Number(_)),
+                Some(Token::Comma | Token::RParen) | None
+            )
+        );
+
+        if is_pure_number {
+            if let Some(Token::Number(n)) = self.peek() {
+                let n = *n;
+                self.advance();
+                return Ok(FuncArg::Number(n));
+            }
         }
+
+        let expr = self.parse_expr()?;
+        Ok(FuncArg::Expression(expr))
     }
 
     fn build_function_call(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
@@ -735,6 +765,8 @@ mod tests {
         assert!(validate_formula("close > sma(close, 20)").is_ok());
         assert!(validate_formula("close > close[1] * 1.02").is_ok());
         assert!(validate_formula("(close - low) / (high - low) < 0.2").is_ok());
+        // abs() with an arithmetic expression as its argument
+        assert!(validate_formula("abs(close - open) > 1.0").is_ok());
     }
 
     #[test]
@@ -742,6 +774,9 @@ mod tests {
         assert!(validate_formula("").is_err());
         assert!(validate_formula("close >").is_err());
         assert!(validate_formula("unknown_func(close)").is_err());
+        // Unknown column name should be rejected
+        assert!(validate_formula("foo > 1").is_err());
+        assert!(validate_formula("typo[1] > close").is_err());
     }
 
     #[test]
@@ -755,5 +790,16 @@ mod tests {
         // Valid integer lookbacks should be accepted
         assert!(validate_formula("close[0]").is_ok());
         assert!(validate_formula("close[10000]").is_ok());
+        // Unknown column in lookback should be rejected
+        assert!(validate_formula("foo[1]").is_err());
+    }
+
+    #[test]
+    fn abs_with_expression_arg() {
+        // abs(expr) should parse `1 + close` as a full expression, not stop at `1`
+        let df = test_df();
+        let signal = FormulaSignal::new("abs(close - open) > 0.5".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 10);
     }
 }
