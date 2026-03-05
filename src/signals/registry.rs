@@ -282,7 +282,7 @@ fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
     const MAX_DEPTH: usize = 8;
     // Depth 8 accommodates deeply nested And/Or combinator trees and multi-level
     // Saved signal references while still catching pathological cycles early.
-    if depth > MAX_DEPTH {
+    if depth >= MAX_DEPTH {
         tracing::error!("Signal recursion limit ({MAX_DEPTH}) exceeded — possible cycle in Saved signal references");
         return Box::new(FormulaSignal::new("false".to_string()));
     }
