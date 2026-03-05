@@ -20,10 +20,10 @@ Once connected via Claude Desktop or any MCP client, try asking:
 - "What strategies can I use for income generation?"
 - "What parameters would you recommend for an iron condor on SPY?"
 
-**Strategy screening:**
-- "Evaluate a 30-delta iron condor on SPY with 45 DTE entries and 14 DTE exits"
-- "Which delta range has the highest win rate for short put verticals?"
-- "Screen bull put spreads across different DTE windows and find the sweet spot"
+**Strategy analysis:**
+- "Suggest parameters for an iron condor on SPY and then backtest them"
+- "What's the win rate for a 30-delta short put on SPY with 45 DTE entries?"
+- "Backtest bull put spreads at different DTE windows and find the sweet spot"
 
 **Backtesting:**
 - "Backtest an iron condor on SPY with $100k capital, max 5 positions, and a 50% stop loss"
@@ -35,6 +35,11 @@ Once connected via Claude Desktop or any MCP client, try asking:
 - "What momentum signals are available? Build me an entry filter using MACD crossover"
 - "Compare iron condor results with and without a VIX-based entry signal"
 
+**Custom signals:**
+- "Create a signal that triggers when close crosses above the 50-day SMA and volume is 2x the 20-day average"
+- "Build me a mean reversion signal: close below the lower Bollinger Band"
+- "Save a custom exit signal that fires when the 3-day price change exceeds 3%"
+
 **Comparison and research:**
 - "Compare iron condors, iron butterflies, and short strangles side by side on SPY"
 - "Which strategy has the best risk-adjusted returns: jade lizard or iron condor?"
@@ -43,9 +48,10 @@ Once connected via Claude Desktop or any MCP client, try asking:
 ## Features
 
 - **Multi-Source Data Integration** — Load options data from EODHD API, local Parquet cache, or S3-compatible storage with fetch-on-miss
-- **Statistical Evaluation** — Group trades by DTE/delta buckets with aggregate stats (mean, std, win rate, profit factor) for strategy research and screening
 - **Event-Driven Backtesting** — Full simulation with position management, trade log, equity curve, and risk metrics (Sharpe, Sortino, Calmar, VaR, max drawdown)
-- **Signal-Based Entry/Exit** — Filter trades using 40+ technical analysis indicators (momentum, trend, volatility, overlap, price, volume)
+- **40+ Built-in Signals** — Filter trades using technical analysis indicators across momentum, trend, volatility, overlap, price, and volume categories
+- **Custom Formula Signals** — Build your own entry/exit signals using a formula DSL with price columns, lookbacks, rolling functions, and logical operators (see [Custom Signals](#custom-signals))
+- **Signal Persistence** — Save, list, load, and delete custom signals for reuse across sessions
 - **32 Built-in Strategies** — Singles, verticals, straddles, strangles, butterflies, condors, iron condors/butterflies, calendars, diagonals (with multi-expiration support)
 - **4 Slippage Models** — Mid, spread, liquidity-based, per-leg fixed
 - **12 MCP Tools** — All accessible via Claude Desktop or any MCP-compatible client
@@ -129,6 +135,57 @@ Minimum required columns for options chain data:
 | `bid` | Float64 | Bid price |
 | `ask` | Float64 | Ask price |
 | `delta` | Float64 | Option delta |
+
+## Custom Signals
+
+The `build_signal` tool lets you create formula-based entry and exit signals using a mini expression DSL. Signals are validated at parse time and evaluated against OHLCV price data during backtests. OHLCV data is auto-fetched when signals are used.
+
+### Supported syntax
+
+**Columns**: `close`, `open`, `high`, `low`, `volume`, `adjclose`
+
+**Lookback**: `close[1]` (previous close), `close[5]` (5 bars ago)
+
+**Rolling functions**:
+
+| Function | Description |
+|----------|-------------|
+| `sma(col, period)` | Simple Moving Average |
+| `ema(col, period)` | Exponential Moving Average |
+| `std(col, period)` | Rolling Standard Deviation |
+| `max(col, period)` | Rolling Maximum |
+| `min(col, period)` | Rolling Minimum |
+| `abs(expr)` | Absolute value |
+| `change(col, period)` | `col - col[period]` |
+| `pct_change(col, period)` | `(col - col[period]) / col[period]` |
+
+**Operators**: `+`, `-`, `*`, `/`
+
+**Comparisons**: `>`, `<`, `>=`, `<=`, `==`, `!=`
+
+**Logical**: `and`, `or`, `not`
+
+### Examples
+
+```
+close > sma(close, 50) and close > sma(close, 200)
+close < sma(close, 20) - 2.0 * std(close, 20)
+volume > sma(volume, 20) * 2.0
+pct_change(close, 1) > 0.03 or pct_change(close, 1) < -0.03
+(close - low) / (high - low) < 0.2
+```
+
+### Signal management
+
+Custom signals can be saved to `~/.optopsy/signals/` for reuse across sessions:
+
+- **Create & save**: `build_signal` with `action="create"` and `save=true`
+- **List saved**: `build_signal` with `action="list"`
+- **Load**: `build_signal` with `action="get"`
+- **Delete**: `build_signal` with `action="delete"`
+- **Validate only**: `build_signal` with `action="validate"`
+
+Saved signals can be referenced in backtests via `{ "type": "Saved", "name": "my_signal" }` as `entry_signal` or `exit_signal`.
 
 ## Tech Stack
 
