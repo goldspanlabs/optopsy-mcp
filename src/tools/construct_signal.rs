@@ -63,46 +63,46 @@ pub fn execute(prompt: &str, symbol: Option<&str>, cache: &CachedStore) -> Const
         )
     };
 
-    let mut suggested_next_steps = vec![
-        format!("Pick a candidate from above or use the schema to construct a custom SignalSpec"),
-        format!("Pass the JSON example in entry_signal or exit_signal parameter of run_backtest"),
-        format!("Use And/Or combinators to merge multiple signals"),
-    ];
+    let mut suggested_next_steps = Vec::new();
 
-    // Add OHLCV data status if symbol provided
+    // OHLCV data status check — most important step for signal usage
     if let Some(sym) = symbol {
         let upper = sym.to_uppercase();
         match cache.cache_path(&upper, "prices") {
             Ok(path) => {
                 if path.exists() {
-                    suggested_next_steps.insert(
-                        0,
-                        format!("✓ OHLCV data for {upper} is cached and ready to use in backtest"),
+                    suggested_next_steps.push(
+                        format!("[Phase 0 → DONE] OHLCV data for {upper} is cached and ready for signal usage"),
                     );
                 } else {
-                    suggested_next_steps.insert(
-                        0,
+                    suggested_next_steps.push(
                         format!(
-                            "⚠️ OHLCV data for {upper} not cached. Call fetch_to_parquet({{ symbol: \"{upper}\", category: \"prices\" }}) first"
+                            "[Phase 0 → REQUIRED] Call fetch_to_parquet({{ symbol: \"{upper}\", category: \"prices\" }}) BEFORE using signals in run_backtest"
                         ),
                     );
                 }
             }
             Err(_) => {
-                suggested_next_steps.insert(
-                    0,
+                suggested_next_steps.push(
                     format!(
-                        "⚠️ Could not check OHLCV data status for {upper}. Call fetch_to_parquet({{ symbol: \"{upper}\", category: \"prices\" }}) if needed"
+                        "[Phase 0 → REQUIRED] Call fetch_to_parquet({{ symbol: \"{upper}\", category: \"prices\" }}) — signals REQUIRE OHLCV data"
                     ),
                 );
             }
         }
     } else {
-        suggested_next_steps.insert(
-            0,
-            "⚠️ Signals require OHLCV data. Call fetch_to_parquet({ symbol: \"SPY\", category: \"prices\" }) first, then call construct_signal again with symbol parameter".to_string(),
+        suggested_next_steps.push(
+            "[Phase 0 → REQUIRED] Signals REQUIRE OHLCV data. Call fetch_to_parquet({ symbol: \"<SYMBOL>\", category: \"prices\" }) BEFORE using signals in run_backtest".to_string(),
         );
     }
+
+    suggested_next_steps.push(
+        "[Phase 2c → DONE] Pick a candidate from above or use the schema to construct a custom SignalSpec".to_string(),
+    );
+    suggested_next_steps.push(
+        "[Phase 5 → THEN] Pass the JSON example as entry_signal or exit_signal in run_backtest"
+            .to_string(),
+    );
 
     ConstructSignalResponse {
         summary,

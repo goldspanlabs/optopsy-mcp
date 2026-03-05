@@ -218,7 +218,9 @@ pub struct EvaluateStrategyParams {
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct RunBacktestParams {
-    /// Strategy name
+    /// Required. Strategy to backtest — must be one of the enum variants (e.g. `long_call`,
+    /// `short_put`, `iron_condor`, `short_strangle`). Cannot be null or omitted.
+    /// Use `list_strategies` if unsure which to pick.
     #[garde(skip)]
     pub strategy: StrategyParam,
     /// Per-leg delta targets (optional — uses strategy-specific defaults if omitted)
@@ -849,9 +851,12 @@ impl OptopsyServer {
     /// **Workflow Phase**: 5/7 (full validation)
     /// **When to use**: After `evaluate_strategy()` to validate strategy performance in capital-constrained scenario
     /// **Prerequisites**:
-    ///   - `load_data()` must have been called
-    ///   - `evaluate_strategy()` recommended (not required, but avoids bad parameter choices)
-    ///   - `fetch_to_parquet()` required ONLY if using `entry_signal` or `exit_signal`
+    ///   - `load_data()` MUST have been called (Phase 1)
+    ///   - `evaluate_strategy()` MUST be called first to validate parameters (Phase 4)
+    ///   - `strategy` is REQUIRED — must be a valid strategy name (e.g. `long_call`, `short_put`, `iron_condor`). Never pass null.
+    ///   - ⚠️  **SIGNAL PREREQUISITE**: If `entry_signal` or `exit_signal` is provided, you MUST call
+    ///     `fetch_to_parquet({ symbol: "<SYMBOL>", category: "prices" })` BEFORE calling this tool.
+    ///     The backtest WILL FAIL without OHLCV data when signals are used.
     /// **⚠️  Warning**: Slow! Run `evaluate_strategy()` first to validate parameters
     /// **Next tools**: `compare_strategies()` (to test variations) or iterate on parameters
     ///
@@ -1187,49 +1192,51 @@ impl ServerHandler for OptopsyServer {
                 website_url: None,
             },
             instructions: Some(
-                "Options backtesting engine. \
-                \n\nRecommended exploration workflow:\
-                \n0a. check_cache_status({ symbol, category }) — check if cached data \
-                exists for a symbol and when it was last updated. Call this before \
-                fetch_to_parquet to avoid re-downloading data that is already available.\
-                \n0b. fetch_to_parquet({ symbol, category, period? }) — fetch historical \
-                OHLCV data from Yahoo Finance and write it to a local Parquet file. \
-                Only needed if check_cache_status shows the data is missing or stale. \
-                Note: the resulting Parquet file is for OHLCV price data and is separate from \
-                the options chain loaded by load_data.\
-                \n1. load_data({ symbol }) — load (or auto-fetch) a symbol's options chain. \
-                If the data is not cached locally and EODHD_API_KEY is set, it will \
-                automatically download from EODHD. You can also use download_options_data \
-                to explicitly download data first.\
-                \n2. list_strategies() — browse all built-in strategies grouped by category \
-                (singles, spreads, butterflies, condors, iron, calendars).\
-                \n3. list_signals() — browse all available TA signals grouped by category \
-                (momentum, overlap, trend, volatility, price, volume). Signals can be used as \
-                entry_signal and exit_signal in run_backtest.\
-                \n4. evaluate_strategy({ strategy, leg_deltas, entry_dte, exit_dte, \
-                dte_interval, delta_interval, slippage }) — fast statistical screen that \
-                groups historical trades into DTE × delta buckets and returns mean P&L, \
-                win rate, profit factor, and distribution stats per bucket. \
-                Use this to identify promising parameter ranges before committing to a full simulation.\
-                \n5. run_backtest({ strategy, leg_deltas, ..., capital, quantity, max_positions, \
-                entry_signal?, exit_signal? }) \
-                — event-driven day-by-day simulation with position management (stop loss, take profit, \
-                max hold, DTE exit, signal exit), equity curve, and full performance metrics \
-                (Sharpe, Sortino, Calmar, VaR, CAGR, expectancy). \
-                Optional: pass entry_signal to filter entries to days where a TA condition fires, \
-                and/or exit_signal to trigger early exits. Signals require OHLCV data — call \
-                fetch_to_parquet({ symbol, category: \"prices\" }) first.\
-                \n6. compare_strategies({ strategies: [...], sim_params }) — run the same backtest \
-                pipeline for multiple strategies in parallel and rank them by Sharpe and total P&L.\
-                \n7. get_raw_prices({ symbol, start_date?, end_date?, limit? }) — return raw \
-                OHLCV price bars for a symbol directly in the response. Useful for generating \
-                charts (candlestick, line, area) or custom analysis. Requires fetch_to_parquet \
-                to have been called first. Data is sampled to `limit` points (default 500) to \
-                avoid overwhelming context windows.\
-                \n\nData flow summary: EODHD API → local Parquet cache → DataFrame → per-leg \
-                filter/delta-select → leg join → strike-order validation → P&L calculation → \
-                bucket aggregation (evaluate) or event-loop simulation (backtest) → \
-                AI-enriched JSON response."
+                "Options backtesting engine.\
+                \n\n## MANDATORY WORKFLOW — Follow these phases IN ORDER for every analysis.\
+                \nDo NOT skip phases. Do NOT jump ahead. Each phase builds on the previous one.\
+                \n\
+                \n### Phase 0: Data Preparation (optional, run if needed)\
+                \n  0a. check_cache_status({ symbol, category: \"options\" }) — verify options data is cached\
+                \n  0b. check_cache_status({ symbol, category: \"prices\" }) — verify OHLCV data is cached (only if using signals)\
+                \n  0c. fetch_to_parquet({ symbol, category: \"prices\" }) — download OHLCV data (only if 0b shows missing AND you plan to use entry_signal/exit_signal)\
+                \n  0d. download_options_data({ symbol }) — bulk download from EODHD (only if 0a shows missing)\
+                \n\
+                \n### Phase 1: Load Data (REQUIRED — always start here)\
+                \n  1. load_data({ symbol }) — load options chain into memory. NOTHING works without this.\
+                \n\
+                \n### Phase 2: Explore Strategies (REQUIRED — choose what to test)\
+                \n  2a. list_strategies() — browse all 32 strategies by category\
+                \n  2b. list_signals() — browse TA signals (only if planning signal-filtered backtest)\
+                \n  2c. construct_signal({ prompt }) — build signal JSON (only if using signals)\
+                \n  2d. build_signal({ action: \"create\", ... }) — custom formula signals (only if built-in signals insufficient)\
+                \n\
+                \n### Phase 3: Get Parameters (RECOMMENDED — avoid guessing)\
+                \n  3. suggest_parameters({ strategy, risk_preference }) — data-driven DTE/delta/slippage recommendations\
+                \n\
+                \n### Phase 4: Statistical Screening (RECOMMENDED — validate before slow backtest)\
+                \n  4. evaluate_strategy({ strategy, ... }) — fast DTE×delta bucket analysis. Identifies best parameter zones.\
+                \n\
+                \n### Phase 5: Full Simulation (the main goal)\
+                \n  5. run_backtest({ strategy, ... }) — event-driven backtest with equity curve, trade log, and metrics\
+                \n\
+                \n### Phase 6: Compare & Optimize (optional — test variations)\
+                \n  6. compare_strategies({ strategies, sim_params }) — side-by-side ranking by Sharpe/PnL\
+                \n\
+                \n### Phase 7: Visualize (optional)\
+                \n  7. get_raw_prices({ symbol }) — OHLCV price bars for chart generation\
+                \n\
+                \n## RULES\
+                \n- ALWAYS call load_data FIRST before any analysis tool\
+                \n- ALWAYS call list_strategies to select a strategy before evaluate/backtest\
+                \n- ALWAYS call evaluate_strategy BEFORE run_backtest to validate parameters\
+                \n- NEVER call run_backtest without completing Phases 1-4\
+                \n- If using signals: MUST call fetch_to_parquet BEFORE run_backtest\
+                \n- Each tool response includes suggested_next_steps — follow them\
+                \n\
+                \nData flow: EODHD API → local Parquet cache → DataFrame → per-leg filter/delta-select → \
+                leg join → strike-order validation → P&L calculation → bucket aggregation (evaluate) \
+                or event-loop simulation (backtest) → AI-enriched JSON response."
                     .into(),
             ),
         }

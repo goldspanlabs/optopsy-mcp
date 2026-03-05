@@ -60,9 +60,9 @@ pub fn execute() -> SignalsResponse {
             r#"{"type": "Or", "left": <signal>, "right": <signal>} — either must be true"#.into(),
         ],
         suggested_next_steps: vec![
-            "Use entry_signal in run_backtest to only enter on signal days".into(),
-            "Use exit_signal in run_backtest to trigger early exits on signal days".into(),
-            "Combine signals with And/Or for compound conditions".into(),
+            "[Phase 2c → NEXT] Call construct_signal({ prompt: \"<signal_name>\" }) to get the JSON spec for a signal".into(),
+            "[Phase 0 → REQUIRED] Call fetch_to_parquet({ symbol, category: \"prices\" }) BEFORE using signals in run_backtest — signals REQUIRE OHLCV data".into(),
+            "[Phase 5 → THEN] Pass the signal JSON as entry_signal or exit_signal in run_backtest".into(),
         ],
     }
 }

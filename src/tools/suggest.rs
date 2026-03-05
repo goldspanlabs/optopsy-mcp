@@ -27,27 +27,24 @@ fn format_suggest(result: SuggestResult) -> SuggestResponse {
         liquidity_pct
     );
 
-    let mut suggested_next_steps = vec![];
-    suggested_next_steps.push(
-        "Use these parameters in evaluate_strategy to test the suggested configuration".to_string(),
-    );
-    suggested_next_steps.push(
-        "Run run_backtest with the suggested parameters for full simulation validation".to_string(),
-    );
+    let mut suggested_next_steps = vec![
+        "[Phase 4 → NEXT] Call evaluate_strategy with the suggested parameters to validate across DTE/delta buckets".to_string(),
+        "[Phase 5 → THEN] Call run_backtest with the suggested parameters for full simulation".to_string(),
+    ];
 
     if result.confidence < 0.5 {
         suggested_next_steps.push(
-            "Consider calling download_options_data to fetch more historical data".to_string(),
+            "[Phase 0 → RETRY] Low confidence — consider calling download_options_data to fetch more historical data".to_string(),
         );
         suggested_next_steps.push(
-            "Try adjusting risk_preference to Aggressive if Conservative/Moderate filters are too strict"
-                .to_string(),
+            "[Phase 3 → RETRY] Try risk_preference: \"aggressive\" if current filters are too strict".to_string(),
         );
     }
 
     if result.data_coverage.expiration_count < 3 {
         suggested_next_steps.push(
-            "Expand date range to include more expiration cycles for better coverage".to_string(),
+            "[Phase 1 → RETRY] Expand date range in load_data to include more expiration cycles"
+                .to_string(),
         );
     }
 

@@ -62,6 +62,38 @@ fn execute_create(
         };
     }
 
+    // Check for duplicate formula under a different name
+    if save {
+        match storage::find_duplicate_formula(formula, name) {
+            Ok(Some(existing_name)) => {
+                // Load the existing signal and return it instead of creating a duplicate
+                let existing_spec = storage::load_signal(&existing_name).ok();
+                return BuildSignalResponse {
+                    summary: format!(
+                        "Duplicate formula detected: this formula already exists as signal '{existing_name}'. Use the existing signal instead of creating a duplicate."
+                    ),
+                    success: false,
+                    signal_spec: existing_spec,
+                    saved_signals: vec![],
+                    formula_help: None,
+                    suggested_next_steps: vec![
+                        format!(
+                            "[Phase 5 → NEXT] Use the existing signal: {{ \"type\": \"Saved\", \"name\": \"{existing_name}\" }}"
+                        ),
+                        format!(
+                            "[Phase 2d → TIP] Delete '{existing_name}' first with action='delete' if you want to replace it"
+                        ),
+                    ],
+                };
+            }
+            Ok(None) => {} // No duplicate — proceed
+            Err(e) => {
+                tracing::warn!("Failed to check for duplicate formulas: {e}");
+                // Non-fatal — proceed with save
+            }
+        }
+    }
+
     let spec = SignalSpec::Custom {
         name: name.to_string(),
         formula: formula.to_string(),
@@ -69,6 +101,9 @@ fn execute_create(
     };
 
     if save {
+        // Check if we're overwriting an existing signal with the same name
+        let is_overwrite = storage::load_signal(name).is_ok();
+
         if let Err(e) = storage::save_signal(name, &spec) {
             return BuildSignalResponse {
                 summary: format!("Signal validated but save failed: {e}"),
@@ -81,31 +116,40 @@ fn execute_create(
                 ],
             };
         }
-    }
 
-    let summary = if save {
-        format!("Custom signal '{name}' created and saved. Formula: {formula}")
-    } else {
-        format!("Custom signal '{name}' created (not saved). Formula: {formula}")
-    };
+        let summary = if is_overwrite {
+            format!("Custom signal '{name}' updated (overwritten). Formula: {formula}")
+        } else {
+            format!("Custom signal '{name}' created and saved. Formula: {formula}")
+        };
 
-    BuildSignalResponse {
-        summary,
-        success: true,
-        signal_spec: Some(spec),
-        saved_signals: vec![],
-        formula_help: None,
-        suggested_next_steps: vec![
-            "Use this signal as entry_signal or exit_signal in run_backtest".to_string(),
-            if save {
+        BuildSignalResponse {
+            summary,
+            success: true,
+            signal_spec: Some(spec),
+            saved_signals: vec![],
+            formula_help: None,
+            suggested_next_steps: vec![
+                "[Phase 0 → REQUIRED] Call fetch_to_parquet({ symbol, category: \"prices\" }) if not already done — signals REQUIRE OHLCV data".to_string(),
+                "[Phase 5 → NEXT] Use this signal as entry_signal or exit_signal in run_backtest".to_string(),
                 format!(
-                    "Reference this signal later with: {{ \"type\": \"Saved\", \"name\": \"{name}\" }}"
-                )
-            } else {
-                "Call build_signal again with save=true to persist this signal".to_string()
-            },
-            "Combine with other signals using And/Or combinators".to_string(),
-        ],
+                    "[Phase 2d → TIP] Reference this signal later with: {{ \"type\": \"Saved\", \"name\": \"{name}\" }}"
+                ),
+            ],
+        }
+    } else {
+        BuildSignalResponse {
+            summary: format!("Custom signal '{name}' created (not saved). Formula: {formula}"),
+            success: true,
+            signal_spec: Some(spec),
+            saved_signals: vec![],
+            formula_help: None,
+            suggested_next_steps: vec![
+                "[Phase 0 → REQUIRED] Call fetch_to_parquet({ symbol, category: \"prices\" }) if not already done — signals REQUIRE OHLCV data".to_string(),
+                "[Phase 5 → NEXT] Use this signal as entry_signal or exit_signal in run_backtest".to_string(),
+                "[Phase 2d → TIP] Call build_signal again with save=true to persist this signal".to_string(),
+            ],
+        }
     }
 }
 
@@ -218,9 +262,8 @@ fn execute_get(name: &str) -> BuildSignalResponse {
             saved_signals: vec![],
             formula_help: None,
             suggested_next_steps: vec![
-                "Use this signal_spec directly as entry_signal or exit_signal in run_backtest"
-                    .to_string(),
-                "Combine with other signals using And/Or combinators".to_string(),
+                "[Phase 0 → REQUIRED] Call fetch_to_parquet({ symbol, category: \"prices\" }) if not already done — signals REQUIRE OHLCV data".to_string(),
+                "[Phase 5 → NEXT] Use this signal_spec as entry_signal or exit_signal in run_backtest".to_string(),
             ],
         },
         Err(e) => BuildSignalResponse {

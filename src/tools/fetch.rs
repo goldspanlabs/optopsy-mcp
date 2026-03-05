@@ -96,9 +96,9 @@ pub async fn execute_with_provider(
         columns,
         suggested_next_steps: vec![
             format!(
-                "Use the returned file_path ('{file_path}') to load this OHLCV parquet into memory with your preferred data analysis tools."
+                "[Phase 1 → NEXT] Call load_data({{ symbol: \"{upper}\" }}) to load options chain data (OHLCV data is now cached for signal usage)"
             ),
-            format!("Call check_cache_status to verify the cached file for {upper}."),
+            "[Phase 5 → LATER] OHLCV data is ready — you can now use entry_signal/exit_signal in run_backtest".to_string(),
         ],
     })
 }

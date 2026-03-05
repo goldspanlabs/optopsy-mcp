@@ -354,12 +354,12 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
             trade_log: result.trade_log,
             data_quality,
             suggested_next_steps: vec![
-                "Widen DTE range or delta targets to capture more entry opportunities".to_string(),
+                "[Phase 4 → RETRY] Widen DTE range or delta targets in evaluate_strategy to capture more entry opportunities".to_string(),
                 format!(
-                    "Use evaluate_strategy to explore which DTE/delta buckets have data for {}",
+                    "[Phase 4 → RETRY] Use evaluate_strategy with broader parameters to find DTE/delta buckets with data for {}",
                     params.strategy
                 ),
-                "Verify the loaded dataset covers the expected date range and symbols".to_string(),
+                "[Phase 1 → CHECK] Verify the loaded dataset covers the expected date range via get_loaded_symbol".to_string(),
             ],
         };
     }
@@ -387,24 +387,20 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
 
     let mut suggested_next_steps = vec![
         format!(
-            "Use compare_strategies to benchmark {} against similar strategies",
-            params.strategy
-        ),
-        format!(
-            "Use evaluate_strategy to find the optimal DTE/delta bucket for {}",
+            "[Phase 6 → NEXT] Use compare_strategies to benchmark {} against similar strategies or parameter variations",
             params.strategy
         ),
     ];
 
     if m.sharpe < 1.0 {
         suggested_next_steps.push(
-            "Consider adjusting stop_loss/take_profit thresholds to improve risk-adjusted returns"
+            "[Phase 5 → ITERATE] Adjust stop_loss/take_profit thresholds and re-run run_backtest to improve risk-adjusted returns"
                 .to_string(),
         );
     }
     if m.max_drawdown > 0.15 {
         suggested_next_steps.push(
-            "Max drawdown is significant — consider tighter risk management or position sizing"
+            "[Phase 5 → ITERATE] Max drawdown is significant — tighten risk management and re-run run_backtest"
                 .to_string(),
         );
     }
@@ -502,17 +498,13 @@ pub fn format_evaluate(
     let mut suggested_next_steps = Vec::new();
     if let Some(ref best) = best_bucket {
         suggested_next_steps.push(format!(
-            "Use run_backtest targeting DTE {} and delta {} for a full simulation",
+            "[Phase 5 → NEXT] Use run_backtest targeting DTE {} and delta {} for a full event-driven simulation",
             best.dte_range, best.delta_range,
         ));
     }
     suggested_next_steps.push(format!(
-        "Narrow delta_interval (currently {:.2}) for finer granularity around the best bucket",
+        "[Phase 4 → REFINE] Narrow delta_interval (currently {:.2}) for finer granularity around the best bucket",
         params.delta_interval,
-    ));
-    suggested_next_steps.push(format!(
-        "Use compare_strategies to benchmark {} against alternatives",
-        params.strategy,
     ));
 
     let data_quality = build_evaluate_quality(&groups, params, median_spread);
@@ -598,10 +590,10 @@ pub fn format_compare(results: Vec<CompareResult>, params: &CompareParams) -> Co
     let mut suggested_next_steps = Vec::new();
     if let Some(ref best) = best_overall {
         suggested_next_steps.push(format!(
-            "Use run_backtest on {best} for detailed trade-level analysis",
+            "[Phase 5 → DRILL DOWN] Use run_backtest on {best} for detailed trade-level analysis",
         ));
         suggested_next_steps.push(format!(
-            "Use evaluate_strategy on {best} to find optimal DTE/delta parameters",
+            "[Phase 6 → ITERATE] Use compare_strategies with parameter variations of {best} to further optimize",
         ));
     }
 
@@ -654,9 +646,8 @@ pub fn format_load_data(
         date_range,
         columns,
         suggested_next_steps: vec![
-            "Use list_strategies to see all available option strategies".to_string(),
-            "Use evaluate_strategy for statistical analysis across DTE/delta buckets".to_string(),
-            "Use run_backtest for a full simulation with equity curve and trade log".to_string(),
+            "[Phase 2 → NEXT] Call list_strategies() to browse available strategies and choose one to analyze".to_string(),
+            "[Phase 3 → THEN] Call suggest_parameters({ strategy, risk_preference: \"moderate\" }) for data-driven parameter recommendations".to_string(),
         ],
     }
 }
@@ -694,10 +685,8 @@ pub fn format_strategies(strategies: Vec<StrategyInfo>) -> StrategiesResponse {
         categories,
         strategies,
         suggested_next_steps: vec![
-            "Use evaluate_strategy with a strategy name to analyze its statistical performance"
-                .to_string(),
-            "Use run_backtest to simulate a strategy with specific parameters".to_string(),
-            "Use compare_strategies to benchmark multiple strategies side by side".to_string(),
+            "[Phase 3 → NEXT] Call suggest_parameters({ strategy: \"<chosen_strategy>\", risk_preference: \"moderate\" }) to get data-driven parameters".to_string(),
+            "[Phase 4 → THEN] Call evaluate_strategy with the chosen strategy for DTE/delta statistical screening".to_string(),
         ],
     }
 }
@@ -754,10 +743,12 @@ pub fn format_download(summary: DownloadSummary) -> DownloadResponse {
         },
         suggested_next_steps: vec![
             format!(
-                "Use load_data({{ symbol: \"{}\" }}) to load the downloaded data for backtesting",
+                "[Phase 1 → NEXT] Call load_data({{ symbol: \"{}\" }}) to load the downloaded data into memory",
                 summary.symbol,
             ),
-            "Use list_strategies to see available options strategies".to_string(),
+            format!(
+                "[Phase 2 → THEN] Call list_strategies() to browse available strategies"
+            ),
         ],
     }
 }
@@ -791,8 +782,8 @@ pub fn format_raw_prices(
         date_range,
         prices,
         suggested_next_steps: vec![
-            "Use the prices array to generate a line chart (close prices), candlestick chart (OHLC), or area chart.".to_string(),
-            "Combine with backtest trade_log data to overlay strategy performance on price action.".to_string(),
+            "[Phase 7 → COMPLETE] Use the prices array to generate a line chart (close prices), candlestick chart (OHLC), or area chart.".to_string(),
+            "[Phase 7 → COMPLETE] Combine with backtest trade_log data to overlay strategy performance on price action.".to_string(),
         ],
     }
 }

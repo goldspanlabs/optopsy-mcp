@@ -45,6 +45,28 @@ fn validate_name(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Check if a formula already exists among saved signals (under a different name).
+/// Returns the name of the existing signal if found.
+pub fn find_duplicate_formula(formula: &str, exclude_name: &str) -> Result<Option<String>> {
+    let normalized = formula.split_whitespace().collect::<Vec<_>>().join(" ");
+    let signals = list_saved_signals()?;
+    for s in signals {
+        if s.name == exclude_name {
+            continue;
+        }
+        if let Some(existing_formula) = &s.formula {
+            let existing_normalized = existing_formula
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            if existing_normalized == normalized {
+                return Ok(Some(s.name));
+            }
+        }
+    }
+    Ok(None)
+}
+
 /// Save a signal spec to disk.
 ///
 /// Writes to a uniquely-named temporary file in the same directory first, then atomically
@@ -180,6 +202,10 @@ pub struct SavedSignalInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    // Serialize tests that touch the filesystem signals directory
+    static FS_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn validate_name_ok() {
@@ -194,5 +220,104 @@ mod tests {
         assert!(validate_name("../evil").is_err());
         assert!(validate_name("path/traversal").is_err());
         assert!(validate_name("has spaces").is_err());
+    }
+
+    #[test]
+    fn find_duplicate_formula_detects_match() {
+        let _lock = FS_LOCK.lock().unwrap();
+        let name_a = "dup-test-a";
+        let name_b = "dup-test-b";
+        let formula = "close > sma(close, 20)";
+
+        let spec = SignalSpec::Custom {
+            name: name_a.to_string(),
+            formula: formula.to_string(),
+            description: None,
+        };
+        save_signal(name_a, &spec).unwrap();
+
+        // Same formula under different name should be detected
+        let result = find_duplicate_formula(formula, name_b).unwrap();
+        assert_eq!(result, Some(name_a.to_string()));
+
+        // Same name should be excluded from duplicate check
+        let result = find_duplicate_formula(formula, name_a).unwrap();
+        assert_eq!(result, None);
+
+        // Cleanup
+        let _ = delete_signal(name_a);
+    }
+
+    #[test]
+    fn find_duplicate_formula_normalizes_whitespace() {
+        let _lock = FS_LOCK.lock().unwrap();
+        let name = "dup-ws-test";
+        let formula = "close > sma(close, 20)";
+
+        let spec = SignalSpec::Custom {
+            name: name.to_string(),
+            formula: formula.to_string(),
+            description: None,
+        };
+        save_signal(name, &spec).unwrap();
+
+        // Extra whitespace should still match
+        let result = find_duplicate_formula("close  >  sma(close,  20)", "other").unwrap();
+        assert_eq!(result, Some(name.to_string()));
+
+        // Cleanup
+        let _ = delete_signal(name);
+    }
+
+    #[test]
+    fn find_duplicate_formula_no_match() {
+        let _lock = FS_LOCK.lock().unwrap();
+        let name = "dup-nomatch-test";
+        let formula = "close > sma(close, 50)";
+
+        let spec = SignalSpec::Custom {
+            name: name.to_string(),
+            formula: formula.to_string(),
+            description: None,
+        };
+        save_signal(name, &spec).unwrap();
+
+        // Different formula should not match
+        let result = find_duplicate_formula("close < ema(close, 20)", "other").unwrap();
+        assert_eq!(result, None);
+
+        // Cleanup
+        let _ = delete_signal(name);
+    }
+
+    #[test]
+    fn save_signal_overwrite_same_name() {
+        let _lock = FS_LOCK.lock().unwrap();
+        let name = "overwrite-test";
+
+        let spec1 = SignalSpec::Custom {
+            name: name.to_string(),
+            formula: "close > sma(close, 10)".to_string(),
+            description: Some("version 1".to_string()),
+        };
+        save_signal(name, &spec1).unwrap();
+
+        let spec2 = SignalSpec::Custom {
+            name: name.to_string(),
+            formula: "close > sma(close, 20)".to_string(),
+            description: Some("version 2".to_string()),
+        };
+        save_signal(name, &spec2).unwrap();
+
+        // Should have the updated formula
+        let loaded = load_signal(name).unwrap();
+        if let SignalSpec::Custom { formula, .. } = loaded {
+            assert_eq!(formula, "close > sma(close, 20)");
+        } else {
+            panic!("Expected Custom signal spec");
+        }
+
+        // Cleanup
+        let _ = delete_signal(name);
     }
 }

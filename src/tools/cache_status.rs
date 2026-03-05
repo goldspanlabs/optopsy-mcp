@@ -35,15 +35,16 @@ pub fn execute(
     let suggested_next_steps = if exists {
         vec![
             format!(
-                "Load {upper} from the cached file into memory for analysis using the appropriate loader or tool."
+                "[Phase 1 → NEXT] Call load_data({{ symbol: \"{upper}\" }}) to load the cached data into memory"
             ),
-            "Check last_updated to decide if data should be refreshed with fetch_to_parquet."
-                .to_string(),
+            "[Phase 0 → OPTIONAL] Check last_updated to decide if data should be refreshed with fetch_to_parquet".to_string(),
         ]
     } else {
-        vec![format!(
-            "Call fetch_to_parquet to download {upper} data from Yahoo Finance."
-        )]
+        vec![
+            format!(
+                "[Phase 0 → REQUIRED] Call fetch_to_parquet({{ symbol: \"{upper}\", category: \"prices\" }}) or download_options_data({{ symbol: \"{upper}\" }}) to download data first"
+            ),
+        ]
     };
 
     Ok(CheckCacheResponse {
