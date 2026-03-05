@@ -218,9 +218,10 @@ pub struct EvaluateStrategyParams {
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct RunBacktestParams {
-    /// Required. Strategy to backtest — must be one of the enum variants (e.g. `long_call`,
-    /// `short_put`, `iron_condor`, `short_strangle`). Cannot be null or omitted.
-    /// Use `list_strategies` if unsure which to pick.
+    /// REQUIRED — the option strategy defining what legs to trade (e.g. `long_call`,
+    /// `short_put`, `iron_condor`, `short_strangle`). CANNOT be null or omitted.
+    /// Signals (`entry_signal`/`exit_signal`) only filter WHEN to trade — they do NOT
+    /// replace the strategy. Use `list_strategies` if unsure which to pick.
     #[garde(skip)]
     pub strategy: StrategyParam,
     /// Per-leg delta targets (optional — uses strategy-specific defaults if omitted)
@@ -853,12 +854,16 @@ impl OptopsyServer {
     /// **Prerequisites**:
     ///   - `load_data()` MUST have been called (Phase 1)
     ///   - `evaluate_strategy()` MUST be called first to validate parameters (Phase 4)
-    ///   - `strategy` is REQUIRED — must be a valid strategy name (e.g. `long_call`, `short_put`, `iron_condor`). Never pass null.
+    ///   - `strategy` is REQUIRED — must be a valid strategy name (e.g. `long_call`, `short_put`, `iron_condor`). **NEVER pass null.**
     ///   - ⚠️  **SIGNAL PREREQUISITE**: If `entry_signal` or `exit_signal` is provided, you MUST call
     ///     `fetch_to_parquet({ symbol: "<SYMBOL>", category: "prices" })` BEFORE calling this tool.
     ///     The backtest WILL FAIL without OHLCV data when signals are used.
     /// **⚠️  Warning**: Slow! Run `evaluate_strategy()` first to validate parameters
     /// **Next tools**: `compare_strategies()` (to test variations) or iterate on parameters
+    ///
+    /// **IMPORTANT**: Signals do NOT replace strategies. A strategy (e.g. `short_put`, `iron_condor`)
+    /// defines WHAT option legs to trade. Signals only FILTER WHEN to enter/exit. You MUST always
+    /// provide a strategy — signals are optional add-ons, not standalone trade definitions.
     ///
     /// **What it simulates**:
     ///   - Day-by-day position opens (respecting `max_positions` constraint)
