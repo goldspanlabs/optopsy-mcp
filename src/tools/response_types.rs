@@ -291,6 +291,21 @@ pub struct DataCoverage {
     pub warnings: Vec<String>,
 }
 
+/// Response for `build_signal`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct BuildSignalResponse {
+    pub summary: String,
+    /// Whether the operation succeeded
+    pub success: bool,
+    /// The signal spec JSON (for create/get actions)
+    pub signal_spec: Option<serde_json::Value>,
+    /// List of saved signals (for list action)
+    pub saved_signals: Option<Vec<serde_json::Value>>,
+    /// Formula syntax help (shown on validation errors)
+    pub formula_help: Option<serde_json::Value>,
+    pub suggested_next_steps: Vec<String>,
+}
+
 /// Signal candidate from `construct_signal`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SignalCandidate {

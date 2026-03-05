@@ -2,6 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::combinators::{AndSignal, OrSignal};
+use super::custom::FormulaSignal;
 use super::helpers::SignalFn;
 use super::momentum::{
     MacdBearish, MacdBullish, MacdCrossover, RsiOverbought, RsiOversold, StochasticOverbought,
@@ -234,6 +235,29 @@ pub enum SignalSpec {
         low_col: String,
         volume_col: String,
         period: usize,
+    },
+
+    // -- Custom (user-defined formula) --
+    /// User-defined formula signal. The `formula` field contains an expression
+    /// using price columns (close, open, high, low, volume) with operators and
+    /// comparisons. Examples:
+    /// - `"close > sma(close, 20)"` — price above 20-day SMA
+    /// - `"close > close[1] * 1.02"` — 2% gap up from previous close
+    /// - `"(close - low) / (high - low) < 0.2"` — near session lows
+    /// - `"volume > sma(volume, 20) * 2.0"` — volume spike
+    Custom {
+        /// Human-readable name for this signal
+        name: String,
+        /// Formula expression that evaluates to a boolean series
+        formula: String,
+        /// Optional description of what this signal detects
+        description: Option<String>,
+    },
+
+    // -- Saved (reference to a previously saved custom signal by name) --
+    Saved {
+        /// Name of a previously saved custom signal
+        name: String,
     },
 
     // -- Combinators --
@@ -584,6 +608,24 @@ pub fn build_signal(spec: &SignalSpec) -> Box<dyn SignalFn> {
             volume_col: volume_col.clone(),
             period: *period,
         }),
+
+        // Custom formula
+        SignalSpec::Custom {
+            name: _,
+            formula,
+            description: _,
+        } => Box::new(FormulaSignal::new(formula.clone())),
+        // Saved signal — resolve from storage at build time
+        SignalSpec::Saved { name } => {
+            match super::storage::load_signal(name) {
+                Ok(spec) => build_signal(&spec),
+                Err(e) => {
+                    // Return a signal that always produces false if not found
+                    tracing::warn!("Failed to load saved signal '{}': {}", name, e);
+                    Box::new(FormulaSignal::new("false".to_string()))
+                }
+            }
+        }
 
         // Combinators
         SignalSpec::And { left, right } => Box::new(AndSignal {
