@@ -205,10 +205,13 @@ mod tests {
         ];
         let dt_chunked: DatetimeChunked =
             DatetimeChunked::new(PlSmallStr::from("datetime"), &datetimes);
-        let df = DataFrame::new(5, vec![
-            dt_chunked.into_series().into(),
-            Series::new("close".into(), &[100.0, 101.0, 102.0, 103.0, 104.0]).into(),
-        ])
+        let df = DataFrame::new(
+            5,
+            vec![
+                dt_chunked.into_series().into(),
+                Series::new("close".into(), &[100.0, 101.0, 102.0, 103.0, 104.0]).into(),
+            ],
+        )
         .unwrap();
 
         let spec = SignalSpec::ConsecutiveUp {

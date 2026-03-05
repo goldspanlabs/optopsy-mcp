@@ -488,13 +488,7 @@ mod tests {
 
     #[test]
     fn compute_cmf_insufficient() {
-        let result = compute_cmf(
-            &[100.0],
-            &[102.0],
-            &[98.0],
-            &[1000.0],
-            5,
-        );
+        let result = compute_cmf(&[100.0], &[102.0], &[98.0], &[1000.0], 5);
         assert!(result.is_empty());
     }
 
