@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::engine::types::{
-    BacktestParams, BacktestQualityStats, BacktestResult, CompareParams, CompareResult, ExitType,
+    BacktestParams, BacktestQualityStats, BacktestResult, CompareEntry, CompareResult, ExitType,
     TradeRecord,
 };
 
@@ -368,7 +368,10 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
     }
 }
 
-pub fn format_compare(results: Vec<CompareResult>, params: &CompareParams) -> CompareResponse {
+pub fn format_compare(
+    results: Vec<CompareResult>,
+    labeled_entries: &[CompareEntry],
+) -> CompareResponse {
     // Build index-based rankings to avoid cloning the full results vec
     let mut sharpe_indices: Vec<usize> = (0..results.len()).collect();
     sharpe_indices.sort_by(|&a, &b| {
@@ -433,8 +436,7 @@ pub fn format_compare(results: Vec<CompareResult>, params: &CompareParams) -> Co
         ));
     }
 
-    let strategies_compared = params
-        .strategies
+    let strategies_compared = labeled_entries
         .iter()
         .map(|entry| CompareStrategyEntry {
             name: entry.name.clone(),
@@ -625,7 +627,7 @@ pub fn format_raw_prices(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::types::{DteRange, EquityPoint, TradeSelector};
+    use crate::engine::types::{DteRange, EquityPoint};
     use chrono::NaiveDateTime;
 
     fn make_trade(pnl: f64, days_held: i64, exit_type: ExitType) -> TradeRecord {
@@ -700,20 +702,7 @@ mod tests {
 
     #[test]
     fn format_compare_empty_results() {
-        let params = CompareParams {
-            strategies: vec![],
-            sim_params: crate::engine::types::SimParams {
-                capital: 10000.0,
-                quantity: 1,
-                multiplier: 100,
-                max_positions: 5,
-                selector: TradeSelector::default(),
-                stop_loss: None,
-                take_profit: None,
-                max_hold_days: None,
-            },
-        };
-        let response = format_compare(vec![], &params);
+        let response = format_compare(vec![], &[]);
         assert_eq!(response.summary, "No strategies to compare.");
         assert!(response.ranking_by_sharpe.is_empty());
         assert!(response.ranking_by_pnl.is_empty());
@@ -761,58 +750,46 @@ mod tests {
             },
         ];
 
-        let params = CompareParams {
-            strategies: vec![
-                crate::engine::types::CompareEntry {
-                    name: "alpha".to_string(),
-                    leg_deltas: vec![],
-                    entry_dte: DteRange {
-                        target: 45,
-                        min: 30,
-                        max: 60,
-                    },
-                    exit_dte: 7,
-                    slippage: crate::engine::types::Slippage::Mid,
-                    commission: None,
+        let labeled_entries = vec![
+            CompareEntry {
+                name: "alpha".to_string(),
+                leg_deltas: vec![],
+                entry_dte: DteRange {
+                    target: 45,
+                    min: 30,
+                    max: 60,
                 },
-                crate::engine::types::CompareEntry {
-                    name: "beta".to_string(),
-                    leg_deltas: vec![],
-                    entry_dte: DteRange {
-                        target: 45,
-                        min: 30,
-                        max: 60,
-                    },
-                    exit_dte: 7,
-                    slippage: crate::engine::types::Slippage::Mid,
-                    commission: None,
-                },
-                crate::engine::types::CompareEntry {
-                    name: "gamma".to_string(),
-                    leg_deltas: vec![],
-                    entry_dte: DteRange {
-                        target: 45,
-                        min: 30,
-                        max: 60,
-                    },
-                    exit_dte: 7,
-                    slippage: crate::engine::types::Slippage::Mid,
-                    commission: None,
-                },
-            ],
-            sim_params: crate::engine::types::SimParams {
-                capital: 10000.0,
-                quantity: 1,
-                multiplier: 100,
-                max_positions: 5,
-                selector: TradeSelector::default(),
-                stop_loss: None,
-                take_profit: None,
-                max_hold_days: None,
+                exit_dte: 7,
+                slippage: crate::engine::types::Slippage::Mid,
+                commission: None,
             },
-        };
+            CompareEntry {
+                name: "beta".to_string(),
+                leg_deltas: vec![],
+                entry_dte: DteRange {
+                    target: 45,
+                    min: 30,
+                    max: 60,
+                },
+                exit_dte: 7,
+                slippage: crate::engine::types::Slippage::Mid,
+                commission: None,
+            },
+            CompareEntry {
+                name: "gamma".to_string(),
+                leg_deltas: vec![],
+                entry_dte: DteRange {
+                    target: 45,
+                    min: 30,
+                    max: 60,
+                },
+                exit_dte: 7,
+                slippage: crate::engine::types::Slippage::Mid,
+                commission: None,
+            },
+        ];
 
-        let response = format_compare(results, &params);
+        let response = format_compare(results, &labeled_entries);
         assert_eq!(response.ranking_by_sharpe, vec!["beta", "gamma", "alpha"]);
         assert_eq!(response.ranking_by_pnl, vec!["gamma", "alpha", "beta"]);
         assert_eq!(response.best_overall, Some("beta".to_string()));

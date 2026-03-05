@@ -148,12 +148,34 @@ fn run_event_loop_path(
     Ok((trade_log, equity_curve, quality))
 }
 
-/// Compare multiple strategies
+/// Compare multiple strategies.
+///
+/// Auto-generates descriptive labels when multiple entries share the same strategy
+/// name (e.g. `long_call(Δ0.30,DTE45)` vs `long_call(Δ0.40,DTE60)`).
+/// Deduplicates identical entries to avoid wasted computation.
 #[allow(clippy::unnecessary_wraps)]
-pub fn compare_strategies(df: &DataFrame, params: &CompareParams) -> Result<Vec<CompareResult>> {
+pub fn compare_strategies(
+    df: &DataFrame,
+    params: &CompareParams,
+) -> Result<(Vec<CompareResult>, Vec<CompareEntry>)> {
+    // Build labels and deduplicate
+    let labels = build_compare_labels(&params.strategies);
     let mut results = Vec::new();
+    let mut labeled_entries = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    for entry in &params.strategies {
+    for (entry, label) in params.strategies.iter().zip(labels.iter()) {
+        // Skip duplicate entries (same label = same parameters)
+        if !seen.insert(label.clone()) {
+            tracing::info!("Skipping duplicate entry: {label}");
+            continue;
+        }
+
+        // Store the entry with the label as its name
+        let mut labeled_entry = entry.clone();
+        labeled_entry.name.clone_from(label);
+        labeled_entries.push(labeled_entry);
+
         let backtest_params = BacktestParams {
             strategy: entry.name.clone(),
             leg_deltas: entry.leg_deltas.clone(),
@@ -179,7 +201,7 @@ pub fn compare_strategies(df: &DataFrame, params: &CompareParams) -> Result<Vec<
         match run_backtest(df, &backtest_params) {
             Ok(bt) => {
                 results.push(CompareResult {
-                    strategy: entry.name.clone(),
+                    strategy: label.clone(),
                     trades: bt.trade_count,
                     pnl: bt.total_pnl,
                     sharpe: bt.metrics.sharpe,
@@ -192,9 +214,9 @@ pub fn compare_strategies(df: &DataFrame, params: &CompareParams) -> Result<Vec<
                 });
             }
             Err(e) => {
-                tracing::warn!("Strategy '{}' failed: {}", entry.name, e);
+                tracing::warn!("Strategy '{label}' failed: {e}");
                 results.push(CompareResult {
-                    strategy: entry.name.clone(),
+                    strategy: label.clone(),
                     trades: 0,
                     pnl: 0.0,
                     sharpe: 0.0,
@@ -209,7 +231,48 @@ pub fn compare_strategies(df: &DataFrame, params: &CompareParams) -> Result<Vec<
         }
     }
 
-    Ok(results)
+    Ok((results, labeled_entries))
+}
+
+/// Build descriptive labels for compare entries.
+///
+/// If all entries have unique strategy names, the labels are just the names.
+/// When duplicates exist, appends parameter details to distinguish them:
+/// e.g. `long_call(Δ0.40,DTE45)` or `bull_call_spread(Δ0.50/0.10,DTE60)`.
+fn build_compare_labels(entries: &[CompareEntry]) -> Vec<String> {
+    // Count how many times each strategy name appears
+    let mut name_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for entry in entries {
+        *name_counts.entry(&entry.name).or_insert(0) += 1;
+    }
+
+    entries
+        .iter()
+        .map(|entry| {
+            if name_counts.get(entry.name.as_str()).copied().unwrap_or(0) <= 1 {
+                // Unique name — no suffix needed
+                entry.name.clone()
+            } else {
+                // Duplicate name — add parameter details
+                let deltas: Vec<String> = entry
+                    .leg_deltas
+                    .iter()
+                    .map(|d| format!("{:.2}", d.target))
+                    .collect();
+                let delta_str = deltas.join("/");
+                let slippage_suffix = match &entry.slippage {
+                    Slippage::Spread => String::new(),
+                    Slippage::Mid => ",mid".to_string(),
+                    Slippage::Liquidity { .. } => ",liq".to_string(),
+                    Slippage::PerLeg { .. } => ",pleg".to_string(),
+                };
+                format!(
+                    "{}(Δ{},DTE{}{})",
+                    entry.name, delta_str, entry.entry_dte.target, slippage_suffix
+                )
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -217,6 +280,113 @@ mod tests {
     use super::*;
     use crate::data::parquet::QUOTE_DATETIME_COL;
     use chrono::NaiveDate;
+
+    fn make_entry(name: &str, delta: f64, dte: i32) -> CompareEntry {
+        CompareEntry {
+            name: name.to_string(),
+            leg_deltas: vec![TargetRange {
+                target: delta,
+                min: delta - 0.05,
+                max: delta + 0.05,
+            }],
+            entry_dte: DteRange {
+                target: dte,
+                min: dte - 10,
+                max: dte + 10,
+            },
+            exit_dte: 7,
+            slippage: Slippage::Spread,
+            commission: None,
+        }
+    }
+
+    #[test]
+    fn compare_labels_unique_names_unchanged() {
+        let entries = vec![
+            make_entry("iron_condor", 0.30, 45),
+            make_entry("short_put", 0.25, 30),
+        ];
+        let labels = build_compare_labels(&entries);
+        assert_eq!(labels, vec!["iron_condor", "short_put"]);
+    }
+
+    #[test]
+    fn compare_labels_duplicate_names_get_params() {
+        let entries = vec![
+            make_entry("long_call", 0.30, 45),
+            make_entry("long_call", 0.40, 45),
+            make_entry("long_call", 0.40, 60),
+        ];
+        let labels = build_compare_labels(&entries);
+        assert_eq!(labels[0], "long_call(Δ0.30,DTE45)");
+        assert_eq!(labels[1], "long_call(Δ0.40,DTE45)");
+        assert_eq!(labels[2], "long_call(Δ0.40,DTE60)");
+    }
+
+    #[test]
+    fn compare_labels_multi_leg_deltas() {
+        let entries = vec![
+            CompareEntry {
+                name: "bull_call_spread".to_string(),
+                leg_deltas: vec![
+                    TargetRange {
+                        target: 0.50,
+                        min: 0.45,
+                        max: 0.55,
+                    },
+                    TargetRange {
+                        target: 0.10,
+                        min: 0.05,
+                        max: 0.15,
+                    },
+                ],
+                entry_dte: DteRange {
+                    target: 45,
+                    min: 30,
+                    max: 60,
+                },
+                exit_dte: 9,
+                slippage: Slippage::Spread,
+                commission: None,
+            },
+            CompareEntry {
+                name: "bull_call_spread".to_string(),
+                leg_deltas: vec![
+                    TargetRange {
+                        target: 0.50,
+                        min: 0.45,
+                        max: 0.55,
+                    },
+                    TargetRange {
+                        target: 0.20,
+                        min: 0.15,
+                        max: 0.25,
+                    },
+                ],
+                entry_dte: DteRange {
+                    target: 45,
+                    min: 30,
+                    max: 60,
+                },
+                exit_dte: 9,
+                slippage: Slippage::Spread,
+                commission: None,
+            },
+        ];
+        let labels = build_compare_labels(&entries);
+        assert_eq!(labels[0], "bull_call_spread(Δ0.50/0.10,DTE45)");
+        assert_eq!(labels[1], "bull_call_spread(Δ0.50/0.20,DTE45)");
+    }
+
+    #[test]
+    fn compare_labels_slippage_suffix() {
+        let mut entry_mid = make_entry("long_call", 0.30, 45);
+        entry_mid.slippage = Slippage::Mid;
+        let entry_spread = make_entry("long_call", 0.30, 60);
+        let labels = build_compare_labels(&[entry_mid, entry_spread]);
+        assert_eq!(labels[0], "long_call(Δ0.30,DTE45,mid)");
+        assert_eq!(labels[1], "long_call(Δ0.30,DTE60)");
+    }
 
     /// Build a daily options `DataFrame` with intermediate dates for event-driven backtest.
     /// Shows price decay from entry to exit for a long call.
