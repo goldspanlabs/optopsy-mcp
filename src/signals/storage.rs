@@ -9,9 +9,26 @@ use std::path::PathBuf;
 
 use super::registry::SignalSpec;
 
+/// Test-only override for signals directory, allowing isolation via temp dirs.
+#[cfg(test)]
+static TEST_SIGNALS_DIR: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
 /// Get the signals storage directory, creating it if needed.
 fn signals_dir() -> Result<PathBuf> {
     const TEMPLATE: &str = "~/.optopsy/signals";
+
+    #[cfg(test)]
+    {
+        if let Ok(guard) = TEST_SIGNALS_DIR.lock() {
+            if let Some(ref dir) = *guard {
+                if !dir.exists() {
+                    fs::create_dir_all(dir).context("Failed to create test signals directory")?;
+                }
+                return Ok(dir.clone());
+            }
+        }
+    }
+
     let expanded = shellexpand::tilde(TEMPLATE);
     // If tilde was not expanded (no HOME set), fall back to a tmp-based path
     let dir = if expanded.as_ref() == TEMPLATE {
@@ -45,21 +62,27 @@ fn validate_name(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Normalize a formula for duplicate comparison by stripping all whitespace and lowercasing.
+/// This catches `close > sma(close, 20)` == `close>sma(close,20)` == `Close > SMA(close, 20)`.
+fn normalize_formula(formula: &str) -> String {
+    formula
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>()
+        .to_lowercase()
+}
+
 /// Check if a formula already exists among saved signals (under a different name).
 /// Returns the name of the existing signal if found.
 pub fn find_duplicate_formula(formula: &str, exclude_name: &str) -> Result<Option<String>> {
-    let normalized = formula.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized = normalize_formula(formula);
     let signals = list_saved_signals()?;
     for s in signals {
         if s.name == exclude_name {
             continue;
         }
         if let Some(existing_formula) = &s.formula {
-            let existing_normalized = existing_formula
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ");
-            if existing_normalized == normalized {
+            if normalize_formula(existing_formula) == normalized {
                 return Ok(Some(s.name));
             }
         }
@@ -204,8 +227,28 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    // Serialize tests that touch the filesystem signals directory
+    // Serialize tests that touch the filesystem signals directory.
+    // All filesystem tests MUST hold this lock AND set the temp dir override.
     static FS_LOCK: Mutex<()> = Mutex::new(());
+
+    /// RAII guard that sets `TEST_SIGNALS_DIR` to a temp directory and restores it on drop.
+    struct TempSignalsDir {
+        _tmp: tempfile::TempDir,
+    }
+
+    impl TempSignalsDir {
+        fn new() -> Self {
+            let tmp = tempfile::TempDir::new().unwrap();
+            *TEST_SIGNALS_DIR.lock().unwrap() = Some(tmp.path().to_path_buf());
+            Self { _tmp: tmp }
+        }
+    }
+
+    impl Drop for TempSignalsDir {
+        fn drop(&mut self) {
+            *TEST_SIGNALS_DIR.lock().unwrap() = None;
+        }
+    }
 
     #[test]
     fn validate_name_ok() {
@@ -223,8 +266,30 @@ mod tests {
     }
 
     #[test]
+    fn normalize_formula_strips_whitespace_and_lowercases() {
+        assert_eq!(
+            normalize_formula("close > sma(close, 20)"),
+            "close>sma(close,20)"
+        );
+        assert_eq!(
+            normalize_formula("close>sma(close,20)"),
+            "close>sma(close,20)"
+        );
+        assert_eq!(
+            normalize_formula("Close > SMA(close, 20)"),
+            "close>sma(close,20)"
+        );
+        assert_eq!(
+            normalize_formula("  close  >  sma( close , 20 )  "),
+            "close>sma(close,20)"
+        );
+    }
+
+    #[test]
     fn find_duplicate_formula_detects_match() {
         let _lock = FS_LOCK.lock().unwrap();
+        let _dir = TempSignalsDir::new();
+
         let name_a = "dup-test-a";
         let name_b = "dup-test-b";
         let formula = "close > sma(close, 20)";
@@ -243,14 +308,13 @@ mod tests {
         // Same name should be excluded from duplicate check
         let result = find_duplicate_formula(formula, name_a).unwrap();
         assert_eq!(result, None);
-
-        // Cleanup
-        let _ = delete_signal(name_a);
     }
 
     #[test]
-    fn find_duplicate_formula_normalizes_whitespace() {
+    fn find_duplicate_formula_normalizes_spacing_and_case() {
         let _lock = FS_LOCK.lock().unwrap();
+        let _dir = TempSignalsDir::new();
+
         let name = "dup-ws-test";
         let formula = "close > sma(close, 20)";
 
@@ -262,16 +326,29 @@ mod tests {
         save_signal(name, &spec).unwrap();
 
         // Extra whitespace should still match
-        let result = find_duplicate_formula("close  >  sma(close,  20)", "other").unwrap();
-        assert_eq!(result, Some(name.to_string()));
+        assert_eq!(
+            find_duplicate_formula("close  >  sma(close,  20)", "other").unwrap(),
+            Some(name.to_string())
+        );
 
-        // Cleanup
-        let _ = delete_signal(name);
+        // No spaces should still match
+        assert_eq!(
+            find_duplicate_formula("close>sma(close,20)", "other").unwrap(),
+            Some(name.to_string())
+        );
+
+        // Case differences should still match
+        assert_eq!(
+            find_duplicate_formula("Close > SMA(close, 20)", "other").unwrap(),
+            Some(name.to_string())
+        );
     }
 
     #[test]
     fn find_duplicate_formula_no_match() {
         let _lock = FS_LOCK.lock().unwrap();
+        let _dir = TempSignalsDir::new();
+
         let name = "dup-nomatch-test";
         let formula = "close > sma(close, 50)";
 
@@ -285,14 +362,13 @@ mod tests {
         // Different formula should not match
         let result = find_duplicate_formula("close < ema(close, 20)", "other").unwrap();
         assert_eq!(result, None);
-
-        // Cleanup
-        let _ = delete_signal(name);
     }
 
     #[test]
     fn save_signal_overwrite_same_name() {
         let _lock = FS_LOCK.lock().unwrap();
+        let _dir = TempSignalsDir::new();
+
         let name = "overwrite-test";
 
         let spec1 = SignalSpec::Custom {
@@ -316,8 +392,5 @@ mod tests {
         } else {
             panic!("Expected Custom signal spec");
         }
-
-        // Cleanup
-        let _ = delete_signal(name);
     }
 }

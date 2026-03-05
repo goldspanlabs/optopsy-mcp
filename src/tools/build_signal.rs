@@ -56,8 +56,8 @@ fn execute_create(
             saved_signals: vec![],
             formula_help: Some(formula_help()),
             suggested_next_steps: vec![
-                "Fix the formula syntax and try again".to_string(),
-                "Use the formula_help field for syntax reference".to_string(),
+                "[Phase 2d → RETRY] Fix the formula syntax and try again".to_string(),
+                "[Phase 2d → TIP] Use the formula_help field for syntax reference".to_string(),
             ],
         };
     }
@@ -112,7 +112,7 @@ fn execute_create(
                 saved_signals: vec![],
                 formula_help: None,
                 suggested_next_steps: vec![
-                    "Check file permissions for ~/.optopsy/signals/".to_string()
+                    "[Phase 2d → RETRY] Check file permissions for ~/.optopsy/signals/".to_string(),
                 ],
             };
         }
@@ -178,14 +178,13 @@ fn execute_list() -> BuildSignalResponse {
                 formula_help: None,
                 suggested_next_steps: if count == 0 {
                     vec![
-                        "Create a custom signal with build_signal action='create'".to_string(),
-                        "Use construct_signal to find built-in signals".to_string(),
+                        "[Phase 2d → NEXT] Create a custom signal with build_signal action='create'".to_string(),
+                        "[Phase 2c → ALT] Use construct_signal to find built-in signals".to_string(),
                     ]
                 } else {
                     vec![
-                        "Use a saved signal via { \"type\": \"Saved\", \"name\": \"signal_name\" }"
-                            .to_string(),
-                        "Delete signals you no longer need with action='delete'".to_string(),
+                        "[Phase 5 → NEXT] Use a saved signal via { \"type\": \"Saved\", \"name\": \"signal_name\" } in run_backtest".to_string(),
+                        "[Phase 2d → TIP] Delete signals you no longer need with action='delete'".to_string(),
                     ]
                 },
             }
@@ -196,7 +195,9 @@ fn execute_list() -> BuildSignalResponse {
             signal_spec: None,
             saved_signals: vec![],
             formula_help: None,
-            suggested_next_steps: vec!["Check permissions for ~/.optopsy/signals/".to_string()],
+            suggested_next_steps: vec![
+                "[Phase 2d → RETRY] Check permissions for ~/.optopsy/signals/".to_string(),
+            ],
         },
     }
 }
@@ -210,7 +211,8 @@ fn execute_delete(name: &str) -> BuildSignalResponse {
             saved_signals: vec![],
             formula_help: None,
             suggested_next_steps: vec![
-                "Use build_signal action='list' to see remaining signals".to_string()
+                "[Phase 2d → NEXT] Use build_signal action='list' to see remaining signals"
+                    .to_string(),
             ],
         },
         Err(e) => BuildSignalResponse {
@@ -220,7 +222,8 @@ fn execute_delete(name: &str) -> BuildSignalResponse {
             saved_signals: vec![],
             formula_help: None,
             suggested_next_steps: vec![
-                "Check that the signal name exists with action='list'".to_string()
+                "[Phase 2d → RETRY] Check that the signal name exists with action='list'"
+                    .to_string(),
             ],
         },
     }
@@ -235,8 +238,10 @@ fn execute_validate(formula: &str) -> BuildSignalResponse {
             saved_signals: vec![],
             formula_help: None,
             suggested_next_steps: vec![
-                "Call build_signal with action='create' to create and save this signal".to_string(),
-                "Use the formula directly in a Custom signal spec for run_backtest".to_string(),
+                "[Phase 2d → NEXT] Call build_signal with action='create' to save this signal"
+                    .to_string(),
+                "[Phase 5 → THEN] Use the formula directly in a Custom signal spec for run_backtest"
+                    .to_string(),
             ],
         },
         Err(e) => BuildSignalResponse {
@@ -246,8 +251,8 @@ fn execute_validate(formula: &str) -> BuildSignalResponse {
             saved_signals: vec![],
             formula_help: Some(formula_help()),
             suggested_next_steps: vec![
-                "Fix the formula syntax and try again".to_string(),
-                "Use the formula_help field for syntax reference".to_string(),
+                "[Phase 2d → RETRY] Fix the formula syntax and try again".to_string(),
+                "[Phase 2d → TIP] Use the formula_help field for syntax reference".to_string(),
             ],
         },
     }
@@ -273,7 +278,8 @@ fn execute_get(name: &str) -> BuildSignalResponse {
             saved_signals: vec![],
             formula_help: None,
             suggested_next_steps: vec![
-                "Check that the signal name exists with action='list'".to_string()
+                "[Phase 2d → RETRY] Check that the signal name exists with action='list'"
+                    .to_string(),
             ],
         },
     }
