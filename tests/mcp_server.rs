@@ -105,7 +105,7 @@ async fn tool_router_lists_all_tools() {
     let tools = client.list_all_tools().await.unwrap();
     let tool_names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
 
-    assert_eq!(tools.len(), 13, "Expected 13 tools, got: {tool_names:?}");
+    assert_eq!(tools.len(), 14, "Expected 14 tools, got: {tool_names:?}");
     for expected in [
         "download_options_data",
         "load_data",
@@ -120,6 +120,7 @@ async fn tool_router_lists_all_tools() {
         "check_cache_status",
         "fetch_to_parquet",
         "get_raw_prices",
+        "build_signal",
     ] {
         assert!(
             tool_names.contains(&expected.to_string()),

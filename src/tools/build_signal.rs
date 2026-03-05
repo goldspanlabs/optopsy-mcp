@@ -117,15 +117,15 @@ fn execute_list() -> BuildSignalResponse {
     match storage::list_saved_signals() {
         Ok(signals) => {
             let saved: Vec<serde_json::Value> = signals
-                .iter()
+                .into_iter()
                 .map(|s| {
                     json!({
-                        "name": s.name,
-                        "formula": s.formula,
-                        "description": s.description,
+                        "name": &s.name,
+                        "formula": &s.formula,
+                        "description": &s.description,
                         "usage": {
                             "type": "Saved",
-                            "name": s.name,
+                            "name": &s.name,
                         }
                     })
                 })
@@ -252,7 +252,7 @@ fn formula_help() -> serde_json::Value {
         "lookback": "close[1] = previous close, close[5] = 5 bars ago",
         "functions": {
             "sma(col, period)": "Simple Moving Average",
-            "ema(col, period)": "Exponential Moving Average",
+            "ema(col, period)": "Exponential Moving Average (true EWM with alpha=2/(period+1))",
             "std(col, period)": "Rolling Standard Deviation",
             "max(col, period)": "Rolling Maximum",
             "min(col, period)": "Rolling Minimum",

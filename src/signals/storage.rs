@@ -89,6 +89,10 @@ pub fn list_saved_signals() -> Result<Vec<SavedSignalInfo>> {
         if path.extension().is_some_and(|ext| ext == "json") {
             if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                 let name = stem.to_string();
+                // Skip files whose names are not accepted by the other APIs
+                if validate_name(&name).is_err() {
+                    continue;
+                }
                 // Try to load and extract info
                 match fs::read_to_string(&path) {
                     Ok(json) => {

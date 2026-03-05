@@ -737,8 +737,8 @@ impl OptopsyServer {
     #[tool(
         name = "build_signal",
         annotations(
-            destructive_hint = false,
-            idempotent_hint = true,
+            destructive_hint = true,
+            idempotent_hint = false,
             read_only_hint = false
         )
     )]

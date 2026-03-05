@@ -11,7 +11,7 @@ postgres = ["sqlx"]
 [dependencies]
 rmcp = { version = "0.17", features = ["server", "transport-io", "transport-streamable-http-server", "macros"] }
 axum = "0.8"
-polars = { version = "0.53", features = ["lazy", "parquet", "dtype-date", "dtype-datetime", "dtype-struct", "round_series", "is_in", "cum_agg", "rolling_window", "abs", "cross_join"] }
+polars = { version = "0.53", features = ["lazy", "parquet", "dtype-date", "dtype-datetime", "dtype-struct", "round_series", "is_in", "cum_agg", "rolling_window", "abs", "cross_join", "ewma"] }
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
