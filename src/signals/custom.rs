@@ -435,8 +435,9 @@ impl Parser {
                 }
                 // Check for lookback: ident "[" number "]"
                 else if self.peek() == Some(&Token::LBracket) {
-                    // Validate column name before processing lookback
-                    if !VALID_COLUMNS.contains(&name.to_lowercase().as_str()) {
+                    // Validate and normalize column name before processing lookback
+                    let name_lower = name.to_lowercase();
+                    if !VALID_COLUMNS.contains(&name_lower.as_str()) {
                         return Err(format!(
                             "Unknown column '{name}'. Valid columns are: close, open, high, low, volume, adjclose"
                         ));
@@ -456,18 +457,20 @@ impl Parser {
                                 ));
                             }
                             let shift = n as i64;
-                            Ok(col(&*name).shift(lit(shift)))
+                            Ok(col(&*name_lower).shift(lit(shift)))
                         }
                         other => Err(format!("Expected number in lookback, got {other:?}")),
                     }
                 } else {
-                    // Plain column reference — whitelist to avoid silent typos
-                    if !VALID_COLUMNS.contains(&name.to_lowercase().as_str()) {
+                    // Plain column reference — whitelist to avoid silent typos.
+                    // Normalize to lowercase so `Close` and `close` both resolve correctly.
+                    let name_lower = name.to_lowercase();
+                    if !VALID_COLUMNS.contains(&name_lower.as_str()) {
                         return Err(format!(
                             "Unknown column '{name}'. Valid columns are: close, open, high, low, volume, adjclose"
                         ));
                     }
-                    Ok(col(&*name))
+                    Ok(col(&*name_lower))
                 }
             }
             Some(tok) => Err(format!("Unexpected token: {tok:?}")),

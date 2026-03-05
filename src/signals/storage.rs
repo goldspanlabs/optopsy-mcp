@@ -46,13 +46,50 @@ fn validate_name(name: &str) -> Result<()> {
 }
 
 /// Save a signal spec to disk.
+///
+/// Writes to a uniquely-named temporary file in the same directory first, then atomically
+/// renames it into place. Both the temporary path and final target path are checked for
+/// symlinks before writing to prevent symlink-based redirect attacks.
 pub fn save_signal(name: &str, spec: &SignalSpec) -> Result<()> {
     validate_name(name)?;
     let dir = signals_dir()?;
     let path = dir.join(format!("{name}.json"));
+
+    // Reject if the final target path is (or resolves through) a symlink.
+    if let Ok(meta) = fs::symlink_metadata(&path) {
+        if meta.file_type().is_symlink() {
+            bail!(
+                "Refusing to write signal '{name}': target path is a symlink ({})",
+                path.display()
+            );
+        }
+    }
+
     let json = serde_json::to_string_pretty(spec).context("Failed to serialize signal")?;
-    fs::write(&path, json)
-        .with_context(|| format!("Failed to write signal file: {}", path.display()))?;
+
+    // Use a PID-qualified temp filename to avoid collisions between concurrent writers.
+    let tmp_path = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+
+    // Reject if the temp path is also a symlink (defence-in-depth).
+    if let Ok(meta) = fs::symlink_metadata(&tmp_path) {
+        if meta.file_type().is_symlink() {
+            bail!(
+                "Refusing to write signal '{name}': temp path is a symlink ({})",
+                tmp_path.display()
+            );
+        }
+    }
+
+    fs::write(&tmp_path, &json)
+        .with_context(|| format!("Failed to write temp signal file: {}", tmp_path.display()))?;
+    fs::rename(&tmp_path, &path).with_context(|| {
+        // Best-effort cleanup of the temp file on rename failure.
+        let _ = fs::remove_file(&tmp_path);
+        format!(
+            "Failed to rename temp file to signal file: {}",
+            path.display()
+        )
+    })?;
     Ok(())
 }
 
