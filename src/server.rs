@@ -22,8 +22,8 @@ use crate::signals::registry::SignalSpec;
 use crate::tools;
 use crate::tools::response_types::{
     BacktestResponse, BuildSignalResponse, CheckCacheResponse, CompareResponse,
-    ConstructSignalResponse, DownloadResponse, EvaluateResponse, FetchResponse,
-    RawPricesResponse, StatusResponse, StrategiesResponse, SuggestResponse,
+    ConstructSignalResponse, DownloadResponse, EvaluateResponse, FetchResponse, RawPricesResponse,
+    StatusResponse, StrategiesResponse, SuggestResponse,
 };
 use crate::tools::signals::SignalsResponse;
 
