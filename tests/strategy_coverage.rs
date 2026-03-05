@@ -8,31 +8,11 @@
 //! Calendar/diagonal strategies use both expirations; all others use near-term only.
 
 use chrono::NaiveDate;
-use optopsy_mcp::engine::core::{evaluate_strategy, run_backtest};
-use optopsy_mcp::engine::types::{DteRange, EvaluateParams, ExitType, Slippage, TargetRange};
+use optopsy_mcp::engine::core::run_backtest;
+use optopsy_mcp::engine::types::{ExitType, TargetRange};
 
 mod common;
 use common::{backtest_params, delta, make_multi_strike_df};
-
-// ─── Parameter Helpers ───────────────────────────────────────────────────────
-
-fn evaluate_params(strategy: &str, leg_deltas: Vec<TargetRange>) -> EvaluateParams {
-    EvaluateParams {
-        strategy: strategy.to_string(),
-        leg_deltas,
-        entry_dte: DteRange {
-            target: 45,
-            min: 10,
-            max: 60,
-        },
-        exit_dte: 5,
-        dte_interval: 10,
-        delta_interval: 0.10,
-        slippage: Slippage::Mid,
-        commission: None,
-        min_bid_ask: 0.0,
-    }
-}
 
 /// Run a backtest and assert on trade count, `PnL`, days held, dates, exit type, and
 /// internal consistency (`exit_proceeds` ≈ `entry_cost` + `pnl`).
@@ -537,120 +517,5 @@ fn backtest_double_diagonal() {
         "double_diagonal",
         vec![delta(0.70), delta(0.50), delta(0.55), delta(0.70)],
         0.0,
-    );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// EVALUATE TESTS — one per category
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[test]
-fn evaluate_singles() {
-    let df = make_multi_strike_df();
-    let params = evaluate_params("long_call", vec![delta(0.50)]);
-    let result = evaluate_strategy(&df, &params);
-    assert!(
-        result.is_ok(),
-        "evaluate long_call failed: {:?}",
-        result.err()
-    );
-    let stats = result.unwrap();
-    assert!(
-        !stats.is_empty(),
-        "Expected at least one group stat for long_call"
-    );
-}
-
-#[test]
-fn evaluate_spreads() {
-    let df = make_multi_strike_df();
-    let params = evaluate_params("bull_call_spread", vec![delta(0.50), delta(0.35)]);
-    let result = evaluate_strategy(&df, &params);
-    assert!(
-        result.is_ok(),
-        "evaluate bull_call_spread failed: {:?}",
-        result.err()
-    );
-    let stats = result.unwrap();
-    assert!(
-        !stats.is_empty(),
-        "Expected at least one group stat for bull_call_spread"
-    );
-}
-
-#[test]
-fn evaluate_butterflies() {
-    let df = make_multi_strike_df();
-    let params = evaluate_params(
-        "long_call_butterfly",
-        vec![delta(0.50), delta(0.35), delta(0.20)],
-    );
-    let result = evaluate_strategy(&df, &params);
-    assert!(
-        result.is_ok(),
-        "evaluate long_call_butterfly failed: {:?}",
-        result.err()
-    );
-    let stats = result.unwrap();
-    assert!(
-        !stats.is_empty(),
-        "Expected at least one group stat for long_call_butterfly"
-    );
-}
-
-#[test]
-fn evaluate_condors() {
-    let df = make_multi_strike_df();
-    let params = evaluate_params(
-        "long_call_condor",
-        vec![delta(0.70), delta(0.50), delta(0.35), delta(0.20)],
-    );
-    let result = evaluate_strategy(&df, &params);
-    assert!(
-        result.is_ok(),
-        "evaluate long_call_condor failed: {:?}",
-        result.err()
-    );
-    let stats = result.unwrap();
-    assert!(
-        !stats.is_empty(),
-        "Expected at least one group stat for long_call_condor"
-    );
-}
-
-#[test]
-fn evaluate_iron() {
-    let df = make_multi_strike_df();
-    let params = evaluate_params(
-        "iron_condor",
-        vec![delta(0.20), delta(0.40), delta(0.35), delta(0.20)],
-    );
-    let result = evaluate_strategy(&df, &params);
-    assert!(
-        result.is_ok(),
-        "evaluate iron_condor failed: {:?}",
-        result.err()
-    );
-    let stats = result.unwrap();
-    assert!(
-        !stats.is_empty(),
-        "Expected at least one group stat for iron_condor"
-    );
-}
-
-#[test]
-fn evaluate_calendar() {
-    let df = make_multi_strike_df();
-    let params = evaluate_params("call_calendar_spread", vec![delta(0.50), delta(0.50)]);
-    let result = evaluate_strategy(&df, &params);
-    assert!(
-        result.is_ok(),
-        "evaluate call_calendar_spread failed: {:?}",
-        result.err()
-    );
-    let stats = result.unwrap();
-    assert!(
-        !stats.is_empty(),
-        "Expected at least one group stat for call_calendar_spread"
     );
 }

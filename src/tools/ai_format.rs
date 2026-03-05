@@ -1,17 +1,16 @@
 use std::collections::HashMap;
 
 use crate::engine::types::{
-    BacktestParams, BacktestQualityStats, BacktestResult, CompareParams, CompareResult,
-    EvaluateParams, ExitType, GroupStats, TradeRecord,
+    BacktestParams, BacktestQualityStats, BacktestResult, CompareParams, CompareResult, ExitType,
+    TradeRecord,
 };
 
 use crate::data::eodhd::DownloadSummary;
 
 use super::response_types::{
     BacktestDataQuality, BacktestParamsSummary, BacktestResponse, CompareResponse,
-    CompareStrategyEntry, DataQualityReport, DateRange, DownloadResponse, EvaluateParamsSummary,
-    EvaluateResponse, LoadDataResponse, PriceBar, RawPricesResponse, StrategiesResponse,
-    StrategyInfo, TradeStat, TradeSummary,
+    CompareStrategyEntry, DateRange, DownloadResponse, LoadDataResponse, PriceBar,
+    RawPricesResponse, StrategiesResponse, StrategyInfo, TradeStat, TradeSummary,
 };
 
 fn assess_sharpe(sharpe: f64) -> &'static str {
@@ -112,78 +111,6 @@ fn most_common_exit(trade_log: &[TradeRecord]) -> String {
         .into_iter()
         .max_by_key(|(_, c)| *c)
         .map_or_else(|| "N/A".to_string(), |(name, _)| name.to_string())
-}
-
-fn build_evaluate_quality(
-    groups: &[GroupStats],
-    params: &EvaluateParams,
-    median_spread: Option<f64>,
-) -> DataQualityReport {
-    let dte_steps = {
-        let interval = params.dte_interval;
-        if interval == 0 {
-            0
-        } else {
-            let min_adj = params.entry_dte.min.saturating_sub(1);
-            let max_adj = params.entry_dte.max.saturating_sub(1);
-            let min_bin = (min_adj / interval) * interval;
-            let max_bin = (max_adj / interval) * interval;
-            ((max_bin - min_bin) / interval + 1) as usize
-        }
-    };
-    let delta_steps = {
-        let min_range = params
-            .leg_deltas
-            .iter()
-            .map(|d| d.max - d.min)
-            .fold(f64::NEG_INFINITY, f64::max);
-        (min_range / params.delta_interval).ceil() as usize
-    };
-    let total_expected_buckets = dte_steps * delta_steps;
-    let buckets_with_data = groups.len();
-    let sufficient_buckets = groups.iter().filter(|g| g.count >= 10).count();
-    let sparse_buckets = groups
-        .iter()
-        .filter(|g| g.count >= 1 && g.count < 10)
-        .count();
-    let empty_buckets = total_expected_buckets.saturating_sub(buckets_with_data);
-    let coverage_pct = if total_expected_buckets > 0 {
-        (buckets_with_data as f64 / total_expected_buckets as f64) * 100.0
-    } else {
-        0.0
-    };
-
-    let mut warnings = Vec::new();
-    if coverage_pct < 80.0 {
-        warnings.push(
-            "More than 20% of the DTE×delta parameter space has no data. Consider widening your delta/DTE ranges."
-                .to_string(),
-        );
-    }
-    if sparse_buckets > sufficient_buckets {
-        warnings.push(
-            "Most buckets have fewer than 10 trades. Statistical estimates may be unreliable."
-                .to_string(),
-        );
-    }
-    if let Some(spread) = median_spread {
-        if spread > 15.0 {
-            warnings.push(format!(
-                "Median bid-ask spread is {spread:.1}%. Slippage costs may significantly impact actual P&L."
-            ));
-        }
-    }
-
-    DataQualityReport {
-        total_expected_buckets,
-        buckets_with_data,
-        sufficient_buckets,
-        sparse_buckets,
-        empty_buckets,
-        coverage_pct,
-        median_spread_pct: median_spread,
-        warnings,
-    }
 }
 
 fn build_backtest_quality(quality: &BacktestQualityStats) -> BacktestDataQuality {
@@ -354,12 +281,12 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
             trade_log: result.trade_log,
             data_quality,
             suggested_next_steps: vec![
-                "[Phase 4 → RETRY] Widen DTE range or delta targets in evaluate_strategy to capture more entry opportunities".to_string(),
+                    "[RETRY] Widen DTE range or delta targets to capture more entry opportunities".to_string(),
                 format!(
-                    "[Phase 4 → RETRY] Use evaluate_strategy with broader parameters to find DTE/delta buckets with data for {}",
+                    "[RETRY] Try broader parameters (wider entry_dte or leg_deltas) for {}",
                     params.strategy
                 ),
-                "[Phase 1 → CHECK] Verify the loaded dataset covers the expected date range via get_loaded_symbol".to_string(),
+                "[CHECK] Verify the loaded dataset covers the expected date range via get_loaded_symbol".to_string(),
             ],
         };
     }
@@ -436,97 +363,6 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
         metrics: result.metrics,
         trade_summary,
         trade_log: result.trade_log,
-        data_quality,
-        suggested_next_steps,
-    }
-}
-
-pub fn format_evaluate(
-    groups: Vec<GroupStats>,
-    params: &EvaluateParams,
-    median_spread: Option<f64>,
-) -> EvaluateResponse {
-    let total_buckets = groups.len();
-    let total_trades: usize = groups.iter().map(|g| g.count).sum();
-
-    let best_bucket = groups
-        .iter()
-        .max_by(|a, b| {
-            a.median
-                .partial_cmp(&b.median)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .cloned();
-
-    let worst_bucket = groups
-        .iter()
-        .min_by(|a, b| {
-            a.median
-                .partial_cmp(&b.median)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .cloned();
-
-    let highest_win_rate_bucket = groups
-        .iter()
-        .max_by(|a, b| {
-            a.win_rate
-                .partial_cmp(&b.win_rate)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .cloned();
-
-    let summary = if let Some(ref best) = best_bucket {
-        format!(
-            "Evaluated {} across {} DTE/delta buckets ({} total trades). \
-             Best bucket: DTE {}, Delta {} with median P&L ${:.2} and {:.0}% win rate.",
-            params.strategy,
-            total_buckets,
-            total_trades,
-            best.dte_range,
-            best.delta_range,
-            best.median,
-            best.win_rate * 100.0,
-        )
-    } else {
-        format!(
-            "Evaluated {} but no buckets were produced. Check DTE/delta parameters.",
-            params.strategy,
-        )
-    };
-
-    let mut suggested_next_steps = Vec::new();
-    if let Some(ref best) = best_bucket {
-        suggested_next_steps.push(format!(
-            "[Phase 5 → NEXT] Use run_backtest targeting DTE {} and delta {} for a full event-driven simulation",
-            best.dte_range, best.delta_range,
-        ));
-    }
-    suggested_next_steps.push(format!(
-        "[Phase 4 → REFINE] Narrow delta_interval (currently {:.2}) for finer granularity around the best bucket",
-        params.delta_interval,
-    ));
-
-    let data_quality = build_evaluate_quality(&groups, params, median_spread);
-
-    EvaluateResponse {
-        summary,
-        parameters: EvaluateParamsSummary {
-            strategy: params.strategy.clone(),
-            leg_deltas: params.leg_deltas.clone(),
-            entry_dte: params.entry_dte.clone(),
-            exit_dte: params.exit_dte,
-            dte_interval: params.dte_interval,
-            delta_interval: params.delta_interval,
-            slippage: params.slippage.clone(),
-            commission: params.commission.clone(),
-        },
-        total_buckets,
-        total_trades,
-        best_bucket,
-        worst_bucket,
-        highest_win_rate_bucket,
-        groups,
         data_quality,
         suggested_next_steps,
     }
@@ -685,8 +521,8 @@ pub fn format_strategies(strategies: Vec<StrategyInfo>) -> StrategiesResponse {
         categories,
         strategies,
         suggested_next_steps: vec![
-            "[Phase 3 → NEXT] Call suggest_parameters({ strategy: \"<chosen_strategy>\", risk_preference: \"moderate\" }) to get data-driven parameters".to_string(),
-            "[Phase 4 → THEN] Call evaluate_strategy with the chosen strategy for DTE/delta statistical screening".to_string(),
+            "[NEXT] Call suggest_parameters({ strategy: \"<chosen_strategy>\", risk_preference: \"moderate\" }) to get data-driven parameters".to_string(),
+            "[THEN] Call run_backtest with the chosen strategy for full simulation".to_string(),
         ],
     }
 }
@@ -985,87 +821,6 @@ mod tests {
         assert_eq!(response.strategies_compared.len(), 3);
         assert!(response.summary.contains("beta"));
         assert!(response.summary.contains("gamma"));
-    }
-
-    #[test]
-    fn format_evaluate_empty_groups() {
-        let params = EvaluateParams {
-            strategy: "test_strat".to_string(),
-            leg_deltas: vec![],
-            entry_dte: DteRange {
-                target: 45,
-                min: 10,
-                max: 60,
-            },
-            exit_dte: 0,
-            dte_interval: 7,
-            delta_interval: 0.05,
-            slippage: crate::engine::types::Slippage::Mid,
-            commission: None,
-            min_bid_ask: 0.05,
-        };
-        let response = format_evaluate(vec![], &params, None);
-        assert_eq!(response.total_buckets, 0);
-        assert_eq!(response.total_trades, 0);
-        assert!(response.best_bucket.is_none());
-        assert!(response.worst_bucket.is_none());
-        assert!(response.summary.contains("no buckets"));
-    }
-
-    #[test]
-    fn format_evaluate_finds_best_worst() {
-        let params = EvaluateParams {
-            strategy: "test_strat".to_string(),
-            leg_deltas: vec![],
-            entry_dte: DteRange {
-                target: 45,
-                min: 10,
-                max: 60,
-            },
-            exit_dte: 0,
-            dte_interval: 7,
-            delta_interval: 0.05,
-            slippage: crate::engine::types::Slippage::Mid,
-            commission: None,
-            min_bid_ask: 0.05,
-        };
-        let groups = vec![
-            GroupStats {
-                dte_range: "(0, 7]".to_string(),
-                delta_range: "(0.10, 0.15]".to_string(),
-                count: 10,
-                mean: 50.0,
-                std: 20.0,
-                min: -10.0,
-                q25: 30.0,
-                median: 45.0,
-                q75: 60.0,
-                max: 100.0,
-                win_rate: 0.7,
-                profit_factor: 2.0,
-            },
-            GroupStats {
-                dte_range: "(7, 14]".to_string(),
-                delta_range: "(0.15, 0.20]".to_string(),
-                count: 5,
-                mean: -20.0,
-                std: 30.0,
-                min: -80.0,
-                q25: -40.0,
-                median: -15.0,
-                q75: 5.0,
-                max: 20.0,
-                win_rate: 0.4,
-                profit_factor: 0.5,
-            },
-        ];
-        let response = format_evaluate(groups, &params, None);
-        assert_eq!(response.total_buckets, 2);
-        assert_eq!(response.total_trades, 15);
-        let best = response.best_bucket.unwrap();
-        assert_eq!(best.dte_range, "(0, 7]");
-        let worst = response.worst_bucket.unwrap();
-        assert_eq!(worst.dte_range, "(7, 14]");
     }
 
     #[test]

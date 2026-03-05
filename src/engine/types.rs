@@ -243,33 +243,6 @@ pub(crate) fn validate_exit_dte_lt_entry_min(
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
-pub struct EvaluateParams {
-    #[garde(length(min = 1))]
-    pub strategy: String,
-    #[garde(length(min = 1), dive)]
-    pub leg_deltas: Vec<TargetRange>,
-    #[garde(dive)]
-    pub entry_dte: DteRange,
-    #[garde(range(min = 0), custom(validate_exit_dte_lt_entry_min(&self.entry_dte)))]
-    pub exit_dte: i32,
-    #[serde(default = "default_dte_interval")]
-    #[garde(range(min = 1))]
-    pub dte_interval: i32,
-    #[serde(default = "default_delta_interval")]
-    #[garde(range(min = 0.001, max = 1.0))]
-    pub delta_interval: f64,
-    #[serde(default)]
-    #[garde(dive)]
-    pub slippage: Slippage,
-    #[serde(default)]
-    #[garde(dive)]
-    pub commission: Option<Commission>,
-    #[serde(default = "default_min_bid_ask")]
-    #[garde(range(min = 0.0))]
-    pub min_bid_ask: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct BacktestParams {
     #[garde(length(min = 1))]
     pub strategy: String,
@@ -326,14 +299,6 @@ pub(crate) fn default_multiplier() -> i32 {
     100
 }
 
-pub(crate) fn default_dte_interval() -> i32 {
-    7
-}
-
-pub(crate) fn default_delta_interval() -> f64 {
-    0.05
-}
-
 pub(crate) fn default_min_bid_ask() -> f64 {
     0.05
 }
@@ -383,23 +348,6 @@ pub struct SimParams {
     pub take_profit: Option<f64>,
     #[garde(inner(range(min = 1)))]
     pub max_hold_days: Option<i32>,
-}
-
-// Output types
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct GroupStats {
-    pub dte_range: String,
-    pub delta_range: String,
-    pub count: usize,
-    pub mean: f64,
-    pub std: f64,
-    pub min: f64,
-    pub q25: f64,
-    pub median: f64,
-    pub q75: f64,
-    pub max: f64,
-    pub win_rate: f64,
-    pub profit_factor: f64,
 }
 
 /// Internal quality stats collected during backtest simulation
@@ -862,29 +810,5 @@ mod tests {
             max: 0.2,
         };
         assert!(tr.validate().is_err());
-    }
-
-    #[test]
-    fn evaluate_params_rejects_exit_dte_gte_entry_min() {
-        let p = EvaluateParams {
-            strategy: "long_call".to_string(),
-            leg_deltas: vec![TargetRange {
-                target: 0.5,
-                min: 0.2,
-                max: 0.8,
-            }],
-            entry_dte: DteRange {
-                target: 30,
-                min: 20,
-                max: 40,
-            },
-            exit_dte: 25,
-            dte_interval: 7,
-            delta_interval: 0.05,
-            slippage: Slippage::Mid,
-            commission: None,
-            min_bid_ask: 0.05,
-        };
-        assert!(p.validate().is_err());
     }
 }

@@ -14,16 +14,16 @@ use tokio::sync::RwLock;
 use crate::data::cache::CachedStore;
 use crate::data::eodhd::EodhdProvider;
 use crate::engine::types::{
-    default_delta_interval, default_dte_interval, default_min_bid_ask, default_multiplier,
-    validate_exit_dte_lt_entry_min, BacktestParams, Commission, CompareEntry, CompareParams,
-    DteRange, EvaluateParams, SimParams, Slippage, TargetRange, TradeSelector,
+    default_min_bid_ask, default_multiplier, validate_exit_dte_lt_entry_min, BacktestParams,
+    Commission, CompareEntry, CompareParams, DteRange, SimParams, Slippage, TargetRange,
+    TradeSelector,
 };
 use crate::signals::registry::SignalSpec;
 use crate::tools;
 use crate::tools::response_types::{
     BacktestResponse, BuildSignalResponse, CheckCacheResponse, CompareResponse,
-    ConstructSignalResponse, DownloadResponse, EvaluateResponse, FetchResponse, RawPricesResponse,
-    StatusResponse, StrategiesResponse, SuggestResponse,
+    ConstructSignalResponse, DownloadResponse, FetchResponse, RawPricesResponse, StatusResponse,
+    StrategiesResponse, SuggestResponse,
 };
 use crate::tools::signals::SignalsResponse;
 
@@ -234,49 +234,6 @@ fn default_quantity() -> i32 {
 
 fn default_capital() -> f64 {
     10000.0
-}
-
-#[derive(Debug, Deserialize, JsonSchema, Validate)]
-pub struct EvaluateStrategyParams {
-    /// REQUIRED — strategy name (e.g. `short_put`, `iron_condor`). Call `list_strategies` to see options.
-    #[garde(skip)]
-    pub strategy: Option<StrategyParam>,
-    /// Per-leg delta targets (optional — uses strategy-specific defaults if omitted)
-    #[serde(default)]
-    #[garde(inner(length(min = 1)))]
-    pub leg_deltas: Option<Vec<TargetRange>>,
-    /// Entry DTE range: { target, min, max } (default: { target: 45, min: 30, max: 60 })
-    #[serde(default = "default_entry_dte")]
-    #[garde(dive)]
-    pub entry_dte: DteRange,
-    /// DTE at exit (default: 9)
-    #[serde(default = "default_exit_dte")]
-    #[garde(range(min = 0), custom(validate_exit_dte_lt_entry_min(&self.entry_dte)))]
-    pub exit_dte: i32,
-    /// DTE bucket width (default: 5)
-    #[serde(default = "default_dte_interval")]
-    #[garde(range(min = 1))]
-    pub dte_interval: i32,
-    /// Delta bucket width (default: 0.10)
-    #[serde(default = "default_delta_interval")]
-    #[garde(range(min = 0.001, max = 1.0))]
-    pub delta_interval: f64,
-    /// Slippage model (default: Spread)
-    #[serde(default)]
-    #[garde(dive)]
-    pub slippage: Slippage,
-    /// Commission structure (optional)
-    #[serde(default)]
-    #[garde(dive)]
-    pub commission: Option<Commission>,
-    /// Minimum bid/ask threshold — options with bid or ask at or below this value are filtered out (default: 0.05)
-    #[serde(default = "default_min_bid_ask")]
-    #[garde(range(min = 0.0))]
-    pub min_bid_ask: f64,
-    /// Symbol to analyze (required if multiple symbols are loaded; optional if only one is loaded)
-    #[serde(default)]
-    #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
-    pub symbol: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
@@ -667,7 +624,7 @@ impl OptopsyServer {
     /// **When to use**: To choose a strategy for analysis
     /// **Prerequisites**: None (informational, no data required)
     /// **Categories**: singles, spreads, straddles, strangles, butterflies, condors, iron, calendars, diagonals
-    /// **Next tools**: `suggest_parameters()` or `evaluate_strategy()` (once you pick a strategy)
+    /// **Next tools**: `suggest_parameters()` or `run_backtest()` (once you pick a strategy)
     #[tool(name = "list_strategies", annotations(read_only_hint = true))]
     async fn list_strategies(&self) -> Json<StrategiesResponse> {
         Json(tools::strategies::execute())
@@ -693,7 +650,7 @@ impl OptopsyServer {
     /// **When to use**: Check what symbol is currently loaded, row count, available columns
     /// **Prerequisites**: None (works with or without loaded data)
     /// **How it works**: Returns details about the in-memory `DataFrame` (symbol, rows, columns)
-    /// **Next tool**: Use `load_data()` to switch symbols, or proceed with `evaluate_strategy()` / `run_backtest()`
+    /// **Next tool**: Proceed with `suggest_parameters()` or `run_backtest()`
     /// **Example usage**: After loading SPY, call this to confirm it's loaded and see column names
     #[tool(name = "get_loaded_symbol", annotations(read_only_hint = true))]
     async fn get_loaded_symbol(&self) -> Json<StatusResponse> {
@@ -808,78 +765,15 @@ impl OptopsyServer {
         Ok(Json(tools::build_signal::execute(action)))
     }
 
-    /// Fast statistical screening without capital simulation.
-    ///
-    /// **Workflow Phase**: 3/5 (statistical validation)
-    /// **When to use**: Before `run_backtest`, to validate strategy parameters and identify
-    ///   promising DTE/delta ranges from historical data
-    /// **Prerequisites**: None — data is auto-loaded from cache when you pass a symbol
-    /// **Why use this**: Avoid wasting time on backtest simulations with poor parameter choices;
-    ///   groups historical P&L by DTE × delta buckets to find winners
-    /// **Next tool**: `run_backtest()` with parameters refined from results
-    ///
-    /// Returns: Best/worst buckets, win rates, profit factors, and full DTE×delta grid stats
-    /// **Time to run**: Fast (seconds)
-    /// **Output includes**:
-    ///   - Best performer bucket (highest `PnL`)
-    ///   - Worst bucket (warning sign)
-    ///   - Highest win-rate bucket (consistency indicator)
-    ///   - Full bucket grid with mean, std, quartiles, count
-    // Tool deregistered — kept as internal method for potential future use.
-    #[allow(dead_code)]
-    async fn evaluate_strategy(
-        &self,
-        Parameters(params): Parameters<EvaluateStrategyParams>,
-    ) -> Result<Json<EvaluateResponse>, String> {
-        params
-            .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
-
-        let strategy = require_strategy(params.strategy)?;
-        let (_, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
-
-        let strategy_name = strategy.as_str();
-        let leg_deltas = resolve_leg_deltas(params.leg_deltas, strategy_name)?;
-
-        let eval_params = EvaluateParams {
-            strategy: strategy_name.to_string(),
-            leg_deltas,
-            entry_dte: params.entry_dte,
-            exit_dte: params.exit_dte,
-            dte_interval: params.dte_interval,
-            delta_interval: params.delta_interval,
-            slippage: params.slippage,
-            commission: params.commission,
-            min_bid_ask: params.min_bid_ask,
-        };
-        eval_params
-            .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
-
-        tokio::task::spawn_blocking(move || tools::evaluate::execute(&df, &eval_params))
-            .await
-            .map_err(|e| format!("Evaluate task panicked: {e}"))?
-            .map(Json)
-            .map_err(|e| format!("Error: {e}"))
-    }
-
     /// Full event-driven day-by-day simulation with position management and metrics.
     ///
-    /// **Workflow Phase**: 5/7 (full validation)
-    /// **When to use**: After `evaluate_strategy()` to validate strategy performance in capital-constrained scenario
-    /// **Prerequisites**:
-    ///   - Data is auto-loaded from cache when you pass a symbol
-    ///   - `evaluate_strategy()` MUST be called first to validate parameters (Phase 4)
-    ///   - `strategy` is REQUIRED — must be a valid strategy name (e.g. `long_call`, `short_put`, `iron_condor`). **NEVER pass null.**
-    ///   - ⚠️  **SIGNAL PREREQUISITE**: If `entry_signal` or `exit_signal` is provided, you MUST call
-    ///     `fetch_to_parquet({ symbol: "<SYMBOL>", category: "prices" })` BEFORE calling this tool.
-    ///     The backtest WILL FAIL without OHLCV data when signals are used.
-    /// **⚠️  Warning**: Slow! Run `evaluate_strategy()` first to validate parameters
+    /// **When to use**: Run a full capital-constrained backtest simulation
+    /// **Prerequisites**: Data is auto-loaded from cache when you pass a symbol.
+    ///   OHLCV data is auto-fetched when signals are used.
     /// **Next tools**: `compare_strategies()` (to test variations) or iterate on parameters
     ///
-    /// **IMPORTANT**: Signals do NOT replace strategies. A strategy (e.g. `short_put`, `iron_condor`)
-    /// defines WHAT option legs to trade. Signals only FILTER WHEN to enter/exit. You MUST always
-    /// provide a strategy — signals are optional add-ons, not standalone trade definitions.
+    /// **IMPORTANT**: `strategy` is REQUIRED — it defines WHAT option legs to trade.
+    /// Signals only FILTER WHEN to enter/exit — they are optional add-ons.
     ///
     /// **What it simulates**:
     ///   - Day-by-day position opens (respecting `max_positions` constraint)
@@ -1133,7 +1027,7 @@ impl OptopsyServer {
     /// **When to use**: To get intelligent parameter suggestions
     ///   based on actual market data (DTE coverage, spread quality, delta distribution)
     /// **Prerequisites**: None — data is auto-loaded from cache when you pass a symbol
-    /// **Next tools**: `evaluate_strategy()` or `run_backtest()` with suggested parameters
+    /// **Next tools**: `run_backtest()` with suggested parameters
     ///
     /// **What it analyzes**:
     ///   - DTE distribution and contiguous coverage zones
@@ -1210,18 +1104,15 @@ impl ServerHandler for OptopsyServer {
                 \n### 2. Get Parameters (recommended)\
                 \n  - suggest_parameters({ strategy, symbol }) — data-driven recommendations\
                 \n\
-                \n### 3. Statistical Screening (recommended)\
-                \n  - evaluate_strategy({ strategy, symbol }) — fast DTE×delta bucket analysis\
-                \n\
-                \n### 4. Full Simulation\
+                \n### 3. Full Simulation\
                 \n  - run_backtest({ strategy, symbol, ... }) — event-driven backtest with trade log and metrics\
                 \n  - OHLCV data is auto-fetched when signals are used\
                 \n\
-                \n### 5. Compare & Optimize (optional)\
+                \n### 4. Compare & Optimize (optional)\
                 \n  - compare_strategies({ strategies, sim_params, symbol }) — side-by-side ranking\
                 \n\
                 \n## RULES\
-                \n- strategy is ALWAYS REQUIRED for evaluate/backtest/suggest — signals do NOT replace strategies\
+                \n- strategy is ALWAYS REQUIRED for backtest/suggest — signals do NOT replace strategies\
                 \n- Signals only filter WHEN to trade; the strategy defines WHAT option legs to trade\
                 \n- NEVER pass strategy: null — pick one like short_put, iron_condor, etc.\
                 \n- Each tool response includes suggested_next_steps — follow them"

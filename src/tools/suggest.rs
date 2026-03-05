@@ -28,8 +28,7 @@ fn format_suggest(result: SuggestResult) -> SuggestResponse {
     );
 
     let mut suggested_next_steps = vec![
-        "[Phase 4 → NEXT] Call evaluate_strategy with the suggested parameters to validate across DTE/delta buckets".to_string(),
-        "[Phase 5 → THEN] Call run_backtest with the suggested parameters for full simulation".to_string(),
+        "[NEXT] Call run_backtest with the suggested parameters for full simulation".to_string(),
     ];
 
     if result.confidence < 0.5 {
@@ -43,8 +42,7 @@ fn format_suggest(result: SuggestResult) -> SuggestResponse {
 
     if result.data_coverage.expiration_count < 3 {
         suggested_next_steps.push(
-            "[Phase 1 → RETRY] Expand date range in load_data to include more expiration cycles"
-                .to_string(),
+            "[RETRY] Try loading more data — dataset has very few expiration cycles".to_string(),
         );
     }
 

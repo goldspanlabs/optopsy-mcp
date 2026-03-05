@@ -3,23 +3,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::engine::types::{
-    Commission, CompareResult, DteRange, GroupStats, PerformanceMetrics, Slippage, TargetRange,
-    TradeRecord, TradeSelector,
+    Commission, CompareResult, DteRange, PerformanceMetrics, Slippage, TargetRange, TradeRecord,
+    TradeSelector,
 };
 use crate::signals::registry::SignalSpec;
-
-/// Data quality report for `evaluate_strategy`
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct DataQualityReport {
-    pub total_expected_buckets: usize,
-    pub buckets_with_data: usize,
-    pub sufficient_buckets: usize,
-    pub sparse_buckets: usize,
-    pub empty_buckets: usize,
-    pub coverage_pct: f64,
-    pub median_spread_pct: Option<f64>,
-    pub warnings: Vec<String>,
-}
 
 /// Data quality report for `run_backtest`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -107,35 +94,6 @@ pub struct TradeSummary {
 pub struct TradeStat {
     pub pnl: f64,
     pub date: String,
-}
-
-/// AI-enriched response for `evaluate_strategy`
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct EvaluateResponse {
-    pub summary: String,
-    /// Parameters used for this evaluation (for context in follow-up questions)
-    pub parameters: EvaluateParamsSummary,
-    pub total_buckets: usize,
-    pub total_trades: usize,
-    pub best_bucket: Option<GroupStats>,
-    pub worst_bucket: Option<GroupStats>,
-    pub highest_win_rate_bucket: Option<GroupStats>,
-    pub groups: Vec<GroupStats>,
-    pub data_quality: DataQualityReport,
-    pub suggested_next_steps: Vec<String>,
-}
-
-/// Summary of evaluation parameters for reference in responses
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct EvaluateParamsSummary {
-    pub strategy: String,
-    pub leg_deltas: Vec<TargetRange>,
-    pub entry_dte: DteRange,
-    pub exit_dte: i32,
-    pub dte_interval: i32,
-    pub delta_interval: f64,
-    pub slippage: Slippage,
-    pub commission: Option<Commission>,
 }
 
 /// Parameters for a single strategy comparison entry
