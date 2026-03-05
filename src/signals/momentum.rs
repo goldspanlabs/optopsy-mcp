@@ -271,4 +271,277 @@ mod tests {
         let bools = result.bool().unwrap();
         assert!(bools.into_no_null_iter().all(|b| !b));
     }
+
+    #[test]
+    fn rsi_overbought_produces_correct_length() {
+        let df = sample_df();
+        let signal = RsiOverbought {
+            column: "close".into(),
+            threshold: 70.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 15);
+    }
+
+    #[test]
+    fn rsi_oversold_insufficient_data() {
+        let df = df! { "close" => &[100.0, 102.0, 101.0] }.unwrap();
+        let signal = RsiOversold {
+            column: "close".into(),
+            threshold: 30.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn rsi_overbought_insufficient_data() {
+        let df = df! { "close" => &[100.0, 102.0, 101.0] }.unwrap();
+        let signal = RsiOverbought {
+            column: "close".into(),
+            threshold: 70.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    fn large_sample_df() -> DataFrame {
+        // 40 data points for MACD (needs 34+)
+        let prices: Vec<f64> = (0..40).map(|i| 100.0 + f64::from(i) * 0.5).collect();
+        df! { "close" => &prices }.unwrap()
+    }
+
+    #[test]
+    fn macd_bullish_produces_correct_length() {
+        let df = large_sample_df();
+        let signal = MacdBullish {
+            column: "close".into(),
+        };
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 40);
+    }
+
+    #[test]
+    fn macd_bearish_produces_correct_length() {
+        let df = large_sample_df();
+        let signal = MacdBearish {
+            column: "close".into(),
+        };
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 40);
+    }
+
+    #[test]
+    fn macd_crossover_produces_correct_length() {
+        let df = large_sample_df();
+        let signal = MacdCrossover {
+            column: "close".into(),
+        };
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 40);
+    }
+
+    #[test]
+    fn macd_bullish_insufficient_data() {
+        let df = df! { "close" => &[100.0; 10] }.unwrap();
+        let signal = MacdBullish {
+            column: "close".into(),
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn macd_bearish_insufficient_data() {
+        let df = df! { "close" => &[100.0; 10] }.unwrap();
+        let signal = MacdBearish {
+            column: "close".into(),
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn macd_crossover_insufficient_data() {
+        let df = df! { "close" => &[100.0; 10] }.unwrap();
+        let signal = MacdCrossover {
+            column: "close".into(),
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn macd_crossover_first_row_always_false() {
+        let df = large_sample_df();
+        let signal = MacdCrossover {
+            column: "close".into(),
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(!bools.get(0).unwrap());
+    }
+
+    #[test]
+    fn stochastic_overbought_correct_length() {
+        let close: Vec<f64> = (0..20).map(|i| 100.0 + f64::from(i)).collect();
+        let high: Vec<f64> = close.iter().map(|c| c + 2.0).collect();
+        let low: Vec<f64> = close.iter().map(|c| c - 2.0).collect();
+        let df = df! {
+            "close" => &close,
+            "high" => &high,
+            "low" => &low,
+        }
+        .unwrap();
+        let signal = StochasticOverbought {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 5,
+            threshold: 80.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 20);
+    }
+
+    #[test]
+    fn stochastic_overbought_insufficient_data() {
+        let df = df! {
+            "close" => &[100.0, 102.0],
+            "high" => &[103.0, 104.0],
+            "low" => &[99.0, 101.0],
+        }
+        .unwrap();
+        let signal = StochasticOverbought {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 14,
+            threshold: 80.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn stochastic_zero_period() {
+        let df = df! {
+            "close" => &[100.0, 102.0, 101.0],
+            "high" => &[103.0, 104.0, 103.0],
+            "low" => &[99.0, 101.0, 100.0],
+        }
+        .unwrap();
+        let signal = StochasticOversold {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 0,
+            threshold: 20.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn compute_stochastic_basic() {
+        // With a simple uptrend, the stochastic should be near 100
+        let close = vec![100.0, 101.0, 102.0, 103.0, 104.0];
+        let high = vec![101.0, 102.0, 103.0, 104.0, 105.0];
+        let low = vec![99.0, 100.0, 101.0, 102.0, 103.0];
+        let result = compute_stochastic(&close, &high, &low, 3);
+        assert!(!result.is_empty());
+        // Last value: close=104, lowest_low=101, highest_high=105
+        // (104 - 101) / (105 - 101) * 100 = 75.0
+        let last = *result.last().unwrap();
+        assert!((last - 75.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn compute_stochastic_insufficient() {
+        let result = compute_stochastic(&[100.0], &[101.0], &[99.0], 5);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn compute_stochastic_flat_range() {
+        // When high == low, should return 0
+        let close = vec![100.0, 100.0, 100.0];
+        let high = vec![100.0, 100.0, 100.0];
+        let low = vec![100.0, 100.0, 100.0];
+        let result = compute_stochastic(&close, &high, &low, 2);
+        assert!(result.iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn rsi_oversold_name() {
+        let signal = RsiOversold {
+            column: "close".into(),
+            threshold: 30.0,
+        };
+        assert_eq!(signal.name(), "rsi_oversold");
+    }
+
+    #[test]
+    fn rsi_overbought_name() {
+        let signal = RsiOverbought {
+            column: "close".into(),
+            threshold: 70.0,
+        };
+        assert_eq!(signal.name(), "rsi_overbought");
+    }
+
+    #[test]
+    fn macd_bullish_name() {
+        let signal = MacdBullish {
+            column: "close".into(),
+        };
+        assert_eq!(signal.name(), "macd_bullish");
+    }
+
+    #[test]
+    fn macd_bearish_name() {
+        let signal = MacdBearish {
+            column: "close".into(),
+        };
+        assert_eq!(signal.name(), "macd_bearish");
+    }
+
+    #[test]
+    fn macd_crossover_name() {
+        let signal = MacdCrossover {
+            column: "close".into(),
+        };
+        assert_eq!(signal.name(), "macd_crossover");
+    }
+
+    #[test]
+    fn stochastic_oversold_name() {
+        let signal = StochasticOversold {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 14,
+            threshold: 20.0,
+        };
+        assert_eq!(signal.name(), "stochastic_oversold");
+    }
+
+    #[test]
+    fn stochastic_overbought_name() {
+        let signal = StochasticOverbought {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 14,
+            threshold: 80.0,
+        };
+        assert_eq!(signal.name(), "stochastic_overbought");
+    }
 }

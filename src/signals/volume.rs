@@ -280,4 +280,298 @@ mod tests {
         let result = signal.evaluate(&df).unwrap();
         assert_eq!(result.len(), 7);
     }
+
+    #[test]
+    fn obv_falling_detects_decrease() {
+        let df = df! {
+            "close" => &[100.0, 98.0, 96.0, 97.0, 95.0],
+            "volume" => &[1000.0, 1500.0, 1200.0, 900.0, 1300.0],
+        }
+        .unwrap();
+        let signal = ObvFalling {
+            price_col: "close".into(),
+            volume_col: "volume".into(),
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert_eq!(result.len(), 5);
+        // Prices fall from 100 to 98 to 96, OBV should be falling
+        // The OBV values depend on rust_ti internals but index 2 should show falling
+        assert!(bools.get(2).unwrap());
+    }
+
+    #[test]
+    fn obv_rising_insufficient_data() {
+        let df = df! {
+            "close" => &[100.0],
+            "volume" => &[1000.0],
+        }
+        .unwrap();
+        let signal = ObvRising {
+            price_col: "close".into(),
+            volume_col: "volume".into(),
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn obv_falling_insufficient_data() {
+        let df = df! {
+            "close" => &[100.0],
+            "volume" => &[1000.0],
+        }
+        .unwrap();
+        let signal = ObvFalling {
+            price_col: "close".into(),
+            volume_col: "volume".into(),
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    fn ohlcv_df() -> DataFrame {
+        df! {
+            "close" => &[102.0, 104.0, 103.0, 105.0, 107.0, 106.0, 108.0, 110.0, 109.0, 111.0,
+                         113.0, 112.0, 114.0, 116.0, 115.0, 117.0, 119.0, 118.0, 120.0, 122.0],
+            "high" =>  &[103.0, 105.0, 104.0, 106.0, 108.0, 107.0, 109.0, 111.0, 110.0, 112.0,
+                         114.0, 113.0, 115.0, 117.0, 116.0, 118.0, 120.0, 119.0, 121.0, 123.0],
+            "low" =>   &[100.0, 102.0, 101.0, 103.0, 105.0, 104.0, 106.0, 108.0, 107.0, 109.0,
+                         111.0, 110.0, 112.0, 114.0, 113.0, 115.0, 117.0, 116.0, 118.0, 120.0],
+            "volume" => &[1000.0, 1500.0, 1200.0, 900.0, 1300.0, 1100.0, 1400.0, 1600.0, 1000.0, 1200.0,
+                         1500.0, 1100.0, 1300.0, 1700.0, 1000.0, 1400.0, 1600.0, 1200.0, 1500.0, 1800.0],
+        }
+        .unwrap()
+    }
+
+    #[test]
+    fn mfi_oversold_correct_length() {
+        let df = ohlcv_df();
+        let signal = MfiOversold {
+            high_col: "high".into(),
+            low_col: "low".into(),
+            close_col: "close".into(),
+            volume_col: "volume".into(),
+            period: 5,
+            threshold: 20.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 20);
+    }
+
+    #[test]
+    fn mfi_overbought_correct_length() {
+        let df = ohlcv_df();
+        let signal = MfiOverbought {
+            high_col: "high".into(),
+            low_col: "low".into(),
+            close_col: "close".into(),
+            volume_col: "volume".into(),
+            period: 5,
+            threshold: 80.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 20);
+    }
+
+    #[test]
+    fn mfi_oversold_insufficient_data() {
+        let df = df! {
+            "close" => &[100.0, 101.0],
+            "high" => &[102.0, 103.0],
+            "low" => &[99.0, 100.0],
+            "volume" => &[1000.0, 1100.0],
+        }
+        .unwrap();
+        let signal = MfiOversold {
+            high_col: "high".into(),
+            low_col: "low".into(),
+            close_col: "close".into(),
+            volume_col: "volume".into(),
+            period: 14,
+            threshold: 20.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn mfi_overbought_insufficient_data() {
+        let df = df! {
+            "close" => &[100.0, 101.0],
+            "high" => &[102.0, 103.0],
+            "low" => &[99.0, 100.0],
+            "volume" => &[1000.0, 1100.0],
+        }
+        .unwrap();
+        let signal = MfiOverbought {
+            high_col: "high".into(),
+            low_col: "low".into(),
+            close_col: "close".into(),
+            volume_col: "volume".into(),
+            period: 14,
+            threshold: 80.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn cmf_negative_correct_length() {
+        let df = ohlcv_df();
+        let signal = CmfNegative {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            volume_col: "volume".into(),
+            period: 5,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 20);
+    }
+
+    #[test]
+    fn cmf_negative_insufficient_data() {
+        let df = df! {
+            "close" => &[100.0, 101.0],
+            "high" => &[102.0, 103.0],
+            "low" => &[99.0, 100.0],
+            "volume" => &[1000.0, 1100.0],
+        }
+        .unwrap();
+        let signal = CmfNegative {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            volume_col: "volume".into(),
+            period: 10,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn cmf_positive_insufficient_data() {
+        let df = df! {
+            "close" => &[100.0, 101.0],
+            "high" => &[102.0, 103.0],
+            "low" => &[99.0, 100.0],
+            "volume" => &[1000.0, 1100.0],
+        }
+        .unwrap();
+        let signal = CmfPositive {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            volume_col: "volume".into(),
+            period: 10,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn compute_cmf_basic() {
+        let close = vec![102.0, 104.0, 103.0, 105.0, 107.0];
+        let high = vec![103.0, 105.0, 104.0, 106.0, 108.0];
+        let low = vec![100.0, 102.0, 101.0, 103.0, 105.0];
+        let volume = vec![1000.0, 1500.0, 1200.0, 900.0, 1300.0];
+        let result = compute_cmf(&close, &high, &low, &volume, 3);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn compute_cmf_insufficient() {
+        let result = compute_cmf(
+            &[100.0],
+            &[102.0],
+            &[98.0],
+            &[1000.0],
+            5,
+        );
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn compute_typical_price_basic() {
+        let high = vec![110.0, 120.0];
+        let low = vec![90.0, 100.0];
+        let close = vec![100.0, 110.0];
+        let tp = compute_typical_price(&high, &low, &close);
+        assert_eq!(tp, vec![100.0, 110.0]);
+    }
+
+    #[test]
+    fn obv_rising_name() {
+        let signal = ObvRising {
+            price_col: "close".into(),
+            volume_col: "volume".into(),
+        };
+        assert_eq!(signal.name(), "obv_rising");
+    }
+
+    #[test]
+    fn obv_falling_name() {
+        let signal = ObvFalling {
+            price_col: "close".into(),
+            volume_col: "volume".into(),
+        };
+        assert_eq!(signal.name(), "obv_falling");
+    }
+
+    #[test]
+    fn mfi_oversold_name() {
+        let signal = MfiOversold {
+            high_col: "high".into(),
+            low_col: "low".into(),
+            close_col: "close".into(),
+            volume_col: "volume".into(),
+            period: 14,
+            threshold: 20.0,
+        };
+        assert_eq!(signal.name(), "mfi_oversold");
+    }
+
+    #[test]
+    fn mfi_overbought_name() {
+        let signal = MfiOverbought {
+            high_col: "high".into(),
+            low_col: "low".into(),
+            close_col: "close".into(),
+            volume_col: "volume".into(),
+            period: 14,
+            threshold: 80.0,
+        };
+        assert_eq!(signal.name(), "mfi_overbought");
+    }
+
+    #[test]
+    fn cmf_positive_name() {
+        let signal = CmfPositive {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            volume_col: "volume".into(),
+            period: 20,
+        };
+        assert_eq!(signal.name(), "cmf_positive");
+    }
+
+    #[test]
+    fn cmf_negative_name() {
+        let signal = CmfNegative {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            volume_col: "volume".into(),
+            period: 20,
+        };
+        assert_eq!(signal.name(), "cmf_negative");
+    }
 }

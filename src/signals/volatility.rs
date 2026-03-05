@@ -284,4 +284,266 @@ mod tests {
         let result = signal.evaluate(&df).unwrap();
         assert_eq!(result.len(), 20);
     }
+
+    #[test]
+    fn atr_below_correct_length() {
+        let close: Vec<f64> = (0..20).map(|i| 100.0 + f64::from(i)).collect();
+        let high: Vec<f64> = close.iter().map(|c| c + 2.0).collect();
+        let low: Vec<f64> = close.iter().map(|c| c - 2.0).collect();
+        let df = df! {
+            "close" => &close,
+            "high" => &high,
+            "low" => &low,
+        }
+        .unwrap();
+        let signal = AtrBelow {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 5,
+            threshold: 10.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 20);
+    }
+
+    #[test]
+    fn atr_above_insufficient_data() {
+        let df = df! {
+            "close" => &[100.0, 101.0],
+            "high" => &[103.0, 104.0],
+            "low" => &[97.0, 98.0],
+        }
+        .unwrap();
+        let signal = AtrAbove {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 10,
+            threshold: 1.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn atr_below_insufficient_data() {
+        let df = df! {
+            "close" => &[100.0, 101.0],
+            "high" => &[103.0, 104.0],
+            "low" => &[97.0, 98.0],
+        }
+        .unwrap();
+        let signal = AtrBelow {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 10,
+            threshold: 10.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn atr_below_detects_low_volatility() {
+        // With constant high-low range of 4, ATR should be around 4
+        let close: Vec<f64> = vec![100.0; 20];
+        let high: Vec<f64> = vec![102.0; 20];
+        let low: Vec<f64> = vec![98.0; 20];
+        let df = df! {
+            "close" => &close,
+            "high" => &high,
+            "low" => &low,
+        }
+        .unwrap();
+        let signal = AtrBelow {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 5,
+            threshold: 10.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        // ATR ~4 < threshold 10, so should have some trues
+        let true_count = bools.into_no_null_iter().filter(|&b| b).count();
+        assert!(true_count > 0);
+    }
+
+    #[test]
+    fn bollinger_upper_touch_correct_length() {
+        let prices: Vec<f64> = (0..30).map(|i| 100.0 + f64::from(i) * 2.0).collect();
+        let df = df! { "close" => &prices }.unwrap();
+        let signal = BollingerUpperTouch {
+            column: "close".into(),
+            period: 10,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 30);
+    }
+
+    #[test]
+    fn bollinger_upper_touch_insufficient_data() {
+        let df = df! { "close" => &[100.0; 5] }.unwrap();
+        let signal = BollingerUpperTouch {
+            column: "close".into(),
+            period: 20,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn keltner_lower_break_correct_length() {
+        let close: Vec<f64> = (0..30).map(|i| 100.0 + f64::from(i)).collect();
+        let high: Vec<f64> = close.iter().map(|c| c + 2.0).collect();
+        let low: Vec<f64> = close.iter().map(|c| c - 2.0).collect();
+        let df = df! {
+            "close" => &close,
+            "high" => &high,
+            "low" => &low,
+        }
+        .unwrap();
+        let signal = KeltnerLowerBreak {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 5,
+            multiplier: 2.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 30);
+    }
+
+    #[test]
+    fn keltner_lower_break_insufficient_data() {
+        let df = df! {
+            "close" => &[100.0, 101.0],
+            "high" => &[102.0, 103.0],
+            "low" => &[98.0, 99.0],
+        }
+        .unwrap();
+        let signal = KeltnerLowerBreak {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 10,
+            multiplier: 2.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn keltner_upper_break_correct_length() {
+        let close: Vec<f64> = (0..30).map(|i| 100.0 + f64::from(i)).collect();
+        let high: Vec<f64> = close.iter().map(|c| c + 2.0).collect();
+        let low: Vec<f64> = close.iter().map(|c| c - 2.0).collect();
+        let df = df! {
+            "close" => &close,
+            "high" => &high,
+            "low" => &low,
+        }
+        .unwrap();
+        let signal = KeltnerUpperBreak {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 5,
+            multiplier: 2.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 30);
+    }
+
+    #[test]
+    fn keltner_upper_break_insufficient_data() {
+        let df = df! {
+            "close" => &[100.0, 101.0],
+            "high" => &[102.0, 103.0],
+            "low" => &[98.0, 99.0],
+        }
+        .unwrap();
+        let signal = KeltnerUpperBreak {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 10,
+            multiplier: 2.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn atr_above_name() {
+        let signal = AtrAbove {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 5,
+            threshold: 1.0,
+        };
+        assert_eq!(signal.name(), "atr_above");
+    }
+
+    #[test]
+    fn atr_below_name() {
+        let signal = AtrBelow {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 5,
+            threshold: 1.0,
+        };
+        assert_eq!(signal.name(), "atr_below");
+    }
+
+    #[test]
+    fn bollinger_lower_touch_name() {
+        let signal = BollingerLowerTouch {
+            column: "close".into(),
+            period: 20,
+        };
+        assert_eq!(signal.name(), "bollinger_lower_touch");
+    }
+
+    #[test]
+    fn bollinger_upper_touch_name() {
+        let signal = BollingerUpperTouch {
+            column: "close".into(),
+            period: 20,
+        };
+        assert_eq!(signal.name(), "bollinger_upper_touch");
+    }
+
+    #[test]
+    fn keltner_lower_break_name() {
+        let signal = KeltnerLowerBreak {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 5,
+            multiplier: 2.0,
+        };
+        assert_eq!(signal.name(), "keltner_lower_break");
+    }
+
+    #[test]
+    fn keltner_upper_break_name() {
+        let signal = KeltnerUpperBreak {
+            close_col: "close".into(),
+            high_col: "high".into(),
+            low_col: "low".into(),
+            period: 5,
+            multiplier: 2.0,
+        };
+        assert_eq!(signal.name(), "keltner_upper_break");
+    }
 }

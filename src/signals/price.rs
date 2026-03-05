@@ -240,4 +240,218 @@ mod tests {
         // 95 / 110 = 0.136 drawdown > 10%
         assert!(bools.get(4).unwrap());
     }
+
+    #[test]
+    fn gap_down_detects_gap() {
+        let df = df! {
+            "open"  => &[100.0, 100.0, 100.0, 85.0, 95.0],
+            "close" => &[100.0, 100.0, 100.0, 90.0, 96.0]
+        }
+        .unwrap();
+        let signal = GapDown {
+            open_col: "open".into(),
+            close_col: "close".into(),
+            threshold: 0.05,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        // open[3]=85 vs close[2]=100: (100-85)/100 = 15% gap down
+        assert!(bools.get(3).unwrap());
+        assert!(!bools.get(0).unwrap());
+    }
+
+    #[test]
+    fn gap_up_first_row_always_false() {
+        let df = df! {
+            "open"  => &[200.0, 100.0],
+            "close" => &[100.0, 100.0]
+        }
+        .unwrap();
+        let signal = GapUp {
+            open_col: "open".into(),
+            close_col: "close".into(),
+            threshold: 0.01,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(!bools.get(0).unwrap());
+    }
+
+    #[test]
+    fn gap_down_first_row_always_false() {
+        let df = df! {
+            "open"  => &[50.0, 100.0],
+            "close" => &[100.0, 100.0]
+        }
+        .unwrap();
+        let signal = GapDown {
+            open_col: "open".into(),
+            close_col: "close".into(),
+            threshold: 0.01,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(!bools.get(0).unwrap());
+    }
+
+    #[test]
+    fn consecutive_down_detects_streak() {
+        let df = df! {
+            "close" => &[110.0, 109.0, 108.0, 107.0, 108.0, 107.0, 106.0, 105.0]
+        }
+        .unwrap();
+        let signal = ConsecutiveDown {
+            column: "close".into(),
+            count: 3,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.get(3).unwrap());
+        assert!(bools.get(7).unwrap());
+        assert!(!bools.get(4).unwrap());
+    }
+
+    #[test]
+    fn consecutive_down_no_streak() {
+        let df = df! {
+            "close" => &[100.0, 101.0, 102.0, 103.0]
+        }
+        .unwrap();
+        let signal = ConsecutiveDown {
+            column: "close".into(),
+            count: 2,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn rate_of_change_detects_change() {
+        let df = df! {
+            "close" => &[100.0, 100.0, 100.0, 120.0, 130.0]
+        }
+        .unwrap();
+        let signal = RateOfChange {
+            column: "close".into(),
+            period: 2,
+            threshold: 0.15,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        // index 3: (120 - 100) / 100 = 0.20 > 0.15
+        assert!(bools.get(3).unwrap());
+        // index 4: (130 - 100) / 100 = 0.30 > 0.15
+        assert!(bools.get(4).unwrap());
+        // index 2: (100 - 100) / 100 = 0.0 < 0.15
+        assert!(!bools.get(2).unwrap());
+    }
+
+    #[test]
+    fn rate_of_change_insufficient_period() {
+        let df = df! {
+            "close" => &[100.0, 200.0]
+        }
+        .unwrap();
+        let signal = RateOfChange {
+            column: "close".into(),
+            period: 5,
+            threshold: 0.01,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn drawdown_no_drawdown_in_uptrend() {
+        let df = df! {
+            "close" => &[100.0, 101.0, 102.0, 103.0, 104.0]
+        }
+        .unwrap();
+        let signal = DrawdownBelow {
+            column: "close".into(),
+            window: 3,
+            threshold: 0.01,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn gap_up_name() {
+        let signal = GapUp {
+            open_col: "open".into(),
+            close_col: "close".into(),
+            threshold: 0.01,
+        };
+        assert_eq!(signal.name(), "gap_up");
+    }
+
+    #[test]
+    fn gap_down_name() {
+        let signal = GapDown {
+            open_col: "open".into(),
+            close_col: "close".into(),
+            threshold: 0.01,
+        };
+        assert_eq!(signal.name(), "gap_down");
+    }
+
+    #[test]
+    fn drawdown_below_name() {
+        let signal = DrawdownBelow {
+            column: "close".into(),
+            window: 5,
+            threshold: 0.10,
+        };
+        assert_eq!(signal.name(), "drawdown_below");
+    }
+
+    #[test]
+    fn consecutive_up_name() {
+        let signal = ConsecutiveUp {
+            column: "close".into(),
+            count: 3,
+        };
+        assert_eq!(signal.name(), "consecutive_up");
+    }
+
+    #[test]
+    fn consecutive_down_name() {
+        let signal = ConsecutiveDown {
+            column: "close".into(),
+            count: 3,
+        };
+        assert_eq!(signal.name(), "consecutive_down");
+    }
+
+    #[test]
+    fn rate_of_change_name() {
+        let signal = RateOfChange {
+            column: "close".into(),
+            period: 5,
+            threshold: 0.05,
+        };
+        assert_eq!(signal.name(), "rate_of_change");
+    }
+
+    #[test]
+    fn gap_up_zero_close_handled() {
+        let df = df! {
+            "open"  => &[0.0, 100.0],
+            "close" => &[0.0, 100.0]
+        }
+        .unwrap();
+        let signal = GapUp {
+            open_col: "open".into(),
+            close_col: "close".into(),
+            threshold: 0.01,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        // close[0] == 0, so gap calculation should be skipped
+        assert!(!bools.get(1).unwrap());
+    }
 }
