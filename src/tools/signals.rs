@@ -60,9 +60,8 @@ pub fn execute() -> SignalsResponse {
             r#"{"type": "Or", "left": <signal>, "right": <signal>} — either must be true"#.into(),
         ],
         suggested_next_steps: vec![
-            "[Phase 2c → NEXT] Call construct_signal({ prompt: \"<signal_name>\" }) to get the JSON spec for a signal".into(),
-            "[Phase 0 → REQUIRED] Call fetch_to_parquet({ symbol, category: \"prices\" }) BEFORE using signals in run_backtest — signals REQUIRE OHLCV data".into(),
-            "[Phase 5 → THEN] Pass the signal JSON as entry_signal or exit_signal in run_backtest".into(),
+            "[NEXT] Call construct_signal({ prompt: \"<signal_name>\" }) to get the JSON spec for a signal".into(),
+            "[THEN] Pass the signal JSON as entry_signal or exit_signal in run_backtest — OHLCV data is auto-fetched".into(),
         ],
     }
 }

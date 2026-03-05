@@ -95,10 +95,11 @@ pub async fn execute_with_provider(
         },
         columns,
         suggested_next_steps: vec![
+            "[DONE] OHLCV data cached — you can now use entry_signal/exit_signal in run_backtest"
+                .to_string(),
             format!(
-                "[Phase 1 → NEXT] Call load_data({{ symbol: \"{upper}\" }}) to load options chain data (OHLCV data is now cached for signal usage)"
+                "[NEXT] Call run_backtest({{ strategy, symbol: \"{upper}\" }}) to run a simulation"
             ),
-            "[Phase 5 → LATER] OHLCV data is ready — you can now use entry_signal/exit_signal in run_backtest".to_string(),
         ],
     })
 }

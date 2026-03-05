@@ -33,10 +33,11 @@ fn format_suggest(result: SuggestResult) -> SuggestResponse {
 
     if result.confidence < 0.5 {
         suggested_next_steps.push(
-            "[Phase 0 → RETRY] Low confidence — consider calling download_options_data to fetch more historical data".to_string(),
+            "[RETRY] Low confidence — consider calling download_options_data to fetch more historical data".to_string(),
         );
         suggested_next_steps.push(
-            "[Phase 3 → RETRY] Try risk_preference: \"aggressive\" if current filters are too strict".to_string(),
+            "[RETRY] Try risk_preference: \"aggressive\" if current filters are too strict"
+                .to_string(),
         );
     }
 

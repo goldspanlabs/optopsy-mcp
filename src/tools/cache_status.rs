@@ -34,15 +34,13 @@ pub fn execute(
 
     let suggested_next_steps = if exists {
         vec![
-            format!(
-                "[Phase 1 → NEXT] Call load_data({{ symbol: \"{upper}\" }}) to load the cached data into memory"
-            ),
-            "[Phase 0 → OPTIONAL] Check last_updated to decide if data should be refreshed with fetch_to_parquet".to_string(),
+            format!("[NEXT] Call run_backtest({{ strategy, symbol: \"{upper}\" }}) — data is auto-loaded from cache"),
+            "[TIP] Check last_updated to decide if data should be refreshed".to_string(),
         ]
     } else {
         vec![
             format!(
-                "[Phase 0 → REQUIRED] Call fetch_to_parquet({{ symbol: \"{upper}\", category: \"prices\" }}) or download_options_data({{ symbol: \"{upper}\" }}) to download data first"
+                "[NEXT] Call download_options_data({{ symbol: \"{upper}\" }}) to download options data, or fetch_to_parquet for OHLCV prices"
             ),
         ]
     };

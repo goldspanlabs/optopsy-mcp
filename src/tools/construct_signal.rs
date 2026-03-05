@@ -1,5 +1,4 @@
 use super::response_types::{ConstructSignalResponse, SignalCandidate};
-use crate::data::cache::CachedStore;
 use crate::signals::registry::{SignalSpec, SIGNAL_CATALOG};
 use schemars::schema_for;
 use serde_json::{json, Value};
@@ -11,7 +10,7 @@ const DEFAULT_HIGH: &str = "high";
 const DEFAULT_LOW: &str = "low";
 const DEFAULT_VOLUME: &str = "volume";
 
-pub fn execute(prompt: &str, symbol: Option<&str>, cache: &CachedStore) -> ConstructSignalResponse {
+pub fn execute(prompt: &str) -> ConstructSignalResponse {
     // Fuzzy search SIGNAL_CATALOG for matches
     let (candidates, had_real_matches) = fuzzy_search(prompt);
 
@@ -63,46 +62,10 @@ pub fn execute(prompt: &str, symbol: Option<&str>, cache: &CachedStore) -> Const
         )
     };
 
-    let mut suggested_next_steps = Vec::new();
-
-    // OHLCV data status check — most important step for signal usage
-    if let Some(sym) = symbol {
-        let upper = sym.to_uppercase();
-        match cache.cache_path(&upper, "prices") {
-            Ok(path) => {
-                if path.exists() {
-                    suggested_next_steps.push(
-                        format!("[Phase 0 → DONE] OHLCV data for {upper} is cached and ready for signal usage"),
-                    );
-                } else {
-                    suggested_next_steps.push(
-                        format!(
-                            "[Phase 0 → REQUIRED] Call fetch_to_parquet({{ symbol: \"{upper}\", category: \"prices\" }}) BEFORE using signals in run_backtest"
-                        ),
-                    );
-                }
-            }
-            Err(_) => {
-                suggested_next_steps.push(
-                    format!(
-                        "[Phase 0 → REQUIRED] Call fetch_to_parquet({{ symbol: \"{upper}\", category: \"prices\" }}) — signals REQUIRE OHLCV data"
-                    ),
-                );
-            }
-        }
-    } else {
-        suggested_next_steps.push(
-            "[Phase 0 → REQUIRED] Signals REQUIRE OHLCV data. Call fetch_to_parquet({ symbol: \"<SYMBOL>\", category: \"prices\" }) BEFORE using signals in run_backtest".to_string(),
-        );
-    }
-
-    suggested_next_steps.push(
-        "[Phase 2c → DONE] Pick a candidate from above or use the schema to construct a custom SignalSpec".to_string(),
-    );
-    suggested_next_steps.push(
-        "[Phase 5 → THEN] Pass the JSON example as entry_signal or exit_signal in run_backtest"
-            .to_string(),
-    );
+    let suggested_next_steps = vec![
+        "Pick a candidate from above or use the schema to construct a custom SignalSpec".to_string(),
+        "Pass the JSON example as entry_signal or exit_signal in run_backtest — OHLCV data is auto-fetched when signals are used".to_string(),
+    ];
 
     ConstructSignalResponse {
         summary,
@@ -518,13 +481,7 @@ mod tests {
 
     #[test]
     fn execute_basic() {
-        use std::sync::Arc;
-        let cache = Arc::new(CachedStore::new(
-            std::env::temp_dir().join("optopsy_test_construct"),
-            "prices".to_string(),
-            None,
-        ));
-        let response = execute("RSI oversold", None, &cache);
+        let response = execute("RSI oversold");
         assert!(!response.candidates.is_empty());
         assert!(response.schema != serde_json::Value::Null);
         assert_eq!(response.column_defaults["close"], "adjclose");

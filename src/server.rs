@@ -589,14 +589,12 @@ use rmcp::handler::server::wrapper::Parameters;
 impl OptopsyServer {
     /// Bulk download options data from EODHD API (~2 years historical coverage).
     ///
-    /// **Workflow Phase**: 0 (optional, before `load_data`)
     /// **When to use**: Proactively download data before analysis, or to refresh cache
     /// **Prerequisites**: `EODHD_API_KEY` environment variable must be set
-    /// **Next tool**: `load_data` (will use cached data automatically)
+    /// **Next tool**: `run_backtest` (data is auto-loaded from cache)
     ///
     /// Downloads calls + puts across weekly/monthly expirations and caches locally.
     /// Resumable — re-run to extend cache with only new data.
-    /// For single ad-hoc loads, just call `load_data` directly (auto-fetches if needed).
     #[tool(
         name = "download_options_data",
         annotations(
@@ -620,7 +618,6 @@ impl OptopsyServer {
 
     /// Browse all 32 built-in options strategies grouped by category.
     ///
-    /// **Workflow Phase**: 2a/7 (exploration)
     /// **When to use**: To choose a strategy for analysis
     /// **Prerequisites**: None (informational, no data required)
     /// **Categories**: singles, spreads, straddles, strangles, butterflies, condors, iron, calendars, diagonals
@@ -632,8 +629,7 @@ impl OptopsyServer {
 
     /// Browse all 40+ available technical analysis (TA) signals for entry/exit filtering.
     ///
-    /// **Workflow Phase**: 2b/7 (exploration)
-    /// **When to use**: After `list_strategies`, to understand available signal options for filtering
+    /// **When to use**: To understand available signal options for entry/exit filtering
     /// **Prerequisites**: None (informational, no data required)
     /// **Categories**: momentum (RSI, MACD, Stoch), trend (SMA, EMA, ADX),
     ///   volatility (`BBands`, `ATR`), overlap, price, volume
@@ -646,7 +642,6 @@ impl OptopsyServer {
 
     /// Get status of currently loaded data.
     ///
-    /// **Workflow Phase**: 1c/7 (data context management)
     /// **When to use**: Check what symbol is currently loaded, row count, available columns
     /// **Prerequisites**: None (works with or without loaded data)
     /// **How it works**: Returns details about the in-memory `DataFrame` (symbol, rows, columns)
@@ -659,9 +654,8 @@ impl OptopsyServer {
 
     /// Construct a signal specification from natural language.
     ///
-    /// **Workflow Phase**: 2c/7 (signal design, optional)
     /// **When to use**: If you want to filter backtests by TA signals (e.g., "RSI oversold")
-    /// **Prerequisites**: `fetch_to_parquet()` must have been called first (to load OHLCV data)
+    /// **Prerequisites**: None (OHLCV data is auto-fetched when signals are used in `run_backtest`)
     /// **How it works**:
     ///   - Fuzzy-searches signal catalog for matches
     ///   - Returns candidate signals with sensible defaults
@@ -678,16 +672,11 @@ impl OptopsyServer {
         params
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
-        Ok(Json(tools::construct_signal::execute(
-            &params.prompt,
-            params.symbol.as_deref(),
-            self.cache.as_ref(),
-        )))
+        Ok(Json(tools::construct_signal::execute(&params.prompt)))
     }
 
     /// Build, validate, save, list, and manage custom formula-based signals.
     ///
-    /// **Workflow Phase**: 2d/7 (signal builder, optional)
     /// **When to use**: When built-in signals don't cover your needs and you want to
     ///   define custom entry/exit conditions using price column formulas
     /// **Prerequisites**: None (formulas are validated at parse time, data needed only at backtest)
@@ -858,7 +847,6 @@ impl OptopsyServer {
 
     /// Run multiple strategies in parallel and rank by performance metrics.
     ///
-    /// **Workflow Phase**: 6/7 (comparison & optimization)
     /// **When to use**: After validating one strategy via `run_backtest()`, to test
     ///   parameter variations and find the best-performing approach
     /// **Prerequisites**: None — data is auto-loaded from cache when you pass a symbol
@@ -915,18 +903,14 @@ impl OptopsyServer {
 
     /// Check if cached Parquet data exists and when it was last updated.
     ///
-    /// **Workflow Phase**: 0 (optional, before `load_data`/`fetch_to_parquet`)
     /// **When to use**: To avoid redundant downloads or to verify data staleness
     /// **Prerequisites**: None
-    /// **Next tools**: `load_data` or `fetch_to_parquet` (if cache is missing/stale)
     ///
     /// **Returns**:
     ///   - Cache exists (boolean)
     ///   - File path (if exists)
     ///   - File size and row count
     ///   - Last update timestamp
-    /// **Use case**: Before calling `load_data`/`fetch_to_parquet`, check if you need
-    ///   to download fresh data or if cache is recent enough
     #[tool(name = "check_cache_status", annotations(read_only_hint = true))]
     async fn check_cache_status(
         &self,
@@ -942,21 +926,13 @@ impl OptopsyServer {
 
     /// Download OHLCV price data from Yahoo Finance and cache locally as Parquet.
     ///
-    /// **Workflow Phase**: 0b (optional, before `run_backtest` with signals)
-    /// **When to use**: ONLY if you want to use `entry_signal` or `exit_signal` in `run_backtest`
+    /// **When to use**: To pre-download OHLCV data, or when you need price data
+    ///   independently of backtesting (e.g., for charting)
     /// **Prerequisites**: None
-    /// **Next tool**: `run_backtest` with `entry_signal`/`exit_signal` parameters
-    ///
-    /// **Why separate from `load_data`**:
-    ///   - `load_data()` loads options chain data (bid/ask/delta)
-    ///   - `fetch_to_parquet()` loads price bars (OHLCV) for TA indicators
-    ///   - Both can be loaded simultaneously
+    /// **Note**: OHLCV data is auto-fetched when signals are used in `run_backtest`,
+    ///   so this tool is only needed for explicit pre-caching or standalone use.
     /// **Categories**: Use "prices" for standard price data
     /// **Periods**: "5y" (default), "6mo", "1y", "max"
-    /// **Performance**: Downloads to ~/.optopsy/cache/prices/{SYMBOL}.parquet
-    ///
-    /// **Important**: Not needed for basic backtest (no signals).
-    ///   Only load if using `construct_signal` → enter signal JSON into `run_backtest`.
     #[tool(
         name = "fetch_to_parquet",
         annotations(
@@ -986,11 +962,9 @@ impl OptopsyServer {
 
     /// Return raw OHLCV price data for a symbol, ready for chart generation.
     ///
-    /// **Workflow Phase**: any (utility)
     /// **When to use**: When an LLM or user needs raw price data to generate charts
     ///   (candlestick, line, area) or perform custom analysis
     /// **Prerequisites**: `fetch_to_parquet()` must have been called first to cache OHLCV data
-    /// **Next tools**: Use the returned `prices` array directly for visualization
     ///
     /// **Returns**: Array of `{ date, open, high, low, close, adjclose, volume }` bars.
     /// Data is evenly sampled down to `limit` points (default 500 if omitted) to avoid
@@ -1023,7 +997,6 @@ impl OptopsyServer {
 
     /// Analyze the loaded options chain and suggest data-driven parameters.
     ///
-    /// **Workflow Phase**: 3/7 (parameter optimization)
     /// **When to use**: To get intelligent parameter suggestions
     ///   based on actual market data (DTE coverage, spread quality, delta distribution)
     /// **Prerequisites**: None — data is auto-loaded from cache when you pass a symbol

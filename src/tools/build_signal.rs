@@ -56,8 +56,8 @@ fn execute_create(
             saved_signals: vec![],
             formula_help: Some(formula_help()),
             suggested_next_steps: vec![
-                "[Phase 2d → RETRY] Fix the formula syntax and try again".to_string(),
-                "[Phase 2d → TIP] Use the formula_help field for syntax reference".to_string(),
+                "[RETRY]Fix the formula syntax and try again".to_string(),
+                "[TIP]Use the formula_help field for syntax reference".to_string(),
             ],
         };
     }
@@ -78,10 +78,10 @@ fn execute_create(
                     formula_help: None,
                     suggested_next_steps: vec![
                         format!(
-                            "[Phase 5 → NEXT] Use the existing signal: {{ \"type\": \"Saved\", \"name\": \"{existing_name}\" }}"
+                            "[NEXT]Use the existing signal: {{ \"type\": \"Saved\", \"name\": \"{existing_name}\" }}"
                         ),
                         format!(
-                            "[Phase 2d → TIP] Delete '{existing_name}' first with action='delete' if you want to replace it"
+                            "[TIP]Delete '{existing_name}' first with action='delete' if you want to replace it"
                         ),
                     ],
                 };
@@ -112,7 +112,7 @@ fn execute_create(
                 saved_signals: vec![],
                 formula_help: None,
                 suggested_next_steps: vec![
-                    "[Phase 2d → RETRY] Check file permissions for ~/.optopsy/signals/".to_string(),
+                    "[RETRY]Check file permissions for ~/.optopsy/signals/".to_string()
                 ],
             };
         }
@@ -130,10 +130,10 @@ fn execute_create(
             saved_signals: vec![],
             formula_help: None,
             suggested_next_steps: vec![
-                "[Phase 0 → REQUIRED] Call fetch_to_parquet({ symbol, category: \"prices\" }) if not already done — signals REQUIRE OHLCV data".to_string(),
-                "[Phase 5 → NEXT] Use this signal as entry_signal or exit_signal in run_backtest — you MUST also provide a strategy (e.g. short_put, iron_condor). Signals filter WHEN to trade, not WHAT to trade.".to_string(),
+                "[INFO] OHLCV data is auto-fetched when signals are used in run_backtest".to_string(),
+                "[NEXT]Use this signal as entry_signal or exit_signal in run_backtest — you MUST also provide a strategy (e.g. short_put, iron_condor). Signals filter WHEN to trade, not WHAT to trade.".to_string(),
                 format!(
-                    "[Phase 2d → TIP] Reference this signal later with: {{ \"type\": \"Saved\", \"name\": \"{name}\" }}"
+                    "[TIP]Reference this signal later with: {{ \"type\": \"Saved\", \"name\": \"{name}\" }}"
                 ),
             ],
         }
@@ -145,9 +145,9 @@ fn execute_create(
             saved_signals: vec![],
             formula_help: None,
             suggested_next_steps: vec![
-                "[Phase 0 → REQUIRED] Call fetch_to_parquet({ symbol, category: \"prices\" }) if not already done — signals REQUIRE OHLCV data".to_string(),
-                "[Phase 5 → NEXT] Use this signal as entry_signal or exit_signal in run_backtest — you MUST also provide a strategy (e.g. short_put, iron_condor). Signals filter WHEN to trade, not WHAT to trade.".to_string(),
-                "[Phase 2d → TIP] Call build_signal again with save=true to persist this signal".to_string(),
+                "[INFO] OHLCV data is auto-fetched when signals are used in run_backtest".to_string(),
+                "[NEXT]Use this signal as entry_signal or exit_signal in run_backtest — you MUST also provide a strategy (e.g. short_put, iron_condor). Signals filter WHEN to trade, not WHAT to trade.".to_string(),
+                "[TIP]Call build_signal again with save=true to persist this signal".to_string(),
             ],
         }
     }
@@ -178,13 +178,14 @@ fn execute_list() -> BuildSignalResponse {
                 formula_help: None,
                 suggested_next_steps: if count == 0 {
                     vec![
-                        "[Phase 2d → NEXT] Create a custom signal with build_signal action='create'".to_string(),
-                        "[Phase 2c → ALT] Use construct_signal to find built-in signals".to_string(),
+                        "[NEXT]Create a custom signal with build_signal action='create'"
+                            .to_string(),
+                        "[ALT]Use construct_signal to find built-in signals".to_string(),
                     ]
                 } else {
                     vec![
-                        "[Phase 5 → NEXT] Use a saved signal via { \"type\": \"Saved\", \"name\": \"signal_name\" } as entry_signal/exit_signal in run_backtest — you MUST also provide a strategy (e.g. short_put, iron_condor)".to_string(),
-                        "[Phase 2d → TIP] Delete signals you no longer need with action='delete'".to_string(),
+                        "[NEXT]Use a saved signal via { \"type\": \"Saved\", \"name\": \"signal_name\" } as entry_signal/exit_signal in run_backtest — you MUST also provide a strategy (e.g. short_put, iron_condor)".to_string(),
+                        "[TIP]Delete signals you no longer need with action='delete'".to_string(),
                     ]
                 },
             }
@@ -196,7 +197,7 @@ fn execute_list() -> BuildSignalResponse {
             saved_signals: vec![],
             formula_help: None,
             suggested_next_steps: vec![
-                "[Phase 2d → RETRY] Check permissions for ~/.optopsy/signals/".to_string(),
+                "[RETRY]Check permissions for ~/.optopsy/signals/".to_string()
             ],
         },
     }
@@ -211,8 +212,7 @@ fn execute_delete(name: &str) -> BuildSignalResponse {
             saved_signals: vec![],
             formula_help: None,
             suggested_next_steps: vec![
-                "[Phase 2d → NEXT] Use build_signal action='list' to see remaining signals"
-                    .to_string(),
+                "[NEXT]Use build_signal action='list' to see remaining signals".to_string(),
             ],
         },
         Err(e) => BuildSignalResponse {
@@ -222,8 +222,7 @@ fn execute_delete(name: &str) -> BuildSignalResponse {
             saved_signals: vec![],
             formula_help: None,
             suggested_next_steps: vec![
-                "[Phase 2d → RETRY] Check that the signal name exists with action='list'"
-                    .to_string(),
+                "[RETRY]Check that the signal name exists with action='list'".to_string(),
             ],
         },
     }
@@ -238,9 +237,8 @@ fn execute_validate(formula: &str) -> BuildSignalResponse {
             saved_signals: vec![],
             formula_help: None,
             suggested_next_steps: vec![
-                "[Phase 2d → NEXT] Call build_signal with action='create' to save this signal"
-                    .to_string(),
-                "[Phase 5 → THEN] Use the formula directly in a Custom signal spec for run_backtest"
+                "[NEXT]Call build_signal with action='create' to save this signal".to_string(),
+                "[THEN]Use the formula directly in a Custom signal spec for run_backtest"
                     .to_string(),
             ],
         },
@@ -251,8 +249,8 @@ fn execute_validate(formula: &str) -> BuildSignalResponse {
             saved_signals: vec![],
             formula_help: Some(formula_help()),
             suggested_next_steps: vec![
-                "[Phase 2d → RETRY] Fix the formula syntax and try again".to_string(),
-                "[Phase 2d → TIP] Use the formula_help field for syntax reference".to_string(),
+                "[RETRY]Fix the formula syntax and try again".to_string(),
+                "[TIP]Use the formula_help field for syntax reference".to_string(),
             ],
         },
     }
@@ -267,8 +265,8 @@ fn execute_get(name: &str) -> BuildSignalResponse {
             saved_signals: vec![],
             formula_help: None,
             suggested_next_steps: vec![
-                "[Phase 0 → REQUIRED] Call fetch_to_parquet({ symbol, category: \"prices\" }) if not already done — signals REQUIRE OHLCV data".to_string(),
-                "[Phase 5 → NEXT] Use this signal_spec as entry_signal or exit_signal in run_backtest — you MUST also provide a strategy (e.g. short_put, iron_condor). Signals filter WHEN to trade, not WHAT to trade.".to_string(),
+                "[INFO] OHLCV data is auto-fetched when signals are used in run_backtest".to_string(),
+                "[NEXT]Use this signal_spec as entry_signal or exit_signal in run_backtest — you MUST also provide a strategy (e.g. short_put, iron_condor). Signals filter WHEN to trade, not WHAT to trade.".to_string(),
             ],
         },
         Err(e) => BuildSignalResponse {
@@ -278,7 +276,7 @@ fn execute_get(name: &str) -> BuildSignalResponse {
             saved_signals: vec![],
             formula_help: None,
             suggested_next_steps: vec![
-                "[Phase 2d → RETRY] Check that the signal name exists with action='list'"
+                "[RETRY]Check that the signal name exists with action='list'"
                     .to_string(),
             ],
         },
