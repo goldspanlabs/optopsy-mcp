@@ -202,7 +202,7 @@ mod tests {
         let bools = result.bool().unwrap();
         // open[1]=111 vs close[0]=100: 11% gap up
         assert!(bools.get(1).unwrap());
-        // open[3]=121 vs close[2]=111: ~8.9% gap up
+        // open[3]=121 vs close[2]=111: ~8.1% gap up
         assert!(bools.get(3).unwrap());
         assert!(!bools.get(0).unwrap());
     }
