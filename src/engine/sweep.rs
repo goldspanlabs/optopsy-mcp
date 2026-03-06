@@ -133,6 +133,9 @@ pub fn split_by_date(df: &DataFrame, oos_pct: f64) -> Result<(DataFrame, DataFra
         .collect()?;
 
     let n = sorted.height();
+    if n < 2 {
+        bail!("out-of-sample validation requires at least 2 rows of data");
+    }
     let split_idx = ((n as f64) * (1.0 - oos_pct)).round() as usize;
     let split_idx = split_idx.clamp(1, n - 1);
 
@@ -313,7 +316,7 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
     }
 
     let mut combos: Vec<Combo> = Vec::new();
-    let mut seen_labels: HashSet<String> = HashSet::new();
+    let mut seen_dedup_keys: HashSet<String> = HashSet::new();
     let mut skipped = 0usize;
 
     for strat in &params.strategies {
@@ -350,8 +353,32 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
                             slippage,
                         );
 
-                        // Deduplicate
-                        if !seen_labels.insert(label.clone()) {
+                        // Build a full-precision dedup key to avoid false collisions
+                        // from the rounded display label (e.g. 0.301 vs 0.302 → same label).
+                        let delta_key: Vec<String> = leg_deltas
+                            .iter()
+                            .map(|d| format!("{:.6}:{:.6}:{:.6}", d.target, d.min, d.max))
+                            .collect();
+                        let slippage_key = match slippage {
+                            Slippage::Spread => "spread".to_string(),
+                            Slippage::Mid => "mid".to_string(),
+                            Slippage::Liquidity {
+                                fill_ratio,
+                                ref_volume,
+                            } => format!("liq:{fill_ratio:.6}:{ref_volume}"),
+                            Slippage::PerLeg { per_leg } => format!("pleg:{per_leg:.6}"),
+                        };
+                        let dedup_key = format!(
+                            "{}|{}|{}|{}|{}",
+                            strat.name,
+                            delta_key.join(","),
+                            dte_target,
+                            exit_dte,
+                            slippage_key,
+                        );
+
+                        // Deduplicate on the precise key; keep label only for display
+                        if !seen_dedup_keys.insert(dedup_key) {
                             skipped += 1;
                             continue;
                         }

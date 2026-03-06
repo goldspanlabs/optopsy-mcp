@@ -257,8 +257,12 @@ fn compare_dedup_key(entry: &CompareEntry) -> String {
         }
         Slippage::PerLeg { per_leg } => format!("pleg:{per_leg:.4}"),
     };
+    let commission_str = match &entry.commission {
+        None => "none".to_string(),
+        Some(c) => format!("{:.4}:{:.4}:{:.4}", c.per_contract, c.base_fee, c.min_fee),
+    };
     format!(
-        "{}|{}|{}:{}:{}|{}|{}",
+        "{}|{}|{}:{}:{}|{}|{}|{}",
         entry.name,
         deltas.join(","),
         entry.entry_dte.target,
@@ -266,6 +270,7 @@ fn compare_dedup_key(entry: &CompareEntry) -> String {
         entry.entry_dte.max,
         entry.exit_dte,
         slippage_str,
+        commission_str,
     )
 }
 

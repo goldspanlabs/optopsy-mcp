@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use crate::signals::registry::SignalSpec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
 pub enum Direction {
     Bullish,
     Bearish,
