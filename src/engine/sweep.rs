@@ -7,6 +7,7 @@ use super::core::run_backtest;
 use super::types::{
     BacktestParams, Direction, DteRange, SimParams, Slippage, SweepResult, TargetRange,
 };
+use crate::data::parquet::QUOTE_DATETIME_COL;
 use crate::engine::types::default_min_bid_ask;
 use crate::strategies;
 
@@ -125,7 +126,7 @@ pub fn split_by_date(df: &DataFrame, oos_pct: f64) -> Result<(DataFrame, DataFra
         bail!("out_of_sample_pct must be between 0 and 1 (exclusive)");
     }
 
-    let date_col = "quote_datetime";
+    let date_col = QUOTE_DATETIME_COL;
     let sorted = df
         .clone()
         .lazy()
