@@ -187,7 +187,6 @@ pub struct DownloadOptionsParams {
     pub symbol: String,
 }
 
-
 /// Resolve `leg_deltas`: use provided deltas or fall back to strategy defaults.
 fn resolve_leg_deltas(
     leg_deltas: Option<Vec<TargetRange>>,
