@@ -96,14 +96,10 @@ impl CachedStore {
             .join(format!("{symbol}.parquet"))
     }
 
-    /// S3 object key for a given symbol.
-    fn s3_key(&self, symbol: &str) -> String {
-        format!("{}/{symbol}.parquet", self.category)
-    }
-
-    /// Ensure the file exists locally, fetching from S3 if needed.
-    async fn ensure_local(&self, symbol: &str) -> Result<PathBuf> {
-        let path = self.local_path(symbol);
+    /// Ensure a file exists locally under the given category, fetching from S3 if needed.
+    pub async fn ensure_local_for(&self, symbol: &str, category: &str) -> Result<PathBuf> {
+        let upper = symbol.to_uppercase();
+        let path = self.cache_dir.join(category).join(format!("{upper}.parquet"));
 
         if path.exists() {
             tracing::info!(%symbol, path = %path.display(), "Cache hit (local parquet)");
@@ -112,7 +108,7 @@ impl CachedStore {
 
         // Try S3 fetch
         if let Some(bucket) = &self.bucket {
-            let key = self.s3_key(symbol);
+            let key = format!("{category}/{upper}.parquet");
             tracing::info!(%symbol, %key, "Fetching from S3");
 
             let response = bucket
@@ -154,7 +150,7 @@ impl DataStore for CachedStore {
         start_date: Option<NaiveDate>,
         end_date: Option<NaiveDate>,
     ) -> Result<DataFrame> {
-        let path = self.ensure_local(symbol).await?;
+        let path = self.ensure_local_for(symbol, &self.category).await?;
 
         let store = ParquetStore::new(&path.to_string_lossy());
         store.load_options(symbol, start_date, end_date).await

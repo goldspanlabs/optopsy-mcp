@@ -95,21 +95,21 @@ impl OptopsyServer {
     /// Ensure OHLCV price data exists for a symbol, auto-fetching from Yahoo Finance if needed.
     /// Returns the parquet file path.
     async fn ensure_ohlcv(&self, symbol: &str) -> Result<String, String> {
-        let path = self
-            .cache
-            .cache_path(symbol, "prices")
-            .map_err(|e| format!("Error resolving OHLCV path: {e}"))?;
-
-        if path.exists() {
+        // Try local cache, then S3 fallback
+        if let Ok(path) = self.cache.ensure_local_for(symbol, "prices").await {
             return Ok(path.to_string_lossy().to_string());
         }
 
-        tracing::info!(symbol = %symbol, "Auto-fetching OHLCV data for signal evaluation");
+        tracing::info!(symbol = %symbol, "Auto-fetching OHLCV data from Yahoo Finance");
 
         tools::fetch::execute(&self.cache, symbol, "prices", "5y")
             .await
             .map_err(|e| format!("Failed to auto-fetch OHLCV data for {symbol}: {e}"))?;
 
+        let path = self
+            .cache
+            .cache_path(symbol, "prices")
+            .map_err(|e| format!("Error resolving OHLCV path: {e}"))?;
         Ok(path.to_string_lossy().to_string())
     }
 
