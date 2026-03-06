@@ -756,12 +756,30 @@ fn resolve_strategy_entries(
         .into_iter()
         .map(|s| {
             let name = s.name.as_str().to_string();
+            let strategy_def = crate::strategies::find_strategy(&name)
+                .ok_or_else(|| format!("Unknown strategy: {name}"))?;
+
             let leg_delta_targets = if let Some(targets) = s.leg_delta_targets {
+                // Validate that the number of legs matches the strategy definition.
+                if targets.len() != strategy_def.legs.len() {
+                    return Err(format!(
+                        "Strategy '{}' expects {} leg(s) but {} leg delta target set(s) were provided",
+                        name,
+                        strategy_def.legs.len(),
+                        targets.len()
+                    ));
+                }
+                // Validate that each leg's sweep list is non-empty.
+                for (idx, leg_targets) in targets.iter().enumerate() {
+                    if leg_targets.is_empty() {
+                        return Err(format!(
+                            "Strategy '{name}' leg {idx} has an empty delta target list; each leg must have at least one target",
+                        ));
+                    }
+                }
                 targets
             } else {
                 // Use strategy defaults — single value per leg
-                let strategy_def = crate::strategies::find_strategy(&name)
-                    .ok_or_else(|| format!("Unknown strategy: {name}"))?;
                 strategy_def
                     .default_deltas()
                     .iter()
