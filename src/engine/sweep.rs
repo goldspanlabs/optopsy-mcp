@@ -209,6 +209,7 @@ fn build_sweep_label(
 
 /// Compute dimension sensitivity: group results by each dimension value,
 /// compute average Sharpe and `PnL`.
+/// Dimensions covered: `strategy`, `entry_dte`, `exit_dte`, `slippage`, and per-leg delta targets.
 pub fn compute_sensitivity(
     results: &[SweepResult],
 ) -> HashMap<String, HashMap<String, DimensionStats>> {
@@ -238,6 +239,34 @@ pub fn compute_sensitivity(
             .entry(r.exit_dte.to_string())
             .or_default()
             .push((r.sharpe, r.pnl));
+
+        // Slippage dimension
+        let slippage_key = match &r.slippage {
+            Slippage::Spread => "spread".to_string(),
+            Slippage::Mid => "mid".to_string(),
+            Slippage::Liquidity { fill_ratio, .. } => {
+                format!("liquidity({fill_ratio:.2})")
+            }
+            Slippage::PerLeg { per_leg } => format!("per_leg({per_leg:.2})"),
+        };
+        sensitivity
+            .entry("slippage".to_string())
+            .or_default()
+            .entry(slippage_key)
+            .or_default()
+            .push((r.sharpe, r.pnl));
+
+        // Per-leg delta dimensions
+        for (i, leg) in r.leg_deltas.iter().enumerate() {
+            let dim_key = format!("leg_{}_delta", i + 1);
+            let delta_key = format!("{:.2}", leg.target);
+            sensitivity
+                .entry(dim_key)
+                .or_default()
+                .entry(delta_key)
+                .or_default()
+                .push((r.sharpe, r.pnl));
+        }
     }
 
     sensitivity

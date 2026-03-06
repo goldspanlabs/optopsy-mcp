@@ -606,10 +606,10 @@ pub struct SweepStrategyInput {
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct SweepDimensionsInput {
     /// Entry DTE targets to sweep (e.g. [30, 45, 60])
-    #[garde(length(min = 1))]
+    #[garde(length(min = 1), inner(range(min = 1)))]
     pub entry_dte_targets: Vec<i32>,
     /// Exit DTE values to sweep (e.g. [0, 5, 10])
-    #[garde(length(min = 1))]
+    #[garde(length(min = 1), inner(range(min = 0)))]
     pub exit_dtes: Vec<i32>,
     /// Slippage models to sweep (default: [Spread])
     #[serde(default = "default_sweep_slippage")]
@@ -633,9 +633,9 @@ pub struct ParameterSweepParams {
     /// Shared simulation parameters
     #[garde(dive)]
     pub sim_params: SweepSimParams,
-    /// Out-of-sample percentage (0-100). Set to 0 to disable OOS validation. Default: 30.
+    /// Out-of-sample percentage [0, 100). Set to 0 to disable OOS validation. Default: 30.
     #[serde(default = "default_oos_pct")]
-    #[garde(range(min = 0.0, max = 100.0))]
+    #[garde(range(min = 0.0, max = 99.99))]
     pub out_of_sample_pct: f64,
     /// Filter strategies by market direction (bullish, bearish, neutral, volatile).
     /// If both `strategies` and `direction` provided, filters the list.
@@ -708,18 +708,30 @@ fn resolve_sweep_strategies(
             }
             resolve_strategy_entries(filtered)
         }
-        (Some(strats), None) => resolve_strategy_entries(strats),
+        (Some(strats), None) => {
+            if strats.is_empty() {
+                return Err("`strategies` list must not be empty. Provide at least one strategy or use `direction` to auto-select.".to_string());
+            }
+            resolve_strategy_entries(strats)
+        }
         (None, Some(dir)) => {
             // Auto-select all strategies matching direction
             let all = crate::strategies::all_strategies();
-            let matching: Vec<_> = all
+            let matching: Result<Vec<_>, String> = all
                 .into_iter()
                 .filter(|s| strategy_direction(&s.name) == dir)
-                .map(|s| SweepStrategyInput {
-                    name: str_to_strategy_param(&s.name).unwrap(),
-                    leg_delta_targets: None,
+                .map(|s| {
+                    str_to_strategy_param(&s.name)
+                        .map(|param| SweepStrategyInput {
+                            name: param,
+                            leg_delta_targets: None,
+                        })
+                        .ok_or_else(|| {
+                            format!("Unknown strategy name '{}' from all_strategies()", s.name)
+                        })
                 })
                 .collect();
+            let matching = matching?;
             if matching.is_empty() {
                 return Err(format!("No strategies match direction {dir:?}.",));
             }
