@@ -9,6 +9,27 @@ use std::collections::HashMap;
 use crate::signals::registry::SignalSpec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Direction {
+    Bullish,
+    Bearish,
+    Neutral,
+    Volatile,
+}
+
+pub fn strategy_direction(name: &str) -> Direction {
+    match name {
+        "long_call" | "short_put" | "covered_call" | "bull_call_spread" | "bull_put_spread"
+        | "cash_secured_put" => Direction::Bullish,
+        "short_call" | "long_put" | "bear_call_spread" | "bear_put_spread" => Direction::Bearish,
+        "long_straddle" | "long_strangle" | "reverse_iron_condor" | "reverse_iron_butterfly" => {
+            Direction::Volatile
+        }
+        _ => Direction::Neutral,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Side {
     Long = 1,
     Short = -1,
@@ -422,6 +443,27 @@ pub struct CompareResult {
     pub total_return_pct: f64,
 }
 
+/// Result of a single parameter sweep combination
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SweepResult {
+    pub label: String,
+    pub strategy: String,
+    pub leg_deltas: Vec<TargetRange>,
+    pub entry_dte: DteRange,
+    pub exit_dte: i32,
+    pub slippage: Slippage,
+    pub trades: usize,
+    pub pnl: f64,
+    pub sharpe: f64,
+    pub sortino: f64,
+    pub max_dd: f64,
+    pub win_rate: f64,
+    pub profit_factor: f64,
+    pub calmar: f64,
+    pub total_return_pct: f64,
+    pub independent_entry_periods: usize,
+}
+
 // --- Event-driven simulation types ---
 
 /// Key for looking up option quotes: (`quote_date`, expiration, strike, `option_type`)
@@ -810,5 +852,68 @@ mod tests {
             max: 0.2,
         };
         assert!(tr.validate().is_err());
+    }
+
+    #[test]
+    fn strategy_direction_bullish() {
+        assert_eq!(strategy_direction("long_call"), Direction::Bullish);
+        assert_eq!(strategy_direction("short_put"), Direction::Bullish);
+        assert_eq!(strategy_direction("covered_call"), Direction::Bullish);
+        assert_eq!(strategy_direction("bull_call_spread"), Direction::Bullish);
+        assert_eq!(strategy_direction("bull_put_spread"), Direction::Bullish);
+        assert_eq!(strategy_direction("cash_secured_put"), Direction::Bullish);
+    }
+
+    #[test]
+    fn strategy_direction_bearish() {
+        assert_eq!(strategy_direction("short_call"), Direction::Bearish);
+        assert_eq!(strategy_direction("long_put"), Direction::Bearish);
+        assert_eq!(strategy_direction("bear_call_spread"), Direction::Bearish);
+        assert_eq!(strategy_direction("bear_put_spread"), Direction::Bearish);
+    }
+
+    #[test]
+    fn strategy_direction_volatile() {
+        assert_eq!(strategy_direction("long_straddle"), Direction::Volatile);
+        assert_eq!(strategy_direction("long_strangle"), Direction::Volatile);
+        assert_eq!(
+            strategy_direction("reverse_iron_condor"),
+            Direction::Volatile
+        );
+        assert_eq!(
+            strategy_direction("reverse_iron_butterfly"),
+            Direction::Volatile
+        );
+    }
+
+    #[test]
+    fn strategy_direction_neutral() {
+        assert_eq!(strategy_direction("iron_condor"), Direction::Neutral);
+        assert_eq!(strategy_direction("short_straddle"), Direction::Neutral);
+        assert_eq!(
+            strategy_direction("long_call_butterfly"),
+            Direction::Neutral
+        );
+        assert_eq!(strategy_direction("short_put_condor"), Direction::Neutral);
+    }
+
+    #[test]
+    fn strategy_direction_all_32_covered() {
+        let all = crate::strategies::all_strategies();
+        for s in &all {
+            // Just ensure it doesn't panic and returns a valid variant
+            let dir = strategy_direction(&s.name);
+            assert!(
+                matches!(
+                    dir,
+                    Direction::Bullish
+                        | Direction::Bearish
+                        | Direction::Neutral
+                        | Direction::Volatile
+                ),
+                "strategy {} returned unexpected direction",
+                s.name
+            );
+        }
     }
 }

@@ -13,3 +13,4 @@ pub mod signals;
 pub mod status;
 pub mod strategies;
 pub mod suggest;
+pub mod sweep;

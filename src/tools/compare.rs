@@ -7,6 +7,6 @@ use super::ai_format;
 use super::response_types::CompareResponse;
 
 pub fn execute(df: &DataFrame, params: &CompareParams) -> Result<CompareResponse> {
-    let result = crate::engine::core::compare_strategies(df, params)?;
-    Ok(ai_format::format_compare(result, params))
+    let (results, labeled_entries) = crate::engine::core::compare_strategies(df, params)?;
+    Ok(ai_format::format_compare(results, &labeled_entries))
 }

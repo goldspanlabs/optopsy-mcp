@@ -1,16 +1,18 @@
 use std::collections::HashMap;
 
 use crate::engine::types::{
-    BacktestParams, BacktestQualityStats, BacktestResult, CompareParams, CompareResult, ExitType,
+    BacktestParams, BacktestQualityStats, BacktestResult, CompareEntry, CompareResult, ExitType,
     TradeRecord,
 };
+
+use crate::engine::sweep::SweepOutput;
 
 use crate::data::eodhd::DownloadSummary;
 
 use super::response_types::{
     BacktestDataQuality, BacktestParamsSummary, BacktestResponse, CompareResponse,
-    CompareStrategyEntry, DateRange, DownloadResponse, LoadDataResponse, PriceBar,
-    RawPricesResponse, StrategiesResponse, StrategyInfo, TradeStat, TradeSummary,
+    CompareStrategyEntry, DateRange, DownloadResponse, LoadDataResponse, OosValidation, PriceBar,
+    RawPricesResponse, StrategiesResponse, StrategyInfo, SweepResponse, TradeStat, TradeSummary,
 };
 
 fn assess_sharpe(sharpe: f64) -> &'static str {
@@ -368,7 +370,10 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
     }
 }
 
-pub fn format_compare(results: Vec<CompareResult>, params: &CompareParams) -> CompareResponse {
+pub fn format_compare(
+    results: Vec<CompareResult>,
+    labeled_entries: &[CompareEntry],
+) -> CompareResponse {
     // Build index-based rankings to avoid cloning the full results vec
     let mut sharpe_indices: Vec<usize> = (0..results.len()).collect();
     sharpe_indices.sort_by(|&a, &b| {
@@ -424,17 +429,20 @@ pub fn format_compare(results: Vec<CompareResult>, params: &CompareParams) -> Co
     };
 
     let mut suggested_next_steps = Vec::new();
-    if let Some(ref best) = best_overall {
+    if !results.is_empty() {
+        // Use the actual strategy name (not the display label) for actionable next steps
+        let best_idx = sharpe_indices[0];
+        let strategy_name = &labeled_entries[best_idx].name;
+        let best_label = &results[best_idx].strategy;
         suggested_next_steps.push(format!(
-            "[NEXT]Use run_backtest on {best} for detailed trade-level analysis",
+            "[NEXT] Use run_backtest(strategy=\"{strategy_name}\") on {best_label} for detailed trade-level analysis",
         ));
         suggested_next_steps.push(format!(
-            "[ITERATE]Use compare_strategies with parameter variations of {best} to further optimize",
+            "[ITERATE] Use compare_strategies with parameter variations of {strategy_name} to further optimize",
         ));
     }
 
-    let strategies_compared = params
-        .strategies
+    let strategies_compared = labeled_entries
         .iter()
         .map(|entry| CompareStrategyEntry {
             name: entry.name.clone(),
@@ -622,10 +630,71 @@ pub fn format_raw_prices(
     }
 }
 
+pub fn format_sweep(output: SweepOutput) -> SweepResponse {
+    let best = output.ranked_results.first().cloned();
+
+    let summary = if let Some(ref b) = best {
+        format!(
+            "Swept {} combinations; ran {} ({} skipped, {} failed). Best: {} (Sharpe {:.2}, {}).",
+            output.combinations_total,
+            output.combinations_run,
+            output.combinations_skipped,
+            output.combinations_failed,
+            b.label,
+            b.sharpe,
+            format_pnl(b.pnl),
+        )
+    } else {
+        format!(
+            "Swept {} combinations but none produced results ({} skipped, {} failed).",
+            output.combinations_total, output.combinations_skipped, output.combinations_failed,
+        )
+    };
+
+    let out_of_sample = if output.oos_results.is_empty() {
+        None
+    } else {
+        Some(OosValidation {
+            top_n_validated: output.oos_results.len(),
+            results: output.oos_results,
+        })
+    };
+
+    let mut suggested_next_steps = Vec::new();
+    if let Some(ref b) = best {
+        suggested_next_steps.push(format!(
+            "[NEXT] Use run_backtest(strategy=\"{}\") on best combo \"{}\" for detailed trade-level analysis",
+            b.strategy, b.label,
+        ));
+        suggested_next_steps.push(
+            "[ITERATE] Narrow delta/DTE ranges around the best combo and re-sweep".to_string(),
+        );
+    }
+    if output.combinations_run == 0 {
+        suggested_next_steps.push(
+            "[FIX] No valid combinations — widen DTE ranges, reduce exit_dtes, or add more strategies"
+                .to_string(),
+        );
+    }
+
+    SweepResponse {
+        summary,
+        combinations_total: output.combinations_total,
+        combinations_run: output.combinations_run,
+        combinations_skipped: output.combinations_skipped,
+        combinations_failed: output.combinations_failed,
+        best_combination: best,
+        dimension_sensitivity: output.dimension_sensitivity,
+        out_of_sample,
+        ranked_results: output.ranked_results,
+        suggested_next_steps,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::types::{DteRange, EquityPoint, TradeSelector};
+    use crate::engine::types::{DteRange, EquityPoint};
     use chrono::NaiveDateTime;
 
     fn make_trade(pnl: f64, days_held: i64, exit_type: ExitType) -> TradeRecord {
@@ -700,20 +769,7 @@ mod tests {
 
     #[test]
     fn format_compare_empty_results() {
-        let params = CompareParams {
-            strategies: vec![],
-            sim_params: crate::engine::types::SimParams {
-                capital: 10000.0,
-                quantity: 1,
-                multiplier: 100,
-                max_positions: 5,
-                selector: TradeSelector::default(),
-                stop_loss: None,
-                take_profit: None,
-                max_hold_days: None,
-            },
-        };
-        let response = format_compare(vec![], &params);
+        let response = format_compare(vec![], &[]);
         assert_eq!(response.summary, "No strategies to compare.");
         assert!(response.ranking_by_sharpe.is_empty());
         assert!(response.ranking_by_pnl.is_empty());
@@ -761,58 +817,46 @@ mod tests {
             },
         ];
 
-        let params = CompareParams {
-            strategies: vec![
-                crate::engine::types::CompareEntry {
-                    name: "alpha".to_string(),
-                    leg_deltas: vec![],
-                    entry_dte: DteRange {
-                        target: 45,
-                        min: 30,
-                        max: 60,
-                    },
-                    exit_dte: 7,
-                    slippage: crate::engine::types::Slippage::Mid,
-                    commission: None,
+        let labeled_entries = vec![
+            CompareEntry {
+                name: "alpha".to_string(),
+                leg_deltas: vec![],
+                entry_dte: DteRange {
+                    target: 45,
+                    min: 30,
+                    max: 60,
                 },
-                crate::engine::types::CompareEntry {
-                    name: "beta".to_string(),
-                    leg_deltas: vec![],
-                    entry_dte: DteRange {
-                        target: 45,
-                        min: 30,
-                        max: 60,
-                    },
-                    exit_dte: 7,
-                    slippage: crate::engine::types::Slippage::Mid,
-                    commission: None,
-                },
-                crate::engine::types::CompareEntry {
-                    name: "gamma".to_string(),
-                    leg_deltas: vec![],
-                    entry_dte: DteRange {
-                        target: 45,
-                        min: 30,
-                        max: 60,
-                    },
-                    exit_dte: 7,
-                    slippage: crate::engine::types::Slippage::Mid,
-                    commission: None,
-                },
-            ],
-            sim_params: crate::engine::types::SimParams {
-                capital: 10000.0,
-                quantity: 1,
-                multiplier: 100,
-                max_positions: 5,
-                selector: TradeSelector::default(),
-                stop_loss: None,
-                take_profit: None,
-                max_hold_days: None,
+                exit_dte: 7,
+                slippage: crate::engine::types::Slippage::Mid,
+                commission: None,
             },
-        };
+            CompareEntry {
+                name: "beta".to_string(),
+                leg_deltas: vec![],
+                entry_dte: DteRange {
+                    target: 45,
+                    min: 30,
+                    max: 60,
+                },
+                exit_dte: 7,
+                slippage: crate::engine::types::Slippage::Mid,
+                commission: None,
+            },
+            CompareEntry {
+                name: "gamma".to_string(),
+                leg_deltas: vec![],
+                entry_dte: DteRange {
+                    target: 45,
+                    min: 30,
+                    max: 60,
+                },
+                exit_dte: 7,
+                slippage: crate::engine::types::Slippage::Mid,
+                commission: None,
+            },
+        ];
 
-        let response = format_compare(results, &params);
+        let response = format_compare(results, &labeled_entries);
         assert_eq!(response.ranking_by_sharpe, vec!["beta", "gamma", "alpha"]);
         assert_eq!(response.ranking_by_pnl, vec!["gamma", "alpha", "beta"]);
         assert_eq!(response.best_overall, Some("beta".to_string()));
@@ -1132,5 +1176,173 @@ mod tests {
             .suggested_next_steps
             .iter()
             .any(|s| s.contains("Widen") || s.contains("DTE")));
+    }
+
+    #[test]
+    fn format_sweep_with_results() {
+        use crate::engine::sweep::SweepOutput;
+        use crate::engine::types::{DteRange, Slippage, SweepResult, TargetRange};
+        use std::collections::HashMap;
+
+        let results = vec![
+            SweepResult {
+                label: "long_call(Δ0.50,DTE45,exit0)".to_string(),
+                strategy: "long_call".to_string(),
+                leg_deltas: vec![TargetRange {
+                    target: 0.50,
+                    min: 0.45,
+                    max: 0.55,
+                }],
+                entry_dte: DteRange {
+                    target: 45,
+                    min: 31,
+                    max: 59,
+                },
+                exit_dte: 0,
+                slippage: Slippage::Mid,
+                trades: 10,
+                pnl: 500.0,
+                sharpe: 1.5,
+                sortino: 2.0,
+                max_dd: 0.05,
+                win_rate: 0.7,
+                profit_factor: 2.5,
+                calmar: 2.0,
+                total_return_pct: 5.0,
+                independent_entry_periods: 8,
+            },
+            SweepResult {
+                label: "long_call(Δ0.35,DTE45,exit0)".to_string(),
+                strategy: "long_call".to_string(),
+                leg_deltas: vec![TargetRange {
+                    target: 0.35,
+                    min: 0.30,
+                    max: 0.40,
+                }],
+                entry_dte: DteRange {
+                    target: 45,
+                    min: 31,
+                    max: 59,
+                },
+                exit_dte: 0,
+                slippage: Slippage::Mid,
+                trades: 8,
+                pnl: 200.0,
+                sharpe: 0.8,
+                sortino: 1.0,
+                max_dd: 0.08,
+                win_rate: 0.6,
+                profit_factor: 1.5,
+                calmar: 1.0,
+                total_return_pct: 2.0,
+                independent_entry_periods: 6,
+            },
+        ];
+
+        let output = SweepOutput {
+            combinations_total: 5,
+            combinations_run: 2,
+            combinations_skipped: 3,
+            combinations_failed: 0,
+            ranked_results: results,
+            dimension_sensitivity: HashMap::new(),
+            oos_results: vec![],
+        };
+
+        let response = format_sweep(output);
+        assert!(response.summary.contains("long_call(Δ0.50,DTE45,exit0)"));
+        assert!(response.summary.contains("1.50"));
+        assert!(response.best_combination.is_some());
+        assert_eq!(
+            response.best_combination.unwrap().label,
+            "long_call(Δ0.50,DTE45,exit0)"
+        );
+        assert_eq!(response.combinations_run, 2);
+        assert_eq!(response.combinations_skipped, 3);
+        assert!(response.out_of_sample.is_none());
+        assert!(response
+            .suggested_next_steps
+            .iter()
+            .any(|s| s.contains("run_backtest")));
+    }
+
+    #[test]
+    fn format_sweep_no_results() {
+        use crate::engine::sweep::SweepOutput;
+        use std::collections::HashMap;
+
+        let output = SweepOutput {
+            combinations_total: 10,
+            combinations_run: 0,
+            combinations_skipped: 10,
+            combinations_failed: 0,
+            ranked_results: vec![],
+            dimension_sensitivity: HashMap::new(),
+            oos_results: vec![],
+        };
+
+        let response = format_sweep(output);
+        assert!(response.summary.contains("none produced results"));
+        assert!(response.best_combination.is_none());
+        assert!(response
+            .suggested_next_steps
+            .iter()
+            .any(|s| s.contains("widen DTE")));
+    }
+
+    #[test]
+    fn format_sweep_with_oos() {
+        use crate::engine::sweep::{OosResult, SweepOutput};
+        use crate::engine::types::{DteRange, Slippage, SweepResult, TargetRange};
+        use std::collections::HashMap;
+
+        let output = SweepOutput {
+            combinations_total: 2,
+            combinations_run: 1,
+            combinations_skipped: 1,
+            combinations_failed: 0,
+            ranked_results: vec![SweepResult {
+                label: "test_combo".to_string(),
+                strategy: "long_call".to_string(),
+                leg_deltas: vec![TargetRange {
+                    target: 0.50,
+                    min: 0.45,
+                    max: 0.55,
+                }],
+                entry_dte: DteRange {
+                    target: 45,
+                    min: 31,
+                    max: 59,
+                },
+                exit_dte: 0,
+                slippage: Slippage::Mid,
+                trades: 5,
+                pnl: 100.0,
+                sharpe: 1.0,
+                sortino: 1.2,
+                max_dd: 0.05,
+                win_rate: 0.6,
+                profit_factor: 1.5,
+                calmar: 1.0,
+                total_return_pct: 1.0,
+                independent_entry_periods: 4,
+            }],
+            dimension_sensitivity: HashMap::new(),
+            oos_results: vec![OosResult {
+                label: "test_combo".to_string(),
+                train_sharpe: 1.0,
+                test_sharpe: 0.8,
+                train_pnl: 100.0,
+                test_pnl: 50.0,
+            }],
+        };
+
+        let response = format_sweep(output);
+        assert!(response.out_of_sample.is_some());
+        let oos = response.out_of_sample.unwrap();
+        assert_eq!(oos.top_n_validated, 1);
+        assert_eq!(oos.results.len(), 1);
+        assert!((oos.results[0].train_sharpe - 1.0).abs() < 1e-10);
+        assert!((oos.results[0].test_sharpe - 0.8).abs() < 1e-10);
     }
 }
