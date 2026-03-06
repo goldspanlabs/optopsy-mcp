@@ -267,8 +267,12 @@ fn build_compare_labels(entries: &[CompareEntry]) -> Vec<String> {
                     Slippage::PerLeg { .. } => ",pleg".to_string(),
                 };
                 format!(
-                    "{}(Δ{},DTE{}{})",
-                    entry.name, delta_str, entry.entry_dte.target, slippage_suffix
+                    "{}(Δ{},DTE{},exit{}{})",
+                    entry.name,
+                    delta_str,
+                    entry.entry_dte.target,
+                    entry.exit_dte,
+                    slippage_suffix
                 )
             }
         })
@@ -318,9 +322,9 @@ mod tests {
             make_entry("long_call", 0.40, 60),
         ];
         let labels = build_compare_labels(&entries);
-        assert_eq!(labels[0], "long_call(Δ0.30,DTE45)");
-        assert_eq!(labels[1], "long_call(Δ0.40,DTE45)");
-        assert_eq!(labels[2], "long_call(Δ0.40,DTE60)");
+        assert_eq!(labels[0], "long_call(Δ0.30,DTE45,exit7)");
+        assert_eq!(labels[1], "long_call(Δ0.40,DTE45,exit7)");
+        assert_eq!(labels[2], "long_call(Δ0.40,DTE60,exit7)");
     }
 
     #[test]
@@ -374,8 +378,8 @@ mod tests {
             },
         ];
         let labels = build_compare_labels(&entries);
-        assert_eq!(labels[0], "bull_call_spread(Δ0.50/0.10,DTE45)");
-        assert_eq!(labels[1], "bull_call_spread(Δ0.50/0.20,DTE45)");
+        assert_eq!(labels[0], "bull_call_spread(Δ0.50/0.10,DTE45,exit9)");
+        assert_eq!(labels[1], "bull_call_spread(Δ0.50/0.20,DTE45,exit9)");
     }
 
     #[test]
@@ -384,8 +388,8 @@ mod tests {
         entry_mid.slippage = Slippage::Mid;
         let entry_spread = make_entry("long_call", 0.30, 60);
         let labels = build_compare_labels(&[entry_mid, entry_spread]);
-        assert_eq!(labels[0], "long_call(Δ0.30,DTE45,mid)");
-        assert_eq!(labels[1], "long_call(Δ0.30,DTE60)");
+        assert_eq!(labels[0], "long_call(Δ0.30,DTE45,exit7,mid)");
+        assert_eq!(labels[1], "long_call(Δ0.30,DTE60,exit7)");
     }
 
     /// Build a daily options `DataFrame` with intermediate dates for event-driven backtest.
