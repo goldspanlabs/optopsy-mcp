@@ -17,12 +17,6 @@ async fn main() -> Result<()> {
 
     let cache = Arc::new(data::cache::CachedStore::from_env()?);
 
-    // Create EODHD provider if API key is configured
-    let eodhd = data::eodhd::EodhdProvider::from_env(&cache.cache_dir()).map(Arc::new);
-    if eodhd.is_some() {
-        tracing::info!("EODHD data provider configured");
-    }
-
     if let Ok(port) = std::env::var("PORT") {
         // HTTP mode — used by Railway and other cloud platforms
         use rmcp::transport::streamable_http_server::{
@@ -30,7 +24,7 @@ async fn main() -> Result<()> {
         };
 
         let service = StreamableHttpService::new(
-            move || Ok(server::OptopsyServer::new(cache.clone(), eodhd.clone())),
+            move || Ok(server::OptopsyServer::new(cache.clone())),
             LocalSessionManager::default().into(),
             StreamableHttpServerConfig::default(),
         );
@@ -52,7 +46,7 @@ async fn main() -> Result<()> {
         // stdio mode — used for local development with Claude Desktop
         tracing::info!("Starting optopsy-mcp MCP server (stdio)");
 
-        let server = server::OptopsyServer::new(cache, eodhd);
+        let server = server::OptopsyServer::new(cache);
         let service = server.serve(rmcp::transport::stdio()).await?;
         service.waiting().await?;
     }

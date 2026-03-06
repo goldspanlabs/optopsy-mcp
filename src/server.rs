@@ -12,7 +12,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::data::cache::CachedStore;
-use crate::data::eodhd::EodhdProvider;
 use crate::engine::types::{
     default_min_bid_ask, default_multiplier, validate_exit_dte_lt_entry_min, BacktestParams,
     Commission, CompareEntry, CompareParams, Direction, DteRange, SimParams, Slippage, TargetRange,
@@ -34,21 +33,19 @@ type LoadedData = HashMap<String, DataFrame>;
 pub struct OptopsyServer {
     pub data: Arc<RwLock<LoadedData>>,
     pub cache: Arc<CachedStore>,
-    pub eodhd: Option<Arc<EodhdProvider>>,
     tool_router: ToolRouter<Self>,
 }
 
 impl OptopsyServer {
-    pub fn new(cache: Arc<CachedStore>, eodhd: Option<Arc<EodhdProvider>>) -> Self {
+    pub fn new(cache: Arc<CachedStore>) -> Self {
         Self {
             data: Arc::new(RwLock::new(HashMap::new())),
             cache,
-            eodhd,
             tool_router: Self::tool_router(),
         }
     }
 
-    /// Ensure options data is loaded for a symbol, auto-loading from cache/EODHD if needed.
+    /// Ensure options data is loaded for a symbol, auto-loading from cache if needed.
     /// Returns `(symbol, DataFrame)`.
     async fn ensure_data_loaded(
         &self,
@@ -77,7 +74,6 @@ impl OptopsyServer {
         tools::load_data::execute(
             &self.data,
             &self.cache,
-            self.eodhd.as_ref(),
             sym,
             None,
             None,

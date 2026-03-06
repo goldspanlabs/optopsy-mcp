@@ -1,5 +1,4 @@
 pub mod cache;
-pub mod eodhd;
 pub mod parquet;
 #[cfg(feature = "postgres")]
 pub mod postgres;

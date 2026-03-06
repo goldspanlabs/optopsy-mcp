@@ -6,7 +6,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::data::cache::CachedStore;
-use crate::data::eodhd::EodhdProvider;
 use crate::data::parquet::QUOTE_DATETIME_COL;
 use crate::data::DataStore;
 
@@ -17,7 +16,6 @@ use super::response_types::{DateRange, LoadDataResponse};
 pub async fn execute(
     data: &Arc<RwLock<HashMap<String, DataFrame>>>,
     cache: &Arc<CachedStore>,
-    eodhd: Option<&Arc<EodhdProvider>>,
     symbol: &str,
     start_date: Option<&str>,
     end_date: Option<&str>,
@@ -40,7 +38,7 @@ pub async fn execute(
         "Loading options data"
     );
 
-    let df = load_with_fallback(cache, eodhd, &symbol, start, end).await?;
+    let df = cache.load_options(&symbol, start, end).await?;
 
     let rows = df.height();
     let columns: Vec<String> = df
@@ -93,71 +91,6 @@ pub async fn execute(
     Ok(ai_format::format_load_data(
         &symbol, rows, symbols, date_range, columns,
     ))
-}
-
-/// Try loading from cache; on miss, attempt EODHD download if configured.
-async fn load_with_fallback(
-    cache: &Arc<CachedStore>,
-    eodhd: Option<&Arc<EodhdProvider>>,
-    symbol: &str,
-    start: Option<NaiveDate>,
-    end: Option<NaiveDate>,
-) -> Result<DataFrame> {
-    match cache.load_options(symbol, start, end).await {
-        Ok(df) => {
-            tracing::info!(
-                symbol = %symbol,
-                rows = df.height(),
-                "✅ Loaded from cache (local parquet)"
-            );
-            Ok(df)
-        }
-        Err(cache_err) => {
-            let err_msg = cache_err.to_string();
-            let is_not_found = err_msg.contains("not found")
-                || err_msg.contains("No such file")
-                || err_msg.contains("returned status 404");
-
-            tracing::warn!(
-                symbol = %symbol,
-                error = %err_msg,
-                is_not_found = is_not_found,
-                "Cache load failed"
-            );
-
-            if is_not_found {
-                if let Some(provider) = eodhd {
-                    tracing::info!(
-                        symbol = %symbol,
-                        "⬇️ Cache miss detected. Downloading from EODHD API…"
-                    );
-                    provider.download_options(symbol).await?;
-                    tracing::info!(
-                        symbol = %symbol,
-                        "✅ Downloaded from EODHD. Retrying cache load…"
-                    );
-                    cache.load_options(symbol, start, end).await.map_err(|e| {
-                        anyhow::anyhow!(
-                            "Downloaded from EODHD but failed to load: {e} (original: {cache_err})"
-                        )
-                    })
-                } else {
-                    tracing::error!(
-                        symbol = %symbol,
-                        "❌ Cache miss AND EODHD provider not configured. Cannot load data."
-                    );
-                    Err(cache_err)
-                }
-            } else {
-                tracing::error!(
-                    symbol = %symbol,
-                    error = %err_msg,
-                    "❌ Non-cache-miss error (corrupt file, S3 auth, etc). Propagating error."
-                );
-                Err(cache_err)
-            }
-        }
-    }
 }
 
 fn format_scalar(s: &polars::prelude::Scalar) -> Option<String> {

@@ -40,7 +40,7 @@ fn make_sparse_df() -> DataFrame {
 
 // ─── Test Helpers ────────────────────────────────────────────────────────────
 
-/// Create an `OptopsyServer` backed by a temporary directory (no S3, no EODHD).
+/// Create an `OptopsyServer` backed by a temporary directory (no S3).
 fn make_test_server() -> (OptopsyServer, TempDir) {
     let tmp = TempDir::new().unwrap();
     let cache = Arc::new(CachedStore::new(
@@ -48,7 +48,7 @@ fn make_test_server() -> (OptopsyServer, TempDir) {
         "options".to_string(),
         None,
     ));
-    let server = OptopsyServer::new(cache, None);
+    let server = OptopsyServer::new(cache);
     (server, tmp)
 }
 
