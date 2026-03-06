@@ -105,9 +105,8 @@ async fn tool_router_lists_all_tools() {
     let tools = client.list_all_tools().await.unwrap();
     let tool_names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
 
-    assert_eq!(tools.len(), 13, "Expected 13 tools, got: {tool_names:?}");
+    assert_eq!(tools.len(), 12, "Expected 12 tools, got: {tool_names:?}");
     for expected in [
-        "download_options_data",
         "list_strategies",
         "list_signals",
         "get_loaded_symbol",
@@ -881,51 +880,7 @@ async fn check_cache_reports_existing_file() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Category 7: External API Graceful Failure
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn download_options_data_fails_without_eodhd() {
-    let (server, _tmp) = make_test_server();
-
-    let (server_tx, server_rx) = tokio::io::duplex(4096);
-    let (client_tx, client_rx) = tokio::io::duplex(4096);
-
-    let server_handle =
-        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
-
-    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
-        ().serve((server_rx, client_tx)).await.unwrap();
-
-    let result = client
-        .peer()
-        .call_tool(CallToolRequestParams {
-            meta: None,
-            name: "download_options_data".into(),
-            arguments: Some(serde_json::from_value(json!({"symbol": "SPY"})).unwrap()),
-            task: None,
-        })
-        .await
-        .unwrap();
-
-    assert!(result.is_error.unwrap_or(false));
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.raw.as_text())
-        .unwrap();
-    assert!(
-        text.text.contains("EODHD"),
-        "Expected EODHD not configured error, got: {}",
-        text.text
-    );
-
-    client.cancel().await.unwrap();
-    server_handle.await.unwrap();
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Category 8: MCP Protocol Round-Trip
+// Category 7: MCP Protocol Round-Trip
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

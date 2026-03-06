@@ -40,7 +40,7 @@ pub fn execute(
     } else {
         vec![
             format!(
-                "[NEXT] Call download_options_data({{ symbol: \"{upper}\" }}) to download options data, or fetch_to_parquet for OHLCV prices"
+                "[NEXT] Call load_data({{ symbol: \"{upper}\" }}) to load options data, or fetch_to_parquet for OHLCV prices"
             ),
         ]
     };

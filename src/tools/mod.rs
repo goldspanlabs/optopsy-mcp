@@ -4,7 +4,6 @@ pub mod build_signal;
 pub mod cache_status;
 pub mod compare;
 pub mod construct_signal;
-pub mod download;
 pub mod fetch;
 pub mod load_data;
 pub mod raw_prices;

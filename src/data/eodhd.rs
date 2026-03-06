@@ -34,7 +34,6 @@ const TIMEOUT_SECS: u64 = 60;
 const MAX_RETRIES: u32 = 5;
 const MIN_REQUEST_INTERVAL_MS: u64 = 100;
 const RATE_LIMIT_SLOW_THRESHOLD: u32 = 50;
-pub const API_CALLS_PER_REQUEST: u32 = 10;
 const MIN_WINDOW_DAYS: i64 = 1;
 const HISTORY_DAYS: i64 = 730; // ~2 years
 

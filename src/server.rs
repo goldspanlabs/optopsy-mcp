@@ -22,7 +22,7 @@ use crate::signals::registry::SignalSpec;
 use crate::tools;
 use crate::tools::response_types::{
     BacktestResponse, BuildSignalResponse, CheckCacheResponse, CompareResponse,
-    ConstructSignalResponse, DownloadResponse, FetchResponse, RawPricesResponse, StatusResponse,
+    ConstructSignalResponse, FetchResponse, RawPricesResponse, StatusResponse,
     StrategiesResponse, SuggestResponse, SweepResponse,
 };
 use crate::tools::signals::SignalsResponse;
@@ -178,13 +178,6 @@ fn validate_end_date_after_start(
         }
         Ok(())
     }
-}
-
-#[derive(Debug, Deserialize, JsonSchema, Validate)]
-pub struct DownloadOptionsParams {
-    /// US stock ticker symbol (e.g. "SPY", "AAPL", "TSLA")
-    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
-    pub symbol: String,
 }
 
 /// Resolve `leg_deltas`: use provided deltas or fall back to strategy defaults.
@@ -691,35 +684,6 @@ use rmcp::handler::server::wrapper::Parameters;
 
 #[tool_router]
 impl OptopsyServer {
-    /// Bulk download options data from EODHD API (~2 years historical coverage).
-    ///
-    /// **When to use**: Proactively download data before analysis, or to refresh cache
-    /// **Prerequisites**: `EODHD_API_KEY` environment variable must be set
-    /// **Next tool**: `run_backtest` (data is auto-loaded from cache)
-    ///
-    /// Downloads calls + puts across weekly/monthly expirations and caches locally.
-    /// Resumable — re-run to extend cache with only new data.
-    #[tool(
-        name = "download_options_data",
-        annotations(
-            destructive_hint = true,
-            idempotent_hint = false,
-            open_world_hint = true
-        )
-    )]
-    async fn download_options_data(
-        &self,
-        Parameters(params): Parameters<DownloadOptionsParams>,
-    ) -> Result<Json<DownloadResponse>, String> {
-        params
-            .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
-        tools::download::execute(self.eodhd.as_ref(), &params.symbol)
-            .await
-            .map(Json)
-            .map_err(|e| format!("Error: {e}"))
-    }
-
     /// Browse all 32 built-in options strategies grouped by category.
     ///
     /// **When to use**: To choose a strategy for analysis
