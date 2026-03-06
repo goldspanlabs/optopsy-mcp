@@ -15,7 +15,7 @@ use crate::data::cache::CachedStore;
 use crate::data::eodhd::EodhdProvider;
 use crate::engine::types::{
     default_min_bid_ask, default_multiplier, validate_exit_dte_lt_entry_min, BacktestParams,
-    Commission, CompareEntry, CompareParams, DteRange, SimParams, Slippage, TargetRange,
+    Commission, CompareEntry, CompareParams, Direction, DteRange, SimParams, Slippage, TargetRange,
     TradeSelector,
 };
 use crate::signals::registry::SignalSpec;
@@ -23,7 +23,7 @@ use crate::tools;
 use crate::tools::response_types::{
     BacktestResponse, BuildSignalResponse, CheckCacheResponse, CompareResponse,
     ConstructSignalResponse, DownloadResponse, FetchResponse, RawPricesResponse, StatusResponse,
-    StrategiesResponse, SuggestResponse,
+    StrategiesResponse, SuggestResponse, SweepResponse,
 };
 use crate::tools::signals::SignalsResponse;
 
@@ -221,7 +221,7 @@ fn default_entry_dte() -> DteRange {
 }
 
 fn default_exit_dte() -> i32 {
-    9
+    0
 }
 
 fn default_max_positions() -> i32 {
@@ -252,7 +252,7 @@ pub struct RunBacktestParams {
     #[serde(default = "default_entry_dte")]
     #[garde(dive)]
     pub entry_dte: DteRange,
-    /// DTE at exit (default: 9)
+    /// DTE at exit (default: 0 — hold to expiration)
     #[serde(default = "default_exit_dte")]
     #[garde(range(min = 0), custom(validate_exit_dte_lt_entry_min(&self.entry_dte)))]
     pub exit_dte: i32,
@@ -323,7 +323,7 @@ pub struct ServerCompareEntry {
     #[serde(default = "default_entry_dte")]
     #[garde(dive)]
     pub entry_dte: DteRange,
-    /// DTE at exit (default: 9)
+    /// DTE at exit (default: 0 — hold to expiration)
     #[serde(default = "default_exit_dte")]
     #[garde(range(min = 0), custom(validate_exit_dte_lt_entry_min(&self.entry_dte)))]
     pub exit_dte: i32,
@@ -581,6 +581,187 @@ pub struct SuggestParametersParams {
     #[serde(default)]
     #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
     pub symbol: Option<String>,
+}
+
+fn default_sweep_max_positions() -> i32 {
+    3
+}
+
+fn default_oos_pct() -> f64 {
+    30.0
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+pub struct SweepStrategyInput {
+    /// Strategy name
+    #[garde(skip)]
+    pub name: StrategyParam,
+    /// Per-leg delta targets to sweep. Each inner Vec is one leg's sweep values.
+    /// Omit to use strategy defaults (no delta sweep).
+    #[serde(default)]
+    #[garde(skip)]
+    pub leg_delta_targets: Option<Vec<Vec<f64>>>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+pub struct SweepDimensionsInput {
+    /// Entry DTE targets to sweep (e.g. [30, 45, 60])
+    #[garde(length(min = 1))]
+    pub entry_dte_targets: Vec<i32>,
+    /// Exit DTE values to sweep (e.g. [0, 5, 10])
+    #[garde(length(min = 1))]
+    pub exit_dtes: Vec<i32>,
+    /// Slippage models to sweep (default: [Spread])
+    #[serde(default = "default_sweep_slippage")]
+    #[garde(length(min = 1), dive)]
+    pub slippage_models: Vec<Slippage>,
+}
+
+fn default_sweep_slippage() -> Vec<Slippage> {
+    vec![Slippage::Spread]
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+pub struct ParameterSweepParams {
+    /// Strategies to sweep (optional if `direction` is provided)
+    #[serde(default)]
+    #[garde(dive)]
+    pub strategies: Option<Vec<SweepStrategyInput>>,
+    /// Sweep dimensions: DTE targets, exit DTEs, slippage models
+    #[garde(dive)]
+    pub sweep: SweepDimensionsInput,
+    /// Shared simulation parameters
+    #[garde(dive)]
+    pub sim_params: SweepSimParams,
+    /// Out-of-sample percentage (0-100). Set to 0 to disable OOS validation. Default: 30.
+    #[serde(default = "default_oos_pct")]
+    #[garde(range(min = 0.0, max = 100.0))]
+    pub out_of_sample_pct: f64,
+    /// Filter strategies by market direction (bullish, bearish, neutral, volatile).
+    /// If both `strategies` and `direction` provided, filters the list.
+    /// If only `direction`, auto-selects matching strategies.
+    #[serde(default)]
+    #[garde(skip)]
+    pub direction: Option<Direction>,
+    /// Symbol to sweep (required if multiple symbols loaded)
+    #[serde(default)]
+    #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
+    pub symbol: Option<String>,
+}
+
+/// `SimParams` variant with sweep-friendly defaults (`max_positions=3`)
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+pub struct SweepSimParams {
+    /// Starting capital (default: 10000)
+    #[serde(default = "default_capital")]
+    #[garde(range(min = 0.01))]
+    pub capital: f64,
+    /// Contracts per trade (default: 1)
+    #[serde(default = "default_quantity")]
+    #[garde(range(min = 1))]
+    pub quantity: i32,
+    /// Contract multiplier (default: 100)
+    #[serde(default = "default_multiplier")]
+    #[garde(range(min = 1))]
+    pub multiplier: i32,
+    /// Max concurrent positions (default: 3)
+    #[serde(default = "default_sweep_max_positions")]
+    #[garde(range(min = 1))]
+    pub max_positions: i32,
+    /// Trade selector
+    #[serde(default)]
+    #[garde(skip)]
+    pub selector: TradeSelector,
+    /// Stop loss threshold
+    #[garde(inner(range(min = 0.0)))]
+    pub stop_loss: Option<f64>,
+    /// Take profit threshold
+    #[garde(inner(range(min = 0.0)))]
+    pub take_profit: Option<f64>,
+    /// Max hold days
+    #[garde(inner(range(min = 1)))]
+    pub max_hold_days: Option<i32>,
+}
+
+/// Resolve sweep strategies from input params.
+/// If both strategies and direction provided, filter list by direction.
+/// If only direction, auto-select matching strategies.
+/// If only strategies, use as-is.
+/// If neither, error.
+fn resolve_sweep_strategies(
+    strategies: Option<Vec<SweepStrategyInput>>,
+    direction: Option<Direction>,
+) -> Result<Vec<crate::engine::sweep::SweepStrategyEntry>, String> {
+    use crate::engine::types::strategy_direction;
+
+    match (strategies, direction) {
+        (Some(strats), Some(dir)) => {
+            // Filter provided list by direction
+            let filtered: Vec<_> = strats
+                .into_iter()
+                .filter(|s| strategy_direction(s.name.as_str()) == dir)
+                .collect();
+            if filtered.is_empty() {
+                return Err(format!(
+                    "No provided strategies match direction {dir:?}. Remove the direction filter or add matching strategies.",
+                ));
+            }
+            resolve_strategy_entries(filtered)
+        }
+        (Some(strats), None) => resolve_strategy_entries(strats),
+        (None, Some(dir)) => {
+            // Auto-select all strategies matching direction
+            let all = crate::strategies::all_strategies();
+            let matching: Vec<_> = all
+                .into_iter()
+                .filter(|s| strategy_direction(&s.name) == dir)
+                .map(|s| SweepStrategyInput {
+                    name: str_to_strategy_param(&s.name).unwrap(),
+                    leg_delta_targets: None,
+                })
+                .collect();
+            if matching.is_empty() {
+                return Err(format!("No strategies match direction {dir:?}.",));
+            }
+            resolve_strategy_entries(matching)
+        }
+        (None, None) => Err("Either `strategies` or `direction` must be provided. \
+             Use `direction` to auto-select strategies by market outlook, \
+             or provide explicit `strategies` list."
+            .to_string()),
+    }
+}
+
+fn str_to_strategy_param(name: &str) -> Option<StrategyParam> {
+    // Build a reverse mapping using serde
+    serde_json::from_value(serde_json::Value::String(name.to_string())).ok()
+}
+
+fn resolve_strategy_entries(
+    strats: Vec<SweepStrategyInput>,
+) -> Result<Vec<crate::engine::sweep::SweepStrategyEntry>, String> {
+    strats
+        .into_iter()
+        .map(|s| {
+            let name = s.name.as_str().to_string();
+            let leg_delta_targets = if let Some(targets) = s.leg_delta_targets {
+                targets
+            } else {
+                // Use strategy defaults — single value per leg
+                let strategy_def = crate::strategies::find_strategy(&name)
+                    .ok_or_else(|| format!("Unknown strategy: {name}"))?;
+                strategy_def
+                    .default_deltas()
+                    .iter()
+                    .map(|d| vec![d.target])
+                    .collect()
+            };
+            Ok(crate::engine::sweep::SweepStrategyEntry {
+                name,
+                leg_delta_targets,
+            })
+        })
+        .collect()
 }
 
 use rmcp::handler::server::wrapper::Parameters;
@@ -845,6 +1026,67 @@ impl OptopsyServer {
             .map_err(|e| format!("Error: {e}"))
     }
 
+    /// Sweep parameter combinations across strategies, DTE, exit DTE, and slippage.
+    ///
+    /// **When to use**: To find optimal parameter combinations without manually building
+    ///   `compare_strategies` entries. Generates cartesian product internally and ranks by Sharpe.
+    /// **Prerequisites**: None — data is auto-loaded from cache when you pass a symbol.
+    ///
+    /// **How it works**:
+    ///   1. Generates cartesian product of delta targets × DTE targets × exit DTEs × slippage models
+    ///   2. Filters invalid combos (`exit_dte` >= entry DTE min, inverted delta orderings)
+    ///   3. Deduplicates identical combinations
+    ///   4. Runs backtest on each combo (hard cap: 100 combinations)
+    ///   5. Ranks by Sharpe ratio, computes dimension sensitivity
+    ///   6. Optionally validates top 3 on out-of-sample data (default: 30% holdout)
+    ///
+    /// **Modes**:
+    ///   - Provide `strategies` list: sweep specific strategies with custom delta grids
+    ///   - Provide `direction` only: auto-select all matching strategies (bullish/bearish/neutral/volatile)
+    ///   - Both: filter provided list by direction
+    ///
+    /// **Output**: Ranked results, dimension sensitivity analysis, OOS validation
+    #[tool(name = "parameter_sweep", annotations(read_only_hint = true))]
+    async fn parameter_sweep(
+        &self,
+        Parameters(params): Parameters<ParameterSweepParams>,
+    ) -> Result<Json<SweepResponse>, String> {
+        params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
+
+        let (_, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
+
+        let strategies = resolve_sweep_strategies(params.strategies, params.direction)?;
+
+        let sweep_params = crate::engine::sweep::SweepParams {
+            strategies,
+            sweep: crate::engine::sweep::SweepDimensions {
+                entry_dte_targets: params.sweep.entry_dte_targets,
+                exit_dtes: params.sweep.exit_dtes,
+                slippage_models: params.sweep.slippage_models,
+            },
+            sim_params: SimParams {
+                capital: params.sim_params.capital,
+                quantity: params.sim_params.quantity,
+                multiplier: params.sim_params.multiplier,
+                max_positions: params.sim_params.max_positions,
+                selector: params.sim_params.selector,
+                stop_loss: params.sim_params.stop_loss,
+                take_profit: params.sim_params.take_profit,
+                max_hold_days: params.sim_params.max_hold_days,
+            },
+            out_of_sample_pct: params.out_of_sample_pct / 100.0,
+            direction: params.direction,
+        };
+
+        tokio::task::spawn_blocking(move || tools::sweep::execute(&df, &sweep_params))
+            .await
+            .map_err(|e| format!("Sweep task panicked: {e}"))?
+            .map(Json)
+            .map_err(|e| format!("Error: {e}"))
+    }
+
     /// Run multiple strategies in parallel and rank by performance metrics.
     ///
     /// **When to use**: After validating one strategy via `run_backtest()`, to test
@@ -1082,12 +1324,18 @@ impl ServerHandler for OptopsyServer {
                 \n  - OHLCV data is auto-fetched when signals are used\
                 \n\
                 \n### 4. Compare & Optimize (optional)\
-                \n  - compare_strategies({ strategies, sim_params, symbol }) — side-by-side ranking\
+                \n  - parameter_sweep — PREFERRED for optimization. Generates cartesian product of delta/DTE/slippage combos automatically.\
+                \n    Use `direction` to auto-select strategies by market outlook (bullish/bearish/neutral/volatile),\
+                \n    or provide explicit `strategies` list with `leg_delta_targets` grids.\
+                \n    Includes out-of-sample validation (default 30%) and dimension sensitivity analysis.\
+                \n  - compare_strategies — use for manual side-by-side comparison of 2-3 specific configurations\
+                \n    you've already chosen. NOT for grid search (use parameter_sweep instead).\
                 \n\
                 \n## RULES\
                 \n- strategy is ALWAYS REQUIRED for backtest/suggest — signals do NOT replace strategies\
                 \n- Signals only filter WHEN to trade; the strategy defines WHAT option legs to trade\
                 \n- NEVER pass strategy: null — pick one like short_put, iron_condor, etc.\
+                \n- For optimization, prefer parameter_sweep over manually enumerating compare_strategies entries\
                 \n- Each tool response includes suggested_next_steps — follow them"
                     .into(),
             ),

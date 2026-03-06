@@ -2,9 +2,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::engine::sweep::{DimensionStats, OosResult};
 use crate::engine::types::{
-    Commission, CompareResult, DteRange, PerformanceMetrics, Slippage, TargetRange, TradeRecord,
-    TradeSelector,
+    Commission, CompareResult, DteRange, PerformanceMetrics, Slippage, SweepResult, TargetRange,
+    TradeRecord, TradeSelector,
 };
 use crate::signals::registry::SignalSpec;
 
@@ -317,5 +318,26 @@ pub struct ConstructSignalResponse {
     pub column_defaults: serde_json::Value,
     /// Example JSON structures showing how to combine signals using And/Or operators
     pub combinator_examples: Vec<serde_json::Value>,
+    pub suggested_next_steps: Vec<String>,
+}
+
+/// OOS validation summary
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct OosValidation {
+    pub top_n_validated: usize,
+    pub results: Vec<OosResult>,
+}
+
+/// AI-enriched response for `parameter_sweep`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SweepResponse {
+    pub summary: String,
+    pub combinations_total: usize,
+    pub combinations_run: usize,
+    pub combinations_skipped: usize,
+    pub best_combination: Option<SweepResult>,
+    pub dimension_sensitivity: HashMap<String, HashMap<String, DimensionStats>>,
+    pub out_of_sample: Option<OosValidation>,
+    pub ranked_results: Vec<SweepResult>,
     pub suggested_next_steps: Vec<String>,
 }

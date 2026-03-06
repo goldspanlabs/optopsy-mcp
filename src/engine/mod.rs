@@ -5,5 +5,6 @@ pub mod metrics;
 pub mod pricing;
 pub mod rules;
 pub mod suggest;
+pub mod sweep;
 pub mod types;
 pub mod vectorized_sim;
