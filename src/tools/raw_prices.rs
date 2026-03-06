@@ -127,12 +127,15 @@ pub async fn load_and_execute(
     limit: Option<usize>,
 ) -> Result<RawPricesResponse> {
     let upper = symbol.to_uppercase();
-    let path = cache.ensure_local_for(&upper, "prices").await.map_err(|_| {
-        anyhow::anyhow!(
-            "No OHLCV price data cached for {upper}. \
+    let path = cache
+        .ensure_local_for(&upper, "prices")
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "No OHLCV price data cached for {upper}. \
              Call fetch_to_parquet({{ symbol: \"{upper}\", category: \"prices\" }}) first."
-        )
-    })?;
+            )
+        })?;
 
     // Read parquet into DataFrame
     let df = tokio::task::spawn_blocking(move || -> Result<DataFrame> {

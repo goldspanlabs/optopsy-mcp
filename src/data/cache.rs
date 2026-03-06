@@ -99,7 +99,10 @@ impl CachedStore {
     /// Ensure a file exists locally under the given category, fetching from S3 if needed.
     pub async fn ensure_local_for(&self, symbol: &str, category: &str) -> Result<PathBuf> {
         let upper = symbol.to_uppercase();
-        let path = self.cache_dir.join(category).join(format!("{upper}.parquet"));
+        let path = self
+            .cache_dir
+            .join(category)
+            .join(format!("{upper}.parquet"));
 
         if path.exists() {
             tracing::info!(%symbol, path = %path.display(), "Cache hit (local parquet)");
