@@ -268,11 +268,7 @@ fn build_compare_labels(entries: &[CompareEntry]) -> Vec<String> {
                 };
                 format!(
                     "{}(Δ{},DTE{},exit{}{})",
-                    entry.name,
-                    delta_str,
-                    entry.entry_dte.target,
-                    entry.exit_dte,
-                    slippage_suffix
+                    entry.name, delta_str, entry.entry_dte.target, entry.exit_dte, slippage_suffix
                 )
             }
         })

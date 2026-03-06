@@ -727,10 +727,7 @@ fn resolve_sweep_strategies(
                             leg_delta_targets: None,
                         })
                         .ok_or_else(|| {
-                            format!(
-                                "Unknown strategy name '{}' from all_strategies()",
-                                s.name
-                            )
+                            format!("Unknown strategy name '{}' from all_strategies()", s.name)
                         })
                 })
                 .collect();
