@@ -14,9 +14,10 @@ use super::registry::SignalSpec;
 static TEST_SIGNALS_DIR: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 
 /// Get the signals storage directory, creating it if needed.
+///
+/// When `DATA_ROOT` is set (e.g. `/data/cache`), signals are stored as a sibling
+/// directory: `/data/signals`. Otherwise falls back to `~/.optopsy/signals`.
 fn signals_dir() -> Result<PathBuf> {
-    const TEMPLATE: &str = "~/.optopsy/signals";
-
     #[cfg(test)]
     {
         if let Ok(guard) = TEST_SIGNALS_DIR.lock() {
@@ -29,12 +30,16 @@ fn signals_dir() -> Result<PathBuf> {
         }
     }
 
-    let expanded = shellexpand::tilde(TEMPLATE);
-    // If tilde was not expanded (no HOME set), fall back to a tmp-based path
-    let dir = if expanded.as_ref() == TEMPLATE {
-        std::env::temp_dir().join("optopsy").join("signals")
+    let dir = if let Ok(val) = std::env::var("DATA_ROOT") {
+        let data_root = PathBuf::from(val);
+        data_root.parent().unwrap_or(&data_root).join("signals")
     } else {
-        PathBuf::from(expanded.as_ref())
+        let expanded = shellexpand::tilde("~/.optopsy/signals");
+        if expanded.as_ref() == "~/.optopsy/signals" {
+            std::env::temp_dir().join("optopsy").join("signals")
+        } else {
+            PathBuf::from(expanded.as_ref())
+        }
     };
     if !dir.exists() {
         fs::create_dir_all(&dir).context("Failed to create signals directory")?;

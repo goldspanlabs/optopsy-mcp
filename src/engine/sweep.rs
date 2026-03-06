@@ -450,9 +450,9 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
             max_positions: params.sim_params.max_positions,
             selector: params.sim_params.selector.clone(),
             adjustment_rules: vec![],
-            entry_signal: None,
-            exit_signal: None,
-            ohlcv_path: None,
+            entry_signal: params.sim_params.entry_signal.clone(),
+            exit_signal: params.sim_params.exit_signal.clone(),
+            ohlcv_path: params.sim_params.ohlcv_path.clone(),
         };
 
         match run_backtest(&train_df, &backtest_params) {
@@ -516,9 +516,9 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
                 max_positions: params.sim_params.max_positions,
                 selector: params.sim_params.selector.clone(),
                 adjustment_rules: vec![],
-                entry_signal: None,
-                exit_signal: None,
-                ohlcv_path: None,
+                entry_signal: params.sim_params.entry_signal.clone(),
+                exit_signal: params.sim_params.exit_signal.clone(),
+                ohlcv_path: params.sim_params.ohlcv_path.clone(),
             };
 
             match run_backtest(test_df, &backtest_params) {
@@ -735,6 +735,9 @@ mod tests {
             stop_loss: None,
             take_profit: None,
             max_hold_days: None,
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
         };
         let params = SweepParams {
             strategies,
@@ -794,6 +797,9 @@ mod tests {
             stop_loss: None,
             take_profit: None,
             max_hold_days: None,
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
         };
         let params = SweepParams {
             strategies,

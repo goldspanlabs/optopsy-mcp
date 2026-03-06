@@ -21,8 +21,8 @@ use crate::signals::registry::SignalSpec;
 use crate::tools;
 use crate::tools::response_types::{
     BacktestResponse, BuildSignalResponse, CheckCacheResponse, CompareResponse,
-    ConstructSignalResponse, FetchResponse, RawPricesResponse, StatusResponse,
-    StrategiesResponse, SuggestResponse, SweepResponse,
+    ConstructSignalResponse, FetchResponse, RawPricesResponse, StatusResponse, StrategiesResponse,
+    SuggestResponse, SweepResponse,
 };
 use crate::tools::signals::SignalsResponse;
 
@@ -71,15 +71,9 @@ impl OptopsyServer {
 
         tracing::info!(symbol = %sym, "Auto-loading options data from cache");
 
-        tools::load_data::execute(
-            &self.data,
-            &self.cache,
-            sym,
-            None,
-            None,
-        )
-        .await
-        .map_err(|e| format!("Failed to auto-load data for {sym}: {e}"))?;
+        tools::load_data::execute(&self.data, &self.cache, sym, None, None)
+            .await
+            .map_err(|e| format!("Failed to auto-load data for {sym}: {e}"))?;
 
         // Read back the loaded data
         let data = self.data.read().await;
@@ -321,6 +315,16 @@ pub struct CompareStrategiesParams {
     /// Shared simulation parameters
     #[garde(dive)]
     pub sim_params: SimParams,
+    /// Entry signal — only open trades on dates where this TA signal fires.
+    /// Requires OHLCV data (call `fetch_to_parquet` first).
+    #[serde(default)]
+    #[garde(skip)]
+    pub entry_signal: Option<SignalSpec>,
+    /// Exit signal — close open positions on dates where this TA signal fires.
+    /// Requires OHLCV data (call `fetch_to_parquet` first).
+    #[serde(default)]
+    #[garde(skip)]
+    pub exit_signal: Option<SignalSpec>,
     /// Symbol to compare strategies on (required if multiple symbols are loaded; optional if only one is loaded)
     #[serde(default)]
     #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
@@ -572,6 +576,16 @@ pub struct SweepSimParams {
     /// Max hold days
     #[garde(inner(range(min = 1)))]
     pub max_hold_days: Option<i32>,
+    /// Entry signal — only open trades on dates where this TA signal fires.
+    /// Requires OHLCV data (call `fetch_to_parquet` first).
+    #[serde(default)]
+    #[garde(skip)]
+    pub entry_signal: Option<SignalSpec>,
+    /// Exit signal — close open positions on dates where this TA signal fires.
+    /// Requires OHLCV data (call `fetch_to_parquet` first).
+    #[serde(default)]
+    #[garde(skip)]
+    pub exit_signal: Option<SignalSpec>,
 }
 
 /// Resolve sweep strategies from input params.
@@ -942,7 +956,16 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
-        let (_, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
+        let (symbol, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
+
+        // Auto-fetch OHLCV data if signals are requested
+        let ohlcv_path = if params.sim_params.entry_signal.is_some()
+            || params.sim_params.exit_signal.is_some()
+        {
+            Some(self.ensure_ohlcv(&symbol).await?)
+        } else {
+            None
+        };
 
         let strategies = resolve_sweep_strategies(params.strategies, params.direction)?;
 
@@ -962,6 +985,9 @@ impl OptopsyServer {
                 stop_loss: params.sim_params.stop_loss,
                 take_profit: params.sim_params.take_profit,
                 max_hold_days: params.sim_params.max_hold_days,
+                entry_signal: params.sim_params.entry_signal,
+                exit_signal: params.sim_params.exit_signal,
+                ohlcv_path,
             },
             out_of_sample_pct: params.out_of_sample_pct / 100.0,
             direction: params.direction,
@@ -998,7 +1024,19 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
-        let (_, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
+        let (symbol, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
+
+        // Auto-fetch OHLCV data if signals are requested
+        let ohlcv_path = if params.entry_signal.is_some() || params.exit_signal.is_some() {
+            Some(self.ensure_ohlcv(&symbol).await?)
+        } else {
+            None
+        };
+
+        let mut sim_params = params.sim_params;
+        sim_params.entry_signal = params.entry_signal;
+        sim_params.exit_signal = params.exit_signal;
+        sim_params.ohlcv_path = ohlcv_path;
 
         let compare_params = CompareParams {
             strategies: params
@@ -1016,7 +1054,7 @@ impl OptopsyServer {
                     })
                 })
                 .collect::<Result<Vec<_>, String>>()?,
-            sim_params: params.sim_params,
+            sim_params,
         };
         compare_params
             .validate()

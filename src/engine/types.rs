@@ -369,6 +369,20 @@ pub struct SimParams {
     pub take_profit: Option<f64>,
     #[garde(inner(range(min = 1)))]
     pub max_hold_days: Option<i32>,
+    /// Entry signal — only open trades on dates where this TA signal fires.
+    /// Requires OHLCV data (call `fetch_to_parquet` first).
+    #[serde(default)]
+    #[garde(skip)]
+    pub entry_signal: Option<SignalSpec>,
+    /// Exit signal — close open positions on dates where this TA signal fires.
+    /// Requires OHLCV data (call `fetch_to_parquet` first).
+    #[serde(default)]
+    #[garde(skip)]
+    pub exit_signal: Option<SignalSpec>,
+    /// Path to OHLCV parquet file (resolved automatically when signals are present)
+    #[serde(default)]
+    #[garde(skip)]
+    pub ohlcv_path: Option<String>,
 }
 
 /// Internal quality stats collected during backtest simulation
@@ -806,6 +820,9 @@ mod tests {
             stop_loss: None,
             take_profit: None,
             max_hold_days: None,
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
         };
         assert!(p.validate().is_err());
     }

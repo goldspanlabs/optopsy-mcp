@@ -4,6 +4,7 @@ use chrono::NaiveDate;
 use optopsy_mcp::data::parquet::QUOTE_DATETIME_COL;
 use optopsy_mcp::engine::types::{BacktestParams, DteRange, Slippage, TargetRange, TradeSelector};
 use polars::prelude::*;
+use tempfile::TempDir;
 
 /// Build a rich synthetic options `DataFrame` with calls+puts at 4 strikes across 3 dates,
 /// with two expirations: near-term (Feb 16, DTE=32) and far-term (Mar 15, DTE=60).
@@ -128,6 +129,36 @@ pub fn delta(target: f64) -> TargetRange {
 
 /// Default backtest params for synthetic data: `entry_dte={target:45, min:10, max:45}`, `exit_dte=5`,
 /// `Slippage::Mid`, `quantity=1`, `multiplier=100`.
+/// Write a minimal OHLCV parquet to a temp directory for signal tests.
+/// Returns the `TempDir` (keeps the file alive) and the path string.
+///
+/// The synthetic data covers the same date range as `make_multi_strike_df`:
+///   Jan 15, Jan 22, Feb 11 (2024)
+/// with a preceding date (Jan 11) so indicators have lookback room.
+pub fn write_ohlcv_parquet(dates: &[NaiveDate], closes: &[f64]) -> (TempDir, String) {
+    let n = dates.len();
+    let mut df = df! {
+        "open" => vec![100.0f64; n],
+        "high" => vec![105.0f64; n],
+        "low" => vec![95.0f64; n],
+        "close" => closes,
+        "adjclose" => closes,
+        "volume" => vec![1_000_000i64; n],
+    }
+    .unwrap();
+    df.with_column(
+        DateChunked::from_naive_date(PlSmallStr::from("date"), dates.to_vec()).into_column(),
+    )
+    .unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ohlcv.parquet");
+    let file = std::fs::File::create(&path).unwrap();
+    ParquetWriter::new(file).finish(&mut df).unwrap();
+    let path_str = path.to_string_lossy().to_string();
+    (dir, path_str)
+}
+
 pub fn backtest_params(strategy: &str, leg_deltas: Vec<TargetRange>) -> BacktestParams {
     BacktestParams {
         strategy: strategy.to_string(),

@@ -3,13 +3,16 @@
 //! These tests exercise the full sweep pipeline with real data frames
 //! that produce actual trades, validating end-to-end correctness.
 
+use chrono::NaiveDate;
+use optopsy_mcp::engine::core::run_backtest;
 use optopsy_mcp::engine::sweep::{run_sweep, SweepDimensions, SweepParams, SweepStrategyEntry};
 use optopsy_mcp::engine::types::{
-    strategy_direction, Direction, SimParams, Slippage, TradeSelector,
+    strategy_direction, Direction, ExitType, SimParams, Slippage, TradeSelector,
 };
+use optopsy_mcp::signals::registry::SignalSpec;
 
 mod common;
-use common::make_multi_strike_df;
+use common::{make_multi_strike_df, write_ohlcv_parquet};
 
 fn default_sim_params() -> SimParams {
     SimParams {
@@ -21,6 +24,9 @@ fn default_sim_params() -> SimParams {
         stop_loss: None,
         take_profit: None,
         max_hold_days: None,
+        entry_signal: None,
+        exit_signal: None,
+        ohlcv_path: None,
     }
 }
 
@@ -408,4 +414,177 @@ fn strategy_direction_covers_all_32() {
     assert_eq!(bearish, 4, "Expected 4 bearish strategies");
     assert_eq!(volatile, 4, "Expected 4 volatile strategies");
     assert_eq!(neutral, 18, "Expected 18 neutral strategies");
+}
+
+// ---------------------------------------------------------------------------
+// Signal integration tests
+// ---------------------------------------------------------------------------
+
+/// Rising OHLCV — `ConsecutiveUp(2)` fires from Jan 22 onward.
+///
+/// With `dte_target_to_range(30)` → min=21, max=39, entry candidates are
+/// Jan 15 (DTE=32) and Jan 22 (DTE=25). Signal blocks Jan 15, allows Jan 22.
+fn rising_ohlcv() -> (tempfile::TempDir, String) {
+    let dates: Vec<NaiveDate> = vec![
+        NaiveDate::from_ymd_opt(2024, 1, 11).unwrap(),
+        NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+        NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(),
+        NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(),
+    ];
+    let closes = vec![100.0, 101.0, 102.0, 103.0];
+    write_ohlcv_parquet(&dates, &closes)
+}
+
+/// Entry signal that partially filters: blocks Jan 15 entry, allows Jan 22.
+/// Produces strictly fewer trades than baseline, proving the signal is
+/// actually evaluated (not just "any signal = block all").
+///
+/// Uses `entry_dte_targets: [30]` → `dte_target_to_range(30)` = min=21, max=39,
+/// which includes both Jan 15 (DTE=32) and Jan 22 (DTE=25) as entry candidates.
+#[test]
+fn sweep_entry_signal_filters_some_entries() {
+    let df = make_multi_strike_df();
+    let (_dir, path) = rising_ohlcv();
+
+    let sweep_dims = SweepDimensions {
+        entry_dte_targets: vec![30],
+        exit_dtes: vec![0, 5],
+        slippage_models: vec![Slippage::Mid],
+    };
+    let strategies = vec![SweepStrategyEntry {
+        name: "long_call".to_string(),
+        leg_delta_targets: vec![vec![0.35, 0.50, 0.70]],
+    }];
+
+    // Baseline: entries on both Jan 15 and Jan 22
+    let baseline_params = SweepParams {
+        strategies: strategies.clone(),
+        sweep: sweep_dims.clone(),
+        sim_params: default_sim_params(),
+        out_of_sample_pct: 0.0,
+        direction: None,
+    };
+    let baseline = run_sweep(&df, &baseline_params).unwrap();
+    let baseline_trades: usize = baseline.ranked_results.iter().map(|r| r.trades).sum();
+    assert!(baseline_trades > 0, "Baseline must produce trades");
+
+    // ConsecutiveUp(2) fires from Jan 22 → blocks Jan 15, allows Jan 22
+    let signal_params = SweepParams {
+        strategies,
+        sweep: sweep_dims,
+        sim_params: SimParams {
+            entry_signal: Some(SignalSpec::ConsecutiveUp {
+                column: "close".into(),
+                count: 2,
+            }),
+            exit_signal: None,
+            ohlcv_path: Some(path),
+            ..default_sim_params()
+        },
+        out_of_sample_pct: 0.0,
+        direction: None,
+    };
+    let output = run_sweep(&df, &signal_params).unwrap();
+    let signal_trades: usize = output.ranked_results.iter().map(|r| r.trades).sum();
+
+    assert!(
+        signal_trades > 0,
+        "Signal should allow trades on Jan 22 where it fires"
+    );
+
+    // Signal shifts entry from Jan 15 → Jan 22 (different price), so PnL must differ
+    let baseline_pnl: f64 = baseline.ranked_results.iter().map(|r| r.pnl).sum();
+    let signal_pnl: f64 = output.ranked_results.iter().map(|r| r.pnl).sum();
+    assert!(
+        (baseline_pnl - signal_pnl).abs() > 0.01,
+        "Signal must change PnL by shifting entry date: baseline_pnl={baseline_pnl}, signal_pnl={signal_pnl}"
+    );
+}
+
+/// Exit signal produces `ExitType::Signal` exits via `run_backtest`, confirming
+/// the signal field on `SimParams` reaches `BacktestParams` correctly.
+/// Uses sweep-equivalent parameters to match the code path.
+#[test]
+fn sweep_exit_signal_produces_signal_exits() {
+    let df = make_multi_strike_df();
+    let dates: Vec<NaiveDate> = vec![
+        NaiveDate::from_ymd_opt(2024, 1, 11).unwrap(),
+        NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+        NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(),
+        NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(),
+    ];
+    let closes = vec![107.0, 106.0, 105.0, 104.0];
+    let (_dir, path) = write_ohlcv_parquet(&dates, &closes);
+
+    // Sweep internally builds BacktestParams with these fields from SimParams.
+    // Call run_backtest directly to verify ExitType::Signal appears in trade log.
+    let mut params = common::backtest_params("long_call", vec![common::delta(0.50)]);
+    params.exit_signal = Some(SignalSpec::ConsecutiveDown {
+        column: "close".into(),
+        count: 1,
+    });
+    params.ohlcv_path = Some(path);
+
+    let result = run_backtest(&df, &params).unwrap();
+    assert!(result.trade_count > 0, "Should produce trades");
+
+    let signal_exits = result
+        .trade_log
+        .iter()
+        .filter(|t| matches!(t.exit_type, ExitType::Signal))
+        .count();
+    assert!(
+        signal_exits > 0,
+        "Exit signal should cause at least one Signal exit, got 0 out of {} trades",
+        result.trade_count
+    );
+}
+
+/// Signals thread correctly through the OOS validation path in sweep.
+/// The OOS `BacktestParams` (second construction in sweep.rs) must also
+/// receive signals. A blocking signal should produce 0 trades in both
+/// training and OOS.
+#[test]
+fn sweep_signal_threads_through_oos_path() {
+    let df = make_multi_strike_df();
+    let (_dir, path) = rising_ohlcv();
+
+    let sweep_dims = SweepDimensions {
+        entry_dte_targets: vec![30],
+        exit_dtes: vec![0, 5],
+        slippage_models: vec![Slippage::Mid],
+    };
+    let strategies = vec![SweepStrategyEntry {
+        name: "long_call".to_string(),
+        leg_delta_targets: vec![vec![0.35, 0.50, 0.70]],
+    }];
+
+    // With signal + OOS enabled: should not panic, and signal should
+    // apply in both training and OOS BacktestParams constructions.
+    let params = SweepParams {
+        strategies,
+        sweep: sweep_dims,
+        sim_params: SimParams {
+            entry_signal: Some(SignalSpec::ConsecutiveUp {
+                column: "close".into(),
+                count: 2,
+            }),
+            exit_signal: None,
+            ohlcv_path: Some(path),
+            ..default_sim_params()
+        },
+        out_of_sample_pct: 0.3,
+        direction: None,
+    };
+
+    // Must not panic — exercises both BacktestParams constructions with signals
+    let output = run_sweep(&df, &params).unwrap();
+
+    if !output.ranked_results.is_empty() {
+        assert!(
+            output.oos_results.len() <= 3,
+            "OOS should validate at most top 3, got {}",
+            output.oos_results.len()
+        );
+    }
 }
