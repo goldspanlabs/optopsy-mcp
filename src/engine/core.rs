@@ -172,10 +172,8 @@ pub fn compare_strategies(
             continue;
         }
 
-        // Store the entry with the label as its name
-        let mut labeled_entry = entry.clone();
-        labeled_entry.name.clone_from(label);
-        labeled_entries.push(labeled_entry);
+        // Store the entry as-is so `name` remains the strategy identifier
+        labeled_entries.push(entry.clone());
 
         let backtest_params = BacktestParams {
             strategy: entry.name.clone(),
@@ -300,8 +298,11 @@ fn build_compare_labels(entries: &[CompareEntry]) -> Vec<String> {
                 let slippage_suffix = match &entry.slippage {
                     Slippage::Spread => String::new(),
                     Slippage::Mid => ",mid".to_string(),
-                    Slippage::Liquidity { .. } => ",liq".to_string(),
-                    Slippage::PerLeg { .. } => ",pleg".to_string(),
+                    Slippage::Liquidity {
+                        fill_ratio,
+                        ref_volume,
+                    } => format!(",liq(fr={fill_ratio:.2},rv={ref_volume})"),
+                    Slippage::PerLeg { per_leg } => format!(",pleg({per_leg:.2})"),
                 };
                 format!(
                     "{}(Δ{},DTE{},exit{}{})",
