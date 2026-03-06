@@ -227,7 +227,7 @@ fn default_capital() -> f64 {
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct RunBacktestParams {
-    /// The option strategy name (e.g. "short_put", "iron_condor", "short_strangle").
+    /// The option strategy name (e.g. `short_put`, `iron_condor`, `short_strangle`).
     /// Call `list_strategies` to see all 32 options.
     #[garde(length(min = 1))]
     pub strategy: String,
@@ -299,7 +299,7 @@ pub struct RunBacktestParams {
 
 #[derive(Debug, Clone, Deserialize, JsonSchema, Validate)]
 pub struct ServerCompareEntry {
-    /// Strategy name (e.g. "short_put", "iron_condor")
+    /// Strategy name (e.g. `short_put`, `iron_condor`)
     #[garde(length(min = 1))]
     pub name: String,
     /// Per-leg delta targets (optional — uses strategy-specific defaults if omitted)
@@ -438,7 +438,7 @@ pub struct GetRawPricesParams {
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct SuggestParametersParams {
-    /// Strategy name (e.g. "short_put", "iron_condor"). Call `list_strategies` to see options.
+    /// Strategy name (e.g. `short_put`, `iron_condor`). Call `list_strategies` to see options.
     #[garde(length(min = 1))]
     pub strategy: String,
     /// Risk preference: "conservative" (tight filters), "moderate" (balanced), or "aggressive" (loose filters)
@@ -494,7 +494,7 @@ fn validate_leg_delta_targets(value: &Option<Vec<Vec<f64>>>, _ctx: &()) -> garde
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct SweepStrategyInput {
-    /// Strategy name (e.g. "short_put", "iron_condor")
+    /// Strategy name (e.g. `short_put`, `iron_condor`)
     #[garde(length(min = 1))]
     pub name: String,
     /// Per-leg delta targets to sweep. Each inner Vec is one leg's sweep values.
