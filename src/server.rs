@@ -227,10 +227,10 @@ fn default_capital() -> f64 {
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct RunBacktestParams {
-    /// The option strategy defining what legs to trade (e.g. `short_put`,
-    /// `iron_condor`, `short_strangle`). Call `list_strategies` to see all 32 options.
-    #[garde(skip)]
-    pub strategy: StrategyParam,
+    /// The option strategy name (e.g. "short_put", "iron_condor", "short_strangle").
+    /// Call `list_strategies` to see all 32 options.
+    #[garde(length(min = 1))]
+    pub strategy: String,
     /// Per-leg delta targets (optional — uses strategy-specific defaults if omitted)
     #[serde(default)]
     #[garde(inner(length(min = 1)))]
@@ -299,9 +299,9 @@ pub struct RunBacktestParams {
 
 #[derive(Debug, Clone, Deserialize, JsonSchema, Validate)]
 pub struct ServerCompareEntry {
-    /// Strategy name
-    #[garde(skip)]
-    pub name: StrategyParam,
+    /// Strategy name (e.g. "short_put", "iron_condor")
+    #[garde(length(min = 1))]
+    pub name: String,
     /// Per-leg delta targets (optional — uses strategy-specific defaults if omitted)
     #[serde(default)]
     #[garde(inner(length(min = 1)))]
@@ -338,20 +338,12 @@ pub struct CompareStrategiesParams {
     pub symbol: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, Validate)]
-#[serde(rename_all = "lowercase")]
-pub enum CategoryParam {
-    Prices,
-    Options,
-}
-
-impl CategoryParam {
-    /// Convert enum variant to lowercase string for data layer
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            CategoryParam::Prices => "prices",
-            CategoryParam::Options => "options",
-        }
+fn validate_category(category: &str) -> Result<&str, String> {
+    match category {
+        "options" | "prices" => Ok(category),
+        _ => Err(format!(
+            "Invalid category: \"{category}\". Must be \"options\" or \"prices\"."
+        )),
     }
 }
 
@@ -360,9 +352,9 @@ pub struct CheckCacheParams {
     /// Ticker symbol (e.g. "SPY")
     #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub symbol: String,
-    /// Data category: `"options"` for options chain data, `"prices"` for OHLCV price data
-    #[garde(skip)]
-    pub category: CategoryParam,
+    /// Data category: "options" for options chain data, "prices" for OHLCV price data
+    #[garde(length(min = 1))]
+    pub category: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
@@ -378,26 +370,11 @@ pub struct ConstructSignalParams {
     pub symbol: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, Validate)]
-#[serde(rename_all = "snake_case")]
-pub enum BuildSignalAction {
-    /// Create a new custom signal from a formula (optionally save it)
-    Create,
-    /// List all saved custom signals
-    List,
-    /// Delete a saved signal by name
-    Delete,
-    /// Validate a formula without saving
-    Validate,
-    /// Load a saved signal and return its spec
-    Get,
-}
-
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct BuildSignalParams {
-    /// Action to perform
-    #[garde(skip)]
-    pub action: BuildSignalAction,
+    /// Action to perform: "create", "list", "delete", "validate", or "get"
+    #[garde(length(min = 1))]
+    pub action: String,
     /// Signal name (required for create, delete, get)
     #[serde(default)]
     #[garde(inner(length(min = 1, max = 64), pattern(r"^[A-Za-z0-9_-]+$")))]
@@ -427,9 +404,9 @@ pub struct FetchToParquetParams {
     /// Ticker symbol (e.g. "SPY")
     #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub symbol: String,
-    /// Data category: `"options"` for options chain data, `"prices"` for OHLCV price data
-    #[garde(skip)]
-    pub category: CategoryParam,
+    /// Data category: "options" for options chain data, "prices" for OHLCV price data
+    #[garde(length(min = 1))]
+    pub category: String,
     /// Time period to fetch (e.g. "6mo", "1y", "5y", "max"). Defaults to "5y".
     #[garde(inner(length(min = 1)))]
     pub period: Option<String>,
@@ -459,105 +436,14 @@ pub struct GetRawPricesParams {
     pub limit: Option<usize>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, Validate)]
-#[serde(rename_all = "lowercase")]
-pub enum RiskPreferenceParam {
-    Conservative,
-    Moderate,
-    Aggressive,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, Validate)]
-#[serde(rename_all = "snake_case")]
-pub enum StrategyParam {
-    // Singles
-    LongCall,
-    ShortCall,
-    LongPut,
-    ShortPut,
-    CoveredCall,
-    CashSecuredPut,
-    // Spreads
-    BullCallSpread,
-    BearCallSpread,
-    BullPutSpread,
-    BearPutSpread,
-    LongStraddle,
-    ShortStraddle,
-    LongStrangle,
-    ShortStrangle,
-    // Butterflies
-    LongCallButterfly,
-    ShortCallButterfly,
-    LongPutButterfly,
-    ShortPutButterfly,
-    // Condors
-    LongCallCondor,
-    ShortCallCondor,
-    LongPutCondor,
-    ShortPutCondor,
-    // Iron
-    IronCondor,
-    ReverseIronCondor,
-    IronButterfly,
-    ReverseIronButterfly,
-    // Calendar
-    CallCalendarSpread,
-    PutCalendarSpread,
-    CallDiagonalSpread,
-    PutDiagonalSpread,
-    DoubleCalendar,
-    DoubleDiagonal,
-}
-
-impl StrategyParam {
-    /// Convert enum variant to `snake_case` string for engine
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            StrategyParam::LongCall => "long_call",
-            StrategyParam::ShortCall => "short_call",
-            StrategyParam::LongPut => "long_put",
-            StrategyParam::ShortPut => "short_put",
-            StrategyParam::CoveredCall => "covered_call",
-            StrategyParam::CashSecuredPut => "cash_secured_put",
-            StrategyParam::BullCallSpread => "bull_call_spread",
-            StrategyParam::BearCallSpread => "bear_call_spread",
-            StrategyParam::BullPutSpread => "bull_put_spread",
-            StrategyParam::BearPutSpread => "bear_put_spread",
-            StrategyParam::LongStraddle => "long_straddle",
-            StrategyParam::ShortStraddle => "short_straddle",
-            StrategyParam::LongStrangle => "long_strangle",
-            StrategyParam::ShortStrangle => "short_strangle",
-            StrategyParam::LongCallButterfly => "long_call_butterfly",
-            StrategyParam::ShortCallButterfly => "short_call_butterfly",
-            StrategyParam::LongPutButterfly => "long_put_butterfly",
-            StrategyParam::ShortPutButterfly => "short_put_butterfly",
-            StrategyParam::LongCallCondor => "long_call_condor",
-            StrategyParam::ShortCallCondor => "short_call_condor",
-            StrategyParam::LongPutCondor => "long_put_condor",
-            StrategyParam::ShortPutCondor => "short_put_condor",
-            StrategyParam::IronCondor => "iron_condor",
-            StrategyParam::ReverseIronCondor => "reverse_iron_condor",
-            StrategyParam::IronButterfly => "iron_butterfly",
-            StrategyParam::ReverseIronButterfly => "reverse_iron_butterfly",
-            StrategyParam::CallCalendarSpread => "call_calendar_spread",
-            StrategyParam::PutCalendarSpread => "put_calendar_spread",
-            StrategyParam::CallDiagonalSpread => "call_diagonal_spread",
-            StrategyParam::PutDiagonalSpread => "put_diagonal_spread",
-            StrategyParam::DoubleCalendar => "double_calendar",
-            StrategyParam::DoubleDiagonal => "double_diagonal",
-        }
-    }
-}
-
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct SuggestParametersParams {
-    /// Strategy name (e.g. `short_put`, `iron_condor`). Call `list_strategies` to see options.
-    #[garde(skip)]
-    pub strategy: StrategyParam,
-    /// Risk preference: conservative (tight filters), moderate (balanced), or aggressive (loose filters)
-    #[garde(skip)]
-    pub risk_preference: RiskPreferenceParam,
+    /// Strategy name (e.g. "short_put", "iron_condor"). Call `list_strategies` to see options.
+    #[garde(length(min = 1))]
+    pub strategy: String,
+    /// Risk preference: "conservative" (tight filters), "moderate" (balanced), or "aggressive" (loose filters)
+    #[garde(length(min = 1))]
+    pub risk_preference: String,
     /// Target win rate (0.0-1.0), informational only
     #[garde(inner(range(min = 0.0, max = 1.0)))]
     pub target_win_rate: Option<f64>,
@@ -608,9 +494,9 @@ fn validate_leg_delta_targets(value: &Option<Vec<Vec<f64>>>, _ctx: &()) -> garde
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct SweepStrategyInput {
-    /// Strategy name
-    #[garde(skip)]
-    pub name: StrategyParam,
+    /// Strategy name (e.g. "short_put", "iron_condor")
+    #[garde(length(min = 1))]
+    pub name: String,
     /// Per-leg delta targets to sweep. Each inner Vec is one leg's sweep values.
     /// Each delta must be in [0.0, 1.0] with at most 10 values per leg.
     /// Omit to use strategy defaults (no delta sweep).
@@ -737,14 +623,10 @@ fn resolve_sweep_strategies(
                 .into_iter()
                 .filter(|s| strategy_direction(&s.name) == dir)
                 .map(|s| {
-                    str_to_strategy_param(&s.name)
-                        .map(|param| SweepStrategyInput {
-                            name: param,
-                            leg_delta_targets: None,
-                        })
-                        .ok_or_else(|| {
-                            format!("Unknown strategy name '{}' from all_strategies()", s.name)
-                        })
+                    Ok(SweepStrategyInput {
+                        name: s.name,
+                        leg_delta_targets: None,
+                    })
                 })
                 .collect();
             let matching = matching?;
@@ -760,18 +642,13 @@ fn resolve_sweep_strategies(
     }
 }
 
-fn str_to_strategy_param(name: &str) -> Option<StrategyParam> {
-    // Build a reverse mapping using serde
-    serde_json::from_value(serde_json::Value::String(name.to_string())).ok()
-}
-
 fn resolve_strategy_entries(
     strats: Vec<SweepStrategyInput>,
 ) -> Result<Vec<crate::engine::sweep::SweepStrategyEntry>, String> {
     strats
         .into_iter()
         .map(|s| {
-            let name = s.name.as_str().to_string();
+            let name = s.name;
             let strategy_def = crate::strategies::find_strategy(&name)
                 .ok_or_else(|| format!("Unknown strategy: {name}"))?;
 
@@ -944,8 +821,8 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
-        let action = match params.action {
-            BuildSignalAction::Create => {
+        let action = match params.action.as_str() {
+            "create" => {
                 let name = params
                     .name
                     .ok_or("'name' is required for action='create'")?;
@@ -959,22 +836,27 @@ impl OptopsyServer {
                     save: params.save,
                 }
             }
-            BuildSignalAction::List => tools::build_signal::Action::List,
-            BuildSignalAction::Delete => {
+            "list" => tools::build_signal::Action::List,
+            "delete" => {
                 let name = params
                     .name
                     .ok_or("'name' is required for action='delete'")?;
                 tools::build_signal::Action::Delete { name }
             }
-            BuildSignalAction::Validate => {
+            "validate" => {
                 let formula = params
                     .formula
                     .ok_or("'formula' is required for action='validate'")?;
                 tools::build_signal::Action::Validate { formula }
             }
-            BuildSignalAction::Get => {
+            "get" => {
                 let name = params.name.ok_or("'name' is required for action='get'")?;
                 tools::build_signal::Action::Get { name }
+            }
+            other => {
+                return Err(format!(
+                    "Invalid action: \"{other}\". Must be \"create\", \"list\", \"delete\", \"validate\", or \"get\"."
+                ));
             }
         };
 
@@ -1035,11 +917,10 @@ impl OptopsyServer {
             None
         };
 
-        let strategy_name = strategy.as_str();
-        let leg_deltas = resolve_leg_deltas(params.leg_deltas, strategy_name)?;
+        let leg_deltas = resolve_leg_deltas(params.leg_deltas, &strategy)?;
 
         let backtest_params = BacktestParams {
-            strategy: strategy_name.to_string(),
+            strategy: strategy.clone(),
             leg_deltas,
             entry_dte: params.entry_dte,
             exit_dte: params.exit_dte,
@@ -1164,10 +1045,9 @@ impl OptopsyServer {
                 .strategies
                 .into_iter()
                 .map(|s| {
-                    let strategy_name = s.name.as_str();
-                    let leg_deltas = resolve_leg_deltas(s.leg_deltas, strategy_name)?;
+                    let leg_deltas = resolve_leg_deltas(s.leg_deltas, &s.name)?;
                     Ok(CompareEntry {
-                        name: strategy_name.to_string(),
+                        name: s.name,
                         leg_deltas,
                         entry_dte: s.entry_dte,
                         exit_dte: s.exit_dte,
@@ -1207,7 +1087,8 @@ impl OptopsyServer {
         params
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
-        tools::cache_status::execute(&self.cache, &params.symbol, params.category.as_str())
+        let category = validate_category(&params.category)?;
+        tools::cache_status::execute(&self.cache, &params.symbol, category)
             .map(Json)
             .map_err(|e| format!("Error: {e}"))
     }
@@ -1236,13 +1117,9 @@ impl OptopsyServer {
         params
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
+        let category = validate_category(&params.category)?;
         let period = params.period.as_deref().unwrap_or("5y");
-        tools::fetch::execute(
-            &self.cache,
-            &params.symbol,
-            params.category.as_str(),
-            period,
-        )
+        tools::fetch::execute(&self.cache, &params.symbol, category, period)
         .await
         .map(Json)
         .map_err(|e| format!("Error: {e}"))
@@ -1314,16 +1191,19 @@ impl OptopsyServer {
 
         let strategy = params.strategy;
 
-        let risk_pref = match params.risk_preference {
-            RiskPreferenceParam::Conservative => {
-                crate::engine::suggest::RiskPreference::Conservative
+        let risk_pref = match params.risk_preference.as_str() {
+            "conservative" => crate::engine::suggest::RiskPreference::Conservative,
+            "moderate" => crate::engine::suggest::RiskPreference::Moderate,
+            "aggressive" => crate::engine::suggest::RiskPreference::Aggressive,
+            other => {
+                return Err(format!(
+                    "Invalid risk_preference: \"{other}\". Must be \"conservative\", \"moderate\", or \"aggressive\"."
+                ));
             }
-            RiskPreferenceParam::Moderate => crate::engine::suggest::RiskPreference::Moderate,
-            RiskPreferenceParam::Aggressive => crate::engine::suggest::RiskPreference::Aggressive,
         };
 
         let suggest_params = crate::engine::suggest::SuggestParams {
-            strategy: strategy.as_str().to_string(),
+            strategy: strategy.clone(),
             risk_preference: risk_pref,
             target_win_rate: params.target_win_rate,
             target_sharpe: params.target_sharpe,

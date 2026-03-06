@@ -399,8 +399,10 @@ async fn check_cache_rejects_path_traversal() {
     if let Ok(result) = result {
         if let Some(text) = result.content.first().and_then(|c| c.raw.as_text()) {
             assert!(
-                text.text.contains("unknown variant") || text.text.contains("Validation error"),
-                "Expected deserialization or validation error for path traversal, got: {}",
+                text.text.contains("unknown variant")
+                    || text.text.contains("Validation error")
+                    || text.text.contains("Invalid category"),
+                "Expected deserialization, validation, or category error for path traversal, got: {}",
                 text.text
             );
         }
