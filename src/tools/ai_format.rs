@@ -631,18 +631,19 @@ pub fn format_sweep(output: SweepOutput) -> SweepResponse {
 
     let summary = if let Some(ref b) = best {
         format!(
-            "Swept {} combinations across {} run ({} skipped). Best: {} (Sharpe {:.2}, {}).",
+            "Swept {} combinations; ran {} ({} skipped, {} failed). Best: {} (Sharpe {:.2}, {}).",
             output.combinations_total,
             output.combinations_run,
             output.combinations_skipped,
+            output.combinations_failed,
             b.label,
             b.sharpe,
             format_pnl(b.pnl),
         )
     } else {
         format!(
-            "Swept {} combinations but none produced results ({} skipped).",
-            output.combinations_total, output.combinations_skipped,
+            "Swept {} combinations but none produced results ({} skipped, {} failed).",
+            output.combinations_total, output.combinations_skipped, output.combinations_failed,
         )
     };
 
@@ -677,6 +678,7 @@ pub fn format_sweep(output: SweepOutput) -> SweepResponse {
         combinations_total: output.combinations_total,
         combinations_run: output.combinations_run,
         combinations_skipped: output.combinations_skipped,
+        combinations_failed: output.combinations_failed,
         best_combination: best,
         dimension_sensitivity: output.dimension_sensitivity,
         out_of_sample,
@@ -1237,6 +1239,7 @@ mod tests {
             combinations_total: 5,
             combinations_run: 2,
             combinations_skipped: 3,
+            combinations_failed: 0,
             ranked_results: results,
             dimension_sensitivity: HashMap::new(),
             oos_results: vec![],
@@ -1268,6 +1271,7 @@ mod tests {
             combinations_total: 10,
             combinations_run: 0,
             combinations_skipped: 10,
+            combinations_failed: 0,
             ranked_results: vec![],
             dimension_sensitivity: HashMap::new(),
             oos_results: vec![],
@@ -1292,6 +1296,7 @@ mod tests {
             combinations_total: 2,
             combinations_run: 1,
             combinations_skipped: 1,
+            combinations_failed: 0,
             ranked_results: vec![SweepResult {
                 label: "test_combo".to_string(),
                 strategy: "long_call".to_string(),

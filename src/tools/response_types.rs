@@ -334,7 +334,10 @@ pub struct SweepResponse {
     pub summary: String,
     pub combinations_total: usize,
     pub combinations_run: usize,
+    /// Pre-filter skips (delta ordering, deduplication)
     pub combinations_skipped: usize,
+    /// Backtests that errored at runtime (after being selected to run)
+    pub combinations_failed: usize,
     pub best_combination: Option<SweepResult>,
     pub dimension_sensitivity: HashMap<String, HashMap<String, DimensionStats>>,
     pub out_of_sample: Option<OosValidation>,

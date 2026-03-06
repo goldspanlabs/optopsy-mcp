@@ -165,8 +165,9 @@ pub fn compare_strategies(
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for (entry, label) in params.strategies.iter().zip(labels.iter()) {
-        // Skip duplicate entries (same label = same parameters)
-        if !seen.insert(label.clone()) {
+        // Skip duplicate entries using a full-parameter key (labels omit min/max ranges)
+        let dedup_key = compare_dedup_key(entry);
+        if !seen.insert(dedup_key) {
             tracing::info!("Skipping duplicate entry: {label}");
             continue;
         }
@@ -237,7 +238,38 @@ pub fn compare_strategies(
 /// Build descriptive labels for compare entries.
 ///
 /// If all entries have unique strategy names, the labels are just the names.
-/// When duplicates exist, appends parameter details to distinguish them:
+/// Builds a canonical deduplication key that covers the full parameter set,
+/// including DteRange/TargetRange min/max values that the display label omits.
+fn compare_dedup_key(entry: &CompareEntry) -> String {
+    let deltas: Vec<String> = entry
+        .leg_deltas
+        .iter()
+        .map(|d| format!("{:.4}:{:.4}:{:.4}", d.target, d.min, d.max))
+        .collect();
+    let slippage_str = match &entry.slippage {
+        Slippage::Spread => "spread".to_string(),
+        Slippage::Mid => "mid".to_string(),
+        Slippage::Liquidity {
+            fill_ratio,
+            ref_volume,
+        } => {
+            format!("liq:{fill_ratio:.4}:{ref_volume}")
+        }
+        Slippage::PerLeg { per_leg } => format!("pleg:{per_leg:.4}"),
+    };
+    format!(
+        "{}|{}|{}:{}:{}|{}|{}",
+        entry.name,
+        deltas.join(","),
+        entry.entry_dte.target,
+        entry.entry_dte.min,
+        entry.entry_dte.max,
+        entry.exit_dte,
+        slippage_str,
+    )
+}
+
+/// Builds a human-readable label for each compare entry.
 /// e.g. `long_call(Δ0.40,DTE45)` or `bull_call_spread(Δ0.50/0.10,DTE60)`.
 fn build_compare_labels(entries: &[CompareEntry]) -> Vec<String> {
     // Count how many times each strategy name appears

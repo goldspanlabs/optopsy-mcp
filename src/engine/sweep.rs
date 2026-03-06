@@ -62,7 +62,10 @@ pub struct OosResult {
 pub struct SweepOutput {
     pub combinations_total: usize,
     pub combinations_run: usize,
+    /// Pre-filter skips (delta ordering, deduplication)
     pub combinations_skipped: usize,
+    /// Backtests that errored at runtime (after being selected to run)
+    pub combinations_failed: usize,
     pub ranked_results: Vec<SweepResult>,
     pub dimension_sensitivity: HashMap<String, HashMap<String, DimensionStats>>,
     pub oos_results: Vec<OosResult>,
@@ -394,6 +397,7 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
 
     // 3. Run backtests on training set
     let mut results: Vec<SweepResult> = Vec::new();
+    let mut failed: usize = 0;
 
     for combo in &combos {
         let backtest_params = BacktestParams {
@@ -441,6 +445,7 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
                 });
             }
             Err(e) => {
+                failed += 1;
                 tracing::warn!("Sweep combo '{}' failed: {e}", combo.label);
             }
         }
@@ -505,7 +510,8 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
     Ok(SweepOutput {
         combinations_total: total,
         combinations_run,
-        combinations_skipped: skipped + (combos.len() - combinations_run),
+        combinations_skipped: skipped,
+        combinations_failed: failed,
         ranked_results: results,
         dimension_sensitivity,
         oos_results,
