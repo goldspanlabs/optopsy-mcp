@@ -16,34 +16,20 @@ An MCP server for options strategy screening and simulation, powered by a high-p
 Once connected via Claude Desktop or any MCP client, try asking:
 
 **Getting started:**
-- "Load SPY options data and tell me what date range is available"
-- "What strategies can I use for income generation?"
-- "What parameters would you recommend for an iron condor on SPY?"
-
-**Strategy analysis:**
-- "Suggest parameters for an iron condor on SPY and then backtest them"
-- "What's the win rate for a 30-delta short put on SPY with 45 DTE entries?"
-- "Backtest bull put spreads at different DTE windows and find the sweet spot"
+- "Load SPY options data and suggest parameters for an iron condor"
+- "What strategies work best for income generation?"
 
 **Backtesting:**
 - "Backtest an iron condor on SPY with $100k capital, max 5 positions, and a 50% stop loss"
-- "Run a short strangle backtest with 16-delta legs and compare it against a 30-delta version"
-- "How does adding a take profit at 50% of max profit affect iron condor performance?"
+- "Run a short strangle with 16-delta legs and compare it against a 30-delta version"
 
 **Signal-based filtering:**
-- "Backtest a short put vertical that only enters when RSI is below 30"
-- "What momentum signals are available? Build me an entry filter using MACD crossover"
-- "Compare iron condor results with and without a VIX-based entry signal"
+- "Backtest a short put that only enters when RSI is below 30"
+- "Create an exit signal that fires when the 3-day price change exceeds 3%"
 
-**Custom signals:**
-- "Create a signal that triggers when close crosses above the 50-day SMA and volume is 2x the 20-day average"
-- "Build me a mean reversion signal: close below the lower Bollinger Band"
-- "Save a custom exit signal that fires when the 3-day price change exceeds 3%"
-
-**Comparison and research:**
-- "Compare iron condors, iron butterflies, and short strangles side by side on SPY"
-- "Which strategy has the best risk-adjusted returns: jade lizard or iron condor?"
-- "Run the same iron condor backtest with mid, spread, and liquidity slippage models and compare"
+**Comparison and optimization:**
+- "Compare iron condors vs iron butterflies with an RSI entry signal"
+- "Sweep DTE and delta combinations for short puts and find the best risk-adjusted setup"
 
 ## Features
 
@@ -177,7 +163,7 @@ pct_change(close, 1) > 0.03 or pct_change(close, 1) < -0.03
 
 ### Signal management
 
-Custom signals can be saved to `~/.optopsy/signals/` for reuse across sessions:
+Custom signals are saved for reuse across sessions (at `~/.optopsy/signals/`, or alongside the cache when `DATA_ROOT` is set):
 
 - **Create & save**: `build_signal` with `action="create"` and `save=true`
 - **List saved**: `build_signal` with `action="list"`
