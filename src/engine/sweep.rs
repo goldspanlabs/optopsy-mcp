@@ -200,8 +200,11 @@ fn build_sweep_label(
     let slippage_suffix = match slippage {
         Slippage::Spread => String::new(),
         Slippage::Mid => ",mid".to_string(),
-        Slippage::Liquidity { .. } => ",liq".to_string(),
-        Slippage::PerLeg { .. } => ",pleg".to_string(),
+        Slippage::Liquidity {
+            fill_ratio,
+            ref_volume,
+        } => format!(",liq(fr={fill_ratio:.2},rv={ref_volume})"),
+        Slippage::PerLeg { per_leg } => format!(",pleg({per_leg:.2})"),
     };
     format!(
         "{}(Δ{},DTE{},exit{}{})",
@@ -250,8 +253,11 @@ pub fn compute_sensitivity(
         let slippage_key = match &r.slippage {
             Slippage::Spread => "spread".to_string(),
             Slippage::Mid => "mid".to_string(),
-            Slippage::Liquidity { fill_ratio, .. } => {
-                format!("liquidity({fill_ratio:.2})")
+            Slippage::Liquidity {
+                fill_ratio,
+                ref_volume,
+            } => {
+                format!("liquidity(fill_ratio={fill_ratio:.2},ref_volume={ref_volume})")
             }
             Slippage::PerLeg { per_leg } => format!("per_leg({per_leg:.2})"),
         };
@@ -391,6 +397,20 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
                             slippage: slippage.clone(),
                             label,
                         });
+
+                        // Enforce cap early to avoid materializing an enormous Vec
+                        if combos.len() > 100 {
+                            bail!(
+                                "Parameter sweep exceeds the 100-combination limit (max 100). \
+                                 Reduce delta targets, DTE values, exit_dtes, or slippage models \
+                                 (currently: {} strategies, {} entry DTE values, {} exit DTE values, \
+                                 {} slippage models).",
+                                params.strategies.len(),
+                                params.sweep.entry_dte_targets.len(),
+                                params.sweep.exit_dtes.len(),
+                                params.sweep.slippage_models.len(),
+                            );
+                        }
                     }
                 }
             }
@@ -398,21 +418,6 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
     }
 
     let total = combos.len() + skipped;
-
-    // Hard cap
-    if combos.len() > 100 {
-        bail!(
-            "Parameter sweep would run {} combinations (max 100). \
-             Reduce the number of delta targets, DTE values, or slippage models. \
-             Current: {} strategies × {} delta combos × {} DTEs × {} exit_dtes × {} slippage models.",
-            combos.len(),
-            params.strategies.len(),
-            params.strategies.iter().map(|s| cartesian_product(&s.leg_delta_targets).len()).sum::<usize>(),
-            params.sweep.entry_dte_targets.len(),
-            params.sweep.exit_dtes.len(),
-            params.sweep.slippage_models.len(),
-        );
-    }
 
     // 2. Split data if OOS enabled
     let (train_df, test_df) = if params.out_of_sample_pct > 0.0 {

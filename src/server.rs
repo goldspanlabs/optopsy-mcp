@@ -591,15 +591,44 @@ fn default_oos_pct() -> f64 {
     30.0
 }
 
+#[allow(clippy::ref_option, clippy::trivially_copy_pass_by_ref)]
+fn validate_leg_delta_targets(value: &Option<Vec<Vec<f64>>>, _ctx: &()) -> garde::Result {
+    let Some(targets) = value else {
+        return Ok(());
+    };
+    for (leg_idx, leg_targets) in targets.iter().enumerate() {
+        if leg_targets.is_empty() {
+            return Err(garde::Error::new(format!(
+                "leg {leg_idx} delta targets list must not be empty"
+            )));
+        }
+        if leg_targets.len() > 10 {
+            return Err(garde::Error::new(format!(
+                "leg {leg_idx} has too many delta targets (max 10, got {})",
+                leg_targets.len()
+            )));
+        }
+        for &delta in leg_targets {
+            if !delta.is_finite() || !(0.0..=1.0).contains(&delta) {
+                return Err(garde::Error::new(format!(
+                    "leg {leg_idx} delta target {delta} is invalid (must be a finite value in [0.0, 1.0])"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct SweepStrategyInput {
     /// Strategy name
     #[garde(skip)]
     pub name: StrategyParam,
     /// Per-leg delta targets to sweep. Each inner Vec is one leg's sweep values.
+    /// Each delta must be in [0.0, 1.0] with at most 10 values per leg.
     /// Omit to use strategy defaults (no delta sweep).
     #[serde(default)]
-    #[garde(skip)]
+    #[garde(custom(validate_leg_delta_targets))]
     pub leg_delta_targets: Option<Vec<Vec<f64>>>,
 }
 

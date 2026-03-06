@@ -429,12 +429,16 @@ pub fn format_compare(
     };
 
     let mut suggested_next_steps = Vec::new();
-    if let Some(ref best) = best_overall {
+    if !results.is_empty() {
+        // Use the actual strategy name (not the display label) for actionable next steps
+        let best_idx = sharpe_indices[0];
+        let strategy_name = &labeled_entries[best_idx].name;
+        let best_label = &results[best_idx].strategy;
         suggested_next_steps.push(format!(
-            "[NEXT]Use run_backtest on {best} for detailed trade-level analysis",
+            "[NEXT] Use run_backtest(strategy=\"{strategy_name}\") on {best_label} for detailed trade-level analysis",
         ));
         suggested_next_steps.push(format!(
-            "[ITERATE]Use compare_strategies with parameter variations of {best} to further optimize",
+            "[ITERATE] Use compare_strategies with parameter variations of {strategy_name} to further optimize",
         ));
     }
 
@@ -659,8 +663,8 @@ pub fn format_sweep(output: SweepOutput) -> SweepResponse {
     let mut suggested_next_steps = Vec::new();
     if let Some(ref b) = best {
         suggested_next_steps.push(format!(
-            "[NEXT] Use run_backtest with {} for detailed trade-level analysis",
-            b.label,
+            "[NEXT] Use run_backtest(strategy=\"{}\") on best combo \"{}\" for detailed trade-level analysis",
+            b.strategy, b.label,
         ));
         suggested_next_steps.push(
             "[ITERATE] Narrow delta/DTE ranges around the best combo and re-sweep".to_string(),
