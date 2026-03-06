@@ -259,10 +259,7 @@ fn compare_dedup_key(entry: &CompareEntry) -> String {
     };
     let commission_str = match &entry.commission {
         None => "none".to_string(),
-        Some(c) => format!(
-            "{:.4}:{:.4}:{:.4}",
-            c.per_contract, c.base_fee, c.min_fee
-        ),
+        Some(c) => format!("{:.4}:{:.4}:{:.4}", c.per_contract, c.base_fee, c.min_fee),
     };
     format!(
         "{}|{}|{}:{}:{}|{}|{}|{}",
