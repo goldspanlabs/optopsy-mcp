@@ -80,7 +80,7 @@ fn sweep_single_strategy_produces_ranked_results() {
 }
 
 #[test]
-fn sweep_multi_strategy_with_direction_filter() {
+fn sweep_multi_strategy_without_direction_filter() {
     let df = make_multi_strike_df();
     let params = SweepParams {
         strategies: vec![
@@ -92,7 +92,8 @@ fn sweep_multi_strategy_with_direction_filter() {
                 name: "short_put".to_string(),
                 leg_delta_targets: vec![vec![0.40]],
             },
-            // This bearish strategy should be filtered out by direction
+            // This bearish strategy is included because direction filtering
+            // happens at the server layer (resolve_sweep_strategies), not in run_sweep.
             SweepStrategyEntry {
                 name: "long_put".to_string(),
                 leg_delta_targets: vec![vec![0.40]],
@@ -105,8 +106,7 @@ fn sweep_multi_strategy_with_direction_filter() {
         },
         sim_params: default_sim_params(),
         out_of_sample_pct: 0.0,
-        // Note: direction filtering happens at server level (resolve_sweep_strategies),
-        // not in run_sweep. This test verifies the engine processes all provided strategies.
+        // direction filtering is not applied by run_sweep itself; all 3 strategies are processed
         direction: None,
     };
 
