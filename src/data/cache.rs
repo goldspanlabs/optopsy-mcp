@@ -48,10 +48,9 @@ impl CachedStore {
             Err(_) => dirs_default_cache(),
         };
 
-        let bucket_name = std::env::var("S3_BUCKET")
-            .or_else(|_| std::env::var("AWS_S3_BUCKET_NAME"));
-        let endpoint = std::env::var("S3_ENDPOINT")
-            .or_else(|_| std::env::var("AWS_ENDPOINT_URL"));
+        let bucket_name =
+            std::env::var("S3_BUCKET").or_else(|_| std::env::var("AWS_S3_BUCKET_NAME"));
+        let endpoint = std::env::var("S3_ENDPOINT").or_else(|_| std::env::var("AWS_ENDPOINT_URL"));
 
         let bucket = match (bucket_name, endpoint) {
             (Ok(bucket_name), Ok(endpoint)) => {
