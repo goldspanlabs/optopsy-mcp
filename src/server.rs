@@ -1120,9 +1120,9 @@ impl OptopsyServer {
         let category = validate_category(&params.category)?;
         let period = params.period.as_deref().unwrap_or("5y");
         tools::fetch::execute(&self.cache, &params.symbol, category, period)
-        .await
-        .map(Json)
-        .map_err(|e| format!("Error: {e}"))
+            .await
+            .map(Json)
+            .map_err(|e| format!("Error: {e}"))
     }
 
     /// Return raw OHLCV price data for a symbol, ready for chart generation.
