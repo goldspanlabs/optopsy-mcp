@@ -187,16 +187,6 @@ pub struct DownloadOptionsParams {
     pub symbol: String,
 }
 
-/// Extract a required strategy from `Option<StrategyParam>`, returning a clear error if null.
-fn require_strategy(strategy: Option<StrategyParam>) -> Result<StrategyParam, String> {
-    strategy.ok_or_else(|| {
-        "strategy is REQUIRED — it defines WHAT option legs to trade. \
-         Signals only filter WHEN to trade, not WHAT. \
-         Pick one: short_put, iron_condor, short_strangle, bull_call_spread, etc. \
-         Call list_strategies to see all 32 options."
-            .to_string()
-    })
-}
 
 /// Resolve `leg_deltas`: use provided deltas or fall back to strategy defaults.
 fn resolve_leg_deltas(
@@ -238,12 +228,10 @@ fn default_capital() -> f64 {
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct RunBacktestParams {
-    /// REQUIRED — the option strategy defining what legs to trade (e.g. `short_put`,
+    /// The option strategy defining what legs to trade (e.g. `short_put`,
     /// `iron_condor`, `short_strangle`). Call `list_strategies` to see all 32 options.
-    /// Signals (`entry_signal`/`exit_signal`) only filter WHEN to trade — they do NOT
-    /// replace the strategy. **NEVER pass null.**
     #[garde(skip)]
-    pub strategy: Option<StrategyParam>,
+    pub strategy: StrategyParam,
     /// Per-leg delta targets (optional — uses strategy-specific defaults if omitted)
     #[serde(default)]
     #[garde(inner(length(min = 1)))]
@@ -373,7 +361,7 @@ pub struct CheckCacheParams {
     /// Ticker symbol (e.g. "SPY")
     #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub symbol: String,
-    /// Cache category
+    /// Data category: `"options"` for options chain data, `"prices"` for OHLCV price data
     #[garde(skip)]
     pub category: CategoryParam,
 }
@@ -440,7 +428,7 @@ pub struct FetchToParquetParams {
     /// Ticker symbol (e.g. "SPY")
     #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub symbol: String,
-    /// Cache category
+    /// Data category: `"options"` for options chain data, `"prices"` for OHLCV price data
     #[garde(skip)]
     pub category: CategoryParam,
     /// Time period to fetch (e.g. "6mo", "1y", "5y", "max"). Defaults to "5y".
@@ -565,9 +553,9 @@ impl StrategyParam {
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct SuggestParametersParams {
-    /// REQUIRED — strategy name (e.g. `short_put`, `iron_condor`). Call `list_strategies` to see options.
+    /// Strategy name (e.g. `short_put`, `iron_condor`). Call `list_strategies` to see options.
     #[garde(skip)]
-    pub strategy: Option<StrategyParam>,
+    pub strategy: StrategyParam,
     /// Risk preference: conservative (tight filters), moderate (balanced), or aggressive (loose filters)
     #[garde(skip)]
     pub risk_preference: RiskPreferenceParam,
@@ -1024,7 +1012,7 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
-        let strategy = require_strategy(params.strategy)?;
+        let strategy = params.strategy;
 
         tracing::info!(
             strategy = strategy.as_str(),
@@ -1325,7 +1313,7 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
-        let strategy = require_strategy(params.strategy)?;
+        let strategy = params.strategy;
 
         let risk_pref = match params.risk_preference {
             RiskPreferenceParam::Conservative => {
