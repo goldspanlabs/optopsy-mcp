@@ -459,6 +459,14 @@ fn build_rationale(
                 "Slippage model: PerLeg — custom per-leg slippage model."
             );
         }
+        Slippage::BidAskTravel { pct } => {
+            let _ = writeln!(
+                text,
+                "Slippage model: BidAskTravel — fills at bid + {:.0}% of spread toward ask (longs) or ask − {:.0}% (shorts).",
+                pct * 100.0,
+                pct * 100.0,
+            );
+        }
     }
 
     text.push_str(&add_target_context(params));

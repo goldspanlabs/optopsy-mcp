@@ -192,6 +192,24 @@ pub enum Slippage {
         #[garde(range(min = 0.0))]
         per_leg: f64,
     },
+    /// Fill at `bid + (ask − bid) × pct` for longs; `ask − (ask − bid) × pct` for shorts.
+    /// `pct = 0` → filled at bid/ask (best for longs/shorts), `pct = 0.5` → mid, `pct = 1` → ask/bid.
+    BidAskTravel {
+        #[garde(range(min = 0.0, max = 1.0))]
+        pct: f64,
+    },
+}
+
+/// Filter entries by expiration calendar type.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
+pub enum ExpirationFilter {
+    /// Accept any expiration (default).
+    #[default]
+    Any,
+    /// Accept only expirations that fall on a Friday (weekly options).
+    Weekly,
+    /// Accept only expirations on the third Friday of the month (standard monthly cycle).
+    Monthly,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
@@ -212,6 +230,8 @@ pub enum ExitType {
     DteExit,
     Adjustment,
     Signal,
+    /// Exit triggered when the absolute net position delta exceeds `exit_net_delta`.
+    DeltaExit,
 }
 
 #[derive(Debug, Clone)]
@@ -314,6 +334,44 @@ pub struct BacktestParams {
     #[serde(default)]
     #[garde(skip)]
     pub ohlcv_path: Option<String>,
+
+    // ── Entry filters ────────────────────────────────────────────────────────
+    /// Minimum absolute net premium at entry (credit or debit, in dollars per share).
+    /// Filters out candidates whose `abs(net_premium)` is below this threshold.
+    #[serde(default)]
+    #[garde(inner(range(min = 0.0)))]
+    pub min_net_premium: Option<f64>,
+    /// Maximum absolute net premium at entry.
+    /// Filters out candidates whose `abs(net_premium)` exceeds this threshold.
+    #[serde(default)]
+    #[garde(inner(range(min = 0.0)))]
+    pub max_net_premium: Option<f64>,
+    /// Minimum signed net position delta at entry (sum of per-leg delta × side × qty).
+    /// Use to enforce directional or near-neutral entry requirements.
+    #[serde(default)]
+    #[garde(skip)]
+    pub min_net_delta: Option<f64>,
+    /// Maximum signed net position delta at entry.
+    #[serde(default)]
+    #[garde(skip)]
+    pub max_net_delta: Option<f64>,
+    /// Minimum calendar days that must elapse between consecutive position entries.
+    /// Prevents entering a new trade immediately after a prior entry (stagger / cooldown).
+    #[serde(default)]
+    #[garde(inner(range(min = 1)))]
+    pub min_days_between_entries: Option<i32>,
+    /// Filter expirations by calendar type: `Any` (default), `Weekly` (Fridays),
+    /// or `Monthly` (third Friday of the month).
+    #[serde(default)]
+    #[garde(skip)]
+    pub expiration_filter: ExpirationFilter,
+
+    // ── Exit filters ─────────────────────────────────────────────────────────
+    /// Exit the position when the absolute net position delta exceeds this threshold.
+    /// Computed as sum of `|delta × side_multiplier × qty|` for all open legs.
+    #[serde(default)]
+    #[garde(inner(range(min = 0.0)))]
+    pub exit_net_delta: Option<f64>,
 }
 
 pub(crate) fn default_multiplier() -> i32 {
@@ -383,6 +441,14 @@ pub struct SimParams {
     #[serde(default)]
     #[garde(skip)]
     pub ohlcv_path: Option<String>,
+    /// Minimum calendar days between consecutive position entries (cooldown / stagger).
+    #[serde(default)]
+    #[garde(inner(range(min = 1)))]
+    pub min_days_between_entries: Option<i32>,
+    /// Exit when the absolute net position delta exceeds this value.
+    #[serde(default)]
+    #[garde(inner(range(min = 0.0)))]
+    pub exit_net_delta: Option<f64>,
 }
 
 /// Internal quality stats collected during backtest simulation
@@ -423,6 +489,9 @@ pub struct PerformanceMetrics {
     pub avg_days_held: f64,
     pub max_consecutive_losses: usize,
     pub expectancy: f64,
+    /// Return on margin: total P&L divided by total margin required, expressed as a percentage.
+    /// Margin is computed per-trade as max(entry debit paid, spread width × multiplier × qty − net credit).
+    pub margin_return_pct: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -441,6 +510,10 @@ pub struct TradeRecord {
     pub pnl: f64,
     pub days_held: i64,
     pub exit_type: ExitType,
+    /// Estimated margin / capital at risk for this trade.
+    /// For credit positions: `max_loss` = `spread_width` × multiplier × qty − `net_credit`.
+    /// For debit positions: the debit paid.
+    pub margin_required: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -538,6 +611,8 @@ pub struct EntryCandidate {
     pub secondary_expiration: Option<NaiveDate>,
     pub legs: Vec<CandidateLeg>,
     pub net_premium: f64,
+    /// Signed net position delta: sum of (delta × `side_multiplier` × qty) for each leg.
+    pub net_delta: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -737,6 +812,13 @@ mod tests {
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: None,
+            max_net_delta: None,
+            min_days_between_entries: None,
+            expiration_filter: ExpirationFilter::Any,
+            exit_net_delta: None,
         };
         assert!(p.validate().is_err());
     }
@@ -771,6 +853,13 @@ mod tests {
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: None,
+            max_net_delta: None,
+            min_days_between_entries: None,
+            expiration_filter: ExpirationFilter::Any,
+            exit_net_delta: None,
         };
         assert!(p.validate().is_err());
     }
@@ -805,6 +894,13 @@ mod tests {
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: None,
+            max_net_delta: None,
+            min_days_between_entries: None,
+            expiration_filter: ExpirationFilter::Any,
+            exit_net_delta: None,
         };
         assert!(p.validate().is_ok());
     }
@@ -823,6 +919,8 @@ mod tests {
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,
+            min_days_between_entries: None,
+            exit_net_delta: None,
         };
         assert!(p.validate().is_err());
     }
@@ -857,6 +955,13 @@ mod tests {
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: None,
+            max_net_delta: None,
+            min_days_between_entries: None,
+            expiration_filter: ExpirationFilter::Any,
+            exit_net_delta: None,
         };
         assert!(p.validate().is_err());
     }

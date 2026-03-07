@@ -41,6 +41,13 @@ fn base_params(strategy: &str, leg_deltas: Vec<TargetRange>) -> BacktestParams {
         entry_signal: None,
         exit_signal: None,
         ohlcv_path: None,
+        min_net_premium: None,
+        max_net_premium: None,
+        min_net_delta: None,
+        max_net_delta: None,
+        min_days_between_entries: None,
+        expiration_filter: optopsy_mcp::engine::types::ExpirationFilter::Any,
+        exit_net_delta: None,
     }
 }
 

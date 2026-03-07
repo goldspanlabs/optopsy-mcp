@@ -14,8 +14,8 @@ use tokio::sync::RwLock;
 use crate::data::cache::CachedStore;
 use crate::engine::types::{
     default_min_bid_ask, default_multiplier, validate_exit_dte_lt_entry_min, BacktestParams,
-    Commission, CompareEntry, CompareParams, Direction, DteRange, SimParams, Slippage, TargetRange,
-    TradeSelector,
+    Commission, CompareEntry, CompareParams, Direction, DteRange, ExpirationFilter, SimParams,
+    Slippage, TargetRange, TradeSelector,
 };
 use crate::signals::registry::SignalSpec;
 use crate::tools;
@@ -278,6 +278,39 @@ pub struct RunBacktestParams {
     #[serde(default)]
     #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
     pub symbol: Option<String>,
+
+    // ── Entry filters ────────────────────────────────────────────────────────
+    /// Minimum absolute net premium (debit or credit) at entry, in dollars per share.
+    #[serde(default)]
+    #[garde(inner(range(min = 0.0)))]
+    pub min_net_premium: Option<f64>,
+    /// Maximum absolute net premium at entry, in dollars per share.
+    #[serde(default)]
+    #[garde(inner(range(min = 0.0)))]
+    pub max_net_premium: Option<f64>,
+    /// Minimum signed net position delta at entry.
+    #[serde(default)]
+    #[garde(skip)]
+    pub min_net_delta: Option<f64>,
+    /// Maximum signed net position delta at entry.
+    #[serde(default)]
+    #[garde(skip)]
+    pub max_net_delta: Option<f64>,
+    /// Minimum calendar days between consecutive position entries (cooldown / stagger).
+    #[serde(default)]
+    #[garde(inner(range(min = 1)))]
+    pub min_days_between_entries: Option<i32>,
+    /// Filter expirations by calendar type: `Any` (default), `Weekly` (Fridays only),
+    /// or `Monthly` (third Friday of the month only).
+    #[serde(default)]
+    #[garde(skip)]
+    pub expiration_filter: Option<ExpirationFilter>,
+
+    // ── Exit filters ─────────────────────────────────────────────────────────
+    /// Exit the position when the absolute net position delta exceeds this value.
+    #[serde(default)]
+    #[garde(inner(range(min = 0.0)))]
+    pub exit_net_delta: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema, Validate)]
@@ -586,6 +619,14 @@ pub struct SweepSimParams {
     #[serde(default)]
     #[garde(skip)]
     pub exit_signal: Option<SignalSpec>,
+    /// Minimum calendar days between consecutive position entries (cooldown / stagger).
+    #[serde(default)]
+    #[garde(inner(range(min = 1)))]
+    pub min_days_between_entries: Option<i32>,
+    /// Exit when absolute net position delta exceeds this value.
+    #[serde(default)]
+    #[garde(inner(range(min = 0.0)))]
+    pub exit_net_delta: Option<f64>,
 }
 
 /// Resolve sweep strategies from input params.
@@ -913,6 +954,13 @@ impl OptopsyServer {
             entry_signal: params.entry_signal,
             exit_signal: params.exit_signal,
             ohlcv_path,
+            min_net_premium: params.min_net_premium,
+            max_net_premium: params.max_net_premium,
+            min_net_delta: params.min_net_delta,
+            max_net_delta: params.max_net_delta,
+            min_days_between_entries: params.min_days_between_entries,
+            expiration_filter: params.expiration_filter.unwrap_or_default(),
+            exit_net_delta: params.exit_net_delta,
         };
         backtest_params
             .validate()
@@ -988,6 +1036,8 @@ impl OptopsyServer {
                 entry_signal: params.sim_params.entry_signal,
                 exit_signal: params.sim_params.exit_signal,
                 ohlcv_path,
+                min_days_between_entries: params.sim_params.min_days_between_entries,
+                exit_net_delta: params.sim_params.exit_net_delta,
             },
             out_of_sample_pct: params.out_of_sample_pct / 100.0,
             direction: params.direction,

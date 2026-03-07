@@ -107,6 +107,7 @@ pub fn run_vectorized_backtest<S1: BuildHasher, S2: BuildHasher>(
     let has_early_exit = params.stop_loss.is_some()
         || params.take_profit.is_some()
         || params.max_hold_days.is_some()
+        || params.exit_net_delta.is_some()
         || exit_dates.is_some();
 
     let t3 = std::time::Instant::now();
@@ -128,7 +129,7 @@ pub fn run_vectorized_backtest<S1: BuildHasher, S2: BuildHasher>(
     );
 
     // Phase 4: Position overlap filter
-    let trades = filter_overlapping_trades(trades, params.max_positions);
+    let trades = filter_overlapping_trades(trades, params);
 
     // Build quality stats
     let total_candidates: usize = candidates.values().map(Vec::len).sum();
@@ -170,6 +171,7 @@ struct TradeRow {
     legs: Vec<TradeRowLeg>,
     entry_cost: f64,
     exit_type: ExitType,
+    margin_required: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -262,6 +264,9 @@ fn build_trade_rows_from_candidates(
                 ExitType::DteExit
             };
 
+            // Compute margin for this trade
+            let margin_required = compute_trade_margin(&legs, entry_cost, params.multiplier);
+
             trades.push(TradeRow {
                 entry_date: candidate.entry_date,
                 exit_date,
@@ -270,11 +275,41 @@ fn build_trade_rows_from_candidates(
                 legs,
                 entry_cost,
                 exit_type,
+                margin_required,
             });
         }
     }
 
     trades
+}
+
+/// Compute margin (capital at risk) for a trade.
+///
+/// For debit positions (`entry_cost > 0`): margin = debit paid.
+/// For credit positions (`entry_cost < 0`): margin = `spread_width` × multiplier × qty − `net_credit`.
+fn compute_trade_margin(legs: &[TradeRowLeg], entry_cost: f64, multiplier: i32) -> f64 {
+    if entry_cost >= 0.0 {
+        return entry_cost;
+    }
+    let net_credit = entry_cost.abs();
+    // Find max spread width across same-option-type legs
+    let mut max_width = 0.0_f64;
+    for opt_type in [OptionType::Call, OptionType::Put] {
+        let strikes: Vec<f64> = legs
+            .iter()
+            .filter(|l| l.option_type == opt_type)
+            .map(|l| l.strike)
+            .collect();
+        if strikes.len() >= 2 {
+            let min_s = strikes.iter().copied().fold(f64::INFINITY, f64::min);
+            let max_s = strikes.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            max_width = max_width.max(max_s - min_s);
+        }
+    }
+    // qty is already embedded in entry_cost; use the minimum qty across legs as a proxy
+    let qty = f64::from(legs.iter().map(|l| l.qty.abs()).min().unwrap_or(1));
+    let max_loss = max_width * qty * f64::from(multiplier) - net_credit;
+    max_loss.max(net_credit)
 }
 
 /// Find the exit date for a trade: first trading day where DTE <= `exit_dte`,
@@ -374,6 +409,7 @@ fn apply_early_exits<S: BuildHasher>(
         let max_exit = params
             .max_hold_days
             .map(|d| trade.entry_date + chrono::Duration::days(i64::from(d)));
+        let delta_thresh = params.exit_net_delta;
 
         // Find the first trading day strictly after entry_date
         let start_idx = trading_days.partition_point(|d| *d <= trade.entry_date);
@@ -387,7 +423,7 @@ fn apply_early_exits<S: BuildHasher>(
 
             // On the exit_date itself, only Signal can override (it has highest
             // priority in the event loop, checked before DTE/expiration exit).
-            // Other triggers (MaxHold/SL/TP) have lower priority than DTE exit.
+            // Other triggers (MaxHold/SL/TP/DeltaExit) have lower priority than DTE exit.
             let exit_day = day == trade.exit_date;
 
             // --- Signal (highest priority) ---
@@ -413,11 +449,12 @@ fn apply_early_exits<S: BuildHasher>(
                 }
             }
 
-            // --- SL/TP (require price lookup) ---
+            // --- SL/TP/DeltaExit (require price lookup) ---
             // Skip on exit_day: DTE/expiration exit has higher priority
-            if !exit_day && (sl_enabled || tp_enabled) {
+            if !exit_day && (sl_enabled || tp_enabled || delta_thresh.is_some()) {
                 let mut mtm = 0.0;
                 let mut all_legs_have_price = true;
+                let mut net_delta = 0.0;
 
                 for leg in &trade.legs {
                     let key = (
@@ -444,6 +481,8 @@ fn apply_early_exits<S: BuildHasher>(
                             * direction
                             * f64::from(leg.qty)
                             * f64::from(params.multiplier);
+                        // Accumulate signed net delta from live quotes
+                        net_delta += snap.delta * leg.side.multiplier() * f64::from(leg.qty);
                     } else {
                         all_legs_have_price = false;
                     }
@@ -459,6 +498,12 @@ fn apply_early_exits<S: BuildHasher>(
                     if let Some(tp) = tp_threshold {
                         if mtm > tp {
                             earliest_trigger = Some((day, ExitType::TakeProfit));
+                            break;
+                        }
+                    }
+                    if let Some(thresh) = delta_thresh {
+                        if net_delta.abs() > thresh {
+                            earliest_trigger = Some((day, ExitType::DeltaExit));
                             break;
                         }
                     }
@@ -516,14 +561,26 @@ fn update_exit_prices(trade: &mut TradeRow, carry_index: &CarryIndex) {
     }
 }
 
-/// Filter overlapping trades: enforce `max_positions` and expiration uniqueness.
+/// Filter overlapping trades: enforce `max_positions`, expiration uniqueness, and stagger days.
 ///
 /// Forward scan over trades sorted by `entry_date`. The overlap check scans `selected`
 /// for each trade, so it is O(n²) in the number of selected trades (bounded by `max_positions`).
-fn filter_overlapping_trades(trades: Vec<TradeRow>, max_positions: i32) -> Vec<TradeRow> {
+fn filter_overlapping_trades(trades: Vec<TradeRow>, params: &BacktestParams) -> Vec<TradeRow> {
+    let max_positions = params.max_positions;
+    let min_days = params.min_days_between_entries;
     let mut selected: Vec<TradeRow> = Vec::new();
+    let mut last_entry_date: Option<NaiveDate> = None;
 
     for trade in trades {
+        // Stagger check: skip if we entered too recently
+        if let Some(min_gap) = min_days {
+            if let Some(last) = last_entry_date {
+                if (trade.entry_date - last).num_days() < i64::from(min_gap) {
+                    continue;
+                }
+            }
+        }
+
         // Count open positions at this trade's entry date
         let open_count = selected
             .iter()
@@ -545,6 +602,7 @@ fn filter_overlapping_trades(trades: Vec<TradeRow>, max_positions: i32) -> Vec<T
             continue;
         }
 
+        last_entry_date = Some(trade.entry_date);
         selected.push(trade);
     }
 
@@ -599,6 +657,7 @@ fn build_outputs(
             pnl,
             days_held,
             exit_type: trade.exit_type.clone(),
+            margin_required: trade.margin_required,
         });
     }
 

@@ -27,6 +27,7 @@ pub(crate) const DEFAULT_METRICS: PerformanceMetrics = PerformanceMetrics {
     avg_days_held: 0.0,
     max_consecutive_losses: 0,
     expectancy: 0.0,
+    margin_return_pct: 0.0,
 };
 
 /// Trade-level metrics extracted from the trade log.
@@ -39,6 +40,7 @@ struct TradeMetrics {
     avg_days_held: f64,
     max_consecutive_losses: usize,
     expectancy: f64,
+    margin_return_pct: f64,
 }
 
 /// Calculate performance metrics from equity curve and trade log
@@ -79,6 +81,7 @@ pub fn calculate_metrics(
         avg_days_held: tm.avg_days_held,
         max_consecutive_losses: tm.max_consecutive_losses,
         expectancy: tm.expectancy,
+        margin_return_pct: tm.margin_return_pct,
     })
 }
 
@@ -170,6 +173,7 @@ fn compute_trade_metrics(trade_log: &[TradeRecord]) -> TradeMetrics {
             avg_days_held: 0.0,
             max_consecutive_losses: 0,
             expectancy: 0.0,
+            margin_return_pct: 0.0,
         };
     }
 
@@ -182,10 +186,12 @@ fn compute_trade_metrics(trade_log: &[TradeRecord]) -> TradeMetrics {
     let mut total_days = 0_i64;
     let mut current_loss_streak = 0usize;
     let mut max_loss_streak = 0usize;
+    let mut total_margin = 0.0_f64;
 
     for t in trade_log {
         total_pnl += t.pnl;
         total_days += t.days_held;
+        total_margin += t.margin_required;
 
         if t.pnl > 0.0 {
             winner_count += 1;
@@ -230,6 +236,13 @@ fn compute_trade_metrics(trade_log: &[TradeRecord]) -> TradeMetrics {
 
     let expectancy = (win_rate * avg_winner) + (loss_rate * avg_loser);
 
+    // Margin return: total P&L as % of total margin used
+    let margin_return_pct = if total_margin > 0.0 {
+        total_pnl / total_margin * 100.0
+    } else {
+        0.0
+    };
+
     TradeMetrics {
         win_rate,
         profit_factor,
@@ -239,6 +252,7 @@ fn compute_trade_metrics(trade_log: &[TradeRecord]) -> TradeMetrics {
         avg_days_held,
         max_consecutive_losses: max_loss_streak,
         expectancy,
+        margin_return_pct,
     }
 }
 
@@ -330,6 +344,7 @@ mod tests {
             pnl,
             days_held,
             exit_type: ExitType::Expiration,
+            margin_required: 100.0,
         }
     }
 

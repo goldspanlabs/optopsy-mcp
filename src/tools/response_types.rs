@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use crate::engine::sweep::{DimensionStats, OosResult};
 use crate::engine::types::{
-    Commission, CompareResult, DteRange, PerformanceMetrics, Slippage, SweepResult, TargetRange,
-    TradeRecord, TradeSelector,
+    Commission, CompareResult, DteRange, ExpirationFilter, PerformanceMetrics, Slippage,
+    SweepResult, TargetRange, TradeRecord, TradeSelector,
 };
 use crate::signals::registry::SignalSpec;
 
@@ -59,6 +59,20 @@ pub struct BacktestParamsSummary {
     pub entry_signal: Option<serde_json::Value>,
     /// Exit signal specification, if any
     pub exit_signal: Option<serde_json::Value>,
+    /// Minimum absolute net premium at entry, if set
+    pub min_net_premium: Option<f64>,
+    /// Maximum absolute net premium at entry, if set
+    pub max_net_premium: Option<f64>,
+    /// Minimum signed net position delta at entry, if set
+    pub min_net_delta: Option<f64>,
+    /// Maximum signed net position delta at entry, if set
+    pub max_net_delta: Option<f64>,
+    /// Minimum calendar days between entries (cooldown), if set
+    pub min_days_between_entries: Option<i32>,
+    /// Expiration type filter applied
+    pub expiration_filter: ExpirationFilter,
+    /// Exit net delta threshold, if set
+    pub exit_net_delta: Option<f64>,
 }
 
 /// Status of currently loaded data

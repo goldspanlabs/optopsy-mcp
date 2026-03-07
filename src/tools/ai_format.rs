@@ -44,6 +44,7 @@ fn exit_type_name(exit_type: &ExitType) -> &'static str {
         ExitType::DteExit => "DteExit",
         ExitType::Adjustment => "Adjustment",
         ExitType::Signal => "Signal",
+        ExitType::DeltaExit => "DeltaExit",
     }
 }
 
@@ -275,6 +276,13 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
                     .exit_signal
                     .as_ref()
                     .map(|s| serde_json::to_value(s).unwrap_or(serde_json::Value::Null)),
+                min_net_premium: params.min_net_premium,
+                max_net_premium: params.max_net_premium,
+                min_net_delta: params.min_net_delta,
+                max_net_delta: params.max_net_delta,
+                min_days_between_entries: params.min_days_between_entries,
+                expiration_filter: params.expiration_filter.clone(),
+                exit_net_delta: params.exit_net_delta,
             },
             metrics: result.metrics,
             trade_summary,
@@ -359,6 +367,13 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
                 .exit_signal
                 .as_ref()
                 .map(|s| serde_json::to_value(s).unwrap_or(serde_json::Value::Null)),
+            min_net_premium: params.min_net_premium,
+            max_net_premium: params.max_net_premium,
+            min_net_delta: params.min_net_delta,
+            max_net_delta: params.max_net_delta,
+            min_days_between_entries: params.min_days_between_entries,
+            expiration_filter: params.expiration_filter.clone(),
+            exit_net_delta: params.exit_net_delta,
         },
         metrics: result.metrics,
         trade_summary,
@@ -646,6 +661,7 @@ mod tests {
             pnl,
             days_held,
             exit_type,
+            margin_required: 100.0,
         }
     }
 
@@ -917,6 +933,13 @@ mod tests {
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: None,
+            max_net_delta: None,
+            min_days_between_entries: None,
+            expiration_filter: crate::engine::types::ExpirationFilter::Any,
+            exit_net_delta: None,
         }
     }
 
@@ -1010,6 +1033,7 @@ mod tests {
                 avg_days_held,
                 max_consecutive_losses,
                 expectancy,
+                margin_return_pct: 0.0,
             },
             equity_curve: equity,
             trade_log: trades,

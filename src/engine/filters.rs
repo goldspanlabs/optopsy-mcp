@@ -1,7 +1,8 @@
 use anyhow::Result;
+use chrono::Datelike;
 use polars::prelude::*;
 
-use super::types::{ExpirationCycle, TargetRange};
+use super::types::{ExpirationCycle, ExpirationFilter, TargetRange};
 use crate::data::parquet::QUOTE_DATETIME_COL;
 
 /// Compute DTE (days to expiration) from `quote_datetime` and expiration columns.
@@ -259,6 +260,58 @@ pub fn filter_valid_quotes(df: &DataFrame, min_bid_ask: f64) -> Result<DataFrame
     Ok(result)
 }
 
+/// Returns `true` if `date` falls on the third Friday of its month.
+pub fn is_third_friday(date: chrono::NaiveDate) -> bool {
+    use chrono::Weekday;
+    if date.weekday() != Weekday::Fri {
+        return false;
+    }
+    // The third Friday has a day-of-month in [15, 21]
+    let d = date.day();
+    (15..=21).contains(&d)
+}
+
+/// Days-from-epoch offset: Polars stores Date as days since 1970-01-01 (Unix epoch).
+/// `chrono::from_num_days_from_ce` uses day 1 CE as the origin (= day 719163 of Unix).
+const EXPIRATION_EPOCH_OFFSET: i32 = 719_163;
+
+/// Filter the options `DataFrame` to only rows whose expiration satisfies `filter`.
+///
+/// * `Any` — no-op, returns the `DataFrame` as-is.
+/// * `Weekly` — keeps rows where expiration falls on a Friday.
+/// * `Monthly` — keeps rows where expiration is the third Friday of the month.
+pub fn filter_expiration_type(df: &DataFrame, filter: &ExpirationFilter) -> Result<DataFrame> {
+    if matches!(filter, ExpirationFilter::Any) {
+        return Ok(df.clone());
+    }
+
+    let exp_col = df.column("expiration")?;
+    let exp_ca = exp_col.date()?;
+
+    let mask: Vec<bool> = exp_ca
+        .phys
+        .iter()
+        .map(|opt_days| {
+            let Some(days) = opt_days else {
+                return false;
+            };
+            let Some(date) =
+                chrono::NaiveDate::from_num_days_from_ce_opt(days + EXPIRATION_EPOCH_OFFSET)
+            else {
+                return false;
+            };
+            match filter {
+                ExpirationFilter::Any => true,
+                ExpirationFilter::Weekly => date.weekday() == chrono::Weekday::Fri,
+                ExpirationFilter::Monthly => is_third_friday(date),
+            }
+        })
+        .collect();
+
+    let mask_ca = BooleanChunked::new(PlSmallStr::from("mask"), &mask);
+    Ok(df.filter(&mask_ca)?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,5 +536,101 @@ mod tests {
         };
         let result = select_closest_delta(&df, &target).unwrap();
         assert_eq!(result.height(), 0);
+    }
+
+    #[test]
+    fn is_third_friday_identifies_correctly() {
+        // Third Friday of January 2024 is the 19th
+        assert!(is_third_friday(NaiveDate::from_ymd_opt(2024, 1, 19).unwrap()));
+        // First Friday of January 2024 is the 5th — not third
+        assert!(!is_third_friday(NaiveDate::from_ymd_opt(2024, 1, 5).unwrap()));
+        // Non-Friday date
+        assert!(!is_third_friday(NaiveDate::from_ymd_opt(2024, 1, 18).unwrap()));
+        // Third Friday of February 2024 is the 16th
+        assert!(is_third_friday(NaiveDate::from_ymd_opt(2024, 2, 16).unwrap()));
+    }
+
+    #[test]
+    fn filter_expiration_type_any_returns_all() {
+        use polars::prelude::DateChunked;
+        let exp1 = NaiveDate::from_ymd_opt(2024, 1, 19).unwrap(); // Friday
+        let exp2 = NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(); // Monday
+        let dt = NaiveDate::from_ymd_opt(2024, 1, 15)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        let mut df = df! {
+            QUOTE_DATETIME_COL => &[dt, dt],
+            "option_type" => &["call", "call"],
+            "strike" => &[100.0f64, 100.0],
+            "bid" => &[1.0f64, 1.0],
+            "ask" => &[1.5f64, 1.5],
+            "delta" => &[0.5f64, 0.5],
+        }
+        .unwrap();
+        df.with_column(
+            DateChunked::from_naive_date(PlSmallStr::from("expiration"), [exp1, exp2])
+                .into_column(),
+        )
+        .unwrap();
+        let result = filter_expiration_type(&df, &ExpirationFilter::Any).unwrap();
+        assert_eq!(result.height(), 2);
+    }
+
+    #[test]
+    fn filter_expiration_type_weekly_keeps_fridays() {
+        use polars::prelude::DateChunked;
+        let friday = NaiveDate::from_ymd_opt(2024, 1, 19).unwrap();
+        let monday = NaiveDate::from_ymd_opt(2024, 1, 22).unwrap();
+        let dt = NaiveDate::from_ymd_opt(2024, 1, 15)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        let mut df = df! {
+            QUOTE_DATETIME_COL => &[dt, dt],
+            "option_type" => &["call", "call"],
+            "strike" => &[100.0f64, 100.0],
+            "bid" => &[1.0f64, 1.0],
+            "ask" => &[1.5f64, 1.5],
+            "delta" => &[0.5f64, 0.5],
+        }
+        .unwrap();
+        df.with_column(
+            DateChunked::from_naive_date(PlSmallStr::from("expiration"), [friday, monday])
+                .into_column(),
+        )
+        .unwrap();
+        let result = filter_expiration_type(&df, &ExpirationFilter::Weekly).unwrap();
+        assert_eq!(result.height(), 1, "Only Friday expiration should remain");
+    }
+
+    #[test]
+    fn filter_expiration_type_monthly_keeps_third_fridays() {
+        use polars::prelude::DateChunked;
+        let third_friday = NaiveDate::from_ymd_opt(2024, 1, 19).unwrap(); // 3rd Friday Jan 2024
+        let other_friday = NaiveDate::from_ymd_opt(2024, 1, 26).unwrap(); // 4th Friday Jan 2024
+        let dt = NaiveDate::from_ymd_opt(2024, 1, 15)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        let mut df = df! {
+            QUOTE_DATETIME_COL => &[dt, dt],
+            "option_type" => &["call", "call"],
+            "strike" => &[100.0f64, 100.0],
+            "bid" => &[1.0f64, 1.0],
+            "ask" => &[1.5f64, 1.5],
+            "delta" => &[0.5f64, 0.5],
+        }
+        .unwrap();
+        df.with_column(
+            DateChunked::from_naive_date(
+                PlSmallStr::from("expiration"),
+                [third_friday, other_friday],
+            )
+            .into_column(),
+        )
+        .unwrap();
+        let result = filter_expiration_type(&df, &ExpirationFilter::Monthly).unwrap();
+        assert_eq!(result.height(), 1, "Only 3rd Friday expiration should remain");
     }
 }
