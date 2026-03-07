@@ -10,56 +10,56 @@ const RSI_PERIOD: usize = 14;
 /// Minimum number of data points required to compute MACD (slow EMA + signal line).
 const MACD_MIN_PERIODS: usize = 34;
 
-/// Signal: RSI is below a threshold (oversold condition).
+/// Signal: RSI is below a threshold.
 /// Uses the standard 14-period RSI.
-pub struct RsiOversold {
+pub struct RsiBelow {
     pub column: String,
     pub threshold: f64,
 }
 
-impl SignalFn for RsiOversold {
+impl SignalFn for RsiBelow {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
         let prices = column_to_f64(df, &self.column)?;
         let n = prices.len();
         if n <= RSI_PERIOD {
-            return Ok(BooleanChunked::new("rsi_oversold".into(), vec![false; n]).into_series());
+            return Ok(BooleanChunked::new("rsi_below".into(), vec![false; n]).into_series());
         }
         let rsi_values = sti::rsi(&prices);
         Ok(pad_and_compare(
             &rsi_values,
             n,
             |v| v < self.threshold,
-            "rsi_oversold",
+            "rsi_below",
         ))
     }
     fn name(&self) -> &'static str {
-        "rsi_oversold"
+        "rsi_below"
     }
 }
 
-/// Signal: RSI is above a threshold (overbought condition).
-pub struct RsiOverbought {
+/// Signal: RSI is above a threshold.
+pub struct RsiAbove {
     pub column: String,
     pub threshold: f64,
 }
 
-impl SignalFn for RsiOverbought {
+impl SignalFn for RsiAbove {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
         let prices = column_to_f64(df, &self.column)?;
         let n = prices.len();
         if n <= RSI_PERIOD {
-            return Ok(BooleanChunked::new("rsi_overbought".into(), vec![false; n]).into_series());
+            return Ok(BooleanChunked::new("rsi_above".into(), vec![false; n]).into_series());
         }
         let rsi_values = sti::rsi(&prices);
         Ok(pad_and_compare(
             &rsi_values,
             n,
             |v| v > self.threshold,
-            "rsi_overbought",
+            "rsi_above",
         ))
     }
     fn name(&self) -> &'static str {
-        "rsi_overbought"
+        "rsi_above"
     }
 }
 
@@ -159,9 +159,9 @@ fn compute_stochastic(close: &[f64], high: &[f64], low: &[f64], period: usize) -
         .collect()
 }
 
-/// Signal: Stochastic oscillator is below threshold (oversold).
+/// Signal: Stochastic oscillator is below threshold.
 /// Uses the standard formula: (close - `lowest_low`) / (`highest_high` - `lowest_low`) * 100.
-pub struct StochasticOversold {
+pub struct StochasticBelow {
     pub close_col: String,
     pub high_col: String,
     pub low_col: String,
@@ -169,7 +169,7 @@ pub struct StochasticOversold {
     pub threshold: f64,
 }
 
-impl SignalFn for StochasticOversold {
+impl SignalFn for StochasticBelow {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
         let close = column_to_f64(df, &self.close_col)?;
         let high = column_to_f64(df, &self.high_col)?;
@@ -177,7 +177,7 @@ impl SignalFn for StochasticOversold {
         let n = close.len();
         if self.period == 0 || n < self.period {
             return Ok(
-                BooleanChunked::new("stochastic_oversold".into(), vec![false; n]).into_series(),
+                BooleanChunked::new("stochastic_below".into(), vec![false; n]).into_series(),
             );
         }
         let stoch_values = compute_stochastic(&close, &high, &low, self.period);
@@ -185,17 +185,17 @@ impl SignalFn for StochasticOversold {
             &stoch_values,
             n,
             |v| v < self.threshold,
-            "stochastic_oversold",
+            "stochastic_below",
         ))
     }
     fn name(&self) -> &'static str {
-        "stochastic_oversold"
+        "stochastic_below"
     }
 }
 
-/// Signal: Stochastic oscillator is above threshold (overbought).
+/// Signal: Stochastic oscillator is above threshold.
 /// Uses the standard formula: (close - `lowest_low`) / (`highest_high` - `lowest_low`) * 100.
-pub struct StochasticOverbought {
+pub struct StochasticAbove {
     pub close_col: String,
     pub high_col: String,
     pub low_col: String,
@@ -203,7 +203,7 @@ pub struct StochasticOverbought {
     pub threshold: f64,
 }
 
-impl SignalFn for StochasticOverbought {
+impl SignalFn for StochasticAbove {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
         let close = column_to_f64(df, &self.close_col)?;
         let high = column_to_f64(df, &self.high_col)?;
@@ -211,7 +211,7 @@ impl SignalFn for StochasticOverbought {
         let n = close.len();
         if self.period == 0 || n < self.period {
             return Ok(
-                BooleanChunked::new("stochastic_overbought".into(), vec![false; n]).into_series(),
+                BooleanChunked::new("stochastic_above".into(), vec![false; n]).into_series(),
             );
         }
         let stoch_values = compute_stochastic(&close, &high, &low, self.period);
@@ -219,11 +219,11 @@ impl SignalFn for StochasticOverbought {
             &stoch_values,
             n,
             |v| v > self.threshold,
-            "stochastic_overbought",
+            "stochastic_above",
         ))
     }
     fn name(&self) -> &'static str {
-        "stochastic_overbought"
+        "stochastic_above"
     }
 }
 
@@ -242,9 +242,9 @@ mod tests {
     }
 
     #[test]
-    fn rsi_oversold_produces_correct_length() {
+    fn rsi_below_produces_correct_length() {
         let df = sample_df();
-        let signal = RsiOversold {
+        let signal = RsiBelow {
             column: "close".into(),
             threshold: 30.0,
         };
@@ -260,7 +260,7 @@ mod tests {
             "low" => &[99.0, 101.0],
         }
         .unwrap();
-        let signal = StochasticOversold {
+        let signal = StochasticBelow {
             close_col: "close".into(),
             high_col: "high".into(),
             low_col: "low".into(),
@@ -273,9 +273,9 @@ mod tests {
     }
 
     #[test]
-    fn rsi_overbought_produces_correct_length() {
+    fn rsi_above_produces_correct_length() {
         let df = sample_df();
-        let signal = RsiOverbought {
+        let signal = RsiAbove {
             column: "close".into(),
             threshold: 70.0,
         };
@@ -284,9 +284,9 @@ mod tests {
     }
 
     #[test]
-    fn rsi_oversold_insufficient_data() {
+    fn rsi_below_insufficient_data() {
         let df = df! { "close" => &[100.0, 102.0, 101.0] }.unwrap();
-        let signal = RsiOversold {
+        let signal = RsiBelow {
             column: "close".into(),
             threshold: 30.0,
         };
@@ -296,9 +296,9 @@ mod tests {
     }
 
     #[test]
-    fn rsi_overbought_insufficient_data() {
+    fn rsi_above_insufficient_data() {
         let df = df! { "close" => &[100.0, 102.0, 101.0] }.unwrap();
-        let signal = RsiOverbought {
+        let signal = RsiAbove {
             column: "close".into(),
             threshold: 70.0,
         };
@@ -388,7 +388,7 @@ mod tests {
     }
 
     #[test]
-    fn stochastic_overbought_correct_length() {
+    fn stochastic_above_correct_length() {
         let close: Vec<f64> = (0..20).map(|i| 100.0 + f64::from(i)).collect();
         let high: Vec<f64> = close.iter().map(|c| c + 2.0).collect();
         let low: Vec<f64> = close.iter().map(|c| c - 2.0).collect();
@@ -398,7 +398,7 @@ mod tests {
             "low" => &low,
         }
         .unwrap();
-        let signal = StochasticOverbought {
+        let signal = StochasticAbove {
             close_col: "close".into(),
             high_col: "high".into(),
             low_col: "low".into(),
@@ -410,14 +410,14 @@ mod tests {
     }
 
     #[test]
-    fn stochastic_overbought_insufficient_data() {
+    fn stochastic_above_insufficient_data() {
         let df = df! {
             "close" => &[100.0, 102.0],
             "high" => &[103.0, 104.0],
             "low" => &[99.0, 101.0],
         }
         .unwrap();
-        let signal = StochasticOverbought {
+        let signal = StochasticAbove {
             close_col: "close".into(),
             high_col: "high".into(),
             low_col: "low".into(),
@@ -437,7 +437,7 @@ mod tests {
             "low" => &[99.0, 101.0, 100.0],
         }
         .unwrap();
-        let signal = StochasticOversold {
+        let signal = StochasticBelow {
             close_col: "close".into(),
             high_col: "high".into(),
             low_col: "low".into(),
@@ -480,21 +480,21 @@ mod tests {
     }
 
     #[test]
-    fn rsi_oversold_name() {
-        let signal = RsiOversold {
+    fn rsi_below_name() {
+        let signal = RsiBelow {
             column: "close".into(),
             threshold: 30.0,
         };
-        assert_eq!(signal.name(), "rsi_oversold");
+        assert_eq!(signal.name(), "rsi_below");
     }
 
     #[test]
-    fn rsi_overbought_name() {
-        let signal = RsiOverbought {
+    fn rsi_above_name() {
+        let signal = RsiAbove {
             column: "close".into(),
             threshold: 70.0,
         };
-        assert_eq!(signal.name(), "rsi_overbought");
+        assert_eq!(signal.name(), "rsi_above");
     }
 
     #[test]
@@ -522,26 +522,26 @@ mod tests {
     }
 
     #[test]
-    fn stochastic_oversold_name() {
-        let signal = StochasticOversold {
+    fn stochastic_below_name() {
+        let signal = StochasticBelow {
             close_col: "close".into(),
             high_col: "high".into(),
             low_col: "low".into(),
             period: 14,
             threshold: 20.0,
         };
-        assert_eq!(signal.name(), "stochastic_oversold");
+        assert_eq!(signal.name(), "stochastic_below");
     }
 
     #[test]
-    fn stochastic_overbought_name() {
-        let signal = StochasticOverbought {
+    fn stochastic_above_name() {
+        let signal = StochasticAbove {
             close_col: "close".into(),
             high_col: "high".into(),
             low_col: "low".into(),
             period: 14,
             threshold: 80.0,
         };
-        assert_eq!(signal.name(), "stochastic_overbought");
+        assert_eq!(signal.name(), "stochastic_above");
     }
 }

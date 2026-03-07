@@ -5,8 +5,7 @@ use super::combinators::{AndSignal, OrSignal};
 use super::custom::FormulaSignal;
 use super::helpers::SignalFn;
 use super::momentum::{
-    MacdBearish, MacdBullish, MacdCrossover, RsiOverbought, RsiOversold, StochasticOverbought,
-    StochasticOversold,
+    MacdBearish, MacdBullish, MacdCrossover, RsiAbove, RsiBelow, StochasticAbove, StochasticBelow,
 };
 use super::overlap::{
     EmaCrossover, EmaCrossunder, PriceAboveEma, PriceAboveSma, PriceBelowEma, PriceBelowSma,
@@ -20,7 +19,7 @@ use super::volatility::{
     AtrAbove, AtrBelow, BollingerLowerTouch, BollingerUpperTouch, KeltnerLowerBreak,
     KeltnerUpperBreak,
 };
-use super::volume::{CmfNegative, CmfPositive, MfiOverbought, MfiOversold, ObvFalling, ObvRising};
+use super::volume::{CmfNegative, CmfPositive, MfiAbove, MfiBelow, ObvFalling, ObvRising};
 
 /// Serializable signal specification. Each variant maps 1:1 to a `SignalFn` struct.
 /// Use `build_signal` to convert a `SignalSpec` into a concrete `Box<dyn SignalFn>`.
@@ -28,11 +27,11 @@ use super::volume::{CmfNegative, CmfPositive, MfiOverbought, MfiOversold, ObvFal
 #[serde(tag = "type")]
 pub enum SignalSpec {
     // -- Momentum --
-    RsiOversold {
+    RsiBelow {
         column: String,
         threshold: f64,
     },
-    RsiOverbought {
+    RsiAbove {
         column: String,
         threshold: f64,
     },
@@ -45,14 +44,14 @@ pub enum SignalSpec {
     MacdCrossover {
         column: String,
     },
-    StochasticOversold {
+    StochasticBelow {
         close_col: String,
         high_col: String,
         low_col: String,
         period: usize,
         threshold: f64,
     },
-    StochasticOverbought {
+    StochasticAbove {
         close_col: String,
         high_col: String,
         low_col: String,
@@ -198,7 +197,7 @@ pub enum SignalSpec {
     },
 
     // -- Volume --
-    MfiOversold {
+    MfiBelow {
         high_col: String,
         low_col: String,
         close_col: String,
@@ -206,7 +205,7 @@ pub enum SignalSpec {
         period: usize,
         threshold: f64,
     },
-    MfiOverbought {
+    MfiAbove {
         high_col: String,
         low_col: String,
         close_col: String,
@@ -288,11 +287,11 @@ fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
     }
     match spec {
         // Momentum
-        SignalSpec::RsiOversold { column, threshold } => Box::new(RsiOversold {
+        SignalSpec::RsiBelow { column, threshold } => Box::new(RsiBelow {
             column: column.clone(),
             threshold: *threshold,
         }),
-        SignalSpec::RsiOverbought { column, threshold } => Box::new(RsiOverbought {
+        SignalSpec::RsiAbove { column, threshold } => Box::new(RsiAbove {
             column: column.clone(),
             threshold: *threshold,
         }),
@@ -305,26 +304,26 @@ fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
         SignalSpec::MacdCrossover { column } => Box::new(MacdCrossover {
             column: column.clone(),
         }),
-        SignalSpec::StochasticOversold {
+        SignalSpec::StochasticBelow {
             close_col,
             high_col,
             low_col,
             period,
             threshold,
-        } => Box::new(StochasticOversold {
+        } => Box::new(StochasticBelow {
             close_col: close_col.clone(),
             high_col: high_col.clone(),
             low_col: low_col.clone(),
             period: *period,
             threshold: *threshold,
         }),
-        SignalSpec::StochasticOverbought {
+        SignalSpec::StochasticAbove {
             close_col,
             high_col,
             low_col,
             period,
             threshold,
-        } => Box::new(StochasticOverbought {
+        } => Box::new(StochasticAbove {
             close_col: close_col.clone(),
             high_col: high_col.clone(),
             low_col: low_col.clone(),
@@ -550,14 +549,14 @@ fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
         }),
 
         // Volume
-        SignalSpec::MfiOversold {
+        SignalSpec::MfiBelow {
             high_col,
             low_col,
             close_col,
             volume_col,
             period,
             threshold,
-        } => Box::new(MfiOversold {
+        } => Box::new(MfiBelow {
             high_col: high_col.clone(),
             low_col: low_col.clone(),
             close_col: close_col.clone(),
@@ -565,14 +564,14 @@ fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
             period: *period,
             threshold: *threshold,
         }),
-        SignalSpec::MfiOverbought {
+        SignalSpec::MfiAbove {
             high_col,
             low_col,
             close_col,
             volume_col,
             period,
             threshold,
-        } => Box::new(MfiOverbought {
+        } => Box::new(MfiAbove {
             high_col: high_col.clone(),
             low_col: low_col.clone(),
             close_col: close_col.clone(),
@@ -672,15 +671,15 @@ pub struct SignalInfo {
 pub const SIGNAL_CATALOG: &[SignalInfo] = &[
     // Momentum
     SignalInfo {
-        name: "RsiOversold",
+        name: "RsiBelow",
         category: "momentum",
-        description: "RSI below threshold (oversold). Uses 14-period RSI.",
+        description: "RSI below threshold. Uses 14-period RSI.",
         params: "column, threshold (e.g. 30.0)",
     },
     SignalInfo {
-        name: "RsiOverbought",
+        name: "RsiAbove",
         category: "momentum",
-        description: "RSI above threshold (overbought). Uses 14-period RSI.",
+        description: "RSI above threshold. Uses 14-period RSI.",
         params: "column, threshold (e.g. 70.0)",
     },
     SignalInfo {
@@ -702,15 +701,15 @@ pub const SIGNAL_CATALOG: &[SignalInfo] = &[
         params: "column",
     },
     SignalInfo {
-        name: "StochasticOversold",
+        name: "StochasticBelow",
         category: "momentum",
-        description: "Stochastic oscillator below threshold.",
+        description: "Stochastic oscillator below threshold. Uses rolling %K.",
         params: "close_col, high_col, low_col, period, threshold",
     },
     SignalInfo {
-        name: "StochasticOverbought",
+        name: "StochasticAbove",
         category: "momentum",
-        description: "Stochastic oscillator above threshold.",
+        description: "Stochastic oscillator above threshold. Uses rolling %K.",
         params: "close_col, high_col, low_col, period, threshold",
     },
     // Overlap
@@ -869,15 +868,15 @@ pub const SIGNAL_CATALOG: &[SignalInfo] = &[
     },
     // Volume
     SignalInfo {
-        name: "MfiOversold",
+        name: "MfiBelow",
         category: "volume",
-        description: "Money Flow Index below threshold (oversold by volume-weighted momentum).",
+        description: "Money Flow Index below threshold.",
         params: "high_col, low_col, close_col, volume_col, period, threshold",
     },
     SignalInfo {
-        name: "MfiOverbought",
+        name: "MfiAbove",
         category: "volume",
-        description: "Money Flow Index above threshold (overbought).",
+        description: "Money Flow Index above threshold.",
         params: "high_col, low_col, close_col, volume_col, period, threshold",
     },
     SignalInfo {
@@ -904,6 +903,34 @@ pub const SIGNAL_CATALOG: &[SignalInfo] = &[
         description: "Chaikin Money Flow < 0 (selling pressure).",
         params: "close_col, high_col, low_col, volume_col, period",
     },
+    // Range (synthetic catalog entries for And combinator patterns)
+    SignalInfo {
+        name: "RsiRange",
+        category: "momentum",
+        description:
+            "RSI within a range (e.g. 30-40). Uses And combinator with RsiAbove + RsiBelow.",
+        params: "And { RsiAbove { threshold: lower }, RsiBelow { threshold: upper } }",
+    },
+    SignalInfo {
+        name: "StochasticRange",
+        category: "momentum",
+        description:
+            "Stochastic within a range. Uses And combinator with StochasticAbove + StochasticBelow.",
+        params:
+            "And { StochasticAbove { threshold: lower }, StochasticBelow { threshold: upper } }",
+    },
+    SignalInfo {
+        name: "AtrRange",
+        category: "volatility",
+        description: "ATR within a range. Uses And combinator with AtrAbove + AtrBelow.",
+        params: "And { AtrAbove { threshold: lower }, AtrBelow { threshold: upper } }",
+    },
+    SignalInfo {
+        name: "MfiRange",
+        category: "volume",
+        description: "MFI within a range. Uses And combinator with MfiAbove + MfiBelow.",
+        params: "And { MfiAbove { threshold: lower }, MfiBelow { threshold: upper } }",
+    },
 ];
 
 #[cfg(test)]
@@ -912,18 +939,18 @@ mod tests {
 
     #[test]
     fn build_signal_round_trip_rsi() {
-        let spec = SignalSpec::RsiOversold {
+        let spec = SignalSpec::RsiBelow {
             column: "close".into(),
             threshold: 30.0,
         };
         let signal = build_signal(&spec);
-        assert_eq!(signal.name(), "rsi_oversold");
+        assert_eq!(signal.name(), "rsi_below");
     }
 
     #[test]
     fn build_signal_and_combinator() {
         let spec = SignalSpec::And {
-            left: Box::new(SignalSpec::RsiOversold {
+            left: Box::new(SignalSpec::RsiBelow {
                 column: "close".into(),
                 threshold: 30.0,
             }),
@@ -937,34 +964,34 @@ mod tests {
 
     #[test]
     fn signal_spec_serde_round_trip() {
-        let spec = SignalSpec::RsiOversold {
+        let spec = SignalSpec::RsiBelow {
             column: "close".into(),
             threshold: 30.0,
         };
         let json = serde_json::to_string(&spec).unwrap();
         let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
-        if let SignalSpec::RsiOversold { column, threshold } = parsed {
+        if let SignalSpec::RsiBelow { column, threshold } = parsed {
             assert_eq!(column, "close");
             assert_eq!(threshold, 30.0);
         } else {
-            panic!("expected RsiOversold");
+            panic!("expected RsiBelow");
         }
     }
 
     #[test]
     fn catalog_has_all_signals() {
-        // 38 signals (excluding And/Or combinators)
-        assert_eq!(SIGNAL_CATALOG.len(), 38);
+        // 42 signals (excluding And/Or combinators; includes 4 range entries)
+        assert_eq!(SIGNAL_CATALOG.len(), 42);
     }
 
     #[test]
     fn build_signal_round_trip_rsi_overbought() {
-        let spec = SignalSpec::RsiOverbought {
+        let spec = SignalSpec::RsiAbove {
             column: "close".into(),
             threshold: 70.0,
         };
         let signal = build_signal(&spec);
-        assert_eq!(signal.name(), "rsi_overbought");
+        assert_eq!(signal.name(), "rsi_above");
     }
 
     #[test]
@@ -993,26 +1020,26 @@ mod tests {
 
     #[test]
     fn build_signal_stochastic_oversold() {
-        let signal = build_signal(&SignalSpec::StochasticOversold {
+        let signal = build_signal(&SignalSpec::StochasticBelow {
             close_col: "close".into(),
             high_col: "high".into(),
             low_col: "low".into(),
             period: 14,
             threshold: 20.0,
         });
-        assert_eq!(signal.name(), "stochastic_oversold");
+        assert_eq!(signal.name(), "stochastic_below");
     }
 
     #[test]
     fn build_signal_stochastic_overbought() {
-        let signal = build_signal(&SignalSpec::StochasticOverbought {
+        let signal = build_signal(&SignalSpec::StochasticAbove {
             close_col: "close".into(),
             high_col: "high".into(),
             low_col: "low".into(),
             period: 14,
             threshold: 80.0,
         });
-        assert_eq!(signal.name(), "stochastic_overbought");
+        assert_eq!(signal.name(), "stochastic_above");
     }
 
     #[test]
@@ -1271,7 +1298,7 @@ mod tests {
 
     #[test]
     fn build_signal_mfi_oversold() {
-        let signal = build_signal(&SignalSpec::MfiOversold {
+        let signal = build_signal(&SignalSpec::MfiBelow {
             high_col: "high".into(),
             low_col: "low".into(),
             close_col: "close".into(),
@@ -1279,12 +1306,12 @@ mod tests {
             period: 14,
             threshold: 20.0,
         });
-        assert_eq!(signal.name(), "mfi_oversold");
+        assert_eq!(signal.name(), "mfi_below");
     }
 
     #[test]
     fn build_signal_mfi_overbought() {
-        let signal = build_signal(&SignalSpec::MfiOverbought {
+        let signal = build_signal(&SignalSpec::MfiAbove {
             high_col: "high".into(),
             low_col: "low".into(),
             close_col: "close".into(),
@@ -1292,7 +1319,7 @@ mod tests {
             period: 14,
             threshold: 80.0,
         });
-        assert_eq!(signal.name(), "mfi_overbought");
+        assert_eq!(signal.name(), "mfi_above");
     }
 
     #[test]
@@ -1340,7 +1367,7 @@ mod tests {
     #[test]
     fn build_signal_or_combinator() {
         let spec = SignalSpec::Or {
-            left: Box::new(SignalSpec::RsiOversold {
+            left: Box::new(SignalSpec::RsiBelow {
                 column: "close".into(),
                 threshold: 30.0,
             }),
@@ -1369,7 +1396,7 @@ mod tests {
     #[test]
     fn signal_spec_serde_round_trip_and_combinator() {
         let spec = SignalSpec::And {
-            left: Box::new(SignalSpec::RsiOversold {
+            left: Box::new(SignalSpec::RsiBelow {
                 column: "close".into(),
                 threshold: 30.0,
             }),
@@ -1381,7 +1408,7 @@ mod tests {
         let json = serde_json::to_string(&spec).unwrap();
         let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
         if let SignalSpec::And { left, right } = parsed {
-            assert!(matches!(*left, SignalSpec::RsiOversold { .. }));
+            assert!(matches!(*left, SignalSpec::RsiBelow { .. }));
             assert!(matches!(*right, SignalSpec::PriceAboveSma { .. }));
         } else {
             panic!("expected And");
@@ -1425,7 +1452,7 @@ mod tests {
 
     #[test]
     fn signal_spec_serde_round_trip_stochastic() {
-        let spec = SignalSpec::StochasticOversold {
+        let spec = SignalSpec::StochasticBelow {
             close_col: "close".into(),
             high_col: "high".into(),
             low_col: "low".into(),
@@ -1434,7 +1461,7 @@ mod tests {
         };
         let json = serde_json::to_string(&spec).unwrap();
         let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
-        if let SignalSpec::StochasticOversold {
+        if let SignalSpec::StochasticBelow {
             close_col,
             high_col,
             low_col,
@@ -1448,7 +1475,7 @@ mod tests {
             assert_eq!(period, 14);
             assert_eq!(threshold, 20.0);
         } else {
-            panic!("expected StochasticOversold");
+            panic!("expected StochasticBelow");
         }
     }
 
