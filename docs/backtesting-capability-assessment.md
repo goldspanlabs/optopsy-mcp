@@ -54,13 +54,13 @@ Gap analysis of optopsy-mcp against the Options Strategy Optimization reference 
 | Standard TA indicators | **~40 signals** | RSI, MACD, SMA, EMA, Bollinger, ATR, Stochastic, etc. |
 | Signal combinators (AND/OR) | **Full** | Nested logic supported |
 | Custom formula signals | **Full** | User-defined expressions |
-| Proprietary volatility indicators | **Missing** | No IV rank, IV percentile, term structure, skew, vol surface |
-| VIX-based indicators | **Missing** | No cross-symbol signal support |
-| Volatility forecasting | **Missing** | No forward-looking vol models |
-| Earnings-aware signals | **Missing** | No earnings date data |
-| Indicator min/max thresholds | **Partial** | Signals are binary (active/inactive), not threshold-ranged per the reference spec |
-| Two-phase search (simulation then confirmation) | **Missing** | No fast simulation approximation before full backtest |
-| Automated indicator sweep | **Missing** | Grid search covers strategy params, not signal params |
+| Proprietary volatility indicators | **Partial** | IV rank and IV percentile signals added (#60); term structure, skew, vol surface not planned — require IV surface fitting infrastructure not in current data |
+| VIX-based indicators | **Full** | Cross-symbol signal support (#59) — e.g., VIX readings as entry filter for SPY strategies |
+| Volatility forecasting | **Not planned** | Forecasting/prediction, not backtesting; IV rank/percentile cover realized vol signals without speculative model risk |
+| Earnings-aware signals | **Not planned** | Requires external earnings calendar data source not available in current options data |
+| Indicator min/max thresholds | **Full** | Directional threshold signals with range catalog (#58) — upper/lower bounds per indicator |
+| Two-phase search (simulation then confirmation) | **Not planned** | Signal parameter sweep (#61) runs full backtests directly; a fast approximation phase risks discarding good candidates |
+| Automated indicator sweep | **Full** | Signal parameter sweep added to `parameter_sweep` tool (#61) — grid search over signal params alongside strategy params |
 
 ---
 
@@ -99,18 +99,12 @@ Out of scope for a backtesting engine. Not assessed.
 
 ## Summary
 
-The engine solidly covers Steps 1-2 at a foundational level: 32 strategies, DTE/delta targeting, 5 slippage models, commissions, multiple exit conditions (DTE, SL/TP, max hold, delta), entry filters (premium, delta, expiration type, stagger), grid search with OOS validation, and ~40 TA signals wired into entry/exit.
+The engine solidly covers Steps 1-2 and most of Step 3: 32 strategies, DTE/delta targeting, 5 slippage models, commissions, multiple exit conditions (DTE, SL/TP, max hold, delta), entry filters (premium, delta, expiration type, stagger), grid search with OOS validation, ~40 TA signals wired into entry/exit, cross-symbol signals (VIX filtering), IV rank/percentile indicators, directional threshold ranges, and automated signal parameter sweeps.
 
 ### Major Gaps
 
 1. **Statistical validation (Step 4)** — No p-values, permutation testing, or anti-overfitting framework. The reference doc calls this the "most critical step" and it is entirely absent.
 
-2. **Indicator optimization at scale (Step 3)** — Signals can be used manually, but there is no automated sweep over signal parameters, no two-phase simulation-then-confirmation search, and no way to systematically test hundreds of indicator/threshold combinations.
-
-3. **Volatility surface data** — No IV rank/percentile, term structure, skew, or implied vs. historical vol. This eliminates the ~100 proprietary vol indicators from the reference library.
-
-4. **Cross-symbol signals** — Cannot use VIX readings as entry triggers for SPY strategies.
-
 ### Bottom Line
 
-The backtester is the foundation and works well for running and comparing strategies. The optimization loop (automated indicator search + statistical validation) that the reference document treats as the core differentiator has not been built yet.
+The backtester covers Steps 1-2 solidly and Step 3 is now substantially addressed: cross-symbol signals (#59), IV rank/percentile (#60), directional thresholds (#58), and automated signal sweeps (#61) close the major indicator optimization gaps. The remaining frontier is statistical validation (Step 4) and deeper volatility surface data.
