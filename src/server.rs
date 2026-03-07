@@ -641,6 +641,18 @@ pub struct SweepSimParams {
     #[serde(default)]
     #[garde(skip)]
     pub exit_signal: Option<SignalSpec>,
+    /// Entry signal variants to sweep (cartesian product with other dimensions).
+    /// Cannot be used together with `entry_signal` (singular).
+    /// Each element is a complete `SignalSpec`. Empty list (default) = no signal sweep.
+    #[serde(default)]
+    #[garde(skip)]
+    pub entry_signals: Vec<SignalSpec>,
+    /// Exit signal variants to sweep (cartesian product with other dimensions).
+    /// Cannot be used together with `exit_signal` (singular).
+    /// Each element is a complete `SignalSpec`. Empty list (default) = no signal sweep.
+    #[serde(default)]
+    #[garde(skip)]
+    pub exit_signals: Vec<SignalSpec>,
     /// Minimum calendar days between consecutive position entries (cooldown / stagger).
     #[serde(default)]
     #[garde(inner(range(min = 1)))]
@@ -1032,12 +1044,30 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
+        // Validate: singular and plural signal fields are mutually exclusive
+        if params.sim_params.entry_signal.is_some() && !params.sim_params.entry_signals.is_empty() {
+            return Err(
+                "Cannot use both `entry_signal` (singular) and `entry_signals` (plural). \
+                 Use `entry_signals` for sweeping multiple signals, or `entry_signal` for a fixed signal."
+                    .to_string(),
+            );
+        }
+        if params.sim_params.exit_signal.is_some() && !params.sim_params.exit_signals.is_empty() {
+            return Err(
+                "Cannot use both `exit_signal` (singular) and `exit_signals` (plural). \
+                 Use `exit_signals` for sweeping multiple signals, or `exit_signal` for a fixed signal."
+                    .to_string(),
+            );
+        }
+
         let (symbol, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
 
-        // Auto-fetch OHLCV data if signals are requested
-        let ohlcv_path = if params.sim_params.entry_signal.is_some()
+        // Auto-fetch OHLCV data if any signals are requested
+        let needs_ohlcv = params.sim_params.entry_signal.is_some()
             || params.sim_params.exit_signal.is_some()
-        {
+            || !params.sim_params.entry_signals.is_empty()
+            || !params.sim_params.exit_signals.is_empty();
+        let ohlcv_path = if needs_ohlcv {
             Some(self.ensure_ohlcv(&symbol).await?)
         } else {
             None
@@ -1077,6 +1107,8 @@ impl OptopsyServer {
             },
             out_of_sample_pct: params.out_of_sample_pct / 100.0,
             direction: params.direction,
+            entry_signals: params.sim_params.entry_signals,
+            exit_signals: params.sim_params.exit_signals,
         };
 
         tokio::task::spawn_blocking(move || tools::sweep::execute(&df, &sweep_params))

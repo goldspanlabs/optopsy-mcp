@@ -10,6 +10,7 @@ use super::types::{
 };
 use crate::data::parquet::QUOTE_DATETIME_COL;
 use crate::engine::types::default_min_bid_ask;
+use crate::signals::registry::SignalSpec;
 use crate::strategies;
 
 // ---------------------------------------------------------------------------
@@ -39,6 +40,10 @@ pub struct SweepParams {
     pub sim_params: SimParams,
     pub out_of_sample_pct: f64,
     pub direction: Option<Direction>,
+    /// Entry signal variants to sweep. Empty = use `sim_params.entry_signal` as-is.
+    pub entry_signals: Vec<SignalSpec>,
+    /// Exit signal variants to sweep. Empty = use `sim_params.exit_signal` as-is.
+    pub exit_signals: Vec<SignalSpec>,
 }
 
 /// Per-dimension-value averages
@@ -68,6 +73,8 @@ pub struct SweepOutput {
     pub combinations_skipped: usize,
     /// Backtests that errored at runtime (after being selected to run)
     pub combinations_failed: usize,
+    /// Number of signal combinations swept (entry × exit), if > 1
+    pub signal_combinations: Option<usize>,
     pub ranked_results: Vec<SweepResult>,
     pub dimension_sensitivity: HashMap<String, HashMap<String, DimensionStats>>,
     pub oos_results: Vec<OosResult>,
@@ -190,6 +197,122 @@ pub fn violates_delta_ordering(strategy_name: &str, delta_targets: &[f64]) -> bo
     false
 }
 
+/// Generate a short human-readable label for a `SignalSpec`.
+fn signal_spec_label(spec: &SignalSpec) -> String {
+    match spec {
+        SignalSpec::RsiBelow { threshold, .. } => format!("RsiBelow(t={threshold})"),
+        SignalSpec::RsiAbove { threshold, .. } => format!("RsiAbove(t={threshold})"),
+        SignalSpec::MacdBullish { .. } => "MacdBullish".to_string(),
+        SignalSpec::MacdBearish { .. } => "MacdBearish".to_string(),
+        SignalSpec::MacdCrossover { .. } => "MacdCrossover".to_string(),
+        SignalSpec::StochasticBelow {
+            period, threshold, ..
+        } => format!("StochBelow(p={period},t={threshold})"),
+        SignalSpec::StochasticAbove {
+            period, threshold, ..
+        } => format!("StochAbove(p={period},t={threshold})"),
+        SignalSpec::PriceAboveSma { period, .. } => format!("AboveSma(p={period})"),
+        SignalSpec::PriceBelowSma { period, .. } => format!("BelowSma(p={period})"),
+        SignalSpec::PriceAboveEma { period, .. } => format!("AboveEma(p={period})"),
+        SignalSpec::PriceBelowEma { period, .. } => format!("BelowEma(p={period})"),
+        SignalSpec::SmaCrossover {
+            fast_period,
+            slow_period,
+            ..
+        } => format!("SmaCross(f={fast_period},s={slow_period})"),
+        SignalSpec::SmaCrossunder {
+            fast_period,
+            slow_period,
+            ..
+        } => format!("SmaXunder(f={fast_period},s={slow_period})"),
+        SignalSpec::EmaCrossover {
+            fast_period,
+            slow_period,
+            ..
+        } => format!("EmaCross(f={fast_period},s={slow_period})"),
+        SignalSpec::EmaCrossunder {
+            fast_period,
+            slow_period,
+            ..
+        } => format!("EmaXunder(f={fast_period},s={slow_period})"),
+        SignalSpec::BollingerLowerTouch { period, .. } => format!("BollLower(p={period})"),
+        SignalSpec::BollingerUpperTouch { period, .. } => format!("BollUpper(p={period})"),
+        SignalSpec::ConsecutiveUp { count, .. } => format!("ConsecUp(n={count})"),
+        SignalSpec::ConsecutiveDown { count, .. } => format!("ConsecDown(n={count})"),
+        SignalSpec::RateOfChange {
+            period, threshold, ..
+        } => format!("RoC(p={period},t={threshold})"),
+        SignalSpec::And { .. } => "And(…)".to_string(),
+        SignalSpec::Or { .. } => "Or(…)".to_string(),
+        // Fallback: use Debug variant name truncated
+        other => {
+            let dbg = format!("{other:?}");
+            // Take up to the first '{' or 100 chars
+            let end = dbg.find('{').unwrap_or(dbg.len()).min(100);
+            dbg[..end].trim().to_string()
+        }
+    }
+}
+
+/// A single entry×exit signal combination for the sweep.
+struct SignalCombo {
+    entry: Option<SignalSpec>,
+    exit: Option<SignalSpec>,
+    label: String,
+    dim_keys: Vec<(String, String)>,
+}
+
+/// Build the cartesian product of entry × exit signal lists.
+/// If a list is empty, use `None` (1 variant) for that slot.
+fn build_signal_combos(
+    entry_signals: &[SignalSpec],
+    exit_signals: &[SignalSpec],
+) -> Vec<SignalCombo> {
+    let entry_variants: Vec<Option<&SignalSpec>> = if entry_signals.is_empty() {
+        vec![None]
+    } else {
+        entry_signals.iter().map(Some).collect()
+    };
+    let exit_variants: Vec<Option<&SignalSpec>> = if exit_signals.is_empty() {
+        vec![None]
+    } else {
+        exit_signals.iter().map(Some).collect()
+    };
+
+    let mut combos = Vec::with_capacity(entry_variants.len() * exit_variants.len());
+    for entry in &entry_variants {
+        for exit in &exit_variants {
+            let mut parts = Vec::new();
+            let mut dim_keys = Vec::new();
+
+            if let Some(e) = entry {
+                let lbl = signal_spec_label(e);
+                dim_keys.push(("entry_signal".to_string(), lbl.clone()));
+                parts.push(format!("ent={lbl}"));
+            }
+            if let Some(x) = exit {
+                let lbl = signal_spec_label(x);
+                dim_keys.push(("exit_signal".to_string(), lbl.clone()));
+                parts.push(format!("ext={lbl}"));
+            }
+
+            let label = if parts.is_empty() {
+                String::new()
+            } else {
+                format!("[{}]", parts.join(","))
+            };
+
+            combos.push(SignalCombo {
+                entry: entry.cloned(),
+                exit: exit.cloned(),
+                label,
+                dim_keys,
+            });
+        }
+    }
+    combos
+}
+
 /// Build a label for a sweep combination (reuses compare labeling pattern).
 fn build_sweep_label(
     strategy_name: &str,
@@ -283,6 +406,16 @@ pub fn compute_sensitivity(
                 .or_default()
                 .push((r.sharpe, r.pnl));
         }
+
+        // Signal dimensions (entry_signal, exit_signal)
+        for (dim_name, dim_value) in &r.signal_dim_keys {
+            sensitivity
+                .entry(dim_name.clone())
+                .or_default()
+                .entry(dim_value.clone())
+                .or_default()
+                .push((r.sharpe, r.pnl));
+        }
     }
 
     sensitivity
@@ -323,7 +456,14 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
         exit_dte: i32,
         slippage: Slippage,
         label: String,
+        entry_signal: Option<SignalSpec>,
+        exit_signal: Option<SignalSpec>,
+        signal_dim_keys: Vec<(String, String)>,
     }
+
+    // Build signal combos (cartesian product of entry × exit signal lists)
+    let signal_combos = build_signal_combos(&params.entry_signals, &params.exit_signals);
+    let signal_count = signal_combos.len();
 
     let mut combos: Vec<Combo> = Vec::new();
     let mut seen_dedup_keys: HashSet<String> = HashSet::new();
@@ -355,66 +495,78 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
                     }
 
                     for slippage in &params.sweep.slippage_models {
-                        let label = build_sweep_label(
-                            &strat.name,
-                            &leg_deltas,
-                            dte_target,
-                            exit_dte,
-                            slippage,
-                        );
-
-                        // Build a full-precision dedup key to avoid false collisions
-                        // from the rounded display label (e.g. 0.301 vs 0.302 → same label).
-                        let delta_key: Vec<String> = leg_deltas
-                            .iter()
-                            .map(|d| format!("{:.6}:{:.6}:{:.6}", d.target, d.min, d.max))
-                            .collect();
-                        let slippage_key = match slippage {
-                            Slippage::Spread => "spread".to_string(),
-                            Slippage::Mid => "mid".to_string(),
-                            Slippage::Liquidity {
-                                fill_ratio,
-                                ref_volume,
-                            } => format!("liq:{fill_ratio:.6}:{ref_volume}"),
-                            Slippage::PerLeg { per_leg } => format!("pleg:{per_leg:.6}"),
-                            Slippage::BidAskTravel { pct } => format!("bat:{pct:.6}"),
-                        };
-                        let dedup_key = format!(
-                            "{}|{}|{}|{}|{}",
-                            strat.name,
-                            delta_key.join(","),
-                            dte_target,
-                            exit_dte,
-                            slippage_key,
-                        );
-
-                        // Deduplicate on the precise key; keep label only for display
-                        if !seen_dedup_keys.insert(dedup_key) {
-                            skipped += 1;
-                            continue;
-                        }
-
-                        combos.push(Combo {
-                            strategy_name: strat.name.clone(),
-                            leg_deltas: leg_deltas.clone(),
-                            entry_dte: entry_dte.clone(),
-                            exit_dte,
-                            slippage: slippage.clone(),
-                            label,
-                        });
-
-                        // Enforce cap early to avoid materializing an enormous Vec
-                        if combos.len() > 100 {
-                            bail!(
-                                "Parameter sweep exceeds the 100-combination limit (max 100). \
-                                 Reduce delta targets, DTE values, exit_dtes, or slippage models \
-                                 (currently: {} strategies, {} entry DTE values, {} exit DTE values, \
-                                 {} slippage models).",
-                                params.strategies.len(),
-                                params.sweep.entry_dte_targets.len(),
-                                params.sweep.exit_dtes.len(),
-                                params.sweep.slippage_models.len(),
+                        for sig_combo in &signal_combos {
+                            let base_label = build_sweep_label(
+                                &strat.name,
+                                &leg_deltas,
+                                dte_target,
+                                exit_dte,
+                                slippage,
                             );
+                            let label = if sig_combo.label.is_empty() {
+                                base_label
+                            } else {
+                                format!("{base_label}{}", sig_combo.label)
+                            };
+
+                            // Build a full-precision dedup key to avoid false collisions
+                            let delta_key: Vec<String> = leg_deltas
+                                .iter()
+                                .map(|d| format!("{:.6}:{:.6}:{:.6}", d.target, d.min, d.max))
+                                .collect();
+                            let slippage_key = match slippage {
+                                Slippage::Spread => "spread".to_string(),
+                                Slippage::Mid => "mid".to_string(),
+                                Slippage::Liquidity {
+                                    fill_ratio,
+                                    ref_volume,
+                                } => format!("liq:{fill_ratio:.6}:{ref_volume}"),
+                                Slippage::PerLeg { per_leg } => format!("pleg:{per_leg:.6}"),
+                                Slippage::BidAskTravel { pct } => format!("bat:{pct:.6}"),
+                            };
+                            let dedup_key = format!(
+                                "{}|{}|{}|{}|{}|{}",
+                                strat.name,
+                                delta_key.join(","),
+                                dte_target,
+                                exit_dte,
+                                slippage_key,
+                                sig_combo.label,
+                            );
+
+                            // Deduplicate on the precise key; keep label only for display
+                            if !seen_dedup_keys.insert(dedup_key) {
+                                skipped += 1;
+                                continue;
+                            }
+
+                            combos.push(Combo {
+                                strategy_name: strat.name.clone(),
+                                leg_deltas: leg_deltas.clone(),
+                                entry_dte: entry_dte.clone(),
+                                exit_dte,
+                                slippage: slippage.clone(),
+                                label,
+                                entry_signal: sig_combo.entry.clone(),
+                                exit_signal: sig_combo.exit.clone(),
+                                signal_dim_keys: sig_combo.dim_keys.clone(),
+                            });
+
+                            // Enforce cap early to avoid materializing an enormous Vec
+                            if combos.len() > 100 {
+                                bail!(
+                                    "Parameter sweep exceeds the 100-combination limit (max 100). \
+                                     Reduce delta targets, DTE values, exit_dtes, slippage models, \
+                                     or signal variants \
+                                     (currently: {} strategies, {} entry DTE values, {} exit DTE values, \
+                                     {} slippage models, {} signal combos).",
+                                    params.strategies.len(),
+                                    params.sweep.entry_dte_targets.len(),
+                                    params.sweep.exit_dtes.len(),
+                                    params.sweep.slippage_models.len(),
+                                    signal_count,
+                                );
+                            }
                         }
                     }
                 }
@@ -437,6 +589,16 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
     let mut failed: usize = 0;
 
     for combo in &combos {
+        // Use per-combo signals if signal sweep is active; otherwise fall back to sim_params
+        let entry_signal = combo
+            .entry_signal
+            .clone()
+            .or_else(|| params.sim_params.entry_signal.clone());
+        let exit_signal = combo
+            .exit_signal
+            .clone()
+            .or_else(|| params.sim_params.exit_signal.clone());
+
         let backtest_params = BacktestParams {
             strategy: combo.strategy_name.clone(),
             leg_deltas: combo.leg_deltas.clone(),
@@ -454,8 +616,8 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
             max_positions: params.sim_params.max_positions,
             selector: params.sim_params.selector.clone(),
             adjustment_rules: vec![],
-            entry_signal: params.sim_params.entry_signal.clone(),
-            exit_signal: params.sim_params.exit_signal.clone(),
+            entry_signal,
+            exit_signal,
             ohlcv_path: params.sim_params.ohlcv_path.clone(),
             cross_ohlcv_paths: params.sim_params.cross_ohlcv_paths.clone(),
             min_net_premium: None,
@@ -487,6 +649,9 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
                     calmar: bt.metrics.calmar,
                     total_return_pct: bt.metrics.total_return_pct,
                     independent_entry_periods: independent_periods,
+                    entry_signal: combo.entry_signal.clone(),
+                    exit_signal: combo.exit_signal.clone(),
+                    signal_dim_keys: combo.signal_dim_keys.clone(),
                 });
             }
             Err(e) => {
@@ -511,6 +676,16 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
     if let Some(ref test_df) = test_df {
         let top_n = results.len().min(3);
         for r in results.iter().take(top_n) {
+            // Use per-result signals for OOS re-run (may differ across combos)
+            let entry_signal = r
+                .entry_signal
+                .clone()
+                .or_else(|| params.sim_params.entry_signal.clone());
+            let exit_signal = r
+                .exit_signal
+                .clone()
+                .or_else(|| params.sim_params.exit_signal.clone());
+
             let backtest_params = BacktestParams {
                 strategy: r.strategy.clone(),
                 leg_deltas: r.leg_deltas.clone(),
@@ -528,8 +703,8 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
                 max_positions: params.sim_params.max_positions,
                 selector: params.sim_params.selector.clone(),
                 adjustment_rules: vec![],
-                entry_signal: params.sim_params.entry_signal.clone(),
-                exit_signal: params.sim_params.exit_signal.clone(),
+                entry_signal,
+                exit_signal,
                 ohlcv_path: params.sim_params.ohlcv_path.clone(),
                 cross_ohlcv_paths: params.sim_params.cross_ohlcv_paths.clone(),
                 min_net_premium: None,
@@ -565,6 +740,11 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
         combinations_run,
         combinations_skipped: skipped,
         combinations_failed: failed,
+        signal_combinations: if signal_count > 1 {
+            Some(signal_count)
+        } else {
+            None
+        },
         ranked_results: results,
         dimension_sensitivity,
         oos_results,
@@ -768,6 +948,8 @@ mod tests {
             sim_params,
             out_of_sample_pct: 0.0,
             direction: None,
+            entry_signals: vec![],
+            exit_signals: vec![],
         };
 
         // Use a minimal DataFrame
@@ -833,6 +1015,8 @@ mod tests {
             sim_params,
             out_of_sample_pct: 0.0,
             direction: None,
+            entry_signals: vec![],
+            exit_signals: vec![],
         };
 
         // Use minimal df
@@ -878,5 +1062,180 @@ mod tests {
         let (train, test) = split_by_date(&df, 0.3).unwrap();
         assert_eq!(train.height(), 7);
         assert_eq!(test.height(), 3);
+    }
+
+    // --- Signal sweep tests ---
+
+    #[test]
+    fn signal_combos_entry_only() {
+        let entries = vec![
+            SignalSpec::RsiBelow {
+                column: "close".into(),
+                threshold: 25.0,
+            },
+            SignalSpec::RsiBelow {
+                column: "close".into(),
+                threshold: 30.0,
+            },
+            SignalSpec::RsiBelow {
+                column: "close".into(),
+                threshold: 35.0,
+            },
+        ];
+        let combos = build_signal_combos(&entries, &[]);
+        assert_eq!(combos.len(), 3);
+        for c in &combos {
+            assert!(c.entry.is_some());
+            assert!(c.exit.is_none());
+            assert!(!c.label.is_empty());
+            assert_eq!(c.dim_keys.len(), 1);
+            assert_eq!(c.dim_keys[0].0, "entry_signal");
+        }
+    }
+
+    #[test]
+    fn signal_combos_entry_and_exit() {
+        let entries = vec![
+            SignalSpec::RsiBelow {
+                column: "close".into(),
+                threshold: 25.0,
+            },
+            SignalSpec::RsiBelow {
+                column: "close".into(),
+                threshold: 30.0,
+            },
+            SignalSpec::RsiBelow {
+                column: "close".into(),
+                threshold: 35.0,
+            },
+        ];
+        let exits = vec![
+            SignalSpec::ConsecutiveDown {
+                column: "close".into(),
+                count: 2,
+            },
+            SignalSpec::ConsecutiveDown {
+                column: "close".into(),
+                count: 3,
+            },
+        ];
+        let combos = build_signal_combos(&entries, &exits);
+        assert_eq!(combos.len(), 6); // 3 × 2
+        for c in &combos {
+            assert!(c.entry.is_some());
+            assert!(c.exit.is_some());
+            assert_eq!(c.dim_keys.len(), 2);
+        }
+    }
+
+    #[test]
+    fn signal_combos_empty_lists() {
+        let combos = build_signal_combos(&[], &[]);
+        assert_eq!(combos.len(), 1);
+        assert!(combos[0].entry.is_none());
+        assert!(combos[0].exit.is_none());
+        assert!(combos[0].label.is_empty());
+        assert!(combos[0].dim_keys.is_empty());
+    }
+
+    #[test]
+    fn sweep_with_signals_multiplies_combos() {
+        // 1 strategy × 1 delta × 1 DTE × 1 exit × 1 slippage × 3 signals = 3 combos
+        let strategies = vec![SweepStrategyEntry {
+            name: "long_call".to_string(),
+            leg_delta_targets: vec![vec![0.50]],
+        }];
+        let sweep = SweepDimensions {
+            entry_dte_targets: vec![45],
+            exit_dtes: vec![0],
+            slippage_models: vec![Slippage::Mid],
+        };
+        let sim_params = SimParams {
+            capital: 10000.0,
+            quantity: 1,
+            multiplier: 100,
+            max_positions: 3,
+            selector: TradeSelector::default(),
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
+            cross_ohlcv_paths: HashMap::new(),
+            min_days_between_entries: None,
+            exit_net_delta: None,
+        };
+        let params = SweepParams {
+            strategies,
+            sweep,
+            sim_params,
+            out_of_sample_pct: 0.0,
+            direction: None,
+            entry_signals: vec![
+                SignalSpec::RsiBelow {
+                    column: "close".into(),
+                    threshold: 25.0,
+                },
+                SignalSpec::RsiBelow {
+                    column: "close".into(),
+                    threshold: 30.0,
+                },
+                SignalSpec::RsiBelow {
+                    column: "close".into(),
+                    threshold: 35.0,
+                },
+            ],
+            exit_signals: vec![],
+        };
+
+        // Use a minimal DataFrame
+        let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
+        let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let qt = date.and_hms_opt(0, 0, 0).unwrap();
+        let mut df = df! {
+            QUOTE_DATETIME_COL => &[qt],
+            "option_type" => &["call"],
+            "strike" => &[100.0f64],
+            "bid" => &[5.0f64],
+            "ask" => &[5.5f64],
+            "delta" => &[0.5f64],
+        }
+        .unwrap();
+        df.with_column(
+            DateChunked::from_naive_date(PlSmallStr::from("expiration"), vec![exp]).into_column(),
+        )
+        .unwrap();
+
+        let output = run_sweep(&df, &params).unwrap();
+        // Total should be 3 (1×1×1×1×3), though they may all fail (no ohlcv)
+        assert_eq!(output.combinations_total, 3);
+        assert_eq!(output.signal_combinations, Some(3));
+    }
+
+    #[test]
+    fn signal_spec_label_covers_common_variants() {
+        assert_eq!(
+            signal_spec_label(&SignalSpec::RsiBelow {
+                column: "close".into(),
+                threshold: 25.0,
+            }),
+            "RsiBelow(t=25)"
+        );
+        assert_eq!(
+            signal_spec_label(&SignalSpec::SmaCrossover {
+                column: "close".into(),
+                fast_period: 10,
+                slow_period: 20,
+            }),
+            "SmaCross(f=10,s=20)"
+        );
+        assert_eq!(
+            signal_spec_label(&SignalSpec::ConsecutiveUp {
+                column: "close".into(),
+                count: 3,
+            }),
+            "ConsecUp(n=3)"
+        );
     }
 }
