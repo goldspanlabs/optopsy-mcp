@@ -21,10 +21,47 @@ fn load_ohlcv(ohlcv_path: &str) -> Result<DataFrame> {
     Ok(LazyFrame::scan_parquet(ohlcv_path.into(), args)?.collect()?)
 }
 
+/// Check whether a `SignalSpec` (including nested And/Or) contains any IV-based signal.
+fn contains_iv_signal(spec: &signals::registry::SignalSpec) -> bool {
+    use signals::registry::SignalSpec;
+    match spec {
+        SignalSpec::IvRankAbove { .. }
+        | SignalSpec::IvRankBelow { .. }
+        | SignalSpec::IvPercentileAbove { .. }
+        | SignalSpec::IvPercentileBelow { .. } => true,
+        SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
+            contains_iv_signal(left) || contains_iv_signal(right)
+        }
+        _ => false,
+    }
+}
+
+/// Check whether a `SignalSpec` (including nested And/Or) contains any non-IV signal.
+fn contains_non_iv_signal(spec: &signals::registry::SignalSpec) -> bool {
+    use signals::registry::SignalSpec;
+    match spec {
+        SignalSpec::IvRankAbove { .. }
+        | SignalSpec::IvRankBelow { .. }
+        | SignalSpec::IvPercentileAbove { .. }
+        | SignalSpec::IvPercentileBelow { .. } => false,
+        SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
+            contains_non_iv_signal(left) || contains_non_iv_signal(right)
+        }
+        _ => true,
+    }
+}
+
 /// Build entry/exit date filters from signal specs, loading OHLCV data.
+///
+/// When IV-based signals are used, aggregates daily IV from the options `DataFrame`
+/// and merges it into the OHLCV `DataFrame` so all signals evaluate against one unified `DataFrame`.
+/// For pure IV signals (no OHLCV path), a minimal `DataFrame` is constructed from the IV aggregation.
 /// When `CrossSymbol` variants are present, loads secondary symbol `DataFrame`s
 /// from `params.cross_ohlcv_paths` and uses `active_dates_multi` for evaluation.
-fn build_signal_filters(params: &BacktestParams) -> Result<(DateFilter, DateFilter)> {
+fn build_signal_filters(
+    params: &BacktestParams,
+    options_df: &DataFrame,
+) -> Result<(DateFilter, DateFilter)> {
     let has_entry = params.entry_signal.is_some();
     let has_exit = params.exit_signal.is_some();
 
@@ -32,11 +69,51 @@ fn build_signal_filters(params: &BacktestParams) -> Result<(DateFilter, DateFilt
         return Ok((None, None));
     }
 
-    let ohlcv_path = params.ohlcv_path.as_deref().ok_or_else(|| {
-        anyhow::anyhow!("ohlcv_path is required when entry_signal or exit_signal is set")
-    })?;
+    let needs_iv = params.entry_signal.as_ref().is_some_and(contains_iv_signal)
+        || params.exit_signal.as_ref().is_some_and(contains_iv_signal);
 
-    let ohlcv_df = load_ohlcv(ohlcv_path)?;
+    // Need OHLCV if any non-IV signal is present.
+    let needs_ohlcv = params
+        .entry_signal
+        .as_ref()
+        .is_some_and(contains_non_iv_signal)
+        || params
+            .exit_signal
+            .as_ref()
+            .is_some_and(contains_non_iv_signal);
+
+    let ohlcv_df = if needs_ohlcv {
+        if let Some(ohlcv_path) = params.ohlcv_path.as_deref() {
+            let mut df = load_ohlcv(ohlcv_path)?;
+            if needs_iv {
+                let iv_df = signals::volatility::aggregate_daily_iv(options_df)?;
+                df = df
+                    .lazy()
+                    .join(
+                        iv_df.lazy(),
+                        [col("date")],
+                        [col("date")],
+                        JoinArgs::new(JoinType::Left),
+                    )
+                    .collect()?;
+            }
+            df
+        } else if needs_iv {
+            // Pure IV signal without OHLCV: build a minimal DataFrame from IV aggregation
+            signals::volatility::aggregate_daily_iv(options_df)?
+        } else {
+            return Err(anyhow::anyhow!(
+                "ohlcv_path is required when entry_signal or exit_signal is set"
+            ));
+        }
+    } else if needs_iv {
+        // Pure IV signals only
+        signals::volatility::aggregate_daily_iv(options_df)?
+    } else {
+        return Err(anyhow::anyhow!(
+            "ohlcv_path is required when entry_signal or exit_signal is set"
+        ));
+    };
 
     // Check if any signal references a cross-symbol
     let has_cross = params
@@ -108,7 +185,7 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
     }
 
     // Build signal date filters if specified (loads OHLCV at most once)
-    let (entry_dates, exit_dates) = build_signal_filters(params)?;
+    let (entry_dates, exit_dates) = build_signal_filters(params, df)?;
 
     if entry_dates.is_some() || exit_dates.is_some() {
         tracing::info!(

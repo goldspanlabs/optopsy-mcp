@@ -16,8 +16,8 @@ use super::trend::{
     AroonDowntrend, AroonUpAbove, AroonUptrend, SupertrendBearish, SupertrendBullish,
 };
 use super::volatility::{
-    AtrAbove, AtrBelow, BollingerLowerTouch, BollingerUpperTouch, KeltnerLowerBreak,
-    KeltnerUpperBreak,
+    AtrAbove, AtrBelow, BollingerLowerTouch, BollingerUpperTouch, IvPercentileAbove,
+    IvPercentileBelow, IvRankAbove, IvRankBelow, KeltnerLowerBreak, KeltnerUpperBreak,
 };
 use super::volume::{CmfNegative, CmfPositive, MfiAbove, MfiBelow, ObvFalling, ObvRising};
 
@@ -164,6 +164,31 @@ pub enum SignalSpec {
         low_col: String,
         period: usize,
         multiplier: f64,
+    },
+
+    // -- IV (implied volatility from options chain) --
+    /// IV Rank above threshold. `IV Rank = (current - min) / (max - min) × 100`.
+    /// Derived from options chain `implied_volatility` column (not OHLCV data).
+    IvRankAbove {
+        /// Rolling lookback window in trading days (default: 252 ≈ 1 year)
+        lookback: usize,
+        /// Threshold 0–100 (e.g. 50.0 means IV Rank > 50%)
+        threshold: f64,
+    },
+    /// IV Rank below threshold.
+    IvRankBelow {
+        lookback: usize,
+        threshold: f64,
+    },
+    /// IV Percentile above threshold. IV Percentile = % of lookback days with IV below current × 100.
+    IvPercentileAbove {
+        lookback: usize,
+        threshold: f64,
+    },
+    /// IV Percentile below threshold.
+    IvPercentileBelow {
+        lookback: usize,
+        threshold: f64,
     },
 
     // -- Price --
@@ -512,6 +537,36 @@ fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
             multiplier: *multiplier,
         }),
 
+        // IV
+        SignalSpec::IvRankAbove {
+            lookback,
+            threshold,
+        } => Box::new(IvRankAbove {
+            lookback: *lookback,
+            threshold: *threshold,
+        }),
+        SignalSpec::IvRankBelow {
+            lookback,
+            threshold,
+        } => Box::new(IvRankBelow {
+            lookback: *lookback,
+            threshold: *threshold,
+        }),
+        SignalSpec::IvPercentileAbove {
+            lookback,
+            threshold,
+        } => Box::new(IvPercentileAbove {
+            lookback: *lookback,
+            threshold: *threshold,
+        }),
+        SignalSpec::IvPercentileBelow {
+            lookback,
+            threshold,
+        } => Box::new(IvPercentileBelow {
+            lookback: *lookback,
+            threshold: *threshold,
+        }),
+
         // Price
         SignalSpec::GapUp {
             open_col,
@@ -843,6 +898,30 @@ pub const SIGNAL_CATALOG: &[SignalInfo] = &[
         description: "Price breaks above upper Keltner Channel.",
         params: "close_col, high_col, low_col, period, multiplier",
     },
+    SignalInfo {
+        name: "IvRankAbove",
+        category: "volatility",
+        description: "IV Rank above threshold. Derived from options chain implied volatility. High IV Rank means current IV is near 52-week highs — good for premium selling.",
+        params: "lookback (default 252), threshold (0-100, e.g. 50.0)",
+    },
+    SignalInfo {
+        name: "IvRankBelow",
+        category: "volatility",
+        description: "IV Rank below threshold. Low IV Rank means current IV is near 52-week lows — good for premium buying.",
+        params: "lookback (default 252), threshold (0-100, e.g. 30.0)",
+    },
+    SignalInfo {
+        name: "IvPercentileAbove",
+        category: "volatility",
+        description: "IV Percentile above threshold. Percentage of lookback days with IV below current level. High percentile = elevated IV environment.",
+        params: "lookback (default 252), threshold (0-100, e.g. 50.0)",
+    },
+    SignalInfo {
+        name: "IvPercentileBelow",
+        category: "volatility",
+        description: "IV Percentile below threshold. Low percentile = suppressed IV environment.",
+        params: "lookback (default 252), threshold (0-100, e.g. 30.0)",
+    },
     // Price
     SignalInfo {
         name: "GapUp",
@@ -1041,8 +1120,8 @@ mod tests {
 
     #[test]
     fn catalog_has_all_signals() {
-        // 43 signals (excluding And/Or combinators; includes 4 range entries + CrossSymbol)
-        assert_eq!(SIGNAL_CATALOG.len(), 43);
+        // 47 signals (excluding And/Or combinators; includes 4 range entries + CrossSymbol + 4 IV signals)
+        assert_eq!(SIGNAL_CATALOG.len(), 47);
     }
 
     #[test]
@@ -1360,6 +1439,62 @@ mod tests {
             multiplier: 2.0,
         });
         assert_eq!(signal.name(), "keltner_upper_break");
+    }
+
+    #[test]
+    fn build_signal_iv_rank_above() {
+        let signal = build_signal(&SignalSpec::IvRankAbove {
+            lookback: 252,
+            threshold: 50.0,
+        });
+        assert_eq!(signal.name(), "iv_rank_above");
+    }
+
+    #[test]
+    fn build_signal_iv_rank_below() {
+        let signal = build_signal(&SignalSpec::IvRankBelow {
+            lookback: 252,
+            threshold: 30.0,
+        });
+        assert_eq!(signal.name(), "iv_rank_below");
+    }
+
+    #[test]
+    fn build_signal_iv_percentile_above() {
+        let signal = build_signal(&SignalSpec::IvPercentileAbove {
+            lookback: 252,
+            threshold: 50.0,
+        });
+        assert_eq!(signal.name(), "iv_percentile_above");
+    }
+
+    #[test]
+    fn build_signal_iv_percentile_below() {
+        let signal = build_signal(&SignalSpec::IvPercentileBelow {
+            lookback: 252,
+            threshold: 30.0,
+        });
+        assert_eq!(signal.name(), "iv_percentile_below");
+    }
+
+    #[test]
+    fn signal_spec_serde_round_trip_iv_rank() {
+        let spec = SignalSpec::IvRankAbove {
+            lookback: 252,
+            threshold: 50.0,
+        };
+        let json = serde_json::to_string(&spec).unwrap();
+        let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
+        if let SignalSpec::IvRankAbove {
+            lookback,
+            threshold,
+        } = parsed
+        {
+            assert_eq!(lookback, 252);
+            assert_eq!(threshold, 50.0);
+        } else {
+            panic!("expected IvRankAbove");
+        }
     }
 
     #[test]
