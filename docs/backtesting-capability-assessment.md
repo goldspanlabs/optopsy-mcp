@@ -14,21 +14,21 @@ Gap analysis of optopsy-mcp against the Options Strategy Optimization reference 
 | DTE targeting with ranges | **Full** | `DteRange { target, min, max }` |
 | Strike delta targeting | **Full** | Per-leg `TargetRange` with closest-match selection |
 | Spread Yield % | **Missing** | No `option_price / stock_price` filter |
-| Spread Price filter | **Missing** | No absolute price filter on spread cost |
-| Spread Delta (net position delta) | **Missing** | No net delta entry/exit filter |
-| Entry frequency / stagger days | **Missing** | Enters on every qualifying day; no cooldown period |
-| Expiration type (weeklies/monthlies) | **Missing** | Only DTE ranges as proxy |
+| Spread Price filter | **Full** | `min_net_premium` / `max_net_premium` filter on `abs(net_premium)` at entry |
+| Spread Delta (net position delta) | **Full** | `min_net_delta` / `max_net_delta` entry filter + `exit_net_delta` exit trigger |
+| Entry frequency / stagger days | **Full** | `min_days_between_entries` cooldown between position opens |
+| Expiration type (weeklies/monthlies) | **Full** | `expiration_filter`: `Any` / `Weekly` (Fridays) / `Monthly` (third Friday) |
 | Exit DTE | **Full** | |
 | Stop loss / take profit | **Full** | Percentage of entry cost |
-| Exit spread delta | **Missing** | |
+| Exit spread delta | **Full** | `exit_net_delta` — exits when `|net_delta|` exceeds threshold (`ExitType::DeltaExit`) |
 | Exit hold days | **Full** | `max_hold_days` |
 | Exit strike diff % | **Missing** | |
 | Exit leg-specific triggers | **Missing** | |
-| Slippage (bid-ask travel %) | **Partial** | 4 models exist, but not the specific `Bid + (Ask-Bid) * slippage%` formula with configurable % |
+| Slippage (bid-ask travel %) | **Full** | 5 models: `Mid`, `Spread`, `Liquidity`, `PerLeg`, `BidAskTravel { pct }` — `bid + (ask−bid) × pct` |
 | Commission modeling | **Full** | Per-contract + base fee + min fee |
 | Arithmetic returns | **Yes** | |
 | Notional returns | **Missing** | No normalization by underlying price |
-| Margin returns | **Missing** | No margin requirement modeling |
+| Margin returns | **Missing** | Deferred — naive model was removed; needs Reg-T or portfolio margin to be useful |
 | Multiple concurrent positions | **Full** | Up to `max_positions` |
 | Immediate re-entry after exit | **Full** | Same-day allowed |
 
@@ -99,7 +99,7 @@ Out of scope for a backtesting engine. Not assessed.
 
 ## Summary
 
-The engine solidly covers Steps 1-2 at a foundational level: 32 strategies, DTE/delta targeting, 4 slippage models, commissions, multiple exit conditions, grid search with OOS validation, and ~40 TA signals wired into entry/exit.
+The engine solidly covers Steps 1-2 at a foundational level: 32 strategies, DTE/delta targeting, 5 slippage models, commissions, multiple exit conditions (DTE, SL/TP, max hold, delta), entry filters (premium, delta, expiration type, stagger), grid search with OOS validation, and ~40 TA signals wired into entry/exit.
 
 ### Major Gaps
 
@@ -109,7 +109,7 @@ The engine solidly covers Steps 1-2 at a foundational level: 32 strategies, DTE/
 
 3. **Volatility surface data** — No IV rank/percentile, term structure, skew, or implied vs. historical vol. This eliminates the ~100 proprietary vol indicators from the reference library.
 
-4. **Missing entry/exit parameters** — Spread yield %, spread delta, stagger days, expiration type filtering, and several exit triggers (leg-level, spread delta, strike diff %).
+4. **Remaining entry/exit gaps** — Spread yield %, exit strike diff %, exit leg-specific triggers, notional returns, and margin returns are still missing.
 
 5. **Weighted composite scoring** — No user-defined weighting across metrics; ranking is Sharpe-only.
 
