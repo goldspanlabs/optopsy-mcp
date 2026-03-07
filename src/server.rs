@@ -17,7 +17,7 @@ use crate::engine::types::{
     Commission, CompareEntry, CompareParams, Direction, DteRange, ExpirationFilter, SimParams,
     Slippage, TargetRange, TradeSelector,
 };
-use crate::signals::registry::SignalSpec;
+use crate::signals::registry::{collect_cross_symbols, SignalSpec};
 use crate::tools;
 use crate::tools::response_types::{
     BacktestResponse, BuildSignalResponse, CheckCacheResponse, CompareResponse,
@@ -101,6 +101,28 @@ impl OptopsyServer {
             .cache_path(symbol, "prices")
             .map_err(|e| format!("Error resolving OHLCV path: {e}"))?;
         Ok(path.to_string_lossy().to_string())
+    }
+
+    /// Collect all cross-symbol references from entry/exit signals and resolve their OHLCV paths.
+    async fn resolve_cross_ohlcv_paths(
+        &self,
+        entry_signal: Option<&SignalSpec>,
+        exit_signal: Option<&SignalSpec>,
+    ) -> Result<HashMap<String, String>, String> {
+        let mut all_symbols = std::collections::HashSet::new();
+        if let Some(sig) = entry_signal {
+            all_symbols.extend(collect_cross_symbols(sig));
+        }
+        if let Some(sig) = exit_signal {
+            all_symbols.extend(collect_cross_symbols(sig));
+        }
+
+        let mut paths = HashMap::new();
+        for sym in all_symbols {
+            let path = self.ensure_ohlcv(&sym).await?;
+            paths.insert(sym, path);
+        }
+        Ok(paths)
     }
 
     /// Resolve a symbol from the loaded data.
@@ -932,6 +954,11 @@ impl OptopsyServer {
             None
         };
 
+        // Resolve cross-symbol OHLCV paths for CrossSymbol signal variants
+        let cross_ohlcv_paths = self
+            .resolve_cross_ohlcv_paths(params.entry_signal.as_ref(), params.exit_signal.as_ref())
+            .await?;
+
         let leg_deltas = resolve_leg_deltas(params.leg_deltas, &strategy)?;
 
         let backtest_params = BacktestParams {
@@ -954,6 +981,7 @@ impl OptopsyServer {
             entry_signal: params.entry_signal,
             exit_signal: params.exit_signal,
             ohlcv_path,
+            cross_ohlcv_paths,
             min_net_premium: params.min_net_premium,
             max_net_premium: params.max_net_premium,
             min_net_delta: params.min_net_delta,
@@ -1015,6 +1043,13 @@ impl OptopsyServer {
             None
         };
 
+        let cross_ohlcv_paths = self
+            .resolve_cross_ohlcv_paths(
+                params.sim_params.entry_signal.as_ref(),
+                params.sim_params.exit_signal.as_ref(),
+            )
+            .await?;
+
         let strategies = resolve_sweep_strategies(params.strategies, params.direction)?;
 
         let sweep_params = crate::engine::sweep::SweepParams {
@@ -1036,6 +1071,7 @@ impl OptopsyServer {
                 entry_signal: params.sim_params.entry_signal,
                 exit_signal: params.sim_params.exit_signal,
                 ohlcv_path,
+                cross_ohlcv_paths,
                 min_days_between_entries: params.sim_params.min_days_between_entries,
                 exit_net_delta: params.sim_params.exit_net_delta,
             },
@@ -1083,10 +1119,15 @@ impl OptopsyServer {
             None
         };
 
+        let cross_ohlcv_paths = self
+            .resolve_cross_ohlcv_paths(params.entry_signal.as_ref(), params.exit_signal.as_ref())
+            .await?;
+
         let mut sim_params = params.sim_params;
         sim_params.entry_signal = params.entry_signal;
         sim_params.exit_signal = params.exit_signal;
         sim_params.ohlcv_path = ohlcv_path;
+        sim_params.cross_ohlcv_paths = cross_ohlcv_paths;
 
         let compare_params = CompareParams {
             strategies: params

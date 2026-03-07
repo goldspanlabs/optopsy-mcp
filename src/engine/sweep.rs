@@ -457,6 +457,7 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
             entry_signal: params.sim_params.entry_signal.clone(),
             exit_signal: params.sim_params.exit_signal.clone(),
             ohlcv_path: params.sim_params.ohlcv_path.clone(),
+            cross_ohlcv_paths: params.sim_params.cross_ohlcv_paths.clone(),
             min_net_premium: None,
             max_net_premium: None,
             min_net_delta: None,
@@ -530,6 +531,7 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
                 entry_signal: params.sim_params.entry_signal.clone(),
                 exit_signal: params.sim_params.exit_signal.clone(),
                 ohlcv_path: params.sim_params.ohlcv_path.clone(),
+                cross_ohlcv_paths: params.sim_params.cross_ohlcv_paths.clone(),
                 min_net_premium: None,
                 max_net_premium: None,
                 min_net_delta: None,
@@ -756,6 +758,7 @@ mod tests {
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,
+            cross_ohlcv_paths: HashMap::new(),
             min_days_between_entries: None,
             exit_net_delta: None,
         };
@@ -820,6 +823,7 @@ mod tests {
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,
+            cross_ohlcv_paths: HashMap::new(),
             min_days_between_entries: None,
             exit_net_delta: None,
         };

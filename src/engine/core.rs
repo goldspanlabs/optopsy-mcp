@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{bail, Result};
 use chrono::NaiveDate;
@@ -10,6 +10,7 @@ use super::metrics;
 use super::types::*;
 use super::vectorized_sim;
 use crate::signals;
+use crate::signals::registry::collect_cross_symbols;
 use crate::strategies;
 
 type DateFilter = Option<HashSet<NaiveDate>>;
@@ -20,7 +21,9 @@ fn load_ohlcv(ohlcv_path: &str) -> Result<DataFrame> {
     Ok(LazyFrame::scan_parquet(ohlcv_path.into(), args)?.collect()?)
 }
 
-/// Build entry/exit date filters from signal specs, loading OHLCV at most once.
+/// Build entry/exit date filters from signal specs, loading OHLCV data.
+/// When `CrossSymbol` variants are present, loads secondary symbol `DataFrame`s
+/// from `params.cross_ohlcv_paths` and uses `active_dates_multi` for evaluation.
 fn build_signal_filters(params: &BacktestParams) -> Result<(DateFilter, DateFilter)> {
     let has_entry = params.entry_signal.is_some();
     let has_exit = params.exit_signal.is_some();
@@ -35,18 +38,50 @@ fn build_signal_filters(params: &BacktestParams) -> Result<(DateFilter, DateFilt
 
     let ohlcv_df = load_ohlcv(ohlcv_path)?;
 
-    let entry_dates = params
+    // Check if any signal references a cross-symbol
+    let has_cross = params
         .entry_signal
         .as_ref()
-        .map(|spec| signals::active_dates(spec, &ohlcv_df, "date"))
-        .transpose()?;
-    let exit_dates = params
-        .exit_signal
-        .as_ref()
-        .map(|spec| signals::active_dates(spec, &ohlcv_df, "date"))
-        .transpose()?;
+        .is_some_and(|s| !collect_cross_symbols(s).is_empty())
+        || params
+            .exit_signal
+            .as_ref()
+            .is_some_and(|s| !collect_cross_symbols(s).is_empty());
 
-    Ok((entry_dates, exit_dates))
+    if has_cross {
+        // Load all cross-symbol DataFrames
+        let mut cross_dfs: HashMap<String, DataFrame> = HashMap::new();
+        for (sym, path) in &params.cross_ohlcv_paths {
+            cross_dfs.insert(sym.to_uppercase(), load_ohlcv(path)?);
+        }
+
+        let entry_dates = params
+            .entry_signal
+            .as_ref()
+            .map(|spec| signals::active_dates_multi(spec, &ohlcv_df, &cross_dfs, "date"))
+            .transpose()?;
+        let exit_dates = params
+            .exit_signal
+            .as_ref()
+            .map(|spec| signals::active_dates_multi(spec, &ohlcv_df, &cross_dfs, "date"))
+            .transpose()?;
+
+        Ok((entry_dates, exit_dates))
+    } else {
+        // Fast path: no cross-symbol references
+        let entry_dates = params
+            .entry_signal
+            .as_ref()
+            .map(|spec| signals::active_dates(spec, &ohlcv_df, "date"))
+            .transpose()?;
+        let exit_dates = params
+            .exit_signal
+            .as_ref()
+            .map(|spec| signals::active_dates(spec, &ohlcv_df, "date"))
+            .transpose()?;
+
+        Ok((entry_dates, exit_dates))
+    }
 }
 
 /// Run a full backtest simulation.
@@ -195,6 +230,7 @@ pub fn compare_strategies(
             entry_signal: params.sim_params.entry_signal.clone(),
             exit_signal: params.sim_params.exit_signal.clone(),
             ohlcv_path: params.sim_params.ohlcv_path.clone(),
+            cross_ohlcv_paths: params.sim_params.cross_ohlcv_paths.clone(),
             min_net_premium: None,
             max_net_premium: None,
             min_net_delta: None,
@@ -545,6 +581,7 @@ mod tests {
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,
+            cross_ohlcv_paths: HashMap::new(),
             min_net_premium: None,
             max_net_premium: None,
             min_net_delta: None,
@@ -876,6 +913,7 @@ mod tests {
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,
+            cross_ohlcv_paths: HashMap::new(),
             min_net_premium: None,
             max_net_premium: None,
             min_net_delta: None,

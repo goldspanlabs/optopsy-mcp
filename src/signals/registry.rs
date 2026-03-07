@@ -259,6 +259,16 @@ pub enum SignalSpec {
         name: String,
     },
 
+    // -- Cross-symbol --
+    /// Evaluate the inner signal against a different symbol's OHLCV data.
+    /// Example: use VIX close > 20 as an entry filter for SPY strategies.
+    CrossSymbol {
+        /// Ticker of the secondary symbol (e.g., "^VIX")
+        symbol: String,
+        /// The signal to evaluate on that symbol's data
+        signal: Box<SignalSpec>,
+    },
+
     // -- Combinators --
     And {
         left: Box<SignalSpec>,
@@ -648,6 +658,10 @@ fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
             }
         }
 
+        // Cross-symbol — the inner signal is built normally; the caller
+        // (`active_dates_multi`) is responsible for providing the correct DataFrame.
+        SignalSpec::CrossSymbol { signal, .. } => build_signal_depth(signal, depth + 1),
+
         // Combinators
         SignalSpec::And { left, right } => Box::new(AndSignal {
             left: build_signal_depth(left, depth + 1),
@@ -931,7 +945,54 @@ pub const SIGNAL_CATALOG: &[SignalInfo] = &[
         description: "MFI within a range. Uses And combinator with MfiAbove + MfiBelow.",
         params: "And { MfiAbove { threshold: lower }, MfiBelow { threshold: upper } }",
     },
+    // Cross-symbol
+    SignalInfo {
+        name: "CrossSymbol",
+        category: "cross-symbol",
+        description: "Evaluate any signal against a different symbol's OHLCV data (e.g., VIX as filter for SPY).",
+        params: "symbol, signal (any nested SignalSpec)",
+    },
 ];
+
+/// Collect all secondary symbols referenced by `CrossSymbol` variants in a signal tree.
+pub fn collect_cross_symbols(spec: &SignalSpec) -> std::collections::HashSet<String> {
+    let mut symbols = std::collections::HashSet::new();
+    let mut visited_saved = std::collections::HashSet::new();
+    collect_cross_symbols_inner(spec, &mut symbols, &mut visited_saved, 0);
+    symbols
+}
+
+fn collect_cross_symbols_inner(
+    spec: &SignalSpec,
+    out: &mut std::collections::HashSet<String>,
+    visited_saved: &mut std::collections::HashSet<String>,
+    depth: u8,
+) {
+    const MAX_DEPTH: u8 = 8;
+    if depth > MAX_DEPTH {
+        return;
+    }
+
+    match spec {
+        SignalSpec::CrossSymbol { symbol, signal } => {
+            out.insert(symbol.to_uppercase());
+            collect_cross_symbols_inner(signal, out, visited_saved, depth);
+        }
+        SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
+            collect_cross_symbols_inner(left, out, visited_saved, depth);
+            collect_cross_symbols_inner(right, out, visited_saved, depth);
+        }
+        SignalSpec::Saved { name } => {
+            if !visited_saved.insert(name.clone()) {
+                return;
+            }
+            if let Ok(loaded_spec) = super::storage::load_signal(name) {
+                collect_cross_symbols_inner(&loaded_spec, out, visited_saved, depth + 1);
+            }
+        }
+        _ => {}
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -980,8 +1041,71 @@ mod tests {
 
     #[test]
     fn catalog_has_all_signals() {
-        // 42 signals (excluding And/Or combinators; includes 4 range entries)
-        assert_eq!(SIGNAL_CATALOG.len(), 42);
+        // 43 signals (excluding And/Or combinators; includes 4 range entries + CrossSymbol)
+        assert_eq!(SIGNAL_CATALOG.len(), 43);
+    }
+
+    #[test]
+    fn collect_cross_symbols_empty_for_plain() {
+        let spec = SignalSpec::ConsecutiveUp {
+            column: "close".into(),
+            count: 2,
+        };
+        assert!(collect_cross_symbols(&spec).is_empty());
+    }
+
+    #[test]
+    fn collect_cross_symbols_handles_saved() {
+        // Saved spec that doesn't exist on disk returns empty (best-effort)
+        let spec = SignalSpec::Saved {
+            name: "nonexistent_saved_signal".into(),
+        };
+        let symbols = collect_cross_symbols(&spec);
+        assert!(symbols.is_empty());
+    }
+
+    #[test]
+    fn collect_cross_symbols_finds_nested() {
+        let spec = SignalSpec::And {
+            left: Box::new(SignalSpec::CrossSymbol {
+                symbol: "^VIX".into(),
+                signal: Box::new(SignalSpec::ConsecutiveUp {
+                    column: "close".into(),
+                    count: 2,
+                }),
+            }),
+            right: Box::new(SignalSpec::CrossSymbol {
+                symbol: "GLD".into(),
+                signal: Box::new(SignalSpec::ConsecutiveDown {
+                    column: "close".into(),
+                    count: 3,
+                }),
+            }),
+        };
+        let symbols = collect_cross_symbols(&spec);
+        assert_eq!(symbols.len(), 2);
+        assert!(symbols.contains("^VIX"));
+        assert!(symbols.contains("GLD"));
+    }
+
+    #[test]
+    fn cross_symbol_serde_round_trip() {
+        let spec = SignalSpec::CrossSymbol {
+            symbol: "^VIX".into(),
+            signal: Box::new(SignalSpec::Custom {
+                name: "vix_above_20".into(),
+                formula: "close > 20".into(),
+                description: None,
+            }),
+        };
+        let json = serde_json::to_string(&spec).unwrap();
+        let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
+        if let SignalSpec::CrossSymbol { symbol, signal } = parsed {
+            assert_eq!(symbol, "^VIX");
+            assert!(matches!(*signal, SignalSpec::Custom { .. }));
+        } else {
+            panic!("expected CrossSymbol");
+        }
     }
 
     #[test]
@@ -1547,6 +1671,7 @@ mod tests {
             "volatility",
             "price",
             "volume",
+            "cross-symbol",
         ];
         for info in SIGNAL_CATALOG {
             assert!(
