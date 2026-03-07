@@ -258,7 +258,10 @@ fn signal_spec_label(spec: &SignalSpec) -> String {
 struct SignalCombo {
     entry: Option<SignalSpec>,
     exit: Option<SignalSpec>,
+    /// Human-readable label for display (may not be unique for complex signals)
     label: String,
+    /// Full-precision key for deduplication (uses `Debug` representation)
+    dedup_key: String,
     dim_keys: Vec<(String, String)>,
 }
 
@@ -302,10 +305,14 @@ fn build_signal_combos(
                 format!("[{}]", parts.join(","))
             };
 
+            // Use Debug representation for dedup key (fully unique, unlike display labels)
+            let dedup_key = format!("{entry:?}|{exit:?}");
+
             combos.push(SignalCombo {
                 entry: entry.cloned(),
                 exit: exit.cloned(),
                 label,
+                dedup_key,
                 dim_keys,
             });
         }
@@ -531,7 +538,7 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
                                 dte_target,
                                 exit_dte,
                                 slippage_key,
-                                sig_combo.label,
+                                sig_combo.dedup_key,
                             );
 
                             // Deduplicate on the precise key; keep label only for display

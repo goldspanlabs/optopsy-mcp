@@ -1022,7 +1022,7 @@ impl OptopsyServer {
     /// **Prerequisites**: None — data is auto-loaded from cache when you pass a symbol.
     ///
     /// **How it works**:
-    ///   1. Generates cartesian product of delta targets × DTE targets × exit DTEs × slippage models
+    ///   1. Generates cartesian product of delta targets × DTE targets × exit DTEs × slippage models × signal variants
     ///   2. Filters invalid combos (`exit_dte` >= entry DTE min, inverted delta orderings)
     ///   3. Deduplicates identical combinations
     ///   4. Runs backtest on each combo (hard cap: 100 combinations)
