@@ -339,6 +339,9 @@ pub struct SweepResponse {
     pub combinations_skipped: usize,
     /// Backtests that errored at runtime (after being selected to run)
     pub combinations_failed: usize,
+    /// Number of signal combinations swept (entry × exit), if signal sweep was used
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signal_combinations: Option<usize>,
     pub best_combination: Option<SweepResult>,
     pub dimension_sensitivity: HashMap<String, HashMap<String, DimensionStats>>,
     pub out_of_sample: Option<OosValidation>,

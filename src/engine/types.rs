@@ -551,6 +551,15 @@ pub struct SweepResult {
     pub calmar: f64,
     pub total_return_pct: f64,
     pub independent_entry_periods: usize,
+    /// Entry signal used for this combo, if any (from signal sweep)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entry_signal: Option<SignalSpec>,
+    /// Exit signal used for this combo, if any (from signal sweep)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_signal: Option<SignalSpec>,
+    /// Signal dimension keys for sensitivity analysis (not serialized)
+    #[serde(skip)]
+    pub signal_dim_keys: Vec<(String, String)>,
 }
 
 // --- Event-driven simulation types ---

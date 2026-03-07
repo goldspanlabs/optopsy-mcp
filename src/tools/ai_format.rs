@@ -586,9 +586,14 @@ pub fn format_raw_prices(
 pub fn format_sweep(output: SweepOutput) -> SweepResponse {
     let best = output.ranked_results.first().cloned();
 
+    let signal_suffix = output
+        .signal_combinations
+        .map(|n| format!(" (incl. {n} signal variants)"))
+        .unwrap_or_default();
+
     let summary = if let Some(ref b) = best {
         format!(
-            "Swept {} combinations; ran {} ({} skipped, {} failed). Best: {} (Sharpe {:.2}, {}).",
+            "Swept {} combinations{signal_suffix}; ran {} ({} skipped, {} failed). Best: {} (Sharpe {:.2}, {}).",
             output.combinations_total,
             output.combinations_run,
             output.combinations_skipped,
@@ -599,7 +604,7 @@ pub fn format_sweep(output: SweepOutput) -> SweepResponse {
         )
     } else {
         format!(
-            "Swept {} combinations but none produced results ({} skipped, {} failed).",
+            "Swept {} combinations{signal_suffix} but none produced results ({} skipped, {} failed).",
             output.combinations_total, output.combinations_skipped, output.combinations_failed,
         )
     };
@@ -636,6 +641,7 @@ pub fn format_sweep(output: SweepOutput) -> SweepResponse {
         combinations_run: output.combinations_run,
         combinations_skipped: output.combinations_skipped,
         combinations_failed: output.combinations_failed,
+        signal_combinations: output.signal_combinations,
         best_combination: best,
         dimension_sensitivity: output.dimension_sensitivity,
         out_of_sample,
@@ -1171,6 +1177,9 @@ mod tests {
                 calmar: 2.0,
                 total_return_pct: 5.0,
                 independent_entry_periods: 8,
+                entry_signal: None,
+                exit_signal: None,
+                signal_dim_keys: vec![],
             },
             SweepResult {
                 label: "long_call(Δ0.35,DTE45,exit0)".to_string(),
@@ -1197,6 +1206,9 @@ mod tests {
                 calmar: 1.0,
                 total_return_pct: 2.0,
                 independent_entry_periods: 6,
+                entry_signal: None,
+                exit_signal: None,
+                signal_dim_keys: vec![],
             },
         ];
 
@@ -1205,6 +1217,7 @@ mod tests {
             combinations_run: 2,
             combinations_skipped: 3,
             combinations_failed: 0,
+            signal_combinations: None,
             ranked_results: results,
             dimension_sensitivity: HashMap::new(),
             oos_results: vec![],
@@ -1237,6 +1250,7 @@ mod tests {
             combinations_run: 0,
             combinations_skipped: 10,
             combinations_failed: 0,
+            signal_combinations: None,
             ranked_results: vec![],
             dimension_sensitivity: HashMap::new(),
             oos_results: vec![],
@@ -1262,6 +1276,7 @@ mod tests {
             combinations_run: 1,
             combinations_skipped: 1,
             combinations_failed: 0,
+            signal_combinations: None,
             ranked_results: vec![SweepResult {
                 label: "test_combo".to_string(),
                 strategy: "long_call".to_string(),
@@ -1287,6 +1302,9 @@ mod tests {
                 calmar: 1.0,
                 total_return_pct: 1.0,
                 independent_entry_periods: 4,
+                entry_signal: None,
+                exit_signal: None,
+                signal_dim_keys: vec![],
             }],
             dimension_sensitivity: HashMap::new(),
             oos_results: vec![OosResult {

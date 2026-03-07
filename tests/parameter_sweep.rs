@@ -53,6 +53,8 @@ fn sweep_single_strategy_produces_ranked_results() {
         sim_params: default_sim_params(),
         out_of_sample_pct: 0.0,
         direction: None,
+        entry_signals: vec![],
+        exit_signals: vec![],
     };
 
     let output = run_sweep(&df, &params).unwrap();
@@ -117,6 +119,8 @@ fn sweep_multi_strategy_without_direction_filter() {
         out_of_sample_pct: 0.0,
         // direction filtering is not applied by run_sweep itself; all 3 strategies are processed
         direction: None,
+        entry_signals: vec![],
+        exit_signals: vec![],
     };
 
     let output = run_sweep(&df, &params).unwrap();
@@ -153,6 +157,8 @@ fn sweep_with_oos_validation() {
         sim_params: default_sim_params(),
         out_of_sample_pct: 0.3,
         direction: None,
+        entry_signals: vec![],
+        exit_signals: vec![],
     };
 
     let output = run_sweep(&df, &params).unwrap();
@@ -200,6 +206,8 @@ fn sweep_oos_disabled_when_zero() {
         sim_params: default_sim_params(),
         out_of_sample_pct: 0.0,
         direction: None,
+        entry_signals: vec![],
+        exit_signals: vec![],
     };
 
     let output = run_sweep(&df, &params).unwrap();
@@ -231,6 +239,8 @@ fn sweep_dimension_sensitivity_populated() {
         sim_params: default_sim_params(),
         out_of_sample_pct: 0.0,
         direction: None,
+        entry_signals: vec![],
+        exit_signals: vec![],
     };
 
     let output = run_sweep(&df, &params).unwrap();
@@ -264,6 +274,8 @@ fn sweep_independent_entry_periods_populated() {
         sim_params: default_sim_params(),
         out_of_sample_pct: 0.0,
         direction: None,
+        entry_signals: vec![],
+        exit_signals: vec![],
     };
 
     let output = run_sweep(&df, &params).unwrap();
@@ -299,6 +311,8 @@ fn sweep_spread_strategy_filters_inverted_deltas() {
         sim_params: default_sim_params(),
         out_of_sample_pct: 0.0,
         direction: None,
+        entry_signals: vec![],
+        exit_signals: vec![],
     };
 
     let output = run_sweep(&df, &params).unwrap();
@@ -342,6 +356,8 @@ fn sweep_all_combos_skipped_returns_empty() {
         sim_params: default_sim_params(),
         out_of_sample_pct: 0.0,
         direction: None,
+        entry_signals: vec![],
+        exit_signals: vec![],
     };
 
     let output = run_sweep(&df, &params).unwrap();
@@ -365,6 +381,8 @@ fn sweep_multiple_slippage_models() {
         sim_params: default_sim_params(),
         out_of_sample_pct: 0.0,
         direction: None,
+        entry_signals: vec![],
+        exit_signals: vec![],
     };
 
     let output = run_sweep(&df, &params).unwrap();
@@ -466,6 +484,8 @@ fn sweep_entry_signal_filters_some_entries() {
         sim_params: default_sim_params(),
         out_of_sample_pct: 0.0,
         direction: None,
+        entry_signals: vec![],
+        exit_signals: vec![],
     };
     let baseline = run_sweep(&df, &baseline_params).unwrap();
     let baseline_trades: usize = baseline.ranked_results.iter().map(|r| r.trades).sum();
@@ -486,6 +506,8 @@ fn sweep_entry_signal_filters_some_entries() {
         },
         out_of_sample_pct: 0.0,
         direction: None,
+        entry_signals: vec![],
+        exit_signals: vec![],
     };
     let output = run_sweep(&df, &signal_params).unwrap();
     let signal_trades: usize = output.ranked_results.iter().map(|r| r.trades).sum();
@@ -578,6 +600,8 @@ fn sweep_signal_threads_through_oos_path() {
         },
         out_of_sample_pct: 0.3,
         direction: None,
+        entry_signals: vec![],
+        exit_signals: vec![],
     };
 
     // Must not panic — exercises both BacktestParams constructions with signals
@@ -588,6 +612,90 @@ fn sweep_signal_threads_through_oos_path() {
             output.oos_results.len() <= 3,
             "OOS should validate at most top 3, got {}",
             output.oos_results.len()
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Signal sweep (entry_signals / exit_signals) integration tests
+// ---------------------------------------------------------------------------
+
+/// Sweeping 3 entry signal variants should produce 3× the combos of a
+/// no-signal sweep, and sensitivity should include an `entry_signal` dimension.
+#[test]
+fn sweep_entry_signals_multiplies_combos() {
+    let df = make_multi_strike_df();
+    let (_dir, path) = rising_ohlcv();
+
+    let strategies = vec![SweepStrategyEntry {
+        name: "long_call".to_string(),
+        leg_delta_targets: vec![vec![0.50]],
+    }];
+    let sweep_dims = SweepDimensions {
+        entry_dte_targets: vec![30],
+        exit_dtes: vec![0],
+        slippage_models: vec![Slippage::Mid],
+    };
+
+    // Baseline: no signals → 1 combo
+    let baseline = run_sweep(
+        &df,
+        &SweepParams {
+            strategies: strategies.clone(),
+            sweep: sweep_dims.clone(),
+            sim_params: default_sim_params(),
+            out_of_sample_pct: 0.0,
+            direction: None,
+            entry_signals: vec![],
+            exit_signals: vec![],
+        },
+    )
+    .unwrap();
+
+    // Signal sweep: 3 entry signals → 3 combos
+    let output = run_sweep(
+        &df,
+        &SweepParams {
+            strategies,
+            sweep: sweep_dims,
+            sim_params: SimParams {
+                ohlcv_path: Some(path),
+                ..default_sim_params()
+            },
+            out_of_sample_pct: 0.0,
+            direction: None,
+            entry_signals: vec![
+                SignalSpec::ConsecutiveUp {
+                    column: "close".into(),
+                    count: 1,
+                },
+                SignalSpec::ConsecutiveUp {
+                    column: "close".into(),
+                    count: 2,
+                },
+                SignalSpec::ConsecutiveUp {
+                    column: "close".into(),
+                    count: 3,
+                },
+            ],
+            exit_signals: vec![],
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        output.combinations_total,
+        baseline.combinations_total * 3,
+        "3 signal variants should triple the combo count"
+    );
+    assert_eq!(output.signal_combinations, Some(3));
+
+    // Sensitivity should include entry_signal dimension
+    if !output.ranked_results.is_empty() {
+        assert!(
+            output.dimension_sensitivity.contains_key("entry_signal"),
+            "Missing 'entry_signal' in dimension_sensitivity: {:?}",
+            output.dimension_sensitivity.keys().collect::<Vec<_>>()
         );
     }
 }
