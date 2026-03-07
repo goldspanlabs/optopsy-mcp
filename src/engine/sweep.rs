@@ -5,7 +5,8 @@ use polars::prelude::*;
 
 use super::core::run_backtest;
 use super::types::{
-    BacktestParams, Direction, DteRange, SimParams, Slippage, SweepResult, TargetRange,
+    BacktestParams, Direction, DteRange, ExpirationFilter, SimParams, Slippage, SweepResult,
+    TargetRange,
 };
 use crate::data::parquet::QUOTE_DATETIME_COL;
 use crate::engine::types::default_min_bid_ask;
@@ -206,6 +207,7 @@ fn build_sweep_label(
             ref_volume,
         } => format!(",liq(fr={fill_ratio:.2},rv={ref_volume})"),
         Slippage::PerLeg { per_leg } => format!(",pleg({per_leg:.2})"),
+        Slippage::BidAskTravel { pct } => format!(",bat({pct:.2})"),
     };
     format!(
         "{}(Δ{},DTE{},exit{}{})",
@@ -261,6 +263,7 @@ pub fn compute_sensitivity(
                 format!("liquidity(fill_ratio={fill_ratio:.2},ref_volume={ref_volume})")
             }
             Slippage::PerLeg { per_leg } => format!("per_leg({per_leg:.2})"),
+            Slippage::BidAskTravel { pct } => format!("bid_ask_travel({pct:.2})"),
         };
         sensitivity
             .entry("slippage".to_string())
@@ -374,6 +377,7 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
                                 ref_volume,
                             } => format!("liq:{fill_ratio:.6}:{ref_volume}"),
                             Slippage::PerLeg { per_leg } => format!("pleg:{per_leg:.6}"),
+                            Slippage::BidAskTravel { pct } => format!("bat:{pct:.6}"),
                         };
                         let dedup_key = format!(
                             "{}|{}|{}|{}|{}",
@@ -453,6 +457,13 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
             entry_signal: params.sim_params.entry_signal.clone(),
             exit_signal: params.sim_params.exit_signal.clone(),
             ohlcv_path: params.sim_params.ohlcv_path.clone(),
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: None,
+            max_net_delta: None,
+            min_days_between_entries: params.sim_params.min_days_between_entries,
+            expiration_filter: ExpirationFilter::Any,
+            exit_net_delta: params.sim_params.exit_net_delta,
         };
 
         match run_backtest(&train_df, &backtest_params) {
@@ -519,6 +530,13 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
                 entry_signal: params.sim_params.entry_signal.clone(),
                 exit_signal: params.sim_params.exit_signal.clone(),
                 ohlcv_path: params.sim_params.ohlcv_path.clone(),
+                min_net_premium: None,
+                max_net_premium: None,
+                min_net_delta: None,
+                max_net_delta: None,
+                min_days_between_entries: params.sim_params.min_days_between_entries,
+                expiration_filter: ExpirationFilter::Any,
+                exit_net_delta: params.sim_params.exit_net_delta,
             };
 
             match run_backtest(test_df, &backtest_params) {
@@ -738,6 +756,8 @@ mod tests {
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,
+            min_days_between_entries: None,
+            exit_net_delta: None,
         };
         let params = SweepParams {
             strategies,
@@ -800,6 +820,8 @@ mod tests {
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,
+            min_days_between_entries: None,
+            exit_net_delta: None,
         };
         let params = SweepParams {
             strategies,

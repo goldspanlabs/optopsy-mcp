@@ -19,6 +19,12 @@ pub fn fill_price(bid: f64, ask: f64, side: Side, slippage: &Slippage) -> f64 {
             Side::Long => mid + per_leg,
             Side::Short => mid - per_leg,
         },
+        Slippage::BidAskTravel { pct } => match side {
+            // Long: buyer pays bid + fraction of spread toward ask
+            Side::Long => bid + spread * pct,
+            // Short: seller receives ask - fraction of spread toward bid
+            Side::Short => ask - spread * pct,
+        },
     }
 }
 
@@ -105,10 +111,39 @@ mod tests {
     }
 
     #[test]
-    fn fill_price_per_leg_short() {
-        let slip = Slippage::PerLeg { per_leg: 0.05 };
-        // mid - per_leg = 2.25 - 0.05 = 2.20
-        assert!((fill_price(BID, ASK, Side::Short, &slip) - 2.20).abs() < 1e-10);
+    fn fill_price_bid_ask_travel_zero_pct_long() {
+        // pct=0 → fill at bid (best fill for long)
+        let slip = Slippage::BidAskTravel { pct: 0.0 };
+        assert!((fill_price(BID, ASK, Side::Long, &slip) - BID).abs() < 1e-10);
+    }
+
+    #[test]
+    fn fill_price_bid_ask_travel_zero_pct_short() {
+        // pct=0 → fill at ask (best fill for short)
+        let slip = Slippage::BidAskTravel { pct: 0.0 };
+        assert!((fill_price(BID, ASK, Side::Short, &slip) - ASK).abs() < 1e-10);
+    }
+
+    #[test]
+    fn fill_price_bid_ask_travel_half_pct() {
+        // pct=0.5 → mid for both sides
+        let slip = Slippage::BidAskTravel { pct: 0.5 };
+        assert!((fill_price(BID, ASK, Side::Long, &slip) - MID).abs() < 1e-10);
+        assert!((fill_price(BID, ASK, Side::Short, &slip) - MID).abs() < 1e-10);
+    }
+
+    #[test]
+    fn fill_price_bid_ask_travel_full_pct_long() {
+        // pct=1 → fill at ask (worst fill for long)
+        let slip = Slippage::BidAskTravel { pct: 1.0 };
+        assert!((fill_price(BID, ASK, Side::Long, &slip) - ASK).abs() < 1e-10);
+    }
+
+    #[test]
+    fn fill_price_bid_ask_travel_full_pct_short() {
+        // pct=1 → fill at bid (worst fill for short)
+        let slip = Slippage::BidAskTravel { pct: 1.0 };
+        assert!((fill_price(BID, ASK, Side::Short, &slip) - BID).abs() < 1e-10);
     }
 
     // --- leg_pnl tests ---

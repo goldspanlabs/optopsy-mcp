@@ -26,6 +26,8 @@ fn default_sim_params() -> SimParams {
         entry_signal: None,
         exit_signal: None,
         ohlcv_path: None,
+        min_days_between_entries: None,
+        exit_net_delta: None,
     }
 }
 

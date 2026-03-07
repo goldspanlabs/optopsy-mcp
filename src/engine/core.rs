@@ -195,6 +195,13 @@ pub fn compare_strategies(
             entry_signal: params.sim_params.entry_signal.clone(),
             exit_signal: params.sim_params.exit_signal.clone(),
             ohlcv_path: params.sim_params.ohlcv_path.clone(),
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: None,
+            max_net_delta: None,
+            min_days_between_entries: params.sim_params.min_days_between_entries,
+            expiration_filter: ExpirationFilter::Any,
+            exit_net_delta: params.sim_params.exit_net_delta,
         };
 
         match run_backtest(df, &backtest_params) {
@@ -254,6 +261,7 @@ fn compare_dedup_key(entry: &CompareEntry) -> String {
             format!("liq:{fill_ratio:.4}:{ref_volume}")
         }
         Slippage::PerLeg { per_leg } => format!("pleg:{per_leg:.4}"),
+        Slippage::BidAskTravel { pct } => format!("bat:{pct:.4}"),
     };
     let commission_str = match &entry.commission {
         None => "none".to_string(),
@@ -303,6 +311,7 @@ fn build_compare_labels(entries: &[CompareEntry]) -> Vec<String> {
                         ref_volume,
                     } => format!(",liq(fr={fill_ratio:.2},rv={ref_volume})"),
                     Slippage::PerLeg { per_leg } => format!(",pleg({per_leg:.2})"),
+                    Slippage::BidAskTravel { pct } => format!(",bat({pct:.2})"),
                 };
                 format!(
                     "{}(Δ{},DTE{},exit{}{})",
@@ -536,6 +545,13 @@ mod tests {
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: None,
+            max_net_delta: None,
+            min_days_between_entries: None,
+            expiration_filter: ExpirationFilter::Any,
+            exit_net_delta: None,
         }
     }
 
@@ -761,6 +777,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn run_backtest_spread_strategy() {
         // Build data for a bull call spread: long call at lower strike, short call at higher
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
@@ -859,6 +876,13 @@ mod tests {
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: None,
+            max_net_delta: None,
+            min_days_between_entries: None,
+            expiration_filter: ExpirationFilter::Any,
+            exit_net_delta: None,
         };
 
         let result = run_backtest(&df, &params);
