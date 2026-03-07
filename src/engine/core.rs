@@ -22,6 +22,7 @@ fn load_ohlcv(ohlcv_path: &str) -> Result<DataFrame> {
 }
 
 /// Check whether a `SignalSpec` (including nested And/Or) contains any IV-based signal.
+/// Resolves `Saved` specs best-effort via disk load.
 fn contains_iv_signal(spec: &signals::registry::SignalSpec) -> bool {
     use signals::registry::SignalSpec;
     match spec {
@@ -32,11 +33,15 @@ fn contains_iv_signal(spec: &signals::registry::SignalSpec) -> bool {
         SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
             contains_iv_signal(left) || contains_iv_signal(right)
         }
+        SignalSpec::Saved { name } => signals::storage::load_signal(name)
+            .map(|s| contains_iv_signal(&s))
+            .unwrap_or(false),
         _ => false,
     }
 }
 
 /// Check whether a `SignalSpec` tree contains any non-IV leaf signal.
+/// Resolves `Saved` specs best-effort via disk load.
 fn contains_non_iv_signal(spec: &signals::registry::SignalSpec) -> bool {
     use signals::registry::SignalSpec;
     match spec {
@@ -47,6 +52,9 @@ fn contains_non_iv_signal(spec: &signals::registry::SignalSpec) -> bool {
         SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
             contains_non_iv_signal(left) || contains_non_iv_signal(right)
         }
+        SignalSpec::Saved { name } => signals::storage::load_signal(name)
+            .map(|s| contains_non_iv_signal(&s))
+            .unwrap_or(false),
         _ => true,
     }
 }

@@ -400,7 +400,7 @@ fn compute_iv_rank_signal(iv: &[f64], lookback: usize, threshold: f64, above: bo
         } else {
             "iv_rank_below"
         };
-        return BooleanChunked::new(name.into(), &vec![false; n]).into_series();
+        return BooleanChunked::new(name.into(), vec![false; n]).into_series();
     }
     let bools: Vec<bool> = (0..n)
         .map(|i| {
@@ -412,16 +412,24 @@ fn compute_iv_rank_signal(iv: &[f64], lookback: usize, threshold: f64, above: bo
             if current.is_nan() {
                 return false;
             }
-            let min = window
-                .iter()
-                .copied()
-                .filter(|v| !v.is_nan())
-                .fold(f64::INFINITY, f64::min);
-            let max = window
-                .iter()
-                .copied()
-                .filter(|v| !v.is_nan())
-                .fold(f64::NEG_INFINITY, f64::max);
+            let mut min = f64::INFINITY;
+            let mut max = f64::NEG_INFINITY;
+            let mut valid_len = 0usize;
+            for &v in window {
+                if !v.is_nan() {
+                    valid_len += 1;
+                    if v < min {
+                        min = v;
+                    }
+                    if v > max {
+                        max = v;
+                    }
+                }
+            }
+            // Require at least half the lookback to have valid IV data
+            if valid_len < lookback / 2 + 1 {
+                return false;
+            }
             let range = max - min;
             if range <= 0.0 {
                 return false;
@@ -457,7 +465,7 @@ fn compute_iv_percentile_signal(
         } else {
             "iv_percentile_below"
         };
-        return BooleanChunked::new(name.into(), &vec![false; n]).into_series();
+        return BooleanChunked::new(name.into(), vec![false; n]).into_series();
     }
     let bools: Vec<bool> = (0..n)
         .map(|i| {
@@ -480,7 +488,8 @@ fn compute_iv_percentile_signal(
                     below_count += 1;
                 }
             }
-            if valid_len == 0 {
+            // Require at least half the lookback to have valid IV data
+            if valid_len < lookback / 2 + 1 {
                 return false;
             }
             let percentile = below_count as f64 / valid_len as f64 * 100.0;
