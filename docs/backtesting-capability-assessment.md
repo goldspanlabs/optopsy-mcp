@@ -28,7 +28,7 @@ Gap analysis of optopsy-mcp against the Options Strategy Optimization reference 
 | Commission modeling | **Full** | Per-contract + base fee + min fee |
 | Arithmetic returns | **Yes** | |
 | Notional returns | **Missing** | No normalization by underlying price |
-| Margin returns | **Missing** | Deferred — naive model was removed; needs Reg-T or portfolio margin to be useful |
+| Margin returns | **Not planned** | Margin requirements are broker-specific (Reg-T vs portfolio margin); any approximation would be misleading |
 | Multiple concurrent positions | **Full** | Up to `max_positions` |
 | Immediate re-entry after exit | **Full** | Same-day allowed |
 
