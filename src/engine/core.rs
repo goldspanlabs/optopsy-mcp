@@ -21,39 +21,56 @@ fn load_ohlcv(ohlcv_path: &str) -> Result<DataFrame> {
     Ok(LazyFrame::scan_parquet(ohlcv_path.into(), args)?.collect()?)
 }
 
+/// Maximum recursion depth when resolving nested/saved signal specs.
+const MAX_SIGNAL_DEPTH: usize = 32;
+
 /// Check whether a `SignalSpec` (including nested And/Or) contains any IV-based signal.
-/// Resolves `Saved` specs best-effort via disk load.
+/// Resolves `Saved` specs best-effort via disk load, with depth guard.
 fn contains_iv_signal(spec: &signals::registry::SignalSpec) -> bool {
+    contains_iv_inner(spec, 0)
+}
+
+/// Check whether a `SignalSpec` tree contains any non-IV leaf signal.
+/// Resolves `Saved` specs best-effort via disk load, with depth guard.
+fn contains_non_iv_signal(spec: &signals::registry::SignalSpec) -> bool {
+    contains_non_iv_inner(spec, 0)
+}
+
+fn contains_iv_inner(spec: &signals::registry::SignalSpec, depth: usize) -> bool {
     use signals::registry::SignalSpec;
+    if depth > MAX_SIGNAL_DEPTH {
+        return false;
+    }
     match spec {
         SignalSpec::IvRankAbove { .. }
         | SignalSpec::IvRankBelow { .. }
         | SignalSpec::IvPercentileAbove { .. }
         | SignalSpec::IvPercentileBelow { .. } => true,
         SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
-            contains_iv_signal(left) || contains_iv_signal(right)
+            contains_iv_inner(left, depth + 1) || contains_iv_inner(right, depth + 1)
         }
         SignalSpec::Saved { name } => signals::storage::load_signal(name)
-            .map(|s| contains_iv_signal(&s))
+            .map(|s| contains_iv_inner(&s, depth + 1))
             .unwrap_or(false),
         _ => false,
     }
 }
 
-/// Check whether a `SignalSpec` tree contains any non-IV leaf signal.
-/// Resolves `Saved` specs best-effort via disk load.
-fn contains_non_iv_signal(spec: &signals::registry::SignalSpec) -> bool {
+fn contains_non_iv_inner(spec: &signals::registry::SignalSpec, depth: usize) -> bool {
     use signals::registry::SignalSpec;
+    if depth > MAX_SIGNAL_DEPTH {
+        return false;
+    }
     match spec {
         SignalSpec::IvRankAbove { .. }
         | SignalSpec::IvRankBelow { .. }
         | SignalSpec::IvPercentileAbove { .. }
         | SignalSpec::IvPercentileBelow { .. } => false,
         SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
-            contains_non_iv_signal(left) || contains_non_iv_signal(right)
+            contains_non_iv_inner(left, depth + 1) || contains_non_iv_inner(right, depth + 1)
         }
         SignalSpec::Saved { name } => signals::storage::load_signal(name)
-            .map(|s| contains_non_iv_signal(&s))
+            .map(|s| contains_non_iv_inner(&s, depth + 1))
             .unwrap_or(false),
         _ => true,
     }
@@ -121,7 +138,8 @@ fn build_signal_filters(
         signals::volatility::aggregate_daily_iv(options_df)?
     } else {
         return Err(anyhow::anyhow!(
-            "ohlcv_path is required when entry_signal or exit_signal is set"
+            "Unable to determine required data for entry/exit signals. \
+             This may indicate ohlcv_path is missing, or a Saved signal could not be resolved."
         ));
     };
 
