@@ -104,16 +104,27 @@ impl OptopsyServer {
     }
 
     /// Collect all cross-symbol references from entry/exit signals and resolve their OHLCV paths.
+    ///
+    /// Inspects both the singular `entry_signal`/`exit_signal` and the plural
+    /// `entry_signals`/`exit_signals` lists (used by parameter sweep).
     async fn resolve_cross_ohlcv_paths(
         &self,
         entry_signal: Option<&SignalSpec>,
         exit_signal: Option<&SignalSpec>,
+        entry_signals: &[SignalSpec],
+        exit_signals: &[SignalSpec],
     ) -> Result<HashMap<String, String>, String> {
         let mut all_symbols = std::collections::HashSet::new();
         if let Some(sig) = entry_signal {
             all_symbols.extend(collect_cross_symbols(sig));
         }
         if let Some(sig) = exit_signal {
+            all_symbols.extend(collect_cross_symbols(sig));
+        }
+        for sig in entry_signals {
+            all_symbols.extend(collect_cross_symbols(sig));
+        }
+        for sig in exit_signals {
             all_symbols.extend(collect_cross_symbols(sig));
         }
 
@@ -968,7 +979,12 @@ impl OptopsyServer {
 
         // Resolve cross-symbol OHLCV paths for CrossSymbol signal variants
         let cross_ohlcv_paths = self
-            .resolve_cross_ohlcv_paths(params.entry_signal.as_ref(), params.exit_signal.as_ref())
+            .resolve_cross_ohlcv_paths(
+                params.entry_signal.as_ref(),
+                params.exit_signal.as_ref(),
+                &[],
+                &[],
+            )
             .await?;
 
         let leg_deltas = resolve_leg_deltas(params.leg_deltas, &strategy)?;
@@ -1077,6 +1093,8 @@ impl OptopsyServer {
             .resolve_cross_ohlcv_paths(
                 params.sim_params.entry_signal.as_ref(),
                 params.sim_params.exit_signal.as_ref(),
+                &params.sim_params.entry_signals,
+                &params.sim_params.exit_signals,
             )
             .await?;
 
@@ -1152,7 +1170,12 @@ impl OptopsyServer {
         };
 
         let cross_ohlcv_paths = self
-            .resolve_cross_ohlcv_paths(params.entry_signal.as_ref(), params.exit_signal.as_ref())
+            .resolve_cross_ohlcv_paths(
+                params.entry_signal.as_ref(),
+                params.exit_signal.as_ref(),
+                &[],
+                &[],
+            )
             .await?;
 
         let mut sim_params = params.sim_params;
