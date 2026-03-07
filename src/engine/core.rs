@@ -52,7 +52,7 @@ fn build_signal_filters(params: &BacktestParams) -> Result<(DateFilter, DateFilt
         // Load all cross-symbol DataFrames
         let mut cross_dfs: HashMap<String, DataFrame> = HashMap::new();
         for (sym, path) in &params.cross_ohlcv_paths {
-            cross_dfs.insert(sym.clone(), load_ohlcv(path)?);
+            cross_dfs.insert(sym.to_uppercase(), load_ohlcv(path)?);
         }
 
         let entry_dates = params

@@ -957,19 +957,38 @@ pub const SIGNAL_CATALOG: &[SignalInfo] = &[
 /// Collect all secondary symbols referenced by `CrossSymbol` variants in a signal tree.
 pub fn collect_cross_symbols(spec: &SignalSpec) -> std::collections::HashSet<String> {
     let mut symbols = std::collections::HashSet::new();
-    collect_cross_symbols_inner(spec, &mut symbols);
+    let mut visited_saved = std::collections::HashSet::new();
+    collect_cross_symbols_inner(spec, &mut symbols, &mut visited_saved, 0);
     symbols
 }
 
-fn collect_cross_symbols_inner(spec: &SignalSpec, out: &mut std::collections::HashSet<String>) {
+fn collect_cross_symbols_inner(
+    spec: &SignalSpec,
+    out: &mut std::collections::HashSet<String>,
+    visited_saved: &mut std::collections::HashSet<String>,
+    depth: u8,
+) {
+    const MAX_DEPTH: u8 = 8;
+    if depth > MAX_DEPTH {
+        return;
+    }
+
     match spec {
         SignalSpec::CrossSymbol { symbol, signal } => {
             out.insert(symbol.to_uppercase());
-            collect_cross_symbols_inner(signal, out);
+            collect_cross_symbols_inner(signal, out, visited_saved, depth);
         }
         SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
-            collect_cross_symbols_inner(left, out);
-            collect_cross_symbols_inner(right, out);
+            collect_cross_symbols_inner(left, out, visited_saved, depth);
+            collect_cross_symbols_inner(right, out, visited_saved, depth);
+        }
+        SignalSpec::Saved { name } => {
+            if !visited_saved.insert(name.clone()) {
+                return;
+            }
+            if let Ok(loaded_spec) = super::storage::load_signal(name) {
+                collect_cross_symbols_inner(&loaded_spec, out, visited_saved, depth + 1);
+            }
         }
         _ => {}
     }
@@ -1033,6 +1052,16 @@ mod tests {
             count: 2,
         };
         assert!(collect_cross_symbols(&spec).is_empty());
+    }
+
+    #[test]
+    fn collect_cross_symbols_handles_saved() {
+        // Saved spec that doesn't exist on disk returns empty (best-effort)
+        let spec = SignalSpec::Saved {
+            name: "nonexistent_saved_signal".into(),
+        };
+        let symbols = collect_cross_symbols(&spec);
+        assert!(symbols.is_empty());
     }
 
     #[test]
