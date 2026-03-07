@@ -62,13 +62,14 @@ pub fn execute(prompt: &str) -> ConstructSignalResponse {
         )
     };
 
-    let has_range_candidates = candidates.iter().any(|c| c.name.ends_with("Range"));
+    let has_range_candidates =
+        had_real_matches && candidates.iter().any(|c| c.name.ends_with("Range"));
     let mut suggested_next_steps = vec![
         "Pick a candidate from above or use the schema to construct a custom SignalSpec".to_string(),
         "Pass the JSON example as entry_signal or exit_signal in run_backtest — OHLCV data is auto-fetched when signals are used".to_string(),
     ];
     if has_range_candidates {
-        suggested_next_steps.push("Range signals use the And combinator pattern. Adjust the min/max thresholds in the example to define your range.".to_string());
+        suggested_next_steps.push("Range signals use the And combinator pattern. Adjust the lower/upper thresholds (left/right) in the example to define your range.".to_string());
     }
 
     ConstructSignalResponse {
@@ -82,7 +83,7 @@ pub fn execute(prompt: &str) -> ConstructSignalResponse {
 }
 
 /// Split a CamelCase string into lowercase words.
-/// E.g., `RsiBelow` → `["rsi", "oversold"]`
+/// E.g., `RsiBelow` → `["rsi", "below"]`
 fn split_camel_case(s: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut current = String::new();
@@ -558,5 +559,14 @@ mod tests {
             .suggested_next_steps
             .iter()
             .any(|s| s.contains("Range signals use the And combinator")));
+    }
+
+    #[test]
+    fn execute_no_match_suppresses_range_hint() {
+        let response = execute("xyzabc");
+        assert!(!response
+            .suggested_next_steps
+            .iter()
+            .any(|s| s.contains("Range signals")));
     }
 }

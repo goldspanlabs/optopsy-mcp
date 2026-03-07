@@ -673,13 +673,13 @@ pub const SIGNAL_CATALOG: &[SignalInfo] = &[
     SignalInfo {
         name: "RsiBelow",
         category: "momentum",
-        description: "RSI below threshold. Uses 14-period RSI.",
+        description: "RSI below threshold (oversold). Uses 14-period RSI.",
         params: "column, threshold (e.g. 30.0)",
     },
     SignalInfo {
         name: "RsiAbove",
         category: "momentum",
-        description: "RSI above threshold. Uses 14-period RSI.",
+        description: "RSI above threshold (overbought). Uses 14-period RSI.",
         params: "column, threshold (e.g. 70.0)",
     },
     SignalInfo {
@@ -703,13 +703,13 @@ pub const SIGNAL_CATALOG: &[SignalInfo] = &[
     SignalInfo {
         name: "StochasticBelow",
         category: "momentum",
-        description: "Stochastic oscillator below threshold. Uses rolling %K.",
+        description: "Stochastic oscillator below threshold (oversold). Uses rolling %K.",
         params: "close_col, high_col, low_col, period, threshold",
     },
     SignalInfo {
         name: "StochasticAbove",
         category: "momentum",
-        description: "Stochastic oscillator above threshold. Uses rolling %K.",
+        description: "Stochastic oscillator above threshold (overbought). Uses rolling %K.",
         params: "close_col, high_col, low_col, period, threshold",
     },
     // Overlap
@@ -870,13 +870,13 @@ pub const SIGNAL_CATALOG: &[SignalInfo] = &[
     SignalInfo {
         name: "MfiBelow",
         category: "volume",
-        description: "Money Flow Index below threshold.",
+        description: "Money Flow Index below threshold (oversold).",
         params: "high_col, low_col, close_col, volume_col, period, threshold",
     },
     SignalInfo {
         name: "MfiAbove",
         category: "volume",
-        description: "Money Flow Index above threshold.",
+        description: "Money Flow Index above threshold (overbought).",
         params: "high_col, low_col, close_col, volume_col, period, threshold",
     },
     SignalInfo {
