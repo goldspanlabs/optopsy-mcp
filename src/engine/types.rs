@@ -221,7 +221,7 @@ pub enum TradeSelector {
     First,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum ExitType {
     Expiration,
     StopLoss,

@@ -2273,4 +2273,586 @@ mod tests {
             "Candidates with premium < min_net_premium should be excluded"
         );
     }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn stagger_days_asserts_trade_count() {
+        // 10 trading days with candidates every day, stagger = 3 → entries on day 0, 3, 6, 9
+        let mut table = PriceTable::with_hasher(rustc_hash::FxBuildHasher);
+        let exp = NaiveDate::from_ymd_opt(2024, 1, 19).unwrap(); // expires within sim window
+        let days: Vec<NaiveDate> = (0..10)
+            .map(|i| NaiveDate::from_ymd_opt(2024, 1, 10 + i).unwrap())
+            .collect();
+
+        for &d in &days {
+            table.insert(
+                (d, exp, OrderedFloat(100.0), OptionType::Call),
+                QuoteSnapshot {
+                    bid: 5.0,
+                    ask: 5.50,
+                    delta: 0.50,
+                },
+            );
+        }
+
+        let mut candidates = BTreeMap::new();
+        for &d in &days {
+            candidates.insert(
+                d,
+                vec![EntryCandidate {
+                    entry_date: d,
+                    expiration: exp,
+                    secondary_expiration: None,
+                    legs: vec![CandidateLeg {
+                        option_type: OptionType::Call,
+                        strike: 100.0,
+                        expiration: exp,
+                        bid: 5.0,
+                        ask: 5.50,
+                        delta: 0.50,
+                    }],
+                    net_premium: -5.25,
+                    net_delta: 0.50,
+                }],
+            );
+        }
+
+        let strategy_def = crate::strategies::find_strategy("long_call").unwrap();
+
+        // Without stagger: should open many positions
+        let params_no_stagger = BacktestParams {
+            strategy: "long_call".to_string(),
+            leg_deltas: vec![TargetRange {
+                target: 0.50,
+                min: 0.20,
+                max: 0.80,
+            }],
+            entry_dte: DteRange {
+                target: 45,
+                min: 10,
+                max: 60,
+            },
+            exit_dte: 5,
+            slippage: Slippage::Mid,
+            commission: None,
+            min_bid_ask: 0.0,
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            capital: 100_000.0,
+            quantity: 1,
+            multiplier: 100,
+            max_positions: 10,
+            selector: TradeSelector::First,
+            adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: None,
+            max_net_delta: None,
+            min_days_between_entries: None,
+            expiration_filter: ExpirationFilter::Any,
+            exit_net_delta: None,
+        };
+        let (trades_no_stagger, _, _) = run_event_loop(
+            &table,
+            &candidates,
+            &days,
+            &params_no_stagger,
+            &strategy_def,
+            None,
+        );
+
+        // With stagger=3: entries on day 0, 3, 6, 9 → 4 trades max
+        let params_stagger = BacktestParams {
+            min_days_between_entries: Some(3),
+            ..params_no_stagger.clone()
+        };
+        let (trades_stagger, _, _) = run_event_loop(
+            &table,
+            &candidates,
+            &days,
+            &params_stagger,
+            &strategy_def,
+            None,
+        );
+
+        assert!(
+            trades_no_stagger.len() > trades_stagger.len(),
+            "Stagger should reduce trade count: {} without vs {} with",
+            trades_no_stagger.len(),
+            trades_stagger.len(),
+        );
+        assert!(
+            trades_stagger.len() <= 4,
+            "With 10 days and stagger=3, at most 4 entries: got {}",
+            trades_stagger.len(),
+        );
+    }
+
+    #[test]
+    fn max_net_premium_filter_excludes_expensive() {
+        let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
+        let d1 = NaiveDate::from_ymd_opt(2024, 1, 15)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+
+        let mut df = df! {
+            QUOTE_DATETIME_COL => &[d1],
+            "option_type" => &["call"],
+            "strike" => &[100.0f64],
+            "bid" => &[5.0f64],
+            "ask" => &[5.50f64],
+            "delta" => &[0.50f64],
+        }
+        .unwrap();
+        df.with_column(
+            DateChunked::from_naive_date(PlSmallStr::from("expiration"), [exp]).into_column(),
+        )
+        .unwrap();
+
+        let strategy_def = crate::strategies::find_strategy("long_call").unwrap();
+        let params = BacktestParams {
+            strategy: "long_call".to_string(),
+            leg_deltas: vec![TargetRange {
+                target: 0.50,
+                min: 0.10,
+                max: 0.99,
+            }],
+            entry_dte: DteRange {
+                target: 45,
+                min: 10,
+                max: 60,
+            },
+            exit_dte: 5,
+            slippage: Slippage::Mid,
+            commission: None,
+            min_bid_ask: 0.0,
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            capital: 10000.0,
+            quantity: 1,
+            multiplier: 100,
+            max_positions: 5,
+            selector: TradeSelector::First,
+            adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
+            min_net_premium: None,
+            max_net_premium: Some(1.0), // max $1 premium — mid of 5.25 should be excluded
+            min_net_delta: None,
+            max_net_delta: None,
+            min_days_between_entries: None,
+            expiration_filter: ExpirationFilter::Any,
+            exit_net_delta: None,
+        };
+
+        let candidates = find_entry_candidates(&df, &strategy_def, &params).unwrap();
+        assert!(
+            candidates.is_empty(),
+            "Candidates with premium > max_net_premium should be excluded"
+        );
+    }
+
+    #[test]
+    fn net_delta_filter_excludes_high_delta() {
+        let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
+        let d1 = NaiveDate::from_ymd_opt(2024, 1, 15)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+
+        let mut df = df! {
+            QUOTE_DATETIME_COL => &[d1],
+            "option_type" => &["call"],
+            "strike" => &[100.0f64],
+            "bid" => &[5.0f64],
+            "ask" => &[5.50f64],
+            "delta" => &[0.70f64], // high delta
+        }
+        .unwrap();
+        df.with_column(
+            DateChunked::from_naive_date(PlSmallStr::from("expiration"), [exp]).into_column(),
+        )
+        .unwrap();
+
+        let strategy_def = crate::strategies::find_strategy("long_call").unwrap();
+
+        // max_net_delta = 0.50 should exclude this 0.70 delta candidate
+        // long_call: net_delta = delta * side(Long=1) * qty(1) = 0.70
+        let params = BacktestParams {
+            strategy: "long_call".to_string(),
+            leg_deltas: vec![TargetRange {
+                target: 0.70,
+                min: 0.10,
+                max: 0.99,
+            }],
+            entry_dte: DteRange {
+                target: 45,
+                min: 10,
+                max: 60,
+            },
+            exit_dte: 5,
+            slippage: Slippage::Mid,
+            commission: None,
+            min_bid_ask: 0.0,
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            capital: 10000.0,
+            quantity: 1,
+            multiplier: 100,
+            max_positions: 5,
+            selector: TradeSelector::First,
+            adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: None,
+            max_net_delta: Some(0.50), // exclude anything above 0.50
+            min_days_between_entries: None,
+            expiration_filter: ExpirationFilter::Any,
+            exit_net_delta: None,
+        };
+
+        let candidates = find_entry_candidates(&df, &strategy_def, &params).unwrap();
+        assert!(
+            candidates.is_empty(),
+            "Candidates with net_delta > max_net_delta should be excluded"
+        );
+    }
+
+    #[test]
+    fn net_delta_filter_passes_within_range() {
+        let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
+        let d1 = NaiveDate::from_ymd_opt(2024, 1, 15)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+
+        let mut df = df! {
+            QUOTE_DATETIME_COL => &[d1],
+            "option_type" => &["call"],
+            "strike" => &[100.0f64],
+            "bid" => &[5.0f64],
+            "ask" => &[5.50f64],
+            "delta" => &[0.30f64],
+        }
+        .unwrap();
+        df.with_column(
+            DateChunked::from_naive_date(PlSmallStr::from("expiration"), [exp]).into_column(),
+        )
+        .unwrap();
+
+        let strategy_def = crate::strategies::find_strategy("long_call").unwrap();
+        let params = BacktestParams {
+            strategy: "long_call".to_string(),
+            leg_deltas: vec![TargetRange {
+                target: 0.30,
+                min: 0.10,
+                max: 0.99,
+            }],
+            entry_dte: DteRange {
+                target: 45,
+                min: 10,
+                max: 60,
+            },
+            exit_dte: 5,
+            slippage: Slippage::Mid,
+            commission: None,
+            min_bid_ask: 0.0,
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            capital: 10000.0,
+            quantity: 1,
+            multiplier: 100,
+            max_positions: 5,
+            selector: TradeSelector::First,
+            adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: Some(0.10),
+            max_net_delta: Some(0.50),
+            min_days_between_entries: None,
+            expiration_filter: ExpirationFilter::Any,
+            exit_net_delta: None,
+        };
+
+        let candidates = find_entry_candidates(&df, &strategy_def, &params).unwrap();
+        assert!(
+            !candidates.is_empty(),
+            "Candidate with net_delta=0.30 should pass [0.10, 0.50] filter"
+        );
+    }
+
+    #[test]
+    fn entry_candidate_net_delta_computed_correctly() {
+        let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
+        let d1 = NaiveDate::from_ymd_opt(2024, 1, 15)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+
+        let mut df = df! {
+            QUOTE_DATETIME_COL => &[d1],
+            "option_type" => &["call"],
+            "strike" => &[100.0f64],
+            "bid" => &[5.0f64],
+            "ask" => &[5.50f64],
+            "delta" => &[0.45f64],
+        }
+        .unwrap();
+        df.with_column(
+            DateChunked::from_naive_date(PlSmallStr::from("expiration"), [exp]).into_column(),
+        )
+        .unwrap();
+
+        let strategy_def = crate::strategies::find_strategy("long_call").unwrap();
+        let params = BacktestParams {
+            strategy: "long_call".to_string(),
+            leg_deltas: vec![TargetRange {
+                target: 0.45,
+                min: 0.10,
+                max: 0.99,
+            }],
+            entry_dte: DteRange {
+                target: 45,
+                min: 10,
+                max: 60,
+            },
+            exit_dte: 5,
+            slippage: Slippage::Mid,
+            commission: None,
+            min_bid_ask: 0.0,
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            capital: 10000.0,
+            quantity: 1,
+            multiplier: 100,
+            max_positions: 5,
+            selector: TradeSelector::First,
+            adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: None,
+            max_net_delta: None,
+            min_days_between_entries: None,
+            expiration_filter: ExpirationFilter::Any,
+            exit_net_delta: None,
+        };
+
+        let candidates = find_entry_candidates(&df, &strategy_def, &params).unwrap();
+        assert!(!candidates.is_empty());
+        let cand = &candidates.values().next().unwrap()[0];
+        // long_call: net_delta = delta(0.45) × side(Long=1) × qty(1) = 0.45
+        assert!(
+            (cand.net_delta - 0.45).abs() < 1e-10,
+            "Expected net_delta=0.45, got {}",
+            cand.net_delta,
+        );
+    }
+
+    #[test]
+    fn delta_exit_triggers_when_threshold_exceeded() {
+        let mut table = PriceTable::with_hasher(rustc_hash::FxBuildHasher);
+        let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
+        let days: Vec<NaiveDate> = (0..5)
+            .map(|i| NaiveDate::from_ymd_opt(2024, 1, 15 + i).unwrap())
+            .collect();
+
+        // Day 0-1: delta=0.30 (within threshold), Day 2+: delta=0.80 (exceeds 0.50 threshold)
+        for (i, &d) in days.iter().enumerate() {
+            let delta = if i < 2 { 0.30 } else { 0.80 };
+            table.insert(
+                (d, exp, OrderedFloat(100.0), OptionType::Call),
+                QuoteSnapshot {
+                    bid: 5.0,
+                    ask: 5.50,
+                    delta,
+                },
+            );
+        }
+
+        let mut candidates = BTreeMap::new();
+        candidates.insert(
+            days[0],
+            vec![EntryCandidate {
+                entry_date: days[0],
+                expiration: exp,
+                secondary_expiration: None,
+                legs: vec![CandidateLeg {
+                    option_type: OptionType::Call,
+                    strike: 100.0,
+                    expiration: exp,
+                    bid: 5.0,
+                    ask: 5.50,
+                    delta: 0.30,
+                }],
+                net_premium: -5.25,
+                net_delta: 0.30,
+            }],
+        );
+
+        let strategy_def = crate::strategies::find_strategy("long_call").unwrap();
+        let params = BacktestParams {
+            strategy: "long_call".to_string(),
+            leg_deltas: vec![TargetRange {
+                target: 0.30,
+                min: 0.10,
+                max: 0.99,
+            }],
+            entry_dte: DteRange {
+                target: 45,
+                min: 10,
+                max: 60,
+            },
+            exit_dte: 5,
+            slippage: Slippage::Mid,
+            commission: None,
+            min_bid_ask: 0.0,
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            capital: 100_000.0,
+            quantity: 1,
+            multiplier: 100,
+            max_positions: 5,
+            selector: TradeSelector::First,
+            adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: None,
+            max_net_delta: None,
+            min_days_between_entries: None,
+            expiration_filter: ExpirationFilter::Any,
+            exit_net_delta: Some(0.50), // exit when |net_delta| > 0.50
+        };
+
+        let (trade_log, _, _) =
+            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None);
+
+        assert_eq!(trade_log.len(), 1, "Should have exactly 1 trade");
+        assert_eq!(
+            trade_log[0].exit_type,
+            ExitType::DeltaExit,
+            "Trade should exit via DeltaExit, got {:?}",
+            trade_log[0].exit_type,
+        );
+        // Entry on day 0, delta exceeds threshold on day 2 → 2 days held
+        assert_eq!(
+            trade_log[0].days_held, 2,
+            "Should exit on day 2 (delta spikes)"
+        );
+    }
+
+    #[test]
+    fn delta_exit_does_not_trigger_within_threshold() {
+        let mut table = PriceTable::with_hasher(rustc_hash::FxBuildHasher);
+        // Expiration within sim window so the position closes and we get a trade record
+        let exp = NaiveDate::from_ymd_opt(2024, 1, 18).unwrap();
+        let days: Vec<NaiveDate> = (0..5)
+            .map(|i| NaiveDate::from_ymd_opt(2024, 1, 15 + i).unwrap())
+            .collect();
+
+        // Delta stays at 0.30 the whole time — never exceeds threshold
+        for &d in &days {
+            table.insert(
+                (d, exp, OrderedFloat(100.0), OptionType::Call),
+                QuoteSnapshot {
+                    bid: 5.0,
+                    ask: 5.50,
+                    delta: 0.30,
+                },
+            );
+        }
+
+        let mut candidates = BTreeMap::new();
+        candidates.insert(
+            days[0],
+            vec![EntryCandidate {
+                entry_date: days[0],
+                expiration: exp,
+                secondary_expiration: None,
+                legs: vec![CandidateLeg {
+                    option_type: OptionType::Call,
+                    strike: 100.0,
+                    expiration: exp,
+                    bid: 5.0,
+                    ask: 5.50,
+                    delta: 0.30,
+                }],
+                net_premium: -5.25,
+                net_delta: 0.30,
+            }],
+        );
+
+        let strategy_def = crate::strategies::find_strategy("long_call").unwrap();
+        let params = BacktestParams {
+            strategy: "long_call".to_string(),
+            leg_deltas: vec![TargetRange {
+                target: 0.30,
+                min: 0.10,
+                max: 0.99,
+            }],
+            entry_dte: DteRange {
+                target: 45,
+                min: 1,
+                max: 60,
+            },
+            exit_dte: 0,
+            slippage: Slippage::Mid,
+            commission: None,
+            min_bid_ask: 0.0,
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            capital: 100_000.0,
+            quantity: 1,
+            multiplier: 100,
+            max_positions: 5,
+            selector: TradeSelector::First,
+            adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: None,
+            max_net_delta: None,
+            min_days_between_entries: None,
+            expiration_filter: ExpirationFilter::Any,
+            exit_net_delta: Some(0.50), // threshold 0.50, delta stays at 0.30
+        };
+
+        let (trade_log, _, _) =
+            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None);
+
+        // Position should close via Expiration, NOT DeltaExit
+        assert!(!trade_log.is_empty(), "Should have at least 1 closed trade");
+        for trade in &trade_log {
+            assert_ne!(
+                trade.exit_type,
+                ExitType::DeltaExit,
+                "Should NOT trigger DeltaExit when delta stays below threshold",
+            );
+        }
+    }
 }
