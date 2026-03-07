@@ -12,9 +12,9 @@ fn compute_typical_price(high: &[f64], low: &[f64], close: &[f64]) -> Vec<f64> {
         .collect()
 }
 
-/// Signal: Money Flow Index is below a threshold (oversold by volume-weighted momentum).
+/// Signal: Money Flow Index is below a threshold.
 /// Typical price is computed internally as `(high + low + close) / 3`.
-pub struct MfiOversold {
+pub struct MfiBelow {
     pub high_col: String,
     pub low_col: String,
     pub close_col: String,
@@ -23,7 +23,7 @@ pub struct MfiOversold {
     pub threshold: f64,
 }
 
-impl SignalFn for MfiOversold {
+impl SignalFn for MfiBelow {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
         let high = column_to_f64(df, &self.high_col)?;
         let low = column_to_f64(df, &self.low_col)?;
@@ -32,7 +32,7 @@ impl SignalFn for MfiOversold {
         let typical = compute_typical_price(&high, &low, &close);
         let n = typical.len();
         if n < self.period {
-            return Ok(BooleanChunked::new("mfi_oversold".into(), vec![false; n]).into_series());
+            return Ok(BooleanChunked::new("mfi_below".into(), vec![false; n]).into_series());
         }
         let mfi_values =
             rust_ti::momentum_indicators::bulk::money_flow_index(&typical, &volume, self.period);
@@ -40,17 +40,17 @@ impl SignalFn for MfiOversold {
             &mfi_values,
             n,
             |v| v < self.threshold,
-            "mfi_oversold",
+            "mfi_below",
         ))
     }
     fn name(&self) -> &'static str {
-        "mfi_oversold"
+        "mfi_below"
     }
 }
 
-/// Signal: Money Flow Index is above a threshold (overbought).
+/// Signal: Money Flow Index is above a threshold.
 /// Typical price is computed internally as `(high + low + close) / 3`.
-pub struct MfiOverbought {
+pub struct MfiAbove {
     pub high_col: String,
     pub low_col: String,
     pub close_col: String,
@@ -59,7 +59,7 @@ pub struct MfiOverbought {
     pub threshold: f64,
 }
 
-impl SignalFn for MfiOverbought {
+impl SignalFn for MfiAbove {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
         let high = column_to_f64(df, &self.high_col)?;
         let low = column_to_f64(df, &self.low_col)?;
@@ -68,7 +68,7 @@ impl SignalFn for MfiOverbought {
         let typical = compute_typical_price(&high, &low, &close);
         let n = typical.len();
         if n < self.period {
-            return Ok(BooleanChunked::new("mfi_overbought".into(), vec![false; n]).into_series());
+            return Ok(BooleanChunked::new("mfi_above".into(), vec![false; n]).into_series());
         }
         let mfi_values =
             rust_ti::momentum_indicators::bulk::money_flow_index(&typical, &volume, self.period);
@@ -76,11 +76,11 @@ impl SignalFn for MfiOverbought {
             &mfi_values,
             n,
             |v| v > self.threshold,
-            "mfi_overbought",
+            "mfi_above",
         ))
     }
     fn name(&self) -> &'static str {
-        "mfi_overbought"
+        "mfi_above"
     }
 }
 
@@ -347,9 +347,9 @@ mod tests {
     }
 
     #[test]
-    fn mfi_oversold_correct_length() {
+    fn mfi_below_correct_length() {
         let df = ohlcv_df();
-        let signal = MfiOversold {
+        let signal = MfiBelow {
             high_col: "high".into(),
             low_col: "low".into(),
             close_col: "close".into(),
@@ -362,9 +362,9 @@ mod tests {
     }
 
     #[test]
-    fn mfi_overbought_correct_length() {
+    fn mfi_above_correct_length() {
         let df = ohlcv_df();
-        let signal = MfiOverbought {
+        let signal = MfiAbove {
             high_col: "high".into(),
             low_col: "low".into(),
             close_col: "close".into(),
@@ -377,7 +377,7 @@ mod tests {
     }
 
     #[test]
-    fn mfi_oversold_insufficient_data() {
+    fn mfi_below_insufficient_data() {
         let df = df! {
             "close" => &[100.0, 101.0],
             "high" => &[102.0, 103.0],
@@ -385,7 +385,7 @@ mod tests {
             "volume" => &[1000.0, 1100.0],
         }
         .unwrap();
-        let signal = MfiOversold {
+        let signal = MfiBelow {
             high_col: "high".into(),
             low_col: "low".into(),
             close_col: "close".into(),
@@ -399,7 +399,7 @@ mod tests {
     }
 
     #[test]
-    fn mfi_overbought_insufficient_data() {
+    fn mfi_above_insufficient_data() {
         let df = df! {
             "close" => &[100.0, 101.0],
             "high" => &[102.0, 103.0],
@@ -407,7 +407,7 @@ mod tests {
             "volume" => &[1000.0, 1100.0],
         }
         .unwrap();
-        let signal = MfiOverbought {
+        let signal = MfiAbove {
             high_col: "high".into(),
             low_col: "low".into(),
             close_col: "close".into(),
@@ -520,8 +520,8 @@ mod tests {
     }
 
     #[test]
-    fn mfi_oversold_name() {
-        let signal = MfiOversold {
+    fn mfi_below_name() {
+        let signal = MfiBelow {
             high_col: "high".into(),
             low_col: "low".into(),
             close_col: "close".into(),
@@ -529,12 +529,12 @@ mod tests {
             period: 14,
             threshold: 20.0,
         };
-        assert_eq!(signal.name(), "mfi_oversold");
+        assert_eq!(signal.name(), "mfi_below");
     }
 
     #[test]
-    fn mfi_overbought_name() {
-        let signal = MfiOverbought {
+    fn mfi_above_name() {
+        let signal = MfiAbove {
             high_col: "high".into(),
             low_col: "low".into(),
             close_col: "close".into(),
@@ -542,7 +542,7 @@ mod tests {
             period: 14,
             threshold: 80.0,
         };
-        assert_eq!(signal.name(), "mfi_overbought");
+        assert_eq!(signal.name(), "mfi_above");
     }
 
     #[test]

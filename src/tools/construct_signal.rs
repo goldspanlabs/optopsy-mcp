@@ -62,10 +62,15 @@ pub fn execute(prompt: &str) -> ConstructSignalResponse {
         )
     };
 
-    let suggested_next_steps = vec![
+    let has_range_candidates =
+        had_real_matches && candidates.iter().any(|c| c.name.ends_with("Range"));
+    let mut suggested_next_steps = vec![
         "Pick a candidate from above or use the schema to construct a custom SignalSpec".to_string(),
         "Pass the JSON example as entry_signal or exit_signal in run_backtest — OHLCV data is auto-fetched when signals are used".to_string(),
     ];
+    if has_range_candidates {
+        suggested_next_steps.push("Range signals use the And combinator pattern. Adjust the lower/upper thresholds (left/right) in the example to define your range.".to_string());
+    }
 
     ConstructSignalResponse {
         summary,
@@ -78,7 +83,7 @@ pub fn execute(prompt: &str) -> ConstructSignalResponse {
 }
 
 /// Split a CamelCase string into lowercase words.
-/// E.g., `RsiOversold` → `["rsi", "oversold"]`
+/// E.g., `RsiBelow` → `["rsi", "below"]`
 fn split_camel_case(s: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut current = String::new();
@@ -182,13 +187,13 @@ fn fuzzy_search(prompt: &str) -> (Vec<SignalCandidate>, bool) {
 fn build_example(signal_name: &str) -> Value {
     match signal_name {
         // Momentum
-        "RsiOversold" => json!({
-            "type": "RsiOversold",
+        "RsiBelow" => json!({
+            "type": "RsiBelow",
             "column": DEFAULT_CLOSE,
             "threshold": 30.0,
         }),
-        "RsiOverbought" => json!({
-            "type": "RsiOverbought",
+        "RsiAbove" => json!({
+            "type": "RsiAbove",
             "column": DEFAULT_CLOSE,
             "threshold": 70.0,
         }),
@@ -204,16 +209,16 @@ fn build_example(signal_name: &str) -> Value {
             "type": "MacdCrossover",
             "column": DEFAULT_CLOSE,
         }),
-        "StochasticOversold" => json!({
-            "type": "StochasticOversold",
+        "StochasticBelow" => json!({
+            "type": "StochasticBelow",
             "close_col": DEFAULT_CLOSE,
             "high_col": DEFAULT_HIGH,
             "low_col": DEFAULT_LOW,
             "period": 14,
             "threshold": 20.0,
         }),
-        "StochasticOverbought" => json!({
-            "type": "StochasticOverbought",
+        "StochasticAbove" => json!({
+            "type": "StochasticAbove",
             "close_col": DEFAULT_CLOSE,
             "high_col": DEFAULT_HIGH,
             "low_col": DEFAULT_LOW,
@@ -379,8 +384,8 @@ fn build_example(signal_name: &str) -> Value {
             "threshold": 0.02,
         }),
         // Volume
-        "MfiOversold" => json!({
-            "type": "MfiOversold",
+        "MfiBelow" => json!({
+            "type": "MfiBelow",
             "high_col": DEFAULT_HIGH,
             "low_col": DEFAULT_LOW,
             "close_col": DEFAULT_CLOSE,
@@ -388,8 +393,8 @@ fn build_example(signal_name: &str) -> Value {
             "period": 14,
             "threshold": 20.0,
         }),
-        "MfiOverbought" => json!({
-            "type": "MfiOverbought",
+        "MfiAbove" => json!({
+            "type": "MfiAbove",
             "high_col": DEFAULT_HIGH,
             "low_col": DEFAULT_LOW,
             "close_col": DEFAULT_CLOSE,
@@ -423,6 +428,27 @@ fn build_example(signal_name: &str) -> Value {
             "volume_col": DEFAULT_VOLUME,
             "period": 20,
         }),
+        // Range (And combinator patterns)
+        "RsiRange" => json!({
+            "type": "And",
+            "left": { "type": "RsiAbove", "column": DEFAULT_CLOSE, "threshold": 30.0 },
+            "right": { "type": "RsiBelow", "column": DEFAULT_CLOSE, "threshold": 40.0 },
+        }),
+        "StochasticRange" => json!({
+            "type": "And",
+            "left": { "type": "StochasticAbove", "close_col": DEFAULT_CLOSE, "high_col": DEFAULT_HIGH, "low_col": DEFAULT_LOW, "period": 14, "threshold": 20.0 },
+            "right": { "type": "StochasticBelow", "close_col": DEFAULT_CLOSE, "high_col": DEFAULT_HIGH, "low_col": DEFAULT_LOW, "period": 14, "threshold": 80.0 },
+        }),
+        "AtrRange" => json!({
+            "type": "And",
+            "left": { "type": "AtrAbove", "close_col": DEFAULT_CLOSE, "high_col": DEFAULT_HIGH, "low_col": DEFAULT_LOW, "period": 14, "threshold": 0.5 },
+            "right": { "type": "AtrBelow", "close_col": DEFAULT_CLOSE, "high_col": DEFAULT_HIGH, "low_col": DEFAULT_LOW, "period": 14, "threshold": 1.5 },
+        }),
+        "MfiRange" => json!({
+            "type": "And",
+            "left": { "type": "MfiAbove", "high_col": DEFAULT_HIGH, "low_col": DEFAULT_LOW, "close_col": DEFAULT_CLOSE, "volume_col": DEFAULT_VOLUME, "period": 14, "threshold": 20.0 },
+            "right": { "type": "MfiBelow", "high_col": DEFAULT_HIGH, "low_col": DEFAULT_LOW, "close_col": DEFAULT_CLOSE, "volume_col": DEFAULT_VOLUME, "period": 14, "threshold": 80.0 },
+        }),
         // Fallback: return a structured placeholder with explicit error message
         _ => json!({
             "type": "UnknownSignal",
@@ -436,11 +462,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fuzzy_search_rsi_oversold() {
-        let (result, had_matches) = fuzzy_search("rsi oversold");
+    fn fuzzy_search_rsi_below() {
+        let (result, had_matches) = fuzzy_search("rsi below");
         let names: Vec<&str> = result.iter().map(|c| c.name.as_str()).collect();
         assert!(had_matches);
-        assert!(names.contains(&"RsiOversold"));
+        assert!(names.contains(&"RsiBelow"));
     }
 
     #[test]
@@ -481,7 +507,7 @@ mod tests {
 
     #[test]
     fn execute_basic() {
-        let response = execute("RSI oversold");
+        let response = execute("RSI below");
         assert!(!response.candidates.is_empty());
         assert!(response.schema != serde_json::Value::Null);
         assert_eq!(response.column_defaults["close"], "adjclose");
@@ -489,8 +515,58 @@ mod tests {
 
     #[test]
     fn build_example_rsi() {
-        let example = build_example("RsiOversold");
-        assert_eq!(example["type"], "RsiOversold");
+        let example = build_example("RsiBelow");
+        assert_eq!(example["type"], "RsiBelow");
         assert_eq!(example["threshold"], 30.0);
+    }
+
+    #[test]
+    fn fuzzy_search_rsi_range() {
+        let (result, had_matches) = fuzzy_search("rsi range");
+        let names: Vec<&str> = result.iter().map(|c| c.name.as_str()).collect();
+        assert!(had_matches);
+        assert!(names.contains(&"RsiRange"));
+    }
+
+    #[test]
+    fn build_example_rsi_range() {
+        let example = build_example("RsiRange");
+        assert_eq!(example["type"], "And");
+        assert_eq!(example["left"]["type"], "RsiAbove");
+        assert_eq!(example["left"]["threshold"], 30.0);
+        assert_eq!(example["right"]["type"], "RsiBelow");
+        assert_eq!(example["right"]["threshold"], 40.0);
+    }
+
+    #[test]
+    fn rsi_range_roundtrip_deserialize() {
+        let example = build_example("RsiRange");
+        let spec: SignalSpec = serde_json::from_value(example).unwrap();
+        if let SignalSpec::And { left, right } = spec {
+            assert!(matches!(*left, SignalSpec::RsiAbove { .. }));
+            assert!(matches!(*right, SignalSpec::RsiBelow { .. }));
+        } else {
+            panic!("expected And combinator");
+        }
+    }
+
+    #[test]
+    fn execute_rsi_range_shows_range_hint() {
+        let response = execute("RSI range");
+        let has_range = response.candidates.iter().any(|c| c.name == "RsiRange");
+        assert!(has_range);
+        assert!(response
+            .suggested_next_steps
+            .iter()
+            .any(|s| s.contains("Range signals use the And combinator")));
+    }
+
+    #[test]
+    fn execute_no_match_suppresses_range_hint() {
+        let response = execute("xyzabc");
+        assert!(!response
+            .suggested_next_steps
+            .iter()
+            .any(|s| s.contains("Range signals")));
     }
 }
