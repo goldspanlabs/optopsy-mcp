@@ -541,13 +541,21 @@ mod tests {
     #[test]
     fn is_third_friday_identifies_correctly() {
         // Third Friday of January 2024 is the 19th
-        assert!(is_third_friday(NaiveDate::from_ymd_opt(2024, 1, 19).unwrap()));
+        assert!(is_third_friday(
+            NaiveDate::from_ymd_opt(2024, 1, 19).unwrap()
+        ));
         // First Friday of January 2024 is the 5th — not third
-        assert!(!is_third_friday(NaiveDate::from_ymd_opt(2024, 1, 5).unwrap()));
+        assert!(!is_third_friday(
+            NaiveDate::from_ymd_opt(2024, 1, 5).unwrap()
+        ));
         // Non-Friday date
-        assert!(!is_third_friday(NaiveDate::from_ymd_opt(2024, 1, 18).unwrap()));
+        assert!(!is_third_friday(
+            NaiveDate::from_ymd_opt(2024, 1, 18).unwrap()
+        ));
         // Third Friday of February 2024 is the 16th
-        assert!(is_third_friday(NaiveDate::from_ymd_opt(2024, 2, 16).unwrap()));
+        assert!(is_third_friday(
+            NaiveDate::from_ymd_opt(2024, 2, 16).unwrap()
+        ));
     }
 
     #[test]
@@ -631,6 +639,10 @@ mod tests {
         )
         .unwrap();
         let result = filter_expiration_type(&df, &ExpirationFilter::Monthly).unwrap();
-        assert_eq!(result.height(), 1, "Only 3rd Friday expiration should remain");
+        assert_eq!(
+            result.height(),
+            1,
+            "Only 3rd Friday expiration should remain"
+        );
     }
 }

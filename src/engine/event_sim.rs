@@ -470,8 +470,7 @@ pub fn run_event_loop(
             });
 
             if let Some(exit_type) = exit_type {
-                let margin_required =
-                    compute_position_margin(&positions[i], params.multiplier);
+                let margin_required = compute_position_margin(&positions[i], params.multiplier);
                 let pnl = close_position(
                     &mut positions[i],
                     today,
@@ -686,9 +685,9 @@ fn compute_position_net_delta(
             OrderedFloat(leg.strike),
             leg.option_type,
         );
-        let snap = price_table
-            .get(&key)
-            .or_else(|| last_known.get(&(leg.expiration, OrderedFloat(leg.strike), leg.option_type)));
+        let snap = price_table.get(&key).or_else(|| {
+            last_known.get(&(leg.expiration, OrderedFloat(leg.strike), leg.option_type))
+        });
         if let Some(s) = snap {
             net_delta += s.delta * leg.side.multiplier() * f64::from(leg.qty);
         }
@@ -707,8 +706,7 @@ pub fn compute_position_margin(position: &Position, multiplier: i32) -> f64 {
     let net_credit = position.entry_cost.abs();
     // Compute max spread width among same-option-type legs at opposing sides
     let max_width = max_spread_width_from_legs(&position.legs);
-    let max_loss =
-        max_width * f64::from(position.quantity) * f64::from(multiplier) - net_credit;
+    let max_loss = max_width * f64::from(position.quantity) * f64::from(multiplier) - net_credit;
     max_loss.max(net_credit) // fallback to net credit for undefined-risk positions
 }
 
