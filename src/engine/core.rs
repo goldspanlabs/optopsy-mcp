@@ -21,10 +21,72 @@ fn load_ohlcv(ohlcv_path: &str) -> Result<DataFrame> {
     Ok(LazyFrame::scan_parquet(ohlcv_path.into(), args)?.collect()?)
 }
 
-/// Build entry/exit date filters from signal specs, loading OHLCV data.
+/// Maximum recursion depth when resolving nested/saved signal specs.
+const MAX_SIGNAL_DEPTH: usize = 32;
+
+/// Check whether a `SignalSpec` (including nested And/Or) contains any IV-based signal.
+/// Resolves `Saved` specs best-effort via disk load, with depth guard.
+fn contains_iv_signal(spec: &signals::registry::SignalSpec) -> bool {
+    contains_iv_inner(spec, 0)
+}
+
+/// Check whether a `SignalSpec` tree contains any non-IV leaf signal.
+/// Resolves `Saved` specs best-effort via disk load, with depth guard.
+fn contains_non_iv_signal(spec: &signals::registry::SignalSpec) -> bool {
+    contains_non_iv_inner(spec, 0)
+}
+
+fn contains_iv_inner(spec: &signals::registry::SignalSpec, depth: usize) -> bool {
+    use signals::registry::SignalSpec;
+    if depth > MAX_SIGNAL_DEPTH {
+        return false;
+    }
+    match spec {
+        SignalSpec::IvRankAbove { .. }
+        | SignalSpec::IvRankBelow { .. }
+        | SignalSpec::IvPercentileAbove { .. }
+        | SignalSpec::IvPercentileBelow { .. } => true,
+        SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
+            contains_iv_inner(left, depth + 1) || contains_iv_inner(right, depth + 1)
+        }
+        SignalSpec::Saved { name } => signals::storage::load_signal(name)
+            .map(|s| contains_iv_inner(&s, depth + 1))
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn contains_non_iv_inner(spec: &signals::registry::SignalSpec, depth: usize) -> bool {
+    use signals::registry::SignalSpec;
+    if depth > MAX_SIGNAL_DEPTH {
+        return false;
+    }
+    match spec {
+        SignalSpec::IvRankAbove { .. }
+        | SignalSpec::IvRankBelow { .. }
+        | SignalSpec::IvPercentileAbove { .. }
+        | SignalSpec::IvPercentileBelow { .. } => false,
+        SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
+            contains_non_iv_inner(left, depth + 1) || contains_non_iv_inner(right, depth + 1)
+        }
+        SignalSpec::Saved { name } => signals::storage::load_signal(name)
+            .map(|s| contains_non_iv_inner(&s, depth + 1))
+            .unwrap_or(false),
+        _ => true,
+    }
+}
+
+/// Build entry/exit date filters from signal specs, loading OHLCV at most once.
+///
+/// When IV-based signals are used, aggregates daily IV from the options `DataFrame`
+/// and merges it into the OHLCV `DataFrame` so all signals evaluate against one unified `DataFrame`.
+/// For pure IV signals (no OHLCV path), a minimal `DataFrame` is constructed from the IV aggregation.
 /// When `CrossSymbol` variants are present, loads secondary symbol `DataFrame`s
 /// from `params.cross_ohlcv_paths` and uses `active_dates_multi` for evaluation.
-fn build_signal_filters(params: &BacktestParams) -> Result<(DateFilter, DateFilter)> {
+fn build_signal_filters(
+    params: &BacktestParams,
+    options_df: &DataFrame,
+) -> Result<(DateFilter, DateFilter)> {
     let has_entry = params.entry_signal.is_some();
     let has_exit = params.exit_signal.is_some();
 
@@ -32,11 +94,55 @@ fn build_signal_filters(params: &BacktestParams) -> Result<(DateFilter, DateFilt
         return Ok((None, None));
     }
 
-    let ohlcv_path = params.ohlcv_path.as_deref().ok_or_else(|| {
-        anyhow::anyhow!("ohlcv_path is required when entry_signal or exit_signal is set")
-    })?;
+    let needs_iv = params.entry_signal.as_ref().is_some_and(contains_iv_signal)
+        || params.exit_signal.as_ref().is_some_and(contains_iv_signal);
 
-    let ohlcv_df = load_ohlcv(ohlcv_path)?;
+    // For pure IV signals, we don't require ohlcv_path.
+    // Need OHLCV only if any non-IV leaf signal exists in the spec tree.
+    let needs_ohlcv = params
+        .entry_signal
+        .as_ref()
+        .is_some_and(contains_non_iv_signal)
+        || params
+            .exit_signal
+            .as_ref()
+            .is_some_and(contains_non_iv_signal);
+
+    let ohlcv_df = if needs_ohlcv {
+        if let Some(ohlcv_path) = params.ohlcv_path.as_deref() {
+            let mut df = load_ohlcv(ohlcv_path)?;
+            if needs_iv {
+                let iv_df = signals::volatility::aggregate_daily_iv(options_df)?;
+                df = df
+                    .lazy()
+                    .join(
+                        iv_df.lazy(),
+                        [col("date")],
+                        [col("date")],
+                        JoinArgs {
+                            how: JoinType::Left,
+                            maintain_order: MaintainOrderJoin::Left,
+                            ..Default::default()
+                        },
+                    )
+                    .collect()?;
+            }
+            df
+        } else {
+            return Err(anyhow::anyhow!(
+                "ohlcv_path is required when entry_signal or exit_signal contains non-IV indicators (e.g. RSI, SMA). \
+                 Pure IV signals (IvRankAbove, IvPercentileBelow, etc.) do not require OHLCV data."
+            ));
+        }
+    } else if needs_iv {
+        // Pure IV signals only
+        signals::volatility::aggregate_daily_iv(options_df)?
+    } else {
+        return Err(anyhow::anyhow!(
+            "Unable to determine required data for entry/exit signals. \
+             This may indicate ohlcv_path is missing, or a Saved signal could not be resolved."
+        ));
+    };
 
     // Check if any signal references a cross-symbol
     let has_cross = params
@@ -108,7 +214,7 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
     }
 
     // Build signal date filters if specified (loads OHLCV at most once)
-    let (entry_dates, exit_dates) = build_signal_filters(params)?;
+    let (entry_dates, exit_dates) = build_signal_filters(params, df)?;
 
     if entry_dates.is_some() || exit_dates.is_some() {
         tracing::info!(
@@ -933,5 +1039,122 @@ mod tests {
         assert_eq!(bt.trade_count, 1);
         // Both legs should be present in the trade
         assert_eq!(bt.trade_log.len(), 1);
+    }
+
+    /// Build an options `DataFrame` that includes `implied_volatility` for IV signal tests.
+    fn make_iv_options_df() -> DataFrame {
+        let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
+        let dates: Vec<_> = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 29).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 2, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 2, 5).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(),
+        ];
+
+        let quote_dates: Vec<_> = dates
+            .iter()
+            .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
+            .collect();
+        let expirations: Vec<_> = dates.iter().map(|_| exp).collect();
+        let n = dates.len();
+
+        let mut df = df! {
+            QUOTE_DATETIME_COL => &quote_dates,
+            "option_type" => vec!["call"; n],
+            "strike" => vec![100.0f64; n],
+            "bid" => vec![5.00, 4.50, 3.80, 3.20, 2.60, 2.00f64],
+            "ask" => vec![5.50, 5.00, 4.30, 3.70, 3.10, 2.50f64],
+            "delta" => vec![0.50, 0.47, 0.42, 0.38, 0.33, 0.25f64],
+            "implied_volatility" => vec![0.20, 0.25, 0.30, 0.35, 0.40, 0.45f64],
+        }
+        .unwrap();
+        df.with_column(
+            DateChunked::from_naive_date(PlSmallStr::from("expiration"), expirations).into_column(),
+        )
+        .unwrap();
+        df
+    }
+
+    #[test]
+    fn run_backtest_pure_iv_signal_without_ohlcv() {
+        // Pure IV signal should work without ohlcv_path
+        let df = make_iv_options_df();
+        let mut params = default_backtest_params();
+        // IV Rank with lookback=3, threshold=50 — should allow some entries
+        params.entry_signal = Some(signals::registry::SignalSpec::IvRankAbove {
+            lookback: 3,
+            threshold: 50.0,
+        });
+        params.ohlcv_path = None; // No OHLCV needed for pure IV signal
+
+        let result = run_backtest(&df, &params);
+        assert!(
+            result.is_ok(),
+            "Pure IV signal backtest failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn run_backtest_mixed_iv_and_ohlcv_signal() {
+        // Mixed signal: IV + OHLCV combinator requires ohlcv_path
+        let df = make_iv_options_df();
+        let ohlcv_dates: Vec<NaiveDate> = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 29).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 2, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 2, 5).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(),
+        ];
+        let closes = vec![100.0, 101.0, 102.0, 103.0, 104.0, 105.0];
+        let (_dir, path) = write_ohlcv_parquet(&ohlcv_dates, &closes);
+
+        let mut params = default_backtest_params();
+        params.entry_signal = Some(signals::registry::SignalSpec::And {
+            left: Box::new(signals::registry::SignalSpec::IvRankAbove {
+                lookback: 3,
+                threshold: 50.0,
+            }),
+            right: Box::new(signals::registry::SignalSpec::ConsecutiveUp {
+                column: "close".into(),
+                count: 2,
+            }),
+        });
+        params.ohlcv_path = Some(path);
+
+        let result = run_backtest(&df, &params);
+        assert!(
+            result.is_ok(),
+            "Mixed IV+OHLCV signal backtest failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn run_backtest_mixed_signal_without_ohlcv_errors() {
+        // Mixed IV + non-IV signal without ohlcv_path should error
+        let df = make_iv_options_df();
+        let mut params = default_backtest_params();
+        params.entry_signal = Some(signals::registry::SignalSpec::And {
+            left: Box::new(signals::registry::SignalSpec::IvRankAbove {
+                lookback: 3,
+                threshold: 50.0,
+            }),
+            right: Box::new(signals::registry::SignalSpec::ConsecutiveUp {
+                column: "close".into(),
+                count: 2,
+            }),
+        });
+        params.ohlcv_path = None;
+
+        let result = run_backtest(&df, &params);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("ohlcv_path is required"));
     }
 }

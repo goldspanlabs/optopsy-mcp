@@ -348,6 +348,27 @@ fn build_example(signal_name: &str) -> Value {
             "period": 20,
             "multiplier": 2.0,
         }),
+        // IV (implied volatility)
+        "IvRankAbove" => json!({
+            "type": "IvRankAbove",
+            "lookback": 252,
+            "threshold": 50.0,
+        }),
+        "IvRankBelow" => json!({
+            "type": "IvRankBelow",
+            "lookback": 252,
+            "threshold": 30.0,
+        }),
+        "IvPercentileAbove" => json!({
+            "type": "IvPercentileAbove",
+            "lookback": 252,
+            "threshold": 50.0,
+        }),
+        "IvPercentileBelow" => json!({
+            "type": "IvPercentileBelow",
+            "lookback": 252,
+            "threshold": 30.0,
+        }),
         // Price
         "GapUp" => json!({
             "type": "GapUp",

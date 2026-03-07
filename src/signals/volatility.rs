@@ -1,6 +1,7 @@
-// Volatility signals: ATR, Bollinger Bands, Keltner Channels
+// Volatility signals: ATR, Bollinger Bands, Keltner Channels, IV Rank, IV Percentile
 
 use super::helpers::{column_to_f64, pad_series, SignalFn};
+use crate::data::parquet::QUOTE_DATETIME_COL;
 use polars::prelude::*;
 
 /// Signal: ATR is above a threshold, indicating high volatility.
@@ -245,6 +246,269 @@ impl SignalFn for KeltnerUpperBreak {
     fn name(&self) -> &'static str {
         "keltner_upper_break"
     }
+}
+
+/// Aggregate daily implied volatility from an options chain `DataFrame`.
+///
+/// Filters to near-ATM options (absolute delta between 0.30 and 0.70), then
+/// computes the median `implied_volatility` per quote date. Returns a `DataFrame`
+/// with columns `["date", "iv"]` sorted by date.
+pub fn aggregate_daily_iv(options_df: &DataFrame) -> Result<DataFrame, PolarsError> {
+    let columns: Vec<&str> = options_df
+        .get_column_names()
+        .iter()
+        .map(|c| c.as_str())
+        .collect();
+
+    if !columns.contains(&"implied_volatility") {
+        return Err(PolarsError::ComputeError(
+            "Options data does not contain an 'implied_volatility' column. \
+             IV Rank/Percentile signals require options data with implied volatility."
+                .into(),
+        ));
+    }
+    if !columns.contains(&QUOTE_DATETIME_COL) {
+        return Err(PolarsError::ComputeError(
+            format!(
+                "Options data does not contain a '{QUOTE_DATETIME_COL}' column. \
+                 IV aggregation requires '{QUOTE_DATETIME_COL}' to group by date."
+            )
+            .into(),
+        ));
+    }
+
+    let has_delta = columns.contains(&"delta");
+
+    let lazy = options_df.clone().lazy();
+
+    // Filter to near-ATM options if delta column exists, otherwise use all rows
+    let filtered = if has_delta {
+        lazy.filter(
+            col("delta")
+                .abs()
+                .gt_eq(lit(0.30))
+                .and(col("delta").abs().lt_eq(lit(0.70))),
+        )
+    } else {
+        lazy
+    };
+
+    // Extract date from quote_datetime and compute median IV per date
+    let result = filtered
+        .with_column(col(QUOTE_DATETIME_COL).cast(DataType::Date).alias("date"))
+        .group_by([col("date")])
+        .agg([col("implied_volatility").median().alias("iv")])
+        .sort(["date"], SortMultipleOptions::default())
+        .collect()?;
+
+    Ok(result)
+}
+
+/// Signal: IV Rank is above a threshold.
+///
+/// `IV Rank = (current_iv - lookback_min) / (lookback_max - lookback_min) × 100`
+/// Requires an `"iv"` column in the `DataFrame` (produced by `aggregate_daily_iv`).
+pub struct IvRankAbove {
+    pub lookback: usize,
+    pub threshold: f64,
+}
+
+impl SignalFn for IvRankAbove {
+    fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
+        let iv = column_to_f64(df, "iv")?;
+        Ok(compute_iv_rank_signal(
+            &iv,
+            self.lookback,
+            self.threshold,
+            true,
+        ))
+    }
+    fn name(&self) -> &'static str {
+        "iv_rank_above"
+    }
+}
+
+/// Signal: IV Rank is below a threshold.
+pub struct IvRankBelow {
+    pub lookback: usize,
+    pub threshold: f64,
+}
+
+impl SignalFn for IvRankBelow {
+    fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
+        let iv = column_to_f64(df, "iv")?;
+        Ok(compute_iv_rank_signal(
+            &iv,
+            self.lookback,
+            self.threshold,
+            false,
+        ))
+    }
+    fn name(&self) -> &'static str {
+        "iv_rank_below"
+    }
+}
+
+/// Signal: IV Percentile is above a threshold.
+///
+/// IV Percentile = % of days in lookback window with IV below current IV × 100
+pub struct IvPercentileAbove {
+    pub lookback: usize,
+    pub threshold: f64,
+}
+
+impl SignalFn for IvPercentileAbove {
+    fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
+        let iv = column_to_f64(df, "iv")?;
+        Ok(compute_iv_percentile_signal(
+            &iv,
+            self.lookback,
+            self.threshold,
+            true,
+        ))
+    }
+    fn name(&self) -> &'static str {
+        "iv_percentile_above"
+    }
+}
+
+/// Signal: IV Percentile is below a threshold.
+pub struct IvPercentileBelow {
+    pub lookback: usize,
+    pub threshold: f64,
+}
+
+impl SignalFn for IvPercentileBelow {
+    fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
+        let iv = column_to_f64(df, "iv")?;
+        Ok(compute_iv_percentile_signal(
+            &iv,
+            self.lookback,
+            self.threshold,
+            false,
+        ))
+    }
+    fn name(&self) -> &'static str {
+        "iv_percentile_below"
+    }
+}
+
+/// Compute IV Rank for each row and return a boolean `Series`.
+/// `IV Rank = (current - window_min) / (window_max - window_min) × 100`
+fn compute_iv_rank_signal(iv: &[f64], lookback: usize, threshold: f64, above: bool) -> Series {
+    let n = iv.len();
+    if lookback == 0 {
+        let name = if above {
+            "iv_rank_above"
+        } else {
+            "iv_rank_below"
+        };
+        return BooleanChunked::new(name.into(), vec![false; n]).into_series();
+    }
+    let bools: Vec<bool> = (0..n)
+        .map(|i| {
+            if i + 1 < lookback {
+                return false;
+            }
+            let window = &iv[i + 1 - lookback..=i];
+            let current = iv[i];
+            if current.is_nan() {
+                return false;
+            }
+            let mut min = f64::INFINITY;
+            let mut max = f64::NEG_INFINITY;
+            let mut valid_len = 0usize;
+            for &v in window {
+                if !v.is_nan() {
+                    valid_len += 1;
+                    if v < min {
+                        min = v;
+                    }
+                    if v > max {
+                        max = v;
+                    }
+                }
+            }
+            // Require at least half the lookback to have valid IV data
+            if valid_len < lookback / 2 + 1 {
+                return false;
+            }
+            let range = max - min;
+            if range <= 0.0 {
+                return false;
+            }
+            let rank = (current - min) / range * 100.0;
+            if above {
+                rank > threshold
+            } else {
+                rank < threshold
+            }
+        })
+        .collect();
+    let name = if above {
+        "iv_rank_above"
+    } else {
+        "iv_rank_below"
+    };
+    BooleanChunked::new(name.into(), &bools).into_series()
+}
+
+/// Compute IV Percentile for each row and return a boolean `Series`.
+/// `IV Percentile = count(window_values < current) / window_len × 100`
+fn compute_iv_percentile_signal(
+    iv: &[f64],
+    lookback: usize,
+    threshold: f64,
+    above: bool,
+) -> Series {
+    let n = iv.len();
+    if lookback == 0 {
+        let name = if above {
+            "iv_percentile_above"
+        } else {
+            "iv_percentile_below"
+        };
+        return BooleanChunked::new(name.into(), vec![false; n]).into_series();
+    }
+    let bools: Vec<bool> = (0..n)
+        .map(|i| {
+            if i < lookback {
+                return false;
+            }
+            let window = &iv[i - lookback..i]; // excludes current, exactly `lookback` points
+            let current = iv[i];
+            if current.is_nan() {
+                return false;
+            }
+            let mut valid_len = 0usize;
+            let mut below_count = 0usize;
+            for &v in window {
+                if v.is_nan() {
+                    continue;
+                }
+                valid_len += 1;
+                if v < current {
+                    below_count += 1;
+                }
+            }
+            // Require at least half the lookback to have valid IV data
+            if valid_len < lookback / 2 + 1 {
+                return false;
+            }
+            let percentile = below_count as f64 / valid_len as f64 * 100.0;
+            if above {
+                percentile > threshold
+            } else {
+                percentile < threshold
+            }
+        })
+        .collect();
+    let name = if above {
+        "iv_percentile_above"
+    } else {
+        "iv_percentile_below"
+    };
+    BooleanChunked::new(name.into(), &bools).into_series()
 }
 
 #[cfg(test)]
@@ -583,5 +847,177 @@ mod tests {
             bools.get(4).unwrap(),
             "price at lower Bollinger Band should be detected"
         );
+    }
+
+    #[test]
+    fn iv_rank_above_basic() {
+        // 5 values with lookback=3: window of exactly 3 points including current
+        // iv = [10, 20, 30, 40, 50]
+        // At i=2: window=[10,20,30], rank=(30-10)/(30-10)*100=100 > 50 → true
+        // At i=3: window=[20,30,40], rank=(40-20)/(40-20)*100=100 > 50 → true
+        // At i=4: window=[30,40,50], rank=(50-30)/(50-30)*100=100 > 50 → true
+        let iv: Vec<f64> = vec![10.0, 20.0, 30.0, 40.0, 50.0];
+        let df = df! { "iv" => &iv }.unwrap();
+        let signal = IvRankAbove {
+            lookback: 3,
+            threshold: 50.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        // First 2 should be false (insufficient lookback)
+        assert!(!bools.get(0).unwrap());
+        assert!(!bools.get(1).unwrap());
+        // At i=2,3,4: rank=100 > 50 → true
+        assert!(bools.get(2).unwrap());
+        assert!(bools.get(3).unwrap());
+        assert!(bools.get(4).unwrap());
+    }
+
+    #[test]
+    fn iv_rank_below_basic() {
+        // iv = [50, 40, 30, 20, 10]
+        // At i=2: window=[50,40,30], rank=(30-30)/(50-30)*100=0 < 50 → true
+        // At i=3: window=[40,30,20], rank=(20-20)/(40-20)*100=0 < 50 → true
+        // At i=4: window=[30,20,10], rank=(10-10)/(30-10)*100=0 < 50 → true
+        let iv: Vec<f64> = vec![50.0, 40.0, 30.0, 20.0, 10.0];
+        let df = df! { "iv" => &iv }.unwrap();
+        let signal = IvRankBelow {
+            lookback: 3,
+            threshold: 50.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(!bools.get(0).unwrap());
+        assert!(!bools.get(1).unwrap());
+        assert!(bools.get(2).unwrap()); // rank=0 < 50
+        assert!(bools.get(3).unwrap()); // rank=0 < 50
+        assert!(bools.get(4).unwrap()); // rank=0 < 50
+    }
+
+    #[test]
+    fn iv_percentile_above_basic() {
+        // iv = [10, 20, 30, 40, 50]
+        // At i=3 (lookback=3): window=[10,20,30] (excludes current 40)
+        //   below_count=3 (all below 40), pct=3/3*100=100
+        // At i=4: window=[20,30,40], below_count=3 (all below 50), pct=100
+        let iv: Vec<f64> = vec![10.0, 20.0, 30.0, 40.0, 50.0];
+        let df = df! { "iv" => &iv }.unwrap();
+        let signal = IvPercentileAbove {
+            lookback: 3,
+            threshold: 50.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(!bools.get(0).unwrap());
+        assert!(!bools.get(1).unwrap());
+        assert!(!bools.get(2).unwrap());
+        assert!(bools.get(3).unwrap()); // pct=100 > 50
+        assert!(bools.get(4).unwrap()); // pct=100 > 50
+    }
+
+    #[test]
+    fn iv_percentile_below_basic() {
+        // iv = [50, 40, 30, 20, 10]
+        // At i=3: window=[50,40,30], below 20? → 0, pct=0
+        // At i=4: window=[40,30,20], below 10? → 0, pct=0
+        let iv: Vec<f64> = vec![50.0, 40.0, 30.0, 20.0, 10.0];
+        let df = df! { "iv" => &iv }.unwrap();
+        let signal = IvPercentileBelow {
+            lookback: 3,
+            threshold: 50.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.get(3).unwrap()); // pct=0 < 50
+        assert!(bools.get(4).unwrap()); // pct=0 < 50
+    }
+
+    #[test]
+    fn iv_rank_insufficient_data() {
+        let iv: Vec<f64> = vec![10.0, 20.0];
+        let df = df! { "iv" => &iv }.unwrap();
+        let signal = IvRankAbove {
+            lookback: 5,
+            threshold: 50.0,
+        };
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn iv_rank_above_name() {
+        let signal = IvRankAbove {
+            lookback: 252,
+            threshold: 50.0,
+        };
+        assert_eq!(signal.name(), "iv_rank_above");
+    }
+
+    #[test]
+    fn iv_rank_below_name() {
+        let signal = IvRankBelow {
+            lookback: 252,
+            threshold: 50.0,
+        };
+        assert_eq!(signal.name(), "iv_rank_below");
+    }
+
+    #[test]
+    fn iv_percentile_above_name() {
+        let signal = IvPercentileAbove {
+            lookback: 252,
+            threshold: 50.0,
+        };
+        assert_eq!(signal.name(), "iv_percentile_above");
+    }
+
+    #[test]
+    fn iv_percentile_below_name() {
+        let signal = IvPercentileBelow {
+            lookback: 252,
+            threshold: 50.0,
+        };
+        assert_eq!(signal.name(), "iv_percentile_below");
+    }
+
+    #[test]
+    fn aggregate_daily_iv_basic() {
+        use chrono::NaiveDate;
+        let dates = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 2)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+        ];
+        let dt_chunked = DatetimeChunked::new(PlSmallStr::from("quote_datetime"), &dates);
+        let df = DataFrame::new(
+            3,
+            vec![
+                dt_chunked.into_series().into(),
+                Series::new("implied_volatility".into(), &[0.20, 0.30, 0.25]).into(),
+                Series::new("delta".into(), &[0.50, 0.45, 0.50]).into(),
+            ],
+        )
+        .unwrap();
+
+        let result = aggregate_daily_iv(&df).unwrap();
+        assert_eq!(result.height(), 2); // 2 unique dates
+        assert!(result.get_column_names().iter().any(|c| c.as_str() == "iv"));
+    }
+
+    #[test]
+    fn aggregate_daily_iv_missing_column_errors() {
+        let df = df! { "close" => &[100.0, 101.0] }.unwrap();
+        let result = aggregate_daily_iv(&df);
+        assert!(result.is_err());
     }
 }
