@@ -261,14 +261,14 @@ pub fn aggregate_daily_iv(options_df: &DataFrame) -> Result<DataFrame, PolarsErr
         .collect();
 
     if !columns.contains(&"implied_volatility") {
-        return Err(PolarsError::ColumnNotFound(
+        return Err(PolarsError::ComputeError(
             "Options data does not contain an 'implied_volatility' column. \
              IV Rank/Percentile signals require options data with implied volatility."
                 .into(),
         ));
     }
     if !columns.contains(&QUOTE_DATETIME_COL) {
-        return Err(PolarsError::ColumnNotFound(
+        return Err(PolarsError::ComputeError(
             format!(
                 "Options data does not contain a '{QUOTE_DATETIME_COL}' column. \
                  IV aggregation requires '{QUOTE_DATETIME_COL}' to group by date."
