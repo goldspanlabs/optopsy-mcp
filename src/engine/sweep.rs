@@ -705,7 +705,6 @@ mod tests {
                 pnl: 10.0,
                 days_held: 1,
                 exit_type: super::super::types::ExitType::Expiration,
-                margin_required: 100.0,
             },
             super::super::types::TradeRecord {
                 trade_id: 2,
@@ -716,7 +715,6 @@ mod tests {
                 pnl: -10.0,
                 days_held: 2,
                 exit_type: super::super::types::ExitType::Expiration,
-                margin_required: 100.0,
             },
             super::super::types::TradeRecord {
                 trade_id: 3,
@@ -727,7 +725,6 @@ mod tests {
                 pnl: 5.0,
                 days_held: 1,
                 exit_type: super::super::types::ExitType::Expiration,
-                margin_required: 100.0,
             },
         ];
         assert_eq!(count_independent_entry_periods(&trades), 2);

@@ -171,7 +171,6 @@ struct TradeRow {
     legs: Vec<TradeRowLeg>,
     entry_cost: f64,
     exit_type: ExitType,
-    margin_required: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -264,9 +263,6 @@ fn build_trade_rows_from_candidates(
                 ExitType::DteExit
             };
 
-            // Compute margin for this trade
-            let margin_required = compute_trade_margin(&legs, entry_cost, params.multiplier);
-
             trades.push(TradeRow {
                 entry_date: candidate.entry_date,
                 exit_date,
@@ -275,41 +271,11 @@ fn build_trade_rows_from_candidates(
                 legs,
                 entry_cost,
                 exit_type,
-                margin_required,
             });
         }
     }
 
     trades
-}
-
-/// Compute margin (capital at risk) for a trade.
-///
-/// For debit positions (`entry_cost > 0`): margin = debit paid.
-/// For credit positions (`entry_cost < 0`): margin = `spread_width` × multiplier × qty − `net_credit`.
-fn compute_trade_margin(legs: &[TradeRowLeg], entry_cost: f64, multiplier: i32) -> f64 {
-    if entry_cost >= 0.0 {
-        return entry_cost;
-    }
-    let net_credit = entry_cost.abs();
-    // Find max spread width across same-option-type legs
-    let mut max_width = 0.0_f64;
-    for opt_type in [OptionType::Call, OptionType::Put] {
-        let strikes: Vec<f64> = legs
-            .iter()
-            .filter(|l| l.option_type == opt_type)
-            .map(|l| l.strike)
-            .collect();
-        if strikes.len() >= 2 {
-            let min_s = strikes.iter().copied().fold(f64::INFINITY, f64::min);
-            let max_s = strikes.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-            max_width = max_width.max(max_s - min_s);
-        }
-    }
-    // qty is already embedded in entry_cost; use the minimum qty across legs as a proxy
-    let qty = f64::from(legs.iter().map(|l| l.qty.abs()).min().unwrap_or(1));
-    let max_loss = max_width * qty * f64::from(multiplier) - net_credit;
-    max_loss.max(net_credit)
 }
 
 /// Find the exit date for a trade: first trading day where DTE <= `exit_dte`,
@@ -657,7 +623,6 @@ fn build_outputs(
             pnl,
             days_held,
             exit_type: trade.exit_type.clone(),
-            margin_required: trade.margin_required,
         });
     }
 

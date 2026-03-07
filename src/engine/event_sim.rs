@@ -470,7 +470,6 @@ pub fn run_event_loop(
             });
 
             if let Some(exit_type) = exit_type {
-                let margin_required = compute_position_margin(&positions[i], params.multiplier);
                 let pnl = close_position(
                     &mut positions[i],
                     today,
@@ -496,7 +495,6 @@ pub fn run_event_loop(
                     pnl,
                     days_held,
                     exit_type,
-                    margin_required,
                 });
             }
 
@@ -693,45 +691,6 @@ fn compute_position_net_delta(
         }
     }
     net_delta
-}
-
-/// Compute the margin / capital at risk for a position.
-///
-/// For debit positions (`entry_cost > 0`): margin = debit paid.
-/// For credit positions (`entry_cost < 0`): margin = max spread width × multiplier × qty − net credit.
-pub fn compute_position_margin(position: &Position, multiplier: i32) -> f64 {
-    if position.entry_cost >= 0.0 {
-        return position.entry_cost;
-    }
-    let net_credit = position.entry_cost.abs();
-    // Compute max spread width among same-option-type legs at opposing sides
-    let max_width = max_spread_width_from_legs(&position.legs);
-    let max_loss = max_width * f64::from(position.quantity) * f64::from(multiplier) - net_credit;
-    max_loss.max(net_credit) // fallback to net credit for undefined-risk positions
-}
-
-/// Estimate the widest spread (`higher_strike` − `lower_strike`) among same-type opposing legs.
-fn max_spread_width_from_legs(legs: &[PositionLeg]) -> f64 {
-    let mut width = 0.0_f64;
-    for opt_type in [OptionType::Call, OptionType::Put] {
-        let strikes_for_type: Vec<f64> = legs
-            .iter()
-            .filter(|l| l.option_type == opt_type && !l.closed)
-            .map(|l| l.strike)
-            .collect();
-        if strikes_for_type.len() >= 2 {
-            let min_s = strikes_for_type
-                .iter()
-                .copied()
-                .fold(f64::INFINITY, f64::min);
-            let max_s = strikes_for_type
-                .iter()
-                .copied()
-                .fold(f64::NEG_INFINITY, f64::max);
-            width = width.max(max_s - min_s);
-        }
-    }
-    width
 }
 
 /// Calculate unrealized P&L for a position at current market prices.
@@ -1203,7 +1162,6 @@ fn finalize_if_all_closed(
     if !pos.legs.iter().all(|l| l.closed) {
         return;
     }
-    let margin_required = compute_position_margin(pos, pos.multiplier);
     let mut pnl = mark_to_market(
         pos,
         today,
@@ -1230,7 +1188,6 @@ fn finalize_if_all_closed(
         pnl,
         days_held: (today - pos.entry_date).num_days(),
         exit_type: ExitType::Adjustment,
-        margin_required,
     });
 }
 

@@ -489,9 +489,6 @@ pub struct PerformanceMetrics {
     pub avg_days_held: f64,
     pub max_consecutive_losses: usize,
     pub expectancy: f64,
-    /// Return on margin: total P&L divided by total margin required, expressed as a percentage.
-    /// Margin is computed per-trade as max(entry debit paid, spread width × multiplier × qty − net credit).
-    pub margin_return_pct: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -510,10 +507,6 @@ pub struct TradeRecord {
     pub pnl: f64,
     pub days_held: i64,
     pub exit_type: ExitType,
-    /// Estimated margin / capital at risk for this trade.
-    /// For credit positions: `max_loss` = `spread_width` × multiplier × qty − `net_credit`.
-    /// For debit positions: the debit paid.
-    pub margin_required: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

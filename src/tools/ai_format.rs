@@ -661,7 +661,6 @@ mod tests {
             pnl,
             days_held,
             exit_type,
-            margin_required: 100.0,
         }
     }
 
@@ -1033,7 +1032,6 @@ mod tests {
                 avg_days_held,
                 max_consecutive_losses,
                 expectancy,
-                margin_return_pct: 0.0,
             },
             equity_curve: equity,
             trade_log: trades,
