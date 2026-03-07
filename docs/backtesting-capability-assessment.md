@@ -41,8 +41,8 @@ Gap analysis of optopsy-mcp against the Options Strategy Optimization reference 
 | Parameter sweep / grid search | **Full** | Cartesian product over strategies, deltas, DTEs, exit DTEs, slippage |
 | OOS train/test split | **Full** | Chronological date split with configurable % |
 | Dimension sensitivity analysis | **Full** | Average Sharpe/PnL per parameter value |
-| Weighted composite scoring | **Missing** | Only ranks by Sharpe; no user-defined weights across metrics |
-| Ranking by multiple metrics | **Partial** | Sharpe and PnL rankings exist, but no composite formula |
+| Weighted composite scoring | **Not planned** | Users can evaluate individual metrics from existing output |
+| Ranking by multiple metrics | **Not planned** | Sharpe and PnL rankings exist; composite scoring adds false objectivity |
 
 ---
 
@@ -109,9 +109,7 @@ The engine solidly covers Steps 1-2 at a foundational level: 32 strategies, DTE/
 
 3. **Volatility surface data** — No IV rank/percentile, term structure, skew, or implied vs. historical vol. This eliminates the ~100 proprietary vol indicators from the reference library.
 
-4. **Weighted composite scoring** — No user-defined weighting across metrics; ranking is Sharpe-only.
-
-5. **Cross-symbol signals** — Cannot use VIX readings as entry triggers for SPY strategies.
+4. **Cross-symbol signals** — Cannot use VIX readings as entry triggers for SPY strategies.
 
 ### Bottom Line
 
