@@ -36,7 +36,7 @@ fn contains_iv_signal(spec: &signals::registry::SignalSpec) -> bool {
     }
 }
 
-/// Check whether a `SignalSpec` (including nested And/Or) contains any non-IV signal.
+/// Check whether a `SignalSpec` tree contains any non-IV leaf signal.
 fn contains_non_iv_signal(spec: &signals::registry::SignalSpec) -> bool {
     use signals::registry::SignalSpec;
     match spec {
@@ -51,7 +51,7 @@ fn contains_non_iv_signal(spec: &signals::registry::SignalSpec) -> bool {
     }
 }
 
-/// Build entry/exit date filters from signal specs, loading OHLCV data.
+/// Build entry/exit date filters from signal specs, loading OHLCV at most once.
 ///
 /// When IV-based signals are used, aggregates daily IV from the options `DataFrame`
 /// and merges it into the OHLCV `DataFrame` so all signals evaluate against one unified `DataFrame`.
@@ -72,7 +72,8 @@ fn build_signal_filters(
     let needs_iv = params.entry_signal.as_ref().is_some_and(contains_iv_signal)
         || params.exit_signal.as_ref().is_some_and(contains_iv_signal);
 
-    // Need OHLCV if any non-IV signal is present.
+    // For pure IV signals, we don't require ohlcv_path.
+    // Need OHLCV only if any non-IV leaf signal exists in the spec tree.
     let needs_ohlcv = params
         .entry_signal
         .as_ref()

@@ -253,22 +253,28 @@ impl SignalFn for KeltnerUpperBreak {
 /// computes the median `implied_volatility` per quote date. Returns a `DataFrame`
 /// with columns `["date", "iv"]` sorted by date.
 pub fn aggregate_daily_iv(options_df: &DataFrame) -> Result<DataFrame, PolarsError> {
-    let has_iv = options_df
+    let columns: Vec<&str> = options_df
         .get_column_names()
         .iter()
-        .any(|c| c.as_str() == "implied_volatility");
-    if !has_iv {
+        .map(|c| c.as_str())
+        .collect();
+
+    if !columns.contains(&"implied_volatility") {
         return Err(PolarsError::ColumnNotFound(
             "Options data does not contain an 'implied_volatility' column. \
              IV Rank/Percentile signals require options data with implied volatility."
                 .into(),
         ));
     }
+    if !columns.contains(&"quote_datetime") {
+        return Err(PolarsError::ColumnNotFound(
+            "Options data does not contain a 'quote_datetime' column. \
+             IV aggregation requires 'quote_datetime' to group by date."
+                .into(),
+        ));
+    }
 
-    let has_delta = options_df
-        .get_column_names()
-        .iter()
-        .any(|c| c.as_str() == "delta");
+    let has_delta = columns.contains(&"delta");
 
     let lazy = options_df.clone().lazy();
 
@@ -388,12 +394,20 @@ impl SignalFn for IvPercentileBelow {
 /// `IV Rank = (current - window_min) / (window_max - window_min) × 100`
 fn compute_iv_rank_signal(iv: &[f64], lookback: usize, threshold: f64, above: bool) -> Series {
     let n = iv.len();
+    if lookback == 0 {
+        let name = if above {
+            "iv_rank_above"
+        } else {
+            "iv_rank_below"
+        };
+        return BooleanChunked::new(name.into(), &vec![false; n]).into_series();
+    }
     let bools: Vec<bool> = (0..n)
         .map(|i| {
-            if i < lookback {
+            if i + 1 < lookback {
                 return false;
             }
-            let window = &iv[i - lookback..=i];
+            let window = &iv[i + 1 - lookback..=i];
             let current = iv[i];
             if current.is_nan() {
                 return false;
@@ -437,12 +451,20 @@ fn compute_iv_percentile_signal(
     above: bool,
 ) -> Series {
     let n = iv.len();
+    if lookback == 0 {
+        let name = if above {
+            "iv_percentile_above"
+        } else {
+            "iv_percentile_below"
+        };
+        return BooleanChunked::new(name.into(), &vec![false; n]).into_series();
+    }
     let bools: Vec<bool> = (0..n)
         .map(|i| {
             if i < lookback {
                 return false;
             }
-            let window = &iv[i - lookback..i]; // excludes current
+            let window = &iv[i - lookback..i]; // excludes current, exactly `lookback` points
             let current = iv[i];
             if current.is_nan() {
                 return false;
@@ -808,10 +830,11 @@ mod tests {
 
     #[test]
     fn iv_rank_above_basic() {
-        // 5 values with lookback=3: window includes current
+        // 5 values with lookback=3: window of exactly 3 points including current
         // iv = [10, 20, 30, 40, 50]
-        // At i=3 (lookback=3): window=[10,20,30,40], rank=(40-10)/(40-10)*100=100
-        // At i=4: window=[20,30,40,50], rank=(50-20)/(50-20)*100=100
+        // At i=2: window=[10,20,30], rank=(30-10)/(30-10)*100=100 > 50 → true
+        // At i=3: window=[20,30,40], rank=(40-20)/(40-20)*100=100 > 50 → true
+        // At i=4: window=[30,40,50], rank=(50-30)/(50-30)*100=100 > 50 → true
         let iv: Vec<f64> = vec![10.0, 20.0, 30.0, 40.0, 50.0];
         let df = df! { "iv" => &iv }.unwrap();
         let signal = IvRankAbove {
@@ -820,11 +843,11 @@ mod tests {
         };
         let result = signal.evaluate(&df).unwrap();
         let bools = result.bool().unwrap();
-        // First 3 should be false (insufficient lookback)
+        // First 2 should be false (insufficient lookback)
         assert!(!bools.get(0).unwrap());
         assert!(!bools.get(1).unwrap());
-        assert!(!bools.get(2).unwrap());
-        // At i=3 and i=4, rank=100 > 50 → true
+        // At i=2,3,4: rank=100 > 50 → true
+        assert!(bools.get(2).unwrap());
         assert!(bools.get(3).unwrap());
         assert!(bools.get(4).unwrap());
     }
@@ -832,8 +855,9 @@ mod tests {
     #[test]
     fn iv_rank_below_basic() {
         // iv = [50, 40, 30, 20, 10]
-        // At i=3: window=[50,40,30,20], rank=(20-20)/(50-20)*100=0
-        // At i=4: window=[40,30,20,10], rank=(10-10)/(40-10)*100=0
+        // At i=2: window=[50,40,30], rank=(30-30)/(50-30)*100=0 < 50 → true
+        // At i=3: window=[40,30,20], rank=(20-20)/(40-20)*100=0 < 50 → true
+        // At i=4: window=[30,20,10], rank=(10-10)/(30-10)*100=0 < 50 → true
         let iv: Vec<f64> = vec![50.0, 40.0, 30.0, 20.0, 10.0];
         let df = df! { "iv" => &iv }.unwrap();
         let signal = IvRankBelow {
@@ -844,7 +868,7 @@ mod tests {
         let bools = result.bool().unwrap();
         assert!(!bools.get(0).unwrap());
         assert!(!bools.get(1).unwrap());
-        assert!(!bools.get(2).unwrap());
+        assert!(bools.get(2).unwrap()); // rank=0 < 50
         assert!(bools.get(3).unwrap()); // rank=0 < 50
         assert!(bools.get(4).unwrap()); // rank=0 < 50
     }

@@ -170,7 +170,7 @@ pub enum SignalSpec {
     /// IV Rank above threshold. `IV Rank = (current - min) / (max - min) × 100`.
     /// Derived from options chain `implied_volatility` column (not OHLCV data).
     IvRankAbove {
-        /// Rolling lookback window in trading days (default: 252 ≈ 1 year)
+        /// Rolling lookback window in trading days (recommended: 252 ≈ 1 year)
         lookback: usize,
         /// Threshold 0–100 (e.g. 50.0 means IV Rank > 50%)
         threshold: f64,
@@ -902,25 +902,25 @@ pub const SIGNAL_CATALOG: &[SignalInfo] = &[
         name: "IvRankAbove",
         category: "volatility",
         description: "IV Rank above threshold. Derived from options chain implied volatility. High IV Rank means current IV is near 52-week highs — good for premium selling.",
-        params: "lookback (default 252), threshold (0-100, e.g. 50.0)",
+        params: "lookback (recommended 252), threshold (0-100, e.g. 50.0)",
     },
     SignalInfo {
         name: "IvRankBelow",
         category: "volatility",
         description: "IV Rank below threshold. Low IV Rank means current IV is near 52-week lows — good for premium buying.",
-        params: "lookback (default 252), threshold (0-100, e.g. 30.0)",
+        params: "lookback (recommended 252), threshold (0-100, e.g. 30.0)",
     },
     SignalInfo {
         name: "IvPercentileAbove",
         category: "volatility",
         description: "IV Percentile above threshold. Percentage of lookback days with IV below current level. High percentile = elevated IV environment.",
-        params: "lookback (default 252), threshold (0-100, e.g. 50.0)",
+        params: "lookback (recommended 252), threshold (0-100, e.g. 50.0)",
     },
     SignalInfo {
         name: "IvPercentileBelow",
         category: "volatility",
         description: "IV Percentile below threshold. Low percentile = suppressed IV environment.",
-        params: "lookback (default 252), threshold (0-100, e.g. 30.0)",
+        params: "lookback (recommended 252), threshold (0-100, e.g. 30.0)",
     },
     // Price
     SignalInfo {
