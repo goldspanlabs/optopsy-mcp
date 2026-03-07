@@ -469,12 +469,21 @@ fn compute_iv_percentile_signal(
             if current.is_nan() {
                 return false;
             }
-            let valid: Vec<f64> = window.iter().copied().filter(|v| !v.is_nan()).collect();
-            if valid.is_empty() {
+            let mut valid_len = 0usize;
+            let mut below_count = 0usize;
+            for &v in window {
+                if v.is_nan() {
+                    continue;
+                }
+                valid_len += 1;
+                if v < current {
+                    below_count += 1;
+                }
+            }
+            if valid_len == 0 {
                 return false;
             }
-            let below_count = valid.iter().filter(|&&v| v < current).count();
-            let percentile = below_count as f64 / valid.len() as f64 * 100.0;
+            let percentile = below_count as f64 / valid_len as f64 * 100.0;
             if above {
                 percentile > threshold
             } else {
