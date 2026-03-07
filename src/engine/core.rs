@@ -130,7 +130,8 @@ fn build_signal_filters(
             df
         } else {
             return Err(anyhow::anyhow!(
-                "ohlcv_path is required when entry_signal or exit_signal is set"
+                "ohlcv_path is required when entry_signal or exit_signal contains non-IV indicators (e.g. RSI, SMA). \
+                 Pure IV signals (IvRankAbove, IvPercentileBelow, etc.) do not require OHLCV data."
             ));
         }
     } else if needs_iv {

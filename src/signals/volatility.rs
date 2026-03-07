@@ -1,6 +1,7 @@
 // Volatility signals: ATR, Bollinger Bands, Keltner Channels, IV Rank, IV Percentile
 
 use super::helpers::{column_to_f64, pad_series, SignalFn};
+use crate::data::parquet::QUOTE_DATETIME_COL;
 use polars::prelude::*;
 
 /// Signal: ATR is above a threshold, indicating high volatility.
@@ -266,11 +267,13 @@ pub fn aggregate_daily_iv(options_df: &DataFrame) -> Result<DataFrame, PolarsErr
                 .into(),
         ));
     }
-    if !columns.contains(&"quote_datetime") {
+    if !columns.contains(&QUOTE_DATETIME_COL) {
         return Err(PolarsError::ColumnNotFound(
-            "Options data does not contain a 'quote_datetime' column. \
-             IV aggregation requires 'quote_datetime' to group by date."
-                .into(),
+            format!(
+                "Options data does not contain a '{QUOTE_DATETIME_COL}' column. \
+                 IV aggregation requires '{QUOTE_DATETIME_COL}' to group by date."
+            )
+            .into(),
         ));
     }
 
@@ -292,7 +295,7 @@ pub fn aggregate_daily_iv(options_df: &DataFrame) -> Result<DataFrame, PolarsErr
 
     // Extract date from quote_datetime and compute median IV per date
     let result = filtered
-        .with_column(col("quote_datetime").cast(DataType::Date).alias("date"))
+        .with_column(col(QUOTE_DATETIME_COL).cast(DataType::Date).alias("date"))
         .group_by([col("date")])
         .agg([col("implied_volatility").median().alias("iv")])
         .sort(["date"], SortMultipleOptions::default())
