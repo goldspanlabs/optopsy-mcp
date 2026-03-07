@@ -13,7 +13,7 @@ Gap analysis of optopsy-mcp against the Options Strategy Optimization reference 
 | Strategy types (25+) | **32 strategies** | Singles, spreads, butterflies, condors, iron, calendar |
 | DTE targeting with ranges | **Full** | `DteRange { target, min, max }` |
 | Strike delta targeting | **Full** | Per-leg `TargetRange` with closest-match selection |
-| Spread Yield % | **Missing** | No `option_price / stock_price` filter |
+| Spread Yield % | **Not planned** | Derivable from existing premium + OHLCV data |
 | Spread Price filter | **Full** | `min_net_premium` / `max_net_premium` filter on `abs(net_premium)` at entry |
 | Spread Delta (net position delta) | **Full** | `min_net_delta` / `max_net_delta` entry filter + `exit_net_delta` exit trigger |
 | Entry frequency / stagger days | **Full** | `min_days_between_entries` cooldown between position opens |
@@ -22,12 +22,12 @@ Gap analysis of optopsy-mcp against the Options Strategy Optimization reference 
 | Stop loss / take profit | **Full** | Percentage of entry cost |
 | Exit spread delta | **Full** | `exit_net_delta` — exits when `|net_delta|` exceeds threshold (`ExitType::DeltaExit`) |
 | Exit hold days | **Full** | `max_hold_days` |
-| Exit strike diff % | **Missing** | |
-| Exit leg-specific triggers | **Missing** | |
+| Exit strike diff % | **Not planned** | Vaguely defined; not a standard options exit trigger |
+| Exit leg-specific triggers | **Not planned** | Would require restructuring position management to exit individual legs |
 | Slippage (bid-ask travel %) | **Full** | 5 models: `Mid`, `Spread`, `Liquidity`, `PerLeg`, `BidAskTravel { pct }` — `bid + (ask−bid) × pct` |
 | Commission modeling | **Full** | Per-contract + base fee + min fee |
 | Arithmetic returns | **Yes** | |
-| Notional returns | **Missing** | No normalization by underlying price |
+| Notional returns | **Not planned** | Derivable from existing P&L + OHLCV data |
 | Margin returns | **Not planned** | Margin requirements are broker-specific (Reg-T vs portfolio margin); any approximation would be misleading |
 | Multiple concurrent positions | **Full** | Up to `max_positions` |
 | Immediate re-entry after exit | **Full** | Same-day allowed |
@@ -109,11 +109,9 @@ The engine solidly covers Steps 1-2 at a foundational level: 32 strategies, DTE/
 
 3. **Volatility surface data** — No IV rank/percentile, term structure, skew, or implied vs. historical vol. This eliminates the ~100 proprietary vol indicators from the reference library.
 
-4. **Remaining entry/exit gaps** — Spread yield %, exit strike diff %, exit leg-specific triggers, notional returns, and margin returns are still missing.
+4. **Weighted composite scoring** — No user-defined weighting across metrics; ranking is Sharpe-only.
 
-5. **Weighted composite scoring** — No user-defined weighting across metrics; ranking is Sharpe-only.
-
-6. **Cross-symbol signals** — Cannot use VIX readings as entry triggers for SPY strategies.
+5. **Cross-symbol signals** — Cannot use VIX readings as entry triggers for SPY strategies.
 
 ### Bottom Line
 
