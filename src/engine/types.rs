@@ -334,6 +334,11 @@ pub struct BacktestParams {
     #[serde(default)]
     #[garde(skip)]
     pub ohlcv_path: Option<String>,
+    /// Paths to OHLCV parquet files for cross-symbol signals (symbol → path).
+    /// Auto-resolved by the server when `CrossSymbol` signal variants are present.
+    #[serde(default)]
+    #[garde(skip)]
+    pub cross_ohlcv_paths: HashMap<String, String>,
 
     // ── Entry filters ────────────────────────────────────────────────────────
     /// Minimum absolute net premium at entry (credit or debit, in dollars per share).
@@ -441,6 +446,10 @@ pub struct SimParams {
     #[serde(default)]
     #[garde(skip)]
     pub ohlcv_path: Option<String>,
+    /// Paths to OHLCV parquet files for cross-symbol signals (symbol → path).
+    #[serde(default)]
+    #[garde(skip)]
+    pub cross_ohlcv_paths: HashMap<String, String>,
     /// Minimum calendar days between consecutive position entries (cooldown / stagger).
     #[serde(default)]
     #[garde(inner(range(min = 1)))]
@@ -805,6 +814,7 @@ mod tests {
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,
+            cross_ohlcv_paths: HashMap::new(),
             min_net_premium: None,
             max_net_premium: None,
             min_net_delta: None,
@@ -846,6 +856,7 @@ mod tests {
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,
+            cross_ohlcv_paths: HashMap::new(),
             min_net_premium: None,
             max_net_premium: None,
             min_net_delta: None,
@@ -887,6 +898,7 @@ mod tests {
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,
+            cross_ohlcv_paths: HashMap::new(),
             min_net_premium: None,
             max_net_premium: None,
             min_net_delta: None,
@@ -912,6 +924,7 @@ mod tests {
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,
+            cross_ohlcv_paths: HashMap::new(),
             min_days_between_entries: None,
             exit_net_delta: None,
         };
@@ -948,6 +961,7 @@ mod tests {
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,
+            cross_ohlcv_paths: HashMap::new(),
             min_net_premium: None,
             max_net_premium: None,
             min_net_delta: None,

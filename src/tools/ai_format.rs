@@ -932,6 +932,7 @@ mod tests {
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,
+            cross_ohlcv_paths: std::collections::HashMap::new(),
             min_net_premium: None,
             max_net_premium: None,
             min_net_delta: None,

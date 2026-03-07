@@ -10,7 +10,7 @@ pub mod trend;
 pub mod volatility;
 pub mod volume;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use chrono::NaiveDate;
@@ -45,6 +45,44 @@ pub fn active_dates(
     }
 
     Ok(result)
+}
+
+/// Evaluate a signal spec that may contain `CrossSymbol` variants.
+///
+/// `primary_df` is the main symbol's OHLCV data. `cross_dfs` maps uppercase
+/// secondary symbols to their OHLCV `DataFrame`s.
+///
+/// For plain signals, evaluates against `primary_df`. For `CrossSymbol` variants,
+/// evaluates the inner signal against the referenced symbol's `DataFrame`. `And`/`Or`
+/// combinators recurse so that each branch can reference a different symbol.
+pub fn active_dates_multi<S: std::hash::BuildHasher>(
+    spec: &SignalSpec,
+    primary_df: &DataFrame,
+    cross_dfs: &HashMap<String, DataFrame, S>,
+    date_col: &str,
+) -> Result<HashSet<NaiveDate>> {
+    match spec {
+        SignalSpec::CrossSymbol { symbol, signal } => {
+            let upper = symbol.to_uppercase();
+            let df = cross_dfs.get(&upper).ok_or_else(|| {
+                anyhow::anyhow!("CrossSymbol references '{upper}' but no OHLCV data loaded for it")
+            })?;
+            // The inner signal may itself contain CrossSymbol or combinators
+            active_dates_multi(signal, df, cross_dfs, date_col)
+        }
+        SignalSpec::And { left, right } => {
+            let left_dates = active_dates_multi(left, primary_df, cross_dfs, date_col)?;
+            let right_dates = active_dates_multi(right, primary_df, cross_dfs, date_col)?;
+            Ok(left_dates.intersection(&right_dates).copied().collect())
+        }
+        SignalSpec::Or { left, right } => {
+            let left_dates = active_dates_multi(left, primary_df, cross_dfs, date_col)?;
+            let right_dates = active_dates_multi(right, primary_df, cross_dfs, date_col)?;
+            Ok(left_dates.union(&right_dates).copied().collect())
+        }
+        // All other variants evaluate against the primary DataFrame
+        _ => active_dates(spec, primary_df, date_col),
+    }
 }
 
 #[cfg(test)]
@@ -193,6 +231,156 @@ mod tests {
         assert!(result.contains(&dates[2]));
         assert!(result.contains(&dates[3]));
         assert!(result.contains(&dates[4]));
+    }
+
+    // ── Cross-symbol tests ──────────────────────────────────────────────
+
+    #[test]
+    fn active_dates_multi_cross_symbol_basic() {
+        let dates = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 3).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 4).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 5).unwrap(),
+        ];
+
+        // Primary symbol (SPY) — trending up
+        let primary_df = df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), dates.clone()),
+            "close" => &[100.0, 101.0, 102.0, 103.0, 104.0],
+        }
+        .unwrap();
+
+        // Secondary symbol (VIX) — only dates 3,4,5 have consecutive ups
+        let vix_df = df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), dates.clone()),
+            "close" => &[18.0, 17.0, 19.0, 21.0, 23.0],
+        }
+        .unwrap();
+
+        let mut cross_dfs = HashMap::new();
+        cross_dfs.insert("^VIX".to_string(), vix_df);
+
+        // CrossSymbol: ConsecutiveUp(count=2) on VIX
+        let spec = SignalSpec::CrossSymbol {
+            symbol: "^VIX".into(),
+            signal: Box::new(SignalSpec::ConsecutiveUp {
+                column: "close".into(),
+                count: 2,
+            }),
+        };
+
+        let result = active_dates_multi(&spec, &primary_df, &cross_dfs, "date").unwrap();
+        // VIX: 18→17 (down), 17→19 (up), 19→21 (up), 21→23 (up)
+        // ConsecutiveUp(2) fires at indices 3,4 (two consecutive up moves)
+        assert!(result.contains(&dates[3]));
+        assert!(result.contains(&dates[4]));
+        assert!(!result.contains(&dates[0]));
+        assert!(!result.contains(&dates[1]));
+        assert!(!result.contains(&dates[2]));
+    }
+
+    #[test]
+    fn active_dates_multi_and_with_cross_symbol() {
+        let dates = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 3).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 4).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 5).unwrap(),
+        ];
+
+        // Primary: all dates have consecutive up (count=2) at indices 2,3,4
+        let primary_df = df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), dates.clone()),
+            "close" => &[100.0, 101.0, 102.0, 103.0, 104.0],
+        }
+        .unwrap();
+
+        // VIX: only dates 4,5 have consecutive up (count=3)
+        let vix_df = df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), dates.clone()),
+            "close" => &[15.0, 14.0, 16.0, 18.0, 20.0],
+        }
+        .unwrap();
+
+        let mut cross_dfs = HashMap::new();
+        cross_dfs.insert("^VIX".to_string(), vix_df);
+
+        // AND: primary ConsecutiveUp(2) AND CrossSymbol(VIX ConsecutiveUp(3))
+        let spec = SignalSpec::And {
+            left: Box::new(SignalSpec::ConsecutiveUp {
+                column: "close".into(),
+                count: 2,
+            }),
+            right: Box::new(SignalSpec::CrossSymbol {
+                symbol: "^VIX".into(),
+                signal: Box::new(SignalSpec::ConsecutiveUp {
+                    column: "close".into(),
+                    count: 3,
+                }),
+            }),
+        };
+
+        let result = active_dates_multi(&spec, &primary_df, &cross_dfs, "date").unwrap();
+        // Primary ConsecutiveUp(2): indices 2,3,4
+        // VIX: 15→14(down), 14→16(up), 16→18(up), 18→20(up)
+        // VIX ConsecutiveUp(3): index 4 only
+        // AND intersection: index 4
+        assert!(result.contains(&dates[4]));
+        assert!(!result.contains(&dates[2]));
+        assert!(!result.contains(&dates[3]));
+    }
+
+    #[test]
+    fn active_dates_multi_missing_cross_symbol_errors() {
+        let dates = vec![NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()];
+        let primary_df = df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), dates),
+            "close" => &[100.0],
+        }
+        .unwrap();
+
+        let cross_dfs = HashMap::new(); // empty — no VIX data
+
+        let spec = SignalSpec::CrossSymbol {
+            symbol: "^VIX".into(),
+            signal: Box::new(SignalSpec::ConsecutiveUp {
+                column: "close".into(),
+                count: 1,
+            }),
+        };
+
+        let result = active_dates_multi(&spec, &primary_df, &cross_dfs, "date");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("^VIX"));
+    }
+
+    #[test]
+    fn active_dates_multi_plain_signal_uses_primary() {
+        let dates = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 3).unwrap(),
+        ];
+        let primary_df = df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), dates.clone()),
+            "close" => &[100.0, 101.0, 102.0],
+        }
+        .unwrap();
+
+        let cross_dfs = HashMap::new();
+
+        // Plain signal (no CrossSymbol) should use primary_df
+        let spec = SignalSpec::ConsecutiveUp {
+            column: "close".into(),
+            count: 2,
+        };
+
+        let result = active_dates_multi(&spec, &primary_df, &cross_dfs, "date").unwrap();
+        assert!(result.contains(&dates[2]));
+        assert!(!result.contains(&dates[0]));
     }
 
     #[test]
