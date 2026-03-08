@@ -135,9 +135,14 @@ impl CachedStore {
                     .with_context(|| format!("Failed to create cache dir: {}", parent.display()))?;
             }
 
-            tokio::fs::write(&path, response.as_slice())
+            // Write to a temp file then atomically rename to avoid corrupt cache on crash
+            let tmp_path = path.with_extension("parquet.tmp");
+            tokio::fs::write(&tmp_path, response.as_slice())
                 .await
-                .with_context(|| format!("Failed to write cache file: {}", path.display()))?;
+                .with_context(|| format!("Failed to write temp cache file: {}", tmp_path.display()))?;
+            tokio::fs::rename(&tmp_path, &path)
+                .await
+                .with_context(|| format!("Failed to rename cache file: {}", path.display()))?;
 
             tracing::info!(%symbol, path = %path.display(), "Cached locally");
             return Ok(path);
