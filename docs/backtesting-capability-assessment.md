@@ -2,7 +2,7 @@
 
 Gap analysis of optopsy-mcp against the Options Strategy Optimization reference workflow.
 
-**Date:** 2026-03-07
+**Date:** 2026-03-08
 
 ---
 
@@ -68,19 +68,13 @@ Gap analysis of optopsy-mcp against the Options Strategy Optimization reference 
 
 | Capability | Status | Notes |
 |---|---|---|
-| P-value calculation | **Missing** | Not implemented |
-| Permutation testing | **Missing** | Not implemented |
-| Multiple comparisons correction | **Missing** | |
+| P-value calculation | **Full** | Computed via permutation testing (#66) |
+| Permutation testing | **Full** | `permutation_test` tool — shuffles trade P&L, computes p-value for Sharpe/PnL/win rate (#66) |
+| Multiple comparisons correction | **Not planned** | Users run permutation tests on individual strategies; Bonferroni-style correction is trivial to apply externally |
 | Out-of-sample validation | **Full** | Train/test date split |
-| Walk-forward analysis | **Missing** | |
-| Parameter stability analysis | **Missing** | No neighboring-parameter robustness check |
+| Walk-forward analysis | **Full** | `walk_forward` tool — rolling train/test windows with aggregate consistency metrics (#68) |
+| Parameter stability analysis | **Full** | Neighboring-parameter robustness check in `parameter_sweep` output (#67) |
 | Performance metrics | **Full** | Sharpe, Sortino, CAGR, VaR, max drawdown, Calmar, win rate, profit factor, expectancy |
-
----
-
-## Steps 5-6: Paper Trading & Live Deployment
-
-Out of scope for a backtesting engine. Not assessed.
 
 ---
 
@@ -91,20 +85,20 @@ Out of scope for a backtesting engine. Not assessed.
 | Historical bid/ask data | **Full** | Via EODHD + Parquet cache |
 | OHLCV underlying data | **Full** | Via Yahoo Finance fetch |
 | Delta from data | **Full** | Read from source |
-| Full Greeks (gamma, theta, vega, rho) | **Missing** | Only delta |
+| Full Greeks (gamma, theta, vega, rho) | **Not planned** | Data available in source but no current consumer; delta is the only Greek used for strategy construction and exit triggers |
 | Smooth Market Volatility (SMV) | **Missing** | No IV surface fitting |
-| Theoretical edge calculation | **Missing** | No theo pricing vs market comparison |
+| Theoretical edge calculation | **Not planned** | Requires IV surface / pricing model (see SMV); backtester uses actual market prices, theo edge is a real-time trading concern |
 
 ---
 
 ## Summary
 
-The engine solidly covers Steps 1-2 and most of Step 3: 32 strategies, DTE/delta targeting, 5 slippage models, commissions, multiple exit conditions (DTE, SL/TP, max hold, delta), entry filters (premium, delta, expiration type, stagger), grid search with OOS validation, ~40 TA signals wired into entry/exit, cross-symbol signals (VIX filtering), IV rank/percentile indicators, directional threshold ranges, and automated signal parameter sweeps.
+The engine solidly covers Steps 1-4: 32 strategies, DTE/delta targeting, 5 slippage models, commissions, multiple exit conditions (DTE, SL/TP, max hold, delta), entry filters (premium, delta, expiration type, stagger), grid search with OOS validation, ~40 TA signals wired into entry/exit, cross-symbol signals (VIX filtering), IV rank/percentile indicators, directional threshold ranges, automated signal parameter sweeps, permutation testing with p-values, walk-forward analysis, and parameter stability scoring.
 
 ### Major Gaps
 
-1. **Statistical validation (Step 4)** — No p-values, permutation testing, or anti-overfitting framework. The reference doc calls this the "most critical step" and it is entirely absent.
+No major gaps remain in the backtesting workflow (Steps 1-4). The remaining items marked "Not planned" either require external data sources not available (earnings calendars, IV surfaces) or add marginal value over existing capabilities.
 
 ### Bottom Line
 
-The backtester covers Steps 1-2 solidly and Step 3 is now substantially addressed: cross-symbol signals (#59), IV rank/percentile (#60), directional thresholds (#58), and automated signal sweeps (#61) close the major indicator optimization gaps. The remaining frontier is statistical validation (Step 4) and deeper volatility surface data.
+The backtester now covers the full backtesting workflow from strategy definition through statistical validation. Steps 1-2 (strategy backtesting, parameter optimization) are comprehensive. Step 3 (indicator optimization) is substantially addressed with ~40 signals, cross-symbol support, and automated sweeps. Step 4 (statistical validation) is complete with permutation testing (#66), parameter stability analysis (#67), walk-forward analysis (#68), and existing OOS validation. The remaining frontier is deeper volatility surface data (IV term structure, skew) which requires data infrastructure beyond current options chain feeds.
