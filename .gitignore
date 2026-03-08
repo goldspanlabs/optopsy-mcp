@@ -16,6 +16,3 @@ Thumbs.db
 # Environment
 .env
 .dual-graph/
-
-# Auto-generated hooks
-.cargo-husky/
