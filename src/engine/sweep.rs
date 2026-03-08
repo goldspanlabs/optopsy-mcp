@@ -64,6 +64,25 @@ pub struct OosResult {
     pub test_pnl: f64,
 }
 
+/// Per-dimension stability for a single top result
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct DimensionStability {
+    pub dimension: String,
+    pub score: f64,
+    pub max_sharpe_change: f64,
+    pub neighbor_count: usize,
+}
+
+/// Stability score for a single top result
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct StabilityScore {
+    pub label: String,
+    pub overall_score: f64,
+    pub is_stable: bool,
+    pub warning: Option<String>,
+    pub per_dimension: Vec<DimensionStability>,
+}
+
 /// Full sweep output
 #[derive(Debug, Clone)]
 pub struct SweepOutput {
@@ -78,6 +97,7 @@ pub struct SweepOutput {
     pub ranked_results: Vec<SweepResult>,
     pub dimension_sensitivity: HashMap<String, HashMap<String, DimensionStats>>,
     pub oos_results: Vec<OosResult>,
+    pub stability_scores: Vec<StabilityScore>,
 }
 
 // ---------------------------------------------------------------------------
@@ -450,6 +470,221 @@ pub fn compute_sensitivity(
 }
 
 // ---------------------------------------------------------------------------
+// Parameter stability
+// ---------------------------------------------------------------------------
+
+/// Build a fingerprint key for a `SweepResult` that identifies its exact
+/// parameter combination (strategy, leg deltas, entry DTE, exit DTE).
+/// Signals and slippage are excluded from neighbor search (categorical).
+fn stability_fingerprint(r: &SweepResult) -> (String, Vec<String>, i32, i32) {
+    let delta_keys: Vec<String> = r
+        .leg_deltas
+        .iter()
+        .map(|d| format!("{:.4}", d.target))
+        .collect();
+    (
+        r.strategy.clone(),
+        delta_keys,
+        r.entry_dte.target,
+        r.exit_dte,
+    )
+}
+
+/// Compute parameter stability scores for the top results in a sweep.
+///
+/// For each top result, checks neighbors (results differing in exactly one
+/// orderable dimension by one grid step) and measures how much Sharpe changes.
+#[allow(clippy::too_many_lines)]
+pub fn compute_stability(results: &[SweepResult], params: &SweepParams) -> Vec<StabilityScore> {
+    if results.is_empty() {
+        return vec![];
+    }
+
+    // Build sorted grids for orderable dimensions
+    let entry_dte_grid: Vec<i32> = {
+        let mut v = params.sweep.entry_dte_targets.clone();
+        v.sort_unstable();
+        v.dedup();
+        v
+    };
+    let exit_dte_grid: Vec<i32> = {
+        let mut v = params.sweep.exit_dtes.clone();
+        v.sort_unstable();
+        v.dedup();
+        v
+    };
+
+    // Per-strategy sorted delta grids (one Vec<f64> per leg)
+    let mut strategy_delta_grids: HashMap<String, Vec<Vec<f64>>> = HashMap::new();
+    for strat in &params.strategies {
+        let grids: Vec<Vec<f64>> = strat
+            .leg_delta_targets
+            .iter()
+            .map(|vals| {
+                let mut sorted = vals.clone();
+                sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                sorted.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+                sorted
+            })
+            .collect();
+        strategy_delta_grids.insert(strat.name.clone(), grids);
+    }
+
+    // Build lookup: fingerprint → Sharpe
+    let mut sharpe_map: HashMap<(String, Vec<String>, i32, i32), f64> = HashMap::new();
+    for r in results {
+        let fp = stability_fingerprint(r);
+        // If multiple results share the same fingerprint (different slippage/signals),
+        // keep the first (highest Sharpe since results are sorted).
+        sharpe_map.entry(fp).or_insert(r.sharpe);
+    }
+
+    let top_n = results.len().min(5);
+    let mut scores = Vec::with_capacity(top_n);
+
+    for r in results.iter().take(top_n) {
+        let fp = stability_fingerprint(r);
+        let mut dim_stabilities = Vec::new();
+
+        // Check leg delta dimensions
+        if let Some(grids) = strategy_delta_grids.get(&r.strategy) {
+            for (leg_idx, grid) in grids.iter().enumerate() {
+                if grid.len() <= 1 {
+                    continue;
+                }
+                let current_delta = r.leg_deltas[leg_idx].target;
+                let pos = grid.iter().position(|&v| (v - current_delta).abs() < 1e-9);
+                if let Some(pos) = pos {
+                    let neighbors: Vec<f64> = [pos.wrapping_sub(1), pos + 1]
+                        .iter()
+                        .filter_map(|&idx| grid.get(idx).copied())
+                        .collect();
+
+                    let mut max_change = 0.0f64;
+                    let mut neighbor_count = 0usize;
+                    for neighbor_delta in &neighbors {
+                        let mut neighbor_fp = fp.clone();
+                        neighbor_fp.1[leg_idx] = format!("{neighbor_delta:.4}");
+                        if let Some(&neighbor_sharpe) = sharpe_map.get(&neighbor_fp) {
+                            let rel_change =
+                                (neighbor_sharpe - r.sharpe).abs() / r.sharpe.abs().max(0.01);
+                            max_change = max_change.max(rel_change);
+                            neighbor_count += 1;
+                        }
+                    }
+
+                    if neighbor_count > 0 {
+                        dim_stabilities.push(DimensionStability {
+                            dimension: format!("leg_{}_delta", leg_idx + 1),
+                            score: 1.0 - max_change.clamp(0.0, 1.0),
+                            max_sharpe_change: max_change,
+                            neighbor_count,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Check entry DTE dimension
+        if entry_dte_grid.len() > 1 {
+            let pos = entry_dte_grid.iter().position(|&v| v == r.entry_dte.target);
+            if let Some(pos) = pos {
+                let neighbors: Vec<i32> = [pos.wrapping_sub(1), pos + 1]
+                    .iter()
+                    .filter_map(|&idx| entry_dte_grid.get(idx).copied())
+                    .collect();
+
+                let mut max_change = 0.0f64;
+                let mut neighbor_count = 0usize;
+                for &neighbor_dte in &neighbors {
+                    let neighbor_fp = (fp.0.clone(), fp.1.clone(), neighbor_dte, fp.3);
+                    if let Some(&neighbor_sharpe) = sharpe_map.get(&neighbor_fp) {
+                        let rel_change =
+                            (neighbor_sharpe - r.sharpe).abs() / r.sharpe.abs().max(0.01);
+                        max_change = max_change.max(rel_change);
+                        neighbor_count += 1;
+                    }
+                }
+
+                if neighbor_count > 0 {
+                    dim_stabilities.push(DimensionStability {
+                        dimension: "entry_dte".to_string(),
+                        score: 1.0 - max_change.clamp(0.0, 1.0),
+                        max_sharpe_change: max_change,
+                        neighbor_count,
+                    });
+                }
+            }
+        }
+
+        // Check exit DTE dimension
+        if exit_dte_grid.len() > 1 {
+            let pos = exit_dte_grid.iter().position(|&v| v == r.exit_dte);
+            if let Some(pos) = pos {
+                let neighbors: Vec<i32> = [pos.wrapping_sub(1), pos + 1]
+                    .iter()
+                    .filter_map(|&idx| exit_dte_grid.get(idx).copied())
+                    .collect();
+
+                let mut max_change = 0.0f64;
+                let mut neighbor_count = 0usize;
+                for &neighbor_exit in &neighbors {
+                    let neighbor_fp = (fp.0.clone(), fp.1.clone(), fp.2, neighbor_exit);
+                    if let Some(&neighbor_sharpe) = sharpe_map.get(&neighbor_fp) {
+                        let rel_change =
+                            (neighbor_sharpe - r.sharpe).abs() / r.sharpe.abs().max(0.01);
+                        max_change = max_change.max(rel_change);
+                        neighbor_count += 1;
+                    }
+                }
+
+                if neighbor_count > 0 {
+                    dim_stabilities.push(DimensionStability {
+                        dimension: "exit_dte".to_string(),
+                        score: 1.0 - max_change.clamp(0.0, 1.0),
+                        max_sharpe_change: max_change,
+                        neighbor_count,
+                    });
+                }
+            }
+        }
+
+        // Compute overall score
+        let (overall_score, warning) = if dim_stabilities.is_empty() {
+            (
+                1.0,
+                Some("Single-point sweep — no neighbors to compare.".to_string()),
+            )
+        } else {
+            let avg =
+                dim_stabilities.iter().map(|d| d.score).sum::<f64>() / dim_stabilities.len() as f64;
+            let warn = if avg < 0.5 {
+                Some(format!(
+                    "UNSTABLE — performance is fragile across neighboring parameters (score: {avg:.2})."
+                ))
+            } else if avg < 0.7 {
+                Some(format!(
+                    "CAUTION — moderate sensitivity to parameter changes (score: {avg:.2})."
+                ))
+            } else {
+                None
+            };
+            (avg, warn)
+        };
+
+        scores.push(StabilityScore {
+            label: r.label.clone(),
+            overall_score,
+            is_stable: overall_score >= 0.7,
+            warning,
+            per_dimension: dim_stabilities,
+        });
+    }
+
+    scores
+}
+
+// ---------------------------------------------------------------------------
 // Main orchestrator
 // ---------------------------------------------------------------------------
 
@@ -742,6 +977,9 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
 
     let combinations_run = results.len();
 
+    // 7. Compute parameter stability for top results
+    let stability_scores = compute_stability(&results, params);
+
     Ok(SweepOutput {
         combinations_total: total,
         combinations_run,
@@ -755,6 +993,7 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
         ranked_results: results,
         dimension_sensitivity,
         oos_results,
+        stability_scores,
     })
 }
 
@@ -1244,5 +1483,154 @@ mod tests {
             }),
             "ConsecUp(n=3)"
         );
+    }
+
+    // --- compute_stability tests ---
+
+    fn make_sweep_result(
+        strategy: &str,
+        delta_target: f64,
+        entry_dte: i32,
+        exit_dte: i32,
+        sharpe: f64,
+    ) -> SweepResult {
+        SweepResult {
+            label: format!("{strategy}(Δ{delta_target:.2},DTE{entry_dte},exit{exit_dte})"),
+            strategy: strategy.to_string(),
+            leg_deltas: vec![delta_target_to_range(delta_target)],
+            entry_dte: dte_target_to_range(entry_dte),
+            exit_dte,
+            slippage: Slippage::Mid,
+            trades: 10,
+            pnl: sharpe * 100.0,
+            sharpe,
+            sortino: sharpe * 1.2,
+            max_dd: 0.05,
+            win_rate: 0.6,
+            profit_factor: 1.5,
+            calmar: 1.0,
+            total_return_pct: 5.0,
+            independent_entry_periods: 8,
+            entry_signal: None,
+            exit_signal: None,
+            signal_dim_keys: vec![],
+        }
+    }
+
+    fn make_sweep_params(
+        strategy: &str,
+        deltas: Vec<f64>,
+        entry_dtes: Vec<i32>,
+        exit_dtes: Vec<i32>,
+    ) -> SweepParams {
+        SweepParams {
+            strategies: vec![SweepStrategyEntry {
+                name: strategy.to_string(),
+                leg_delta_targets: vec![deltas],
+            }],
+            sweep: SweepDimensions {
+                entry_dte_targets: entry_dtes,
+                exit_dtes,
+                slippage_models: vec![Slippage::Mid],
+            },
+            sim_params: SimParams {
+                capital: 10000.0,
+                quantity: 1,
+                multiplier: 100,
+                max_positions: 5,
+                selector: TradeSelector::Nearest,
+                stop_loss: None,
+                take_profit: None,
+                max_hold_days: None,
+                entry_signal: None,
+                exit_signal: None,
+                ohlcv_path: None,
+                cross_ohlcv_paths: HashMap::new(),
+                min_days_between_entries: None,
+                exit_net_delta: None,
+            },
+            out_of_sample_pct: 0.0,
+            direction: None,
+            entry_signals: vec![],
+            exit_signals: vec![],
+        }
+    }
+
+    #[test]
+    fn stability_all_neighbors_same_sharpe() {
+        let results = vec![
+            make_sweep_result("long_call", 0.30, 45, 0, 1.0),
+            make_sweep_result("long_call", 0.40, 45, 0, 1.0),
+            make_sweep_result("long_call", 0.50, 45, 0, 1.0),
+        ];
+        let params = make_sweep_params("long_call", vec![0.30, 0.40, 0.50], vec![45], vec![0]);
+
+        let scores = compute_stability(&results, &params);
+        assert_eq!(scores.len(), 3);
+        assert!((scores[0].overall_score - 1.0).abs() < 1e-10);
+        assert!(scores[0].is_stable);
+        assert!(scores[0].warning.is_none());
+    }
+
+    #[test]
+    fn stability_sharp_drop_in_neighbor() {
+        let results = vec![
+            make_sweep_result("long_call", 0.40, 45, 0, 2.0),
+            make_sweep_result("long_call", 0.30, 45, 0, 0.1),
+            make_sweep_result("long_call", 0.50, 45, 0, 0.1),
+        ];
+        let params = make_sweep_params("long_call", vec![0.30, 0.40, 0.50], vec![45], vec![0]);
+
+        let scores = compute_stability(&results, &params);
+        assert!(!scores.is_empty());
+        // Top result (Sharpe 2.0 at 0.40) has neighbors at 0.1 → relative change = 1.9/2.0 = 0.95
+        let top = &scores[0];
+        assert!(
+            top.overall_score < 0.5,
+            "Expected unstable, got {}",
+            top.overall_score
+        );
+        assert!(!top.is_stable);
+        assert!(top.warning.is_some());
+        assert!(top.warning.as_ref().unwrap().contains("UNSTABLE"));
+    }
+
+    #[test]
+    fn stability_single_value_dimension_excluded() {
+        // Only one delta value → no neighbors possible → score 1.0 with note
+        let results = vec![make_sweep_result("long_call", 0.30, 45, 0, 1.5)];
+        let params = make_sweep_params("long_call", vec![0.30], vec![45], vec![0]);
+
+        let scores = compute_stability(&results, &params);
+        assert_eq!(scores.len(), 1);
+        assert!((scores[0].overall_score - 1.0).abs() < 1e-10);
+        assert!(scores[0].warning.is_some());
+        assert!(scores[0].warning.as_ref().unwrap().contains("Single-point"));
+    }
+
+    #[test]
+    fn stability_empty_results() {
+        let params = make_sweep_params("long_call", vec![0.30], vec![45], vec![0]);
+        let scores = compute_stability(&[], &params);
+        assert!(scores.is_empty());
+    }
+
+    #[test]
+    fn stability_multi_dimension() {
+        // Sweep across deltas AND entry DTEs
+        let results = vec![
+            make_sweep_result("long_call", 0.30, 30, 0, 1.0),
+            make_sweep_result("long_call", 0.30, 45, 0, 1.0),
+            make_sweep_result("long_call", 0.40, 30, 0, 1.0),
+            make_sweep_result("long_call", 0.40, 45, 0, 1.0),
+        ];
+        let params = make_sweep_params("long_call", vec![0.30, 0.40], vec![30, 45], vec![0]);
+
+        let scores = compute_stability(&results, &params);
+        assert!(!scores.is_empty());
+        // All same Sharpe → all stable
+        assert!((scores[0].overall_score - 1.0).abs() < 1e-10);
+        // Should have 2 per-dimension entries (leg_1_delta + entry_dte)
+        assert_eq!(scores[0].per_dimension.len(), 2);
     }
 }
