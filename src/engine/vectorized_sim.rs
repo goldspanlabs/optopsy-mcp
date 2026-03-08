@@ -643,16 +643,36 @@ fn build_outputs(
         let exit_dt = trade.exit_date.and_hms_opt(0, 0, 0).unwrap();
         let days_held = (trade.exit_date - trade.entry_date).num_days();
 
-        trade_log.push(TradeRecord {
-            trade_id: idx + 1,
-            entry_datetime: entry_dt,
-            exit_datetime: exit_dt,
-            entry_cost: trade.entry_cost,
-            exit_proceeds: trade.entry_cost + pnl,
+        let leg_details: Vec<LegDetail> = trade
+            .legs
+            .iter()
+            .map(|l| {
+                let entry_price =
+                    pricing::fill_price(l.entry_bid, l.entry_ask, l.side, &params.slippage);
+                let exit_price =
+                    pricing::fill_price(l.exit_bid, l.exit_ask, l.side, &params.slippage);
+                LegDetail {
+                    side: l.side,
+                    option_type: l.option_type,
+                    strike: l.strike,
+                    expiration: l.expiration.to_string(),
+                    entry_price,
+                    exit_price: Some(exit_price),
+                    qty: l.qty,
+                }
+            })
+            .collect();
+        trade_log.push(TradeRecord::new(
+            idx + 1,
+            entry_dt,
+            exit_dt,
+            trade.entry_cost,
+            trade.entry_cost + pnl,
             pnl,
             days_held,
-            exit_type: trade.exit_type.clone(),
-        });
+            trade.exit_type.clone(),
+            leg_details,
+        ));
     }
 
     // Build equity curve

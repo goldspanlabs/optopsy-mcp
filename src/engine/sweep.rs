@@ -1124,36 +1124,39 @@ mod tests {
         let dt3 =
             NaiveDateTime::parse_from_str("2024-01-17 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap();
         let trades = vec![
-            super::super::types::TradeRecord {
-                trade_id: 1,
-                entry_datetime: dt1,
-                exit_datetime: dt2,
-                entry_cost: 100.0,
-                exit_proceeds: 110.0,
-                pnl: 10.0,
-                days_held: 1,
-                exit_type: super::super::types::ExitType::Expiration,
-            },
-            super::super::types::TradeRecord {
-                trade_id: 2,
-                entry_datetime: dt1, // same date as trade 1
-                exit_datetime: dt3,
-                entry_cost: 100.0,
-                exit_proceeds: 90.0,
-                pnl: -10.0,
-                days_held: 2,
-                exit_type: super::super::types::ExitType::Expiration,
-            },
-            super::super::types::TradeRecord {
-                trade_id: 3,
-                entry_datetime: dt2,
-                exit_datetime: dt3,
-                entry_cost: 100.0,
-                exit_proceeds: 105.0,
-                pnl: 5.0,
-                days_held: 1,
-                exit_type: super::super::types::ExitType::Expiration,
-            },
+            super::super::types::TradeRecord::new(
+                1,
+                dt1,
+                dt2,
+                100.0,
+                110.0,
+                10.0,
+                1,
+                super::super::types::ExitType::Expiration,
+                vec![],
+            ),
+            super::super::types::TradeRecord::new(
+                2,
+                dt1, // same date as trade 1
+                dt3,
+                100.0,
+                90.0,
+                -10.0,
+                2,
+                super::super::types::ExitType::Expiration,
+                vec![],
+            ),
+            super::super::types::TradeRecord::new(
+                3,
+                dt2,
+                dt3,
+                100.0,
+                105.0,
+                5.0,
+                1,
+                super::super::types::ExitType::Expiration,
+                vec![],
+            ),
         ];
         assert_eq!(count_independent_entry_periods(&trades), 2);
     }

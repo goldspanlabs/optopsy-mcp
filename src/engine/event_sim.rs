@@ -486,16 +486,30 @@ pub fn run_event_loop(
                 let exit_dt = today.and_hms_opt(0, 0, 0).unwrap();
                 let days_held = (today - positions[i].entry_date).num_days();
 
-                trade_log.push(TradeRecord {
+                let leg_details: Vec<LegDetail> = positions[i]
+                    .legs
+                    .iter()
+                    .map(|l| LegDetail {
+                        side: l.side,
+                        option_type: l.option_type,
+                        strike: l.strike,
+                        expiration: l.expiration.to_string(),
+                        entry_price: l.entry_price,
+                        exit_price: l.close_price,
+                        qty: l.qty,
+                    })
+                    .collect();
+                trade_log.push(TradeRecord::new(
                     trade_id,
-                    entry_datetime: entry_dt,
-                    exit_datetime: exit_dt,
-                    entry_cost: positions[i].entry_cost,
-                    exit_proceeds: positions[i].entry_cost + pnl,
+                    entry_dt,
+                    exit_dt,
+                    positions[i].entry_cost,
+                    positions[i].entry_cost + pnl,
                     pnl,
                     days_held,
                     exit_type,
-                });
+                    leg_details,
+                ));
             }
 
             i += 1;
@@ -1179,16 +1193,30 @@ fn finalize_if_all_closed(
     pos.status = PositionStatus::Closed(ExitType::Adjustment);
 
     *trade_id += 1;
-    trade_log.push(TradeRecord {
-        trade_id: *trade_id,
-        entry_datetime: pos.entry_date.and_hms_opt(0, 0, 0).unwrap(),
-        exit_datetime: today.and_hms_opt(0, 0, 0).unwrap(),
-        entry_cost: pos.entry_cost,
-        exit_proceeds: pos.entry_cost + pnl,
+    let leg_details: Vec<LegDetail> = pos
+        .legs
+        .iter()
+        .map(|l| LegDetail {
+            side: l.side,
+            option_type: l.option_type,
+            strike: l.strike,
+            expiration: l.expiration.to_string(),
+            entry_price: l.entry_price,
+            exit_price: l.close_price,
+            qty: l.qty,
+        })
+        .collect();
+    trade_log.push(TradeRecord::new(
+        *trade_id,
+        pos.entry_date.and_hms_opt(0, 0, 0).unwrap(),
+        today.and_hms_opt(0, 0, 0).unwrap(),
+        pos.entry_cost,
+        pos.entry_cost + pnl,
         pnl,
-        days_held: (today - pos.entry_date).num_days(),
-        exit_type: ExitType::Adjustment,
-    });
+        (today - pos.entry_date).num_days(),
+        ExitType::Adjustment,
+        leg_details,
+    ));
 }
 
 /// Check adjustment rules against open positions and apply the first matching rule per position.

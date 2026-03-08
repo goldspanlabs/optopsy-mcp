@@ -321,16 +321,17 @@ mod tests {
             .unwrap()
             .and_hms_opt(0, 0, 0)
             .unwrap();
-        TradeRecord {
-            trade_id: 1,
-            entry_datetime: dt,
-            exit_datetime: dt + chrono::Duration::days(days_held),
-            entry_cost: 100.0,
-            exit_proceeds: 100.0 + pnl,
+        TradeRecord::new(
+            1,
+            dt,
+            dt + chrono::Duration::days(days_held),
+            100.0,
+            100.0 + pnl,
             pnl,
             days_held,
-            exit_type: ExitType::Expiration,
-        }
+            ExitType::Expiration,
+            vec![],
+        )
     }
 
     #[test]

@@ -506,6 +506,23 @@ pub struct EquityPoint {
     pub equity: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub enum CashflowLabel {
+    CR,
+    DR,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LegDetail {
+    pub side: Side,
+    pub option_type: OptionType,
+    pub strike: f64,
+    pub expiration: String,
+    pub entry_price: f64,
+    pub exit_price: Option<f64>,
+    pub qty: i32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TradeRecord {
     pub trade_id: usize,
@@ -513,9 +530,53 @@ pub struct TradeRecord {
     pub exit_datetime: NaiveDateTime,
     pub entry_cost: f64,
     pub exit_proceeds: f64,
+    pub entry_amount: f64,
+    pub entry_label: CashflowLabel,
+    pub exit_amount: f64,
+    pub exit_label: CashflowLabel,
     pub pnl: f64,
     pub days_held: i64,
     pub exit_type: ExitType,
+    pub legs: Vec<LegDetail>,
+}
+
+impl TradeRecord {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        trade_id: usize,
+        entry_datetime: NaiveDateTime,
+        exit_datetime: NaiveDateTime,
+        entry_cost: f64,
+        exit_proceeds: f64,
+        pnl: f64,
+        days_held: i64,
+        exit_type: ExitType,
+        legs: Vec<LegDetail>,
+    ) -> Self {
+        Self {
+            trade_id,
+            entry_datetime,
+            exit_datetime,
+            entry_amount: entry_cost.abs(),
+            entry_label: if entry_cost < 0.0 {
+                CashflowLabel::CR
+            } else {
+                CashflowLabel::DR
+            },
+            exit_amount: exit_proceeds.abs(),
+            exit_label: if exit_proceeds < 0.0 {
+                CashflowLabel::CR
+            } else {
+                CashflowLabel::DR
+            },
+            entry_cost,
+            exit_proceeds,
+            pnl,
+            days_held,
+            exit_type,
+            legs,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

@@ -978,16 +978,17 @@ mod tests {
 
     fn make_trade(pnl: f64, days_held: i64, exit_type: ExitType) -> TradeRecord {
         let dt = NaiveDateTime::parse_from_str("2024-01-15 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap();
-        TradeRecord {
-            trade_id: 1,
-            entry_datetime: dt,
-            exit_datetime: dt,
-            entry_cost: 100.0,
-            exit_proceeds: 100.0 + pnl,
+        TradeRecord::new(
+            1,
+            dt,
+            dt,
+            100.0,
+            100.0 + pnl,
             pnl,
             days_held,
             exit_type,
-        }
+            vec![],
+        )
     }
 
     #[test]
