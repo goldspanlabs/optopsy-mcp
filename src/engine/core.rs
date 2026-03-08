@@ -83,7 +83,7 @@ fn contains_non_iv_inner(spec: &signals::registry::SignalSpec, depth: usize) -> 
 /// For pure IV signals (no OHLCV path), a minimal `DataFrame` is constructed from the IV aggregation.
 /// When `CrossSymbol` variants are present, loads secondary symbol `DataFrame`s
 /// from `params.cross_ohlcv_paths` and uses `active_dates_multi` for evaluation.
-fn build_signal_filters(
+pub fn build_signal_filters(
     params: &BacktestParams,
     options_df: &DataFrame,
 ) -> Result<(DateFilter, DateFilter)> {

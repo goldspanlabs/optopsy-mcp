@@ -6,6 +6,7 @@ pub mod compare;
 pub mod construct_signal;
 pub mod fetch;
 pub mod load_data;
+pub mod permutation_test;
 pub mod raw_prices;
 pub mod response_types;
 pub mod signals;

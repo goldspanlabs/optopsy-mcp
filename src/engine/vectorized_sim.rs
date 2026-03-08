@@ -22,11 +22,11 @@ use crate::strategies;
 
 /// Secondary index for O(log n) carry-forward lookups.
 /// Key: (expiration, strike, `option_type`) → sorted map of date → snapshot reference data.
-type CarryIndex =
+pub type CarryIndex =
     BTreeMap<(NaiveDate, OrderedFloat<f64>, OptionType), BTreeMap<NaiveDate, QuoteSnapshot>>;
 
 /// Build the carry-forward index from the price table.
-fn build_carry_index(price_table: &PriceTable) -> CarryIndex {
+pub fn build_carry_index(price_table: &PriceTable) -> CarryIndex {
     let mut index = CarryIndex::new();
     for ((date, exp, strike, opt), snap) in price_table {
         index
@@ -79,17 +79,46 @@ pub fn run_vectorized_backtest<S1: BuildHasher, S2: BuildHasher>(
         return Ok((vec![], vec![], BacktestQualityStats::default()));
     }
 
-    // Convert candidates to TradeRows with exit resolution via price table
-    let t2 = std::time::Instant::now();
-    let trades = build_trade_rows_from_candidates(
+    run_with_candidates(
         &candidates,
         &price_table,
         &carry_index,
         &trading_days,
         &strategy_def,
         params,
+        exit_dates,
+    )
+}
+
+/// Run the simulation pipeline from pre-built candidates.
+///
+/// This is the core reusable function: given candidates, price table, and params,
+/// it resolves exits, applies selectors/early-exits/overlap filters, and returns
+/// the trade log, equity curve, and quality stats.
+pub fn run_with_candidates<S: BuildHasher>(
+    candidates: &BTreeMap<NaiveDate, Vec<EntryCandidate>>,
+    price_table: &PriceTable,
+    carry_index: &CarryIndex,
+    trading_days: &[NaiveDate],
+    strategy_def: &StrategyDef,
+    params: &BacktestParams,
+    exit_dates: Option<&HashSet<NaiveDate, S>>,
+) -> Result<(Vec<TradeRecord>, Vec<EquityPoint>, BacktestQualityStats)> {
+    if candidates.is_empty() {
+        return Ok((vec![], vec![], BacktestQualityStats::default()));
+    }
+
+    // Convert candidates to TradeRows with exit resolution via price table
+    let t2 = std::time::Instant::now();
+    let trades = build_trade_rows_from_candidates(
+        candidates,
+        price_table,
+        carry_index,
+        trading_days,
+        strategy_def,
+        params,
     );
-    tracing::info!(
+    tracing::debug!(
         elapsed_ms = t2.elapsed().as_millis(),
         trades = trades.len(),
         "Trade rows built"
@@ -114,16 +143,16 @@ pub fn run_vectorized_backtest<S1: BuildHasher, S2: BuildHasher>(
     let trades = if has_early_exit {
         apply_early_exits(
             trades,
-            &price_table,
-            &carry_index,
-            &trading_days,
+            price_table,
+            carry_index,
+            trading_days,
             params,
             exit_dates,
         )
     } else {
         trades
     };
-    tracing::info!(
+    tracing::debug!(
         elapsed_ms = t3.elapsed().as_millis(),
         "Early exit scan done"
     );
@@ -147,8 +176,8 @@ pub fn run_vectorized_backtest<S1: BuildHasher, S2: BuildHasher>(
     // Build trade log and equity curve
     let t4 = std::time::Instant::now();
     let (trade_log, equity_curve) =
-        build_outputs(&trades, &trading_days, &price_table, &carry_index, params);
-    tracing::info!(elapsed_ms = t4.elapsed().as_millis(), "Outputs built");
+        build_outputs(&trades, trading_days, price_table, carry_index, params);
+    tracing::debug!(elapsed_ms = t4.elapsed().as_millis(), "Outputs built");
 
     let quality = BacktestQualityStats {
         trading_days_total: trading_days.len(),
