@@ -101,8 +101,7 @@ impl DataStore for ParquetStore {
         let mut df = normalize_quote_datetime(df)?;
 
         // Apply date filters if quote_datetime exists
-        if df.schema().contains(QUOTE_DATETIME_COL)
-            && (start_date.is_some() || end_date.is_some())
+        if df.schema().contains(QUOTE_DATETIME_COL) && (start_date.is_some() || end_date.is_some())
         {
             let start_dt = start_date.and_then(|d| d.and_hms_opt(0, 0, 0));
             let end_dt = end_date.and_then(|d| d.and_hms_opt(23, 59, 59));

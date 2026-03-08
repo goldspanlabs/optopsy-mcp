@@ -139,7 +139,9 @@ impl CachedStore {
             let tmp_path = path.with_extension("parquet.tmp");
             tokio::fs::write(&tmp_path, response.as_slice())
                 .await
-                .with_context(|| format!("Failed to write temp cache file: {}", tmp_path.display()))?;
+                .with_context(|| {
+                    format!("Failed to write temp cache file: {}", tmp_path.display())
+                })?;
             tokio::fs::rename(&tmp_path, &path)
                 .await
                 .with_context(|| format!("Failed to rename cache file: {}", path.display()))?;

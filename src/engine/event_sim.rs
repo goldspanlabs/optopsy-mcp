@@ -1577,8 +1577,15 @@ mod tests {
             exit_net_delta: None,
         };
 
-        let (_trade_log, equity_curve, _) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None, &date_idx);
+        let (_trade_log, equity_curve, _) = run_event_loop(
+            &table,
+            &candidates,
+            &days,
+            &params,
+            &strategy_def,
+            None,
+            &date_idx,
+        );
 
         // Should have 1 trade, closed by DTE exit on day 3 (DTE = 18, which is > 15, so no DTE exit)
         // Actually DTE on Jan 29 = Feb 16 - Jan 29 = 18 days, exit_dte=15, so 18 > 15 → no DTE exit
@@ -1588,6 +1595,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn run_event_loop_stop_loss() {
         let mut table = PriceTable::with_hasher(rustc_hash::FxBuildHasher);
         let d1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
@@ -1685,8 +1693,15 @@ mod tests {
             exit_net_delta: None,
         };
 
-        let (trade_log, _, _) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None, &date_idx);
+        let (trade_log, _, _) = run_event_loop(
+            &table,
+            &candidates,
+            &days,
+            &params,
+            &strategy_def,
+            None,
+            &date_idx,
+        );
 
         // Stop loss: entry_cost = 5.25 * 100 = 525, threshold = 525 * 0.5 = 262.5
         // Day 2 MTM: (4.25 - 5.25) * 100 = -100 → no trigger
@@ -1700,6 +1715,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn run_event_loop_take_profit() {
         let mut table = PriceTable::with_hasher(rustc_hash::FxBuildHasher);
         let d1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
@@ -1795,8 +1811,15 @@ mod tests {
             exit_net_delta: None,
         };
 
-        let (trade_log, _, _) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None, &date_idx);
+        let (trade_log, _, _) = run_event_loop(
+            &table,
+            &candidates,
+            &days,
+            &params,
+            &strategy_def,
+            None,
+            &date_idx,
+        );
 
         // Take profit: entry_cost = 525, threshold = 525 * 0.5 = 262.5
         // Day 2 MTM: (6.25 - 5.25) * 100 = 100 → no trigger
@@ -1901,8 +1924,15 @@ mod tests {
             exit_net_delta: None,
         };
 
-        let (trade_log, _, _) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None, &date_idx);
+        let (trade_log, _, _) = run_event_loop(
+            &table,
+            &candidates,
+            &days,
+            &params,
+            &strategy_def,
+            None,
+            &date_idx,
+        );
 
         // Max positions = 1, first position stays open, second rejected
         assert_eq!(trade_log.len(), 0, "No trades should close in 2 days");
@@ -1974,8 +2004,15 @@ mod tests {
             exit_net_delta: None,
         };
 
-        let (_, equity_curve, _) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None, &date_idx);
+        let (_, equity_curve, _) = run_event_loop(
+            &table,
+            &candidates,
+            &days,
+            &params,
+            &strategy_def,
+            None,
+            &date_idx,
+        );
 
         // Should have one equity point per trading day
         assert_eq!(
@@ -2263,8 +2300,15 @@ mod tests {
             exit_net_delta: None,
         };
 
-        let (_, equity_curve, _) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None, &date_idx);
+        let (_, equity_curve, _) = run_event_loop(
+            &table,
+            &candidates,
+            &days,
+            &params,
+            &strategy_def,
+            None,
+            &date_idx,
+        );
 
         // 5 days, with 3-day minimum gap: entries on day 0 and day 3 (days[0] and days[3])
         // means at most 2 positions opened over 5 days
@@ -2826,8 +2870,15 @@ mod tests {
             exit_net_delta: Some(0.50), // exit when |net_delta| > 0.50
         };
 
-        let (trade_log, _, _) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None, &date_idx);
+        let (trade_log, _, _) = run_event_loop(
+            &table,
+            &candidates,
+            &days,
+            &params,
+            &strategy_def,
+            None,
+            &date_idx,
+        );
 
         assert_eq!(trade_log.len(), 1, "Should have exactly 1 trade");
         assert_eq!(
@@ -2924,8 +2975,15 @@ mod tests {
             exit_net_delta: Some(0.50), // threshold 0.50, delta stays at 0.30
         };
 
-        let (trade_log, _, _) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None, &date_idx);
+        let (trade_log, _, _) = run_event_loop(
+            &table,
+            &candidates,
+            &days,
+            &params,
+            &strategy_def,
+            None,
+            &date_idx,
+        );
 
         // Position should close via Expiration, NOT DeltaExit
         assert!(!trade_log.is_empty(), "Should have at least 1 closed trade");
