@@ -2,6 +2,7 @@ pub mod core;
 pub mod event_sim;
 pub mod filters;
 pub mod metrics;
+pub mod permutation;
 pub mod pricing;
 pub mod rules;
 pub mod suggest;
