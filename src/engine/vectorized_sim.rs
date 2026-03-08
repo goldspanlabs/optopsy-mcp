@@ -51,7 +51,7 @@ pub fn run_vectorized_backtest<S1: BuildHasher, S2: BuildHasher>(
 
     // Build price table and get trading days
     let t0 = std::time::Instant::now();
-    let (price_table, trading_days) = event_sim::build_price_table(df)?;
+    let (price_table, trading_days, _date_index) = event_sim::build_price_table(df)?;
     tracing::info!(
         elapsed_ms = t0.elapsed().as_millis(),
         entries = price_table.len(),

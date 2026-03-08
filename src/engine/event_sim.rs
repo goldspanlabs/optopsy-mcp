@@ -14,7 +14,7 @@ use crate::data::parquet::QUOTE_DATETIME_COL;
 
 /// Build a price lookup table from the raw options `DataFrame`.
 /// Returns the table and a sorted list of unique trading dates.
-pub fn build_price_table(df: &DataFrame) -> Result<(PriceTable, Vec<NaiveDate>)> {
+pub fn build_price_table(df: &DataFrame) -> Result<(PriceTable, Vec<NaiveDate>, DateIndex)> {
     let quote_col = df.column(QUOTE_DATETIME_COL)?;
     let exp_col = df.column("expiration")?;
 
@@ -27,13 +27,22 @@ pub fn build_price_table(df: &DataFrame) -> Result<(PriceTable, Vec<NaiveDate>)>
     build_price_table_slow(df, quote_col, exp_col)
 }
 
+/// Build a `DateIndex` from a completed `PriceTable`.
+fn build_date_index(table: &PriceTable) -> DateIndex {
+    let mut index: DateIndex = HashMap::new();
+    for key in table.keys() {
+        index.entry(key.0).or_default().push(*key);
+    }
+    index
+}
+
 /// Fast path: columns already typed as Datetime/Date after `ParquetStore` normalization.
 /// Uses `cont_slice()` for zero-copy raw value access when possible.
 fn build_price_table_fast(
     df: &DataFrame,
     quote_ca: &DatetimeChunked,
     exp_ca: &DateChunked,
-) -> Result<(PriceTable, Vec<NaiveDate>)> {
+) -> Result<(PriceTable, Vec<NaiveDate>, DateIndex)> {
     let strikes = df.column("strike")?.f64()?;
     let option_types = df.column("option_type")?.str()?;
     let bids = df.column("bid")?.f64()?;
@@ -132,7 +141,8 @@ fn build_price_table_fast(
 
     dates_vec.sort_unstable();
     dates_vec.dedup();
-    Ok((table, dates_vec))
+    let date_index = build_date_index(&table);
+    Ok((table, dates_vec, date_index))
 }
 
 /// Slow fallback: per-row type dispatch via `extract_date_from_column`.
@@ -140,7 +150,7 @@ fn build_price_table_slow(
     df: &DataFrame,
     quote_col: &Column,
     exp_col: &Column,
-) -> Result<(PriceTable, Vec<NaiveDate>)> {
+) -> Result<(PriceTable, Vec<NaiveDate>, DateIndex)> {
     let strikes = df.column("strike")?.f64()?;
     let option_types = df.column("option_type")?.str()?;
     let bids = df.column("bid")?.f64()?;
@@ -170,7 +180,8 @@ fn build_price_table_slow(
     }
 
     let trading_days: Vec<NaiveDate> = dates_set.into_iter().collect();
-    Ok((table, trading_days))
+    let date_index = build_date_index(&table);
+    Ok((table, trading_days, date_index))
 }
 
 /// Extract a `NaiveDate` from a column value at a given index.
@@ -423,6 +434,7 @@ pub fn run_event_loop(
     params: &BacktestParams,
     strategy_def: &StrategyDef,
     exit_dates: Option<&std::collections::HashSet<NaiveDate>>,
+    date_index: &DateIndex,
 ) -> (Vec<TradeRecord>, Vec<EquityPoint>, BacktestQualityStats) {
     let mut positions: Vec<Position> = Vec::new();
     let mut trade_log: Vec<TradeRecord> = Vec::new();
@@ -580,7 +592,7 @@ pub fn run_event_loop(
         }
 
         // Update last known prices for all quotes on this day
-        update_last_known(price_table, today, &mut last_known);
+        update_last_known(price_table, date_index, today, &mut last_known);
 
         // Phase 3: Daily mark-to-market
         let unrealized: f64 = positions
@@ -1275,13 +1287,16 @@ fn check_and_apply_adjustments(
 /// Update the last-known price cache for carry-forward on gaps.
 fn update_last_known(
     price_table: &PriceTable,
+    date_index: &DateIndex,
     today: NaiveDate,
     last_known: &mut HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
 ) {
-    for (key, snap) in price_table {
-        if key.0 == today {
-            let carry_key = (key.1, key.2, key.3);
-            last_known.insert(carry_key, snap.clone());
+    if let Some(keys) = date_index.get(&today) {
+        for key in keys {
+            if let Some(snap) = price_table.get(key) {
+                let carry_key = (key.1, key.2, key.3);
+                last_known.insert(carry_key, snap.clone());
+            }
         }
     }
 }
@@ -1290,7 +1305,7 @@ fn update_last_known(
 mod tests {
     use super::*;
 
-    fn make_price_table_simple() -> (PriceTable, Vec<NaiveDate>) {
+    fn make_price_table_simple() -> (PriceTable, Vec<NaiveDate>, DateIndex) {
         let mut table = PriceTable::with_hasher(rustc_hash::FxBuildHasher);
         let d1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
         let d2 = NaiveDate::from_ymd_opt(2024, 1, 22).unwrap();
@@ -1327,13 +1342,14 @@ mod tests {
         );
 
         let days = vec![d1, d2, d3];
-        (table, days)
+        let date_index = build_date_index(&table);
+        (table, days, date_index)
     }
 
     #[test]
     fn build_price_table_basic() {
         let df = make_daily_df();
-        let (table, days) = build_price_table(&df).unwrap();
+        let (table, days, _) = build_price_table(&df).unwrap();
         assert!(!table.is_empty());
         assert!(!days.is_empty());
         // Verify a specific key lookup
@@ -1347,7 +1363,7 @@ mod tests {
 
     #[test]
     fn mark_to_market_long_call() {
-        let (table, _) = make_price_table_simple();
+        let (table, _, _) = make_price_table_simple();
         let d2 = NaiveDate::from_ymd_opt(2024, 1, 22).unwrap();
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
         let last_known = HashMap::new();
@@ -1437,7 +1453,7 @@ mod tests {
 
     #[test]
     fn close_position_records_fills() {
-        let (table, _) = make_price_table_simple();
+        let (table, _, _) = make_price_table_simple();
         let d3 = NaiveDate::from_ymd_opt(2024, 1, 29).unwrap();
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
         let last_known = HashMap::new();
@@ -1486,7 +1502,7 @@ mod tests {
 
     #[test]
     fn run_event_loop_single_trade() {
-        let (table, days) = make_price_table_simple();
+        let (table, days, date_idx) = make_price_table_simple();
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
         let d1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
 
@@ -1551,7 +1567,7 @@ mod tests {
         };
 
         let (_trade_log, equity_curve, _) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None);
+            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None, &date_idx);
 
         // Should have 1 trade, closed by DTE exit on day 3 (DTE = 18, which is > 15, so no DTE exit)
         // Actually DTE on Jan 29 = Feb 16 - Jan 29 = 18 days, exit_dte=15, so 18 > 15 → no DTE exit
@@ -1597,6 +1613,7 @@ mod tests {
         );
 
         let days = vec![d1, d2, d3];
+        let date_idx = build_date_index(&table);
         let mut candidates = BTreeMap::new();
         candidates.insert(
             d1,
@@ -1658,7 +1675,7 @@ mod tests {
         };
 
         let (trade_log, _, _) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None);
+            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None, &date_idx);
 
         // Stop loss: entry_cost = 5.25 * 100 = 525, threshold = 525 * 0.5 = 262.5
         // Day 2 MTM: (4.25 - 5.25) * 100 = -100 → no trigger
@@ -1706,6 +1723,7 @@ mod tests {
         );
 
         let days = vec![d1, d2, d3];
+        let date_idx = build_date_index(&table);
         let mut candidates = BTreeMap::new();
         candidates.insert(
             d1,
@@ -1767,7 +1785,7 @@ mod tests {
         };
 
         let (trade_log, _, _) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None);
+            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None, &date_idx);
 
         // Take profit: entry_cost = 525, threshold = 525 * 0.5 = 262.5
         // Day 2 MTM: (6.25 - 5.25) * 100 = 100 → no trigger
@@ -1807,6 +1825,7 @@ mod tests {
         }
 
         let days = vec![d1, d2];
+        let date_idx = build_date_index(&table);
 
         // Candidates on both days
         let make_cand = |date: NaiveDate, strike: f64, bid: f64, ask: f64| -> EntryCandidate {
@@ -1872,7 +1891,7 @@ mod tests {
         };
 
         let (trade_log, _, _) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None);
+            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None, &date_idx);
 
         // Max positions = 1, first position stays open, second rejected
         assert_eq!(trade_log.len(), 0, "No trades should close in 2 days");
@@ -1880,7 +1899,7 @@ mod tests {
 
     #[test]
     fn run_event_loop_daily_equity() {
-        let (table, days) = make_price_table_simple();
+        let (table, days, date_idx) = make_price_table_simple();
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
         let d1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
 
@@ -1945,7 +1964,7 @@ mod tests {
         };
 
         let (_, equity_curve, _) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None);
+            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None, &date_idx);
 
         // Should have one equity point per trading day
         assert_eq!(
@@ -2172,6 +2191,7 @@ mod tests {
 
         // Provide candidates on every day
         let mut candidates = BTreeMap::new();
+        let date_idx = build_date_index(&table);
         for &d in &days {
             candidates.insert(
                 d,
@@ -2233,7 +2253,7 @@ mod tests {
         };
 
         let (_, equity_curve, _) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None);
+            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None, &date_idx);
 
         // 5 days, with 3-day minimum gap: entries on day 0 and day 3 (days[0] and days[3])
         // means at most 2 positions opened over 5 days
@@ -2334,6 +2354,7 @@ mod tests {
             );
         }
 
+        let date_idx = build_date_index(&table);
         let mut candidates = BTreeMap::new();
         for &d in &days {
             candidates.insert(
@@ -2403,6 +2424,7 @@ mod tests {
             &params_no_stagger,
             &strategy_def,
             None,
+            &date_idx,
         );
 
         // With stagger=3: entries on day 0, 3, 6, 9 → 4 trades max
@@ -2417,6 +2439,7 @@ mod tests {
             &params_stagger,
             &strategy_def,
             None,
+            &date_idx,
         );
 
         assert!(
@@ -2733,6 +2756,7 @@ mod tests {
         }
 
         let mut candidates = BTreeMap::new();
+        let date_idx = build_date_index(&table);
         candidates.insert(
             days[0],
             vec![EntryCandidate {
@@ -2792,7 +2816,7 @@ mod tests {
         };
 
         let (trade_log, _, _) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None);
+            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None, &date_idx);
 
         assert_eq!(trade_log.len(), 1, "Should have exactly 1 trade");
         assert_eq!(
@@ -2830,6 +2854,7 @@ mod tests {
         }
 
         let mut candidates = BTreeMap::new();
+        let date_idx = build_date_index(&table);
         candidates.insert(
             days[0],
             vec![EntryCandidate {
@@ -2889,7 +2914,7 @@ mod tests {
         };
 
         let (trade_log, _, _) =
-            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None);
+            run_event_loop(&table, &candidates, &days, &params, &strategy_def, None, &date_idx);
 
         // Position should close via Expiration, NOT DeltaExit
         assert!(!trade_log.is_empty(), "Should have at least 1 closed trade");

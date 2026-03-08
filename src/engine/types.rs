@@ -631,6 +631,9 @@ pub type PriceKey = (NaiveDate, NaiveDate, OrderedFloat<f64>, OptionType);
 /// Lookup table mapping `PriceKey` to quote snapshot (`FxHash` for speed on fixed-size keys)
 pub type PriceTable = HashMap<PriceKey, QuoteSnapshot, FxBuildHasher>;
 
+/// Secondary index: maps each trading date to its price table keys for O(1) daily lookups.
+pub type DateIndex = HashMap<NaiveDate, Vec<PriceKey>>;
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct QuoteSnapshot {
