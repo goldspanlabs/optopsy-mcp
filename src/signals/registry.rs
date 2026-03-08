@@ -305,6 +305,19 @@ pub enum SignalSpec {
     },
 }
 
+impl SignalSpec {
+    /// Check if this spec (or any nested child) contains a `CrossSymbol` variant.
+    pub fn contains_cross_symbol(&self) -> bool {
+        match self {
+            SignalSpec::CrossSymbol { .. } => true,
+            SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
+                left.contains_cross_symbol() || right.contains_cross_symbol()
+            }
+            _ => false,
+        }
+    }
+}
+
 /// Convert a `SignalSpec` into a concrete `Box<dyn SignalFn>`.
 #[allow(clippy::too_many_lines)]
 pub fn build_signal(spec: &SignalSpec) -> Box<dyn SignalFn> {

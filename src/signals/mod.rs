@@ -30,6 +30,13 @@ pub fn active_dates(
     ohlcv_df: &DataFrame,
     date_col: &str,
 ) -> Result<HashSet<NaiveDate>> {
+    if spec.contains_cross_symbol() {
+        tracing::warn!(
+            "Signal spec contains CrossSymbol references but active_dates() was called \
+             without cross-symbol DataFrames. CrossSymbol signals will evaluate against \
+             the primary DataFrame. Use active_dates_multi() instead."
+        );
+    }
     let signal: Box<dyn SignalFn> = build_signal(spec);
     let bools = signal.evaluate(ohlcv_df)?;
     let bool_ca = bools.bool()?;
