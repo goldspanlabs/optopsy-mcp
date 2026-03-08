@@ -67,7 +67,7 @@ mod tests {
     #[test]
     fn spread_strategies_have_two_legs() {
         for s in all_strategies() {
-            if s.category == "spreads" {
+            if s.category == "Spreads" {
                 assert_eq!(
                     s.legs.len(),
                     2,
@@ -82,7 +82,7 @@ mod tests {
     #[test]
     fn butterfly_strategies_have_three_legs() {
         for s in all_strategies() {
-            if s.category == "butterflies" {
+            if s.category == "Butterflies" {
                 assert_eq!(
                     s.legs.len(),
                     3,
