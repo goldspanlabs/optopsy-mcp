@@ -782,6 +782,9 @@ fn close_position(
     let mut total_contracts = 0i32;
 
     for leg in &mut position.legs {
+        // Count all contracts for commission (including previously closed adjustment legs)
+        total_contracts += leg.qty.abs();
+
         if leg.closed {
             continue;
         }
@@ -814,14 +817,13 @@ fn close_position(
             * direction
             * f64::from(leg.qty)
             * f64::from(position.multiplier);
-        total_contracts += leg.qty.abs();
 
         leg.closed = true;
         leg.close_price = Some(close_price);
         leg.close_date = Some(date);
     }
 
-    // Apply commission (entry + exit)
+    // Apply commission (entry + exit) on all legs including adjustment-closed ones
     pnl -= commission.calculate(total_contracts) * 2.0;
 
     position.status = PositionStatus::Closed(exit_type);
