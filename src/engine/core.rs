@@ -360,6 +360,7 @@ pub fn compare_strategies(
                     profit_factor: bt.metrics.profit_factor,
                     calmar: bt.metrics.calmar,
                     total_return_pct: bt.metrics.total_return_pct,
+                    error: None,
                 });
             }
             Err(e) => {
@@ -375,6 +376,7 @@ pub fn compare_strategies(
                     profit_factor: 0.0,
                     calmar: 0.0,
                     total_return_pct: 0.0,
+                    error: Some(e.to_string()),
                 });
             }
         }
