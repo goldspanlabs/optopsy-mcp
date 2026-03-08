@@ -90,10 +90,12 @@ impl CachedStore {
     }
 
     /// Resolve the local path for a given symbol.
-    fn local_path(&self, symbol: &str) -> PathBuf {
-        self.cache_dir
+    fn local_path(&self, symbol: &str) -> Result<PathBuf> {
+        validate_path_segment(symbol).with_context(|| format!("Invalid symbol: {symbol}"))?;
+        Ok(self
+            .cache_dir
             .join(&self.category)
-            .join(format!("{symbol}.parquet"))
+            .join(format!("{}.parquet", symbol.to_uppercase())))
     }
 
     /// Ensure a file exists locally under the given category, fetching from S3 if needed.
@@ -180,7 +182,7 @@ impl DataStore for CachedStore {
     }
 
     fn date_range(&self, symbol: &str) -> Result<(NaiveDate, NaiveDate)> {
-        let path = self.local_path(symbol);
+        let path = self.local_path(symbol)?;
         if !path.exists() {
             bail!("No cached file for symbol: {symbol}");
         }
