@@ -9,10 +9,10 @@ pub fn long_call_condor() -> StrategyDef {
         "Condors",
         "Buy 1 lowest call, sell 1 lower-mid call, sell 1 upper-mid call, buy 1 highest call",
         vec![
-            call_leg(Side::Long, 1, default_deep_otm_delta()),  // lowest strike
-            call_leg(Side::Short, 1, default_otm_delta()),      // lower-mid strike
-            call_leg(Side::Short, 1, default_itm_delta()),      // upper-mid strike
-            call_leg(Side::Long, 1, default_deep_itm_delta()),  // highest strike
+            call_leg(Side::Long, 1, default_deep_itm_delta()),  // lowest strike (highest delta)
+            call_leg(Side::Short, 1, default_itm_delta()),      // lower-mid strike
+            call_leg(Side::Short, 1, default_otm_delta()),      // upper-mid strike
+            call_leg(Side::Long, 1, default_deep_otm_delta()),  // highest strike (lowest delta)
         ],
     )
 }
@@ -23,10 +23,10 @@ pub fn short_call_condor() -> StrategyDef {
         "Condors",
         "Sell 1 lowest call, buy 1 lower-mid call, buy 1 upper-mid call, sell 1 highest call",
         vec![
-            call_leg(Side::Short, 1, default_deep_otm_delta()), // lowest strike
-            call_leg(Side::Long, 1, default_otm_delta()),       // lower-mid strike
-            call_leg(Side::Long, 1, default_itm_delta()),       // upper-mid strike
-            call_leg(Side::Short, 1, default_deep_itm_delta()), // highest strike
+            call_leg(Side::Short, 1, default_deep_itm_delta()), // lowest strike (highest delta)
+            call_leg(Side::Long, 1, default_itm_delta()),       // lower-mid strike
+            call_leg(Side::Long, 1, default_otm_delta()),       // upper-mid strike
+            call_leg(Side::Short, 1, default_deep_otm_delta()), // highest strike (lowest delta)
         ],
     )
 }

@@ -831,40 +831,6 @@ fn interpret_p_value(p: f64) -> &'static str {
     }
 }
 
-fn build_params_summary(params: &BacktestParams) -> BacktestParamsSummary {
-    BacktestParamsSummary {
-        strategy: params.strategy.clone(),
-        leg_deltas: params.leg_deltas.clone(),
-        entry_dte: params.entry_dte.clone(),
-        exit_dte: params.exit_dte,
-        slippage: params.slippage.clone(),
-        commission: params.commission.clone(),
-        capital: params.capital,
-        quantity: params.quantity,
-        multiplier: params.multiplier,
-        max_positions: params.max_positions,
-        stop_loss: params.stop_loss,
-        take_profit: params.take_profit,
-        max_hold_days: params.max_hold_days,
-        selector: params.selector.clone(),
-        entry_signal: params
-            .entry_signal
-            .as_ref()
-            .map(|s| serde_json::to_value(s).unwrap_or(serde_json::Value::Null)),
-        exit_signal: params
-            .exit_signal
-            .as_ref()
-            .map(|s| serde_json::to_value(s).unwrap_or(serde_json::Value::Null)),
-        min_net_premium: params.min_net_premium,
-        max_net_premium: params.max_net_premium,
-        min_net_delta: params.min_net_delta,
-        max_net_delta: params.max_net_delta,
-        min_days_between_entries: params.min_days_between_entries,
-        expiration_filter: params.expiration_filter.clone(),
-        exit_net_delta: params.exit_net_delta,
-    }
-}
-
 pub fn format_permutation_test(
     output: PermutationOutput,
     params: &BacktestParams,
@@ -1051,6 +1017,7 @@ mod tests {
                 profit_factor: 1.5,
                 calmar: 1.0,
                 total_return_pct: 5.0,
+                error: None,
             },
             CompareResult {
                 strategy: "beta".to_string(),
@@ -1063,6 +1030,7 @@ mod tests {
                 profit_factor: 2.5,
                 calmar: 2.0,
                 total_return_pct: 3.0,
+                error: None,
             },
             CompareResult {
                 strategy: "gamma".to_string(),
@@ -1075,6 +1043,7 @@ mod tests {
                 profit_factor: 2.0,
                 calmar: 1.5,
                 total_return_pct: 10.0,
+                error: None,
             },
         ];
 
