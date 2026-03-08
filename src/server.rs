@@ -425,8 +425,9 @@ pub struct WalkForwardParams {
     #[serde(default = "default_test_days")]
     #[garde(range(min = 1))]
     pub test_days: i32,
-    /// Step size in calendar days (default: `test_days` — non-overlapping windows)
-    #[garde(inner(range(min = 1)))]
+    /// Step size in calendar days (default: `test_days` — non-overlapping windows).
+    /// Minimum 5 days to prevent generating an excessive number of windows.
+    #[garde(inner(range(min = 5)))]
     pub step_days: Option<i32>,
 
     // ── Signals ────────────────────────────────────────────────────────────

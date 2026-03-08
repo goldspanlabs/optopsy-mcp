@@ -91,11 +91,16 @@ fn date_range(df: &DataFrame) -> Result<(NaiveDate, NaiveDate)> {
         .ok_or_else(|| anyhow::anyhow!("empty datetime column"))?;
 
     // Convert raw Polars integer (in the column's time unit) to a NaiveDate.
+    // Uses Euclidean division for nanoseconds to correctly handle negative (pre-epoch) values.
     let raw_to_date = |raw: i64| -> Result<NaiveDate> {
         let opt_dt = match time_unit {
             TimeUnit::Microseconds => chrono::DateTime::from_timestamp_micros(raw),
             TimeUnit::Milliseconds => chrono::DateTime::from_timestamp_millis(raw),
-            TimeUnit::Nanoseconds => chrono::DateTime::from_timestamp_micros(raw / 1_000),
+            TimeUnit::Nanoseconds => {
+                let secs = raw.div_euclid(1_000_000_000);
+                let nanos = raw.rem_euclid(1_000_000_000) as u32;
+                chrono::DateTime::from_timestamp(secs, nanos)
+            }
         };
         opt_dt
             .ok_or_else(|| anyhow::anyhow!("invalid datetime raw value: {raw}"))
@@ -120,8 +125,8 @@ pub fn run_walk_forward(
         bail!("test_days must be >= 1");
     }
     let step = step_days.unwrap_or(test_days);
-    if step < 1 {
-        bail!("step_days must be >= 1");
+    if step < 5 {
+        bail!("step_days must be >= 5 to avoid generating an excessive number of windows");
     }
 
     let (min_date, max_date) = date_range(df)?;
@@ -140,9 +145,10 @@ pub fn run_walk_forward(
     let mut windows = Vec::new();
     let mut failed_count = 0usize;
     let mut cursor = min_date + Days::new(train_days as u64);
-    let mut window_num = 1usize;
+    let mut attempt = 0usize;
 
     while cursor + Days::new(test_days as u64) <= max_date + Days::new(1) {
+        attempt += 1;
         let train_start = cursor - Days::new(train_days as u64);
         let train_end = cursor;
         let test_start = cursor;
@@ -152,6 +158,7 @@ pub fn run_walk_forward(
         let test_df = slice_by_date_range(df, test_start, test_end)?;
 
         if train_df.height() == 0 || test_df.height() == 0 {
+            failed_count += 1;
             cursor = cursor + Days::new(step as u64);
             continue;
         }
@@ -162,7 +169,7 @@ pub fn run_walk_forward(
         match (train_result, test_result) {
             (Ok(train_r), Ok(test_r)) => {
                 windows.push(WindowResult {
-                    window_number: window_num,
+                    window_number: attempt,
                     train_start,
                     train_end,
                     test_start,
@@ -176,7 +183,6 @@ pub fn run_walk_forward(
                     train_win_rate: train_r.metrics.win_rate,
                     test_win_rate: test_r.metrics.win_rate,
                 });
-                window_num += 1;
             }
             _ => {
                 failed_count += 1;
