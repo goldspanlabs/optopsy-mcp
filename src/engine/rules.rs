@@ -1,27 +1,7 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 use polars::prelude::*;
 
 use super::types::{ExpirationCycle, StrategyDef};
-
-/// Validate strike ordering for multi-leg strategies.
-/// For spreads: strikes must be ordered correctly.
-/// For butterflies: lower < middle < upper.
-/// For condors/iron strategies: s1 < s2 < s3 < s4.
-#[allow(dead_code)]
-pub fn validate_strike_order(strikes: &[f64]) -> Result<()> {
-    for i in 1..strikes.len() {
-        if strikes[i] <= strikes[i - 1] {
-            bail!(
-                "Strike ordering violated: strike[{}]={} must be > strike[{}]={}",
-                i,
-                strikes[i],
-                i - 1,
-                strikes[i - 1]
-            );
-        }
-    }
-    Ok(())
-}
 
 /// Filter a multi-leg `DataFrame` to ensure strike ordering constraints.
 /// Assumes legs are joined and strikes are in columns like `strike_0`, `strike_1`, etc.
@@ -105,36 +85,6 @@ fn apply_window_ordering(mut lazy: LazyFrame, indices: &[usize], strict: bool) -
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn validate_ascending_strikes() {
-        assert!(validate_strike_order(&[100.0, 105.0, 110.0]).is_ok());
-    }
-
-    #[test]
-    fn validate_single_strike() {
-        assert!(validate_strike_order(&[100.0]).is_ok());
-    }
-
-    #[test]
-    fn validate_empty_strikes() {
-        assert!(validate_strike_order(&[]).is_ok());
-    }
-
-    #[test]
-    fn validate_equal_strikes_fails() {
-        assert!(validate_strike_order(&[100.0, 100.0]).is_err());
-    }
-
-    #[test]
-    fn validate_descending_strikes_fails() {
-        assert!(validate_strike_order(&[110.0, 105.0, 100.0]).is_err());
-    }
-
-    #[test]
-    fn validate_partial_disorder_fails() {
-        assert!(validate_strike_order(&[100.0, 110.0, 105.0]).is_err());
-    }
 
     #[test]
     fn filter_strike_order_single_leg_passthrough() {

@@ -591,6 +591,9 @@ pub struct CompareResult {
     pub profit_factor: f64,
     pub calmar: f64,
     pub total_return_pct: f64,
+    /// If the backtest failed, contains the error message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Result of a single parameter sweep combination
@@ -630,6 +633,9 @@ pub type PriceKey = (NaiveDate, NaiveDate, OrderedFloat<f64>, OptionType);
 
 /// Lookup table mapping `PriceKey` to quote snapshot (`FxHash` for speed on fixed-size keys)
 pub type PriceTable = HashMap<PriceKey, QuoteSnapshot, FxBuildHasher>;
+
+/// Secondary index: maps each trading date to its price table keys for O(1) daily lookups.
+pub type DateIndex = HashMap<NaiveDate, Vec<PriceKey>>;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]

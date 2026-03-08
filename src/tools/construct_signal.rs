@@ -16,8 +16,13 @@ pub fn execute(prompt: &str) -> ConstructSignalResponse {
 
     // Generate live JSON Schema for SignalSpec
     let schema = schema_for!(SignalSpec);
-    let schema_value =
-        serde_json::to_value(&schema).expect("Failed to serialize SignalSpec schema to JSON value");
+    let schema_value = match serde_json::to_value(&schema) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("Failed to serialize SignalSpec schema: {e}");
+            Value::Null
+        }
+    };
 
     // Build column defaults
     let column_defaults = json!({
@@ -134,8 +139,8 @@ fn fuzzy_search(prompt: &str) -> (Vec<SignalCandidate>, bool) {
                 else if name_lower.contains(token) {
                     score += 2;
                 }
-                // +1 for substring in description
-                if desc_lower.contains(token) {
+                // +1 for substring in description only
+                else if desc_lower.contains(token) {
                     score += 1;
                 }
             }

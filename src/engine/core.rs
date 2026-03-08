@@ -269,7 +269,7 @@ fn run_event_loop_path(
     entry_dates: &DateFilter,
     exit_dates: &DateFilter,
 ) -> Result<(Vec<TradeRecord>, Vec<EquityPoint>, BacktestQualityStats)> {
-    let (price_table, trading_days) = event_sim::build_price_table(df)?;
+    let (price_table, trading_days, date_index) = event_sim::build_price_table(df)?;
     let mut candidates = event_sim::find_entry_candidates(df, strategy_def, params)?;
 
     // Filter entry candidates to only dates where the entry signal is active
@@ -284,6 +284,7 @@ fn run_event_loop_path(
         params,
         strategy_def,
         exit_dates.as_ref(),
+        &date_index,
     );
 
     Ok((trade_log, equity_curve, quality))
@@ -359,6 +360,7 @@ pub fn compare_strategies(
                     profit_factor: bt.metrics.profit_factor,
                     calmar: bt.metrics.calmar,
                     total_return_pct: bt.metrics.total_return_pct,
+                    error: None,
                 });
             }
             Err(e) => {
@@ -374,6 +376,7 @@ pub fn compare_strategies(
                     profit_factor: 0.0,
                     calmar: 0.0,
                     total_return_pct: 0.0,
+                    error: Some(e.to_string()),
                 });
             }
         }

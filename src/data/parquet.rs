@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use polars::prelude::*;
 use std::path::PathBuf;
 
@@ -101,27 +101,22 @@ impl DataStore for ParquetStore {
         let mut df = normalize_quote_datetime(df)?;
 
         // Apply date filters if quote_datetime exists
-        if df.schema().contains(QUOTE_DATETIME_COL) {
-            if let Some(start) = start_date {
-                let start_dt = start.and_hms_opt(0, 0, 0).unwrap();
-                df = tokio::task::spawn_blocking(move || {
-                    df.lazy()
-                        .filter(col(QUOTE_DATETIME_COL).gt_eq(lit(start_dt)))
-                        .collect()
-                })
-                .await
-                .context("Parquet filter (start) task panicked")??;
-            }
-            if let Some(end) = end_date {
-                let end_dt = end.and_hms_opt(23, 59, 59).unwrap();
-                df = tokio::task::spawn_blocking(move || {
-                    df.lazy()
-                        .filter(col(QUOTE_DATETIME_COL).lt_eq(lit(end_dt)))
-                        .collect()
-                })
-                .await
-                .context("Parquet filter (end) task panicked")??;
-            }
+        if df.schema().contains(QUOTE_DATETIME_COL) && (start_date.is_some() || end_date.is_some())
+        {
+            let start_dt = start_date.and_then(|d| d.and_hms_opt(0, 0, 0));
+            let end_dt = end_date.and_then(|d| d.and_hms_opt(23, 59, 59));
+            df = tokio::task::spawn_blocking(move || {
+                let mut lazy = df.lazy();
+                if let Some(start) = start_dt {
+                    lazy = lazy.filter(col(QUOTE_DATETIME_COL).gt_eq(lit(start)));
+                }
+                if let Some(end) = end_dt {
+                    lazy = lazy.filter(col(QUOTE_DATETIME_COL).lt_eq(lit(end)));
+                }
+                lazy.collect()
+            })
+            .await
+            .context("Parquet date filter task panicked")??;
         }
 
         Ok(df)
@@ -151,13 +146,34 @@ impl DataStore for ParquetStore {
         let min = date_col.min_reduce()?;
         let max = date_col.max_reduce()?;
 
-        let min_str = format!("{:?}", min.value());
-        let max_str = format!("{:?}", max.value());
-
-        let start = NaiveDate::parse_from_str(min_str.trim_matches('"'), "%Y-%m-%d")?;
-        let end = NaiveDate::parse_from_str(max_str.trim_matches('"'), "%Y-%m-%d")?;
+        let start = scalar_to_date(&min)?;
+        let end = scalar_to_date(&max)?;
 
         Ok((start, end))
+    }
+}
+
+/// Extract a `NaiveDate` from a Polars `Scalar`, handling Date, Datetime, and String types.
+fn scalar_to_date(scalar: &Scalar) -> Result<NaiveDate> {
+    match scalar.value() {
+        AnyValue::Date(days) => NaiveDate::from_num_days_from_ce_opt(*days + 719_163)
+            .ok_or_else(|| anyhow::anyhow!("Invalid date value: {days}")),
+        AnyValue::Datetime(ts_value, tu, _) => {
+            let units_per_sec = match tu {
+                TimeUnit::Microseconds => 1_000_000i64,
+                TimeUnit::Milliseconds => 1_000i64,
+                TimeUnit::Nanoseconds => 1_000_000_000i64,
+            };
+            let secs = ts_value / units_per_sec;
+            let nsecs = ((ts_value % units_per_sec).abs() * (1_000_000_000 / units_per_sec)) as u32;
+            DateTime::<Utc>::from_timestamp(secs, nsecs)
+                .map(|dt| dt.date_naive())
+                .ok_or_else(|| anyhow::anyhow!("Invalid datetime value: {ts_value}"))
+        }
+        AnyValue::String(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d")
+            .or_else(|_| NaiveDate::parse_from_str(&s[..10.min(s.len())], "%Y-%m-%d"))
+            .context("Failed to parse date string"),
+        other => anyhow::bail!("Unexpected scalar type for date: {other:?}"),
     }
 }
 

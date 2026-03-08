@@ -80,7 +80,7 @@ pub fn run_permutation_test<S1: BuildHasher, S2: BuildHasher>(
     let real_result = crate::engine::core::run_backtest(df, params)?;
 
     // Build shared infrastructure once
-    let (price_table, trading_days) = event_sim::build_price_table(df)?;
+    let (price_table, trading_days, _date_index) = event_sim::build_price_table(df)?;
     let carry_index = vectorized_sim::build_carry_index(&price_table);
 
     // Build candidates (same as vectorized path)

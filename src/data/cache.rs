@@ -90,10 +90,12 @@ impl CachedStore {
     }
 
     /// Resolve the local path for a given symbol.
-    fn local_path(&self, symbol: &str) -> PathBuf {
-        self.cache_dir
+    fn local_path(&self, symbol: &str) -> Result<PathBuf> {
+        validate_path_segment(symbol).with_context(|| format!("Invalid symbol: {symbol}"))?;
+        Ok(self
+            .cache_dir
             .join(&self.category)
-            .join(format!("{symbol}.parquet"))
+            .join(format!("{}.parquet", symbol.to_uppercase())))
     }
 
     /// Ensure a file exists locally under the given category, fetching from S3 if needed.
@@ -128,12 +130,21 @@ impl CachedStore {
 
             // Ensure parent directory exists
             if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)
+                tokio::fs::create_dir_all(parent)
+                    .await
                     .with_context(|| format!("Failed to create cache dir: {}", parent.display()))?;
             }
 
-            std::fs::write(&path, response.as_slice())
-                .with_context(|| format!("Failed to write cache file: {}", path.display()))?;
+            // Write to a temp file then atomically rename to avoid corrupt cache on crash
+            let tmp_path = path.with_extension("parquet.tmp");
+            tokio::fs::write(&tmp_path, response.as_slice())
+                .await
+                .with_context(|| {
+                    format!("Failed to write temp cache file: {}", tmp_path.display())
+                })?;
+            tokio::fs::rename(&tmp_path, &path)
+                .await
+                .with_context(|| format!("Failed to rename cache file: {}", path.display()))?;
 
             tracing::info!(%symbol, path = %path.display(), "Cached locally");
             return Ok(path);
@@ -180,7 +191,7 @@ impl DataStore for CachedStore {
     }
 
     fn date_range(&self, symbol: &str) -> Result<(NaiveDate, NaiveDate)> {
-        let path = self.local_path(symbol);
+        let path = self.local_path(symbol)?;
         if !path.exists() {
             bail!("No cached file for symbol: {symbol}");
         }
