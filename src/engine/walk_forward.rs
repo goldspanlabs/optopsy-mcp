@@ -1,5 +1,5 @@
 use anyhow::{bail, Result};
-use chrono::{Days, NaiveDate};
+use chrono::{Days, NaiveDate, NaiveDateTime};
 use polars::prelude::*;
 
 use crate::data::parquet::QUOTE_DATETIME_COL;
@@ -27,7 +27,9 @@ pub struct WindowResult {
 /// Aggregate statistics across all walk-forward windows.
 #[derive(Debug, Clone)]
 pub struct WalkForwardAggregate {
-    pub total_windows: usize,
+    /// Number of windows successfully completed and included in aggregate statistics.
+    /// Does NOT include failed windows — see `failed_windows` for the count of those.
+    pub successful_windows: usize,
     pub failed_windows: usize,
     pub avg_test_sharpe: f64,
     pub std_test_sharpe: f64,
@@ -45,74 +47,62 @@ pub struct WalkForwardResult {
 }
 
 /// Filter a `DataFrame` to rows within `[start, end)` by calendar date.
+/// Filters directly on the native `quote_datetime` Datetime column (microseconds since epoch)
+/// using midnight-boundary `NaiveDateTimes`, avoiding an expensive per-window cast to `Date`.
 fn slice_by_date_range(df: &DataFrame, start: NaiveDate, end: NaiveDate) -> Result<DataFrame> {
-    let date_expr = col(QUOTE_DATETIME_COL).cast(DataType::Date);
+    let start_dt: NaiveDateTime = start.and_hms_opt(0, 0, 0).unwrap();
+    let end_dt: NaiveDateTime = end.and_hms_opt(0, 0, 0).unwrap();
     Ok(df
         .clone()
         .lazy()
         .filter(
-            date_expr
-                .clone()
-                .gt_eq(lit(start))
-                .and(date_expr.lt(lit(end))),
+            col(QUOTE_DATETIME_COL)
+                .gt_eq(lit(start_dt))
+                .and(col(QUOTE_DATETIME_COL).lt(lit(end_dt))),
         )
         .collect()?)
 }
 
-// Polars `Date` is stored as i32 days since 1970-01-01.
-// This is the number of days from 0001-01-01 to 1970-01-01.
-const CE_OFFSET: i64 = 719_163;
-
 /// Get the min and max dates from the `DataFrame`.
+/// Works directly on the native `quote_datetime` Datetime column, handling
+/// all Polars time units (microseconds, milliseconds, nanoseconds) without
+/// casting the full column to `Date`.
 fn date_range(df: &DataFrame) -> Result<(NaiveDate, NaiveDate)> {
     let stats = df
         .clone()
         .lazy()
         .select([
-            col(QUOTE_DATETIME_COL)
-                .cast(DataType::Date)
-                .min()
-                .alias("min_date"),
-            col(QUOTE_DATETIME_COL)
-                .cast(DataType::Date)
-                .max()
-                .alias("max_date"),
+            col(QUOTE_DATETIME_COL).min().alias("min_dt"),
+            col(QUOTE_DATETIME_COL).max().alias("max_dt"),
         ])
         .collect()?;
 
-    let min_val = stats
-        .column("min_date")?
-        .date()?
+    let min_col = stats.column("min_dt")?.datetime()?;
+    let time_unit = min_col.time_unit();
+    let min_raw = min_col
         .phys
         .get(0)
-        .ok_or_else(|| anyhow::anyhow!("empty date column"))?;
-    let max_val = stats
-        .column("max_date")?
-        .date()?
+        .ok_or_else(|| anyhow::anyhow!("empty datetime column"))?;
+    let max_raw = stats
+        .column("max_dt")?
+        .datetime()?
         .phys
         .get(0)
-        .ok_or_else(|| anyhow::anyhow!("empty date column"))?;
+        .ok_or_else(|| anyhow::anyhow!("empty datetime column"))?;
 
-    // Convert Polars signed days-since-epoch to Chrono CE days and validate range.
-    let min_ce_days = i64::from(min_val) + CE_OFFSET;
-    if min_ce_days < 1 || min_ce_days > i64::from(i32::MAX) {
-        return Err(anyhow::anyhow!(
-            "min_date out of range for NaiveDate: {min_val} (CE days: {min_ce_days})"
-        ));
-    }
-    let min_date = NaiveDate::from_num_days_from_ce_opt(min_ce_days as i32)
-        .ok_or_else(|| anyhow::anyhow!("invalid min_date value: {min_val}"))?;
+    // Convert raw Polars integer (in the column's time unit) to a NaiveDate.
+    let raw_to_date = |raw: i64| -> Result<NaiveDate> {
+        let opt_dt = match time_unit {
+            TimeUnit::Microseconds => chrono::DateTime::from_timestamp_micros(raw),
+            TimeUnit::Milliseconds => chrono::DateTime::from_timestamp_millis(raw),
+            TimeUnit::Nanoseconds => chrono::DateTime::from_timestamp_micros(raw / 1_000),
+        };
+        opt_dt
+            .ok_or_else(|| anyhow::anyhow!("invalid datetime raw value: {raw}"))
+            .map(|d| d.date_naive())
+    };
 
-    let max_ce_days = i64::from(max_val) + CE_OFFSET;
-    if max_ce_days < 1 || max_ce_days > i64::from(i32::MAX) {
-        return Err(anyhow::anyhow!(
-            "max_date out of range for NaiveDate: {max_val} (CE days: {max_ce_days})"
-        ));
-    }
-    let max_date = NaiveDate::from_num_days_from_ce_opt(max_ce_days as i32)
-        .ok_or_else(|| anyhow::anyhow!("invalid max_date value: {max_val}"))?;
-
-    Ok((min_date, max_date))
+    Ok((raw_to_date(min_raw)?, raw_to_date(max_raw)?))
 }
 
 /// Run walk-forward analysis: rolling train/test windows across the data.
@@ -231,7 +221,7 @@ fn compute_aggregate(windows: &[WindowResult], failed_windows: usize) -> WalkFor
     let total_test_pnl = test_pnls.iter().sum::<f64>();
 
     WalkForwardAggregate {
-        total_windows: windows.len(),
+        successful_windows: windows.len(),
         failed_windows,
         avg_test_sharpe,
         std_test_sharpe,
