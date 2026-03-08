@@ -124,7 +124,7 @@ fn compute_equity_metrics(
         0.0
     };
 
-    let max_drawdown = calculate_max_drawdown(equity_curve);
+    let max_drawdown = calculate_max_drawdown(equity_curve, initial_capital);
     let var_95 = calculate_var(&returns, 0.05);
 
     let final_equity = equity_curve.last().unwrap().equity;
@@ -263,8 +263,8 @@ fn downside_deviation(returns: &[f64]) -> f64 {
     variance.sqrt()
 }
 
-fn calculate_max_drawdown(equity_curve: &[EquityPoint]) -> f64 {
-    let mut peak = equity_curve[0].equity;
+fn calculate_max_drawdown(equity_curve: &[EquityPoint], initial_capital: f64) -> f64 {
+    let mut peak = initial_capital;
     let mut max_dd = 0.0;
 
     for point in equity_curve {
