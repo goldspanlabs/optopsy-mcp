@@ -4,6 +4,17 @@ use super::helpers::{column_to_f64, pad_series, SignalFn};
 use crate::data::parquet::QUOTE_DATETIME_COL;
 use polars::prelude::*;
 
+/// Extract the IV column with a descriptive error message.
+fn iv_column(df: &DataFrame) -> Result<Vec<f64>, PolarsError> {
+    column_to_f64(df, "iv").map_err(|_| {
+        PolarsError::ColumnNotFound(
+            "IV signals require an 'iv' column. Standard OHLCV data from fetch_to_parquet \
+             does not include IV. You need pre-processed data with an 'iv' column."
+                .into(),
+        )
+    })
+}
+
 /// Signal: ATR is above a threshold, indicating high volatility.
 /// Requires `close_col`, `high_col`, and `low_col` columns.
 pub struct AtrAbove {
@@ -315,7 +326,7 @@ pub struct IvRankAbove {
 
 impl SignalFn for IvRankAbove {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
-        let iv = column_to_f64(df, "iv")?;
+        let iv = iv_column(df)?;
         Ok(compute_iv_rank_signal(
             &iv,
             self.lookback,
@@ -336,7 +347,7 @@ pub struct IvRankBelow {
 
 impl SignalFn for IvRankBelow {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
-        let iv = column_to_f64(df, "iv")?;
+        let iv = iv_column(df)?;
         Ok(compute_iv_rank_signal(
             &iv,
             self.lookback,
@@ -359,7 +370,7 @@ pub struct IvPercentileAbove {
 
 impl SignalFn for IvPercentileAbove {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
-        let iv = column_to_f64(df, "iv")?;
+        let iv = iv_column(df)?;
         Ok(compute_iv_percentile_signal(
             &iv,
             self.lookback,
@@ -380,7 +391,7 @@ pub struct IvPercentileBelow {
 
 impl SignalFn for IvPercentileBelow {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
-        let iv = column_to_f64(df, "iv")?;
+        let iv = iv_column(df)?;
         Ok(compute_iv_percentile_signal(
             &iv,
             self.lookback,
