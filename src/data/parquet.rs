@@ -101,27 +101,23 @@ impl DataStore for ParquetStore {
         let mut df = normalize_quote_datetime(df)?;
 
         // Apply date filters if quote_datetime exists
-        if df.schema().contains(QUOTE_DATETIME_COL) {
-            if let Some(start) = start_date {
-                let start_dt = start.and_hms_opt(0, 0, 0).unwrap();
-                df = tokio::task::spawn_blocking(move || {
-                    df.lazy()
-                        .filter(col(QUOTE_DATETIME_COL).gt_eq(lit(start_dt)))
-                        .collect()
-                })
-                .await
-                .context("Parquet filter (start) task panicked")??;
-            }
-            if let Some(end) = end_date {
-                let end_dt = end.and_hms_opt(23, 59, 59).unwrap();
-                df = tokio::task::spawn_blocking(move || {
-                    df.lazy()
-                        .filter(col(QUOTE_DATETIME_COL).lt_eq(lit(end_dt)))
-                        .collect()
-                })
-                .await
-                .context("Parquet filter (end) task panicked")??;
-            }
+        if df.schema().contains(QUOTE_DATETIME_COL)
+            && (start_date.is_some() || end_date.is_some())
+        {
+            let start_dt = start_date.and_then(|d| d.and_hms_opt(0, 0, 0));
+            let end_dt = end_date.and_then(|d| d.and_hms_opt(23, 59, 59));
+            df = tokio::task::spawn_blocking(move || {
+                let mut lazy = df.lazy();
+                if let Some(start) = start_dt {
+                    lazy = lazy.filter(col(QUOTE_DATETIME_COL).gt_eq(lit(start)));
+                }
+                if let Some(end) = end_dt {
+                    lazy = lazy.filter(col(QUOTE_DATETIME_COL).lt_eq(lit(end)));
+                }
+                lazy.collect()
+            })
+            .await
+            .context("Parquet date filter task panicked")??;
         }
 
         Ok(df)
