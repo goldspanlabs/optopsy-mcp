@@ -618,6 +618,31 @@ pub fn format_sweep(output: SweepOutput) -> SweepResponse {
         })
     };
 
+    // Stability analysis
+    let stability = if output.stability_scores.is_empty() {
+        None
+    } else {
+        Some(output.stability_scores.clone())
+    };
+
+    // Append stability info to summary
+    let summary = if let Some(ref scores) = stability {
+        if let Some(top) = scores.first() {
+            if let Some(ref warn) = top.warning {
+                format!("{summary} ⚠ Stability: {warn}")
+            } else {
+                format!(
+                    "{summary} Parameter stability: GOOD (score: {:.2}).",
+                    top.overall_score
+                )
+            }
+        } else {
+            summary
+        }
+    } else {
+        summary
+    };
+
     let mut suggested_next_steps = Vec::new();
     if let Some(ref b) = best {
         suggested_next_steps.push(format!(
@@ -635,6 +660,23 @@ pub fn format_sweep(output: SweepOutput) -> SweepResponse {
         );
     }
 
+    // Add stability-specific next steps
+    if let Some(ref scores) = stability {
+        if let Some(top) = scores.first() {
+            if top.overall_score < 0.5 {
+                suggested_next_steps.push(format!(
+                    "[CAUTION] Best combination has low parameter stability ({:.2}). Performance may be fragile — consider a more stable alternative.",
+                    top.overall_score,
+                ));
+            } else if top.overall_score >= 0.7 {
+                suggested_next_steps.push(format!(
+                    "[GOOD] Best combination shows stable performance across neighboring parameters (stability: {:.2}).",
+                    top.overall_score,
+                ));
+            }
+        }
+    }
+
     SweepResponse {
         summary,
         combinations_total: output.combinations_total,
@@ -645,6 +687,7 @@ pub fn format_sweep(output: SweepOutput) -> SweepResponse {
         best_combination: best,
         dimension_sensitivity: output.dimension_sensitivity,
         out_of_sample,
+        stability,
         ranked_results: output.ranked_results,
         suggested_next_steps,
     }
@@ -1221,6 +1264,7 @@ mod tests {
             ranked_results: results,
             dimension_sensitivity: HashMap::new(),
             oos_results: vec![],
+            stability_scores: vec![],
         };
 
         let response = format_sweep(output);
@@ -1254,6 +1298,7 @@ mod tests {
             ranked_results: vec![],
             dimension_sensitivity: HashMap::new(),
             oos_results: vec![],
+            stability_scores: vec![],
         };
 
         let response = format_sweep(output);
@@ -1314,6 +1359,7 @@ mod tests {
                 train_pnl: 100.0,
                 test_pnl: 50.0,
             }],
+            stability_scores: vec![],
         };
 
         let response = format_sweep(output);

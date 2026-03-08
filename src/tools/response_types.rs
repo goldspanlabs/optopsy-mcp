@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::engine::sweep::{DimensionStats, OosResult};
+use crate::engine::sweep::{DimensionStats, OosResult, StabilityScore};
 use crate::engine::types::{
     Commission, CompareResult, DteRange, ExpirationFilter, PerformanceMetrics, Slippage,
     SweepResult, TargetRange, TradeRecord, TradeSelector,
@@ -345,6 +345,9 @@ pub struct SweepResponse {
     pub best_combination: Option<SweepResult>,
     pub dimension_sensitivity: HashMap<String, HashMap<String, DimensionStats>>,
     pub out_of_sample: Option<OosValidation>,
+    /// Parameter stability scores for the top-ranked results
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stability: Option<Vec<StabilityScore>>,
     pub ranked_results: Vec<SweepResult>,
     pub suggested_next_steps: Vec<String>,
 }
