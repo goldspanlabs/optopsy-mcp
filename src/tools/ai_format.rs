@@ -7,12 +7,13 @@ use crate::engine::types::{
 };
 
 use crate::engine::sweep::SweepOutput;
+use crate::engine::walk_forward::WalkForwardResult;
 
 use super::response_types::{
     BacktestDataQuality, BacktestParamsSummary, BacktestResponse, CompareResponse,
     CompareStrategyEntry, DateRange, LoadDataResponse, OosValidation, PermutationTestResponse,
     PriceBar, RawPricesResponse, StrategiesResponse, StrategyInfo, SweepResponse, TradeStat,
-    TradeSummary,
+    TradeSummary, WalkForwardAggregate, WalkForwardResponse, WalkForwardWindowResult,
 };
 
 fn assess_sharpe(sharpe: f64) -> &'static str {
@@ -697,6 +698,142 @@ pub fn format_sweep(output: SweepOutput) -> SweepResponse {
         out_of_sample,
         stability,
         ranked_results: output.ranked_results,
+        suggested_next_steps,
+    }
+}
+
+fn walk_forward_findings(agg: &crate::engine::walk_forward::WalkForwardAggregate) -> Vec<String> {
+    let mut findings = Vec::new();
+    if agg.failed_windows > 0 {
+        findings.push(format!(
+            "{} window(s) failed and were excluded from aggregate statistics",
+            agg.failed_windows
+        ));
+    }
+    if agg.avg_train_test_sharpe_decay > 0.5 {
+        findings.push(format!(
+            "High train→test Sharpe decay ({:.2}) suggests overfitting risk",
+            agg.avg_train_test_sharpe_decay
+        ));
+    } else if agg.avg_train_test_sharpe_decay < 0.1 {
+        findings.push(format!(
+            "Low train→test Sharpe decay ({:.2}) indicates robust strategy",
+            agg.avg_train_test_sharpe_decay
+        ));
+    }
+    if agg.pct_profitable_windows >= 70.0 {
+        findings.push(format!(
+            "{:.0}% of test windows profitable — strong consistency",
+            agg.pct_profitable_windows
+        ));
+    } else if agg.pct_profitable_windows < 50.0 {
+        findings.push(format!(
+            "Only {:.0}% of test windows profitable — strategy may be unreliable",
+            agg.pct_profitable_windows
+        ));
+    }
+    if agg.std_test_sharpe > 1.0 {
+        findings.push(format!(
+            "High variance in test Sharpe (σ={:.2}) — performance is inconsistent across windows",
+            agg.std_test_sharpe
+        ));
+    }
+    findings.push(format!(
+        "Average out-of-sample Sharpe is {} ({:.2})",
+        assess_sharpe(agg.avg_test_sharpe),
+        agg.avg_test_sharpe
+    ));
+    findings
+}
+
+pub fn format_walk_forward(
+    result: &WalkForwardResult,
+    params: &BacktestParams,
+    train_days: i32,
+    test_days: i32,
+    step_days: Option<i32>,
+) -> WalkForwardResponse {
+    let agg = &result.aggregate;
+    let step = step_days.unwrap_or(test_days);
+
+    let attempted_windows = agg.successful_windows + agg.failed_windows;
+    let window_desc = if agg.failed_windows > 0 {
+        format!(
+            "{} of {} attempted windows ({} failed)",
+            agg.successful_windows, attempted_windows, agg.failed_windows
+        )
+    } else {
+        format!("{} windows", agg.successful_windows)
+    };
+
+    let summary = format!(
+        "Walk-forward analysis for {} across {} (train={}d, test={}d, step={}d): \
+         avg test Sharpe {:.2} (±{:.2}), {:.0}% profitable windows, total test P&L {}",
+        params.strategy,
+        window_desc,
+        train_days,
+        test_days,
+        step,
+        agg.avg_test_sharpe,
+        agg.std_test_sharpe,
+        agg.pct_profitable_windows,
+        format_pnl(agg.total_test_pnl),
+    );
+
+    let windows: Vec<WalkForwardWindowResult> = result
+        .windows
+        .iter()
+        .map(|w| WalkForwardWindowResult {
+            window_number: w.window_number,
+            train_start: w.train_start.to_string(),
+            train_end: w.train_end.to_string(),
+            test_start: w.test_start.to_string(),
+            test_end: w.test_end.to_string(),
+            train_sharpe: w.train_sharpe,
+            test_sharpe: w.test_sharpe,
+            train_pnl: w.train_pnl,
+            test_pnl: w.test_pnl,
+            train_trades: w.train_trades,
+            test_trades: w.test_trades,
+            train_win_rate: w.train_win_rate,
+            test_win_rate: w.test_win_rate,
+        })
+        .collect();
+
+    let key_findings = walk_forward_findings(agg);
+
+    let mut suggested_next_steps = vec![];
+    if agg.avg_train_test_sharpe_decay > 0.5 {
+        suggested_next_steps
+            .push("Consider simplifying strategy parameters to reduce overfitting".to_string());
+    }
+    if agg.pct_profitable_windows < 50.0 {
+        suggested_next_steps
+            .push("Try different strategy parameters or a different strategy entirely".to_string());
+    }
+    suggested_next_steps.push(
+        "Use `parameter_sweep` to find optimal parameters, then validate with `walk_forward`"
+            .to_string(),
+    );
+    suggested_next_steps.push(
+        "Try different train/test window sizes to check robustness of the walk-forward results"
+            .to_string(),
+    );
+
+    WalkForwardResponse {
+        summary,
+        windows,
+        aggregate: WalkForwardAggregate {
+            successful_windows: agg.successful_windows,
+            failed_windows: agg.failed_windows,
+            avg_test_sharpe: agg.avg_test_sharpe,
+            std_test_sharpe: agg.std_test_sharpe,
+            avg_test_pnl: agg.avg_test_pnl,
+            pct_profitable_windows: agg.pct_profitable_windows,
+            avg_train_test_sharpe_decay: agg.avg_train_test_sharpe_decay,
+            total_test_pnl: agg.total_test_pnl,
+        },
+        key_findings,
         suggested_next_steps,
     }
 }

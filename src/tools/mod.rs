@@ -14,3 +14,4 @@ pub mod status;
 pub mod strategies;
 pub mod suggest;
 pub mod sweep;
+pub mod walk_forward;
