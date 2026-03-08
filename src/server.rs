@@ -51,17 +51,18 @@ impl OptopsyServer {
         &self,
         symbol: Option<&str>,
     ) -> Result<(String, DataFrame), String> {
-        // First check if already loaded
-        {
-            let data = self.data.read().await;
-            match Self::resolve_symbol(&data, symbol) {
-                Ok((sym, df)) => return Ok((sym.clone(), df.clone())),
-                Err(e) if !data.is_empty() => {
-                    // Data exists but wrong symbol or ambiguous — propagate the error as-is
-                    return Err(format!("Error: {e}"));
-                }
-                Err(_) => {} // No data loaded — proceed to auto-load
+        // Acquire write lock upfront to prevent TOCTOU races where concurrent
+        // requests both see no data and trigger redundant loads.
+        let mut data = self.data.write().await;
+
+        // Check if already loaded under the write lock
+        match Self::resolve_symbol(&data, symbol) {
+            Ok((sym, df)) => return Ok((sym.clone(), df.clone())),
+            Err(e) if !data.is_empty() => {
+                // Data exists but wrong symbol or ambiguous — propagate the error as-is
+                return Err(format!("Error: {e}"));
             }
+            Err(_) => {} // No data loaded — proceed to auto-load
         }
 
         // Auto-load requires a symbol
@@ -71,15 +72,16 @@ impl OptopsyServer {
 
         tracing::info!(symbol = %sym, "Auto-loading options data from cache");
 
-        tools::load_data::execute(&self.data, &self.cache, sym, None, None)
+        // Load data while holding the write lock to prevent concurrent duplicate loads
+        let df = self
+            .cache
+            .load_options(sym, None, None)
             .await
             .map_err(|e| format!("Failed to auto-load data for {sym}: {e}"))?;
 
-        // Read back the loaded data
-        let data = self.data.read().await;
-        let (s, df) = Self::resolve_symbol(&data, symbol)
-            .map_err(|e| format!("Error after auto-load: {e}"))?;
-        Ok((s.clone(), df.clone()))
+        let key = sym.to_uppercase();
+        data.insert(key.clone(), df.clone());
+        Ok((key, df))
     }
 
     /// Ensure OHLCV price data exists for a symbol, auto-fetching from Yahoo Finance if needed.
