@@ -654,6 +654,12 @@ pub fn format_sweep(output: SweepOutput) -> SweepResponse {
 
 fn walk_forward_findings(agg: &crate::engine::walk_forward::WalkForwardAggregate) -> Vec<String> {
     let mut findings = Vec::new();
+    if agg.failed_windows > 0 {
+        findings.push(format!(
+            "{} window(s) failed and were excluded from aggregate statistics",
+            agg.failed_windows
+        ));
+    }
     if agg.avg_train_test_sharpe_decay > 0.5 {
         findings.push(format!(
             "High train→test Sharpe decay ({:.2}) suggests overfitting risk",
@@ -700,11 +706,21 @@ pub fn format_walk_forward(
     let agg = &result.aggregate;
     let step = step_days.unwrap_or(test_days);
 
+    let attempted_windows = agg.successful_windows + agg.failed_windows;
+    let window_desc = if agg.failed_windows > 0 {
+        format!(
+            "{} of {} attempted windows ({} failed)",
+            agg.successful_windows, attempted_windows, agg.failed_windows
+        )
+    } else {
+        format!("{} windows", agg.successful_windows)
+    };
+
     let summary = format!(
-        "Walk-forward analysis for {} across {} windows (train={}d, test={}d, step={}d): \
+        "Walk-forward analysis for {} across {} (train={}d, test={}d, step={}d): \
          avg test Sharpe {:.2} (±{:.2}), {:.0}% profitable windows, total test P&L {}",
         params.strategy,
-        agg.total_windows,
+        window_desc,
         train_days,
         test_days,
         step,
@@ -758,7 +774,7 @@ pub fn format_walk_forward(
         summary,
         windows,
         aggregate: WalkForwardAggregate {
-            total_windows: agg.total_windows,
+            successful_windows: agg.successful_windows,
             failed_windows: agg.failed_windows,
             avg_test_sharpe: agg.avg_test_sharpe,
             std_test_sharpe: agg.std_test_sharpe,
