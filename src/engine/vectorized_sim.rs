@@ -118,7 +118,7 @@ pub fn run_with_candidates<S: BuildHasher>(
         strategy_def,
         params,
     );
-    tracing::info!(
+    tracing::debug!(
         elapsed_ms = t2.elapsed().as_millis(),
         trades = trades.len(),
         "Trade rows built"
@@ -152,7 +152,7 @@ pub fn run_with_candidates<S: BuildHasher>(
     } else {
         trades
     };
-    tracing::info!(
+    tracing::debug!(
         elapsed_ms = t3.elapsed().as_millis(),
         "Early exit scan done"
     );
@@ -177,7 +177,7 @@ pub fn run_with_candidates<S: BuildHasher>(
     let t4 = std::time::Instant::now();
     let (trade_log, equity_curve) =
         build_outputs(&trades, trading_days, price_table, carry_index, params);
-    tracing::info!(elapsed_ms = t4.elapsed().as_millis(), "Outputs built");
+    tracing::debug!(elapsed_ms = t4.elapsed().as_millis(), "Outputs built");
 
     let quality = BacktestQualityStats {
         trading_days_total: trading_days.len(),

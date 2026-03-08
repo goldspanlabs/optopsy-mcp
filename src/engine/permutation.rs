@@ -185,9 +185,16 @@ fn run_shuffled_permutations<S: BuildHasher>(
         let mut offset = 0;
         for (idx, &date) in date_keys.iter().enumerate() {
             let size = group_sizes[idx];
-            let mut group: Vec<EntryCandidate> = pool[offset..offset + size].to_vec();
-            for c in &mut group {
+            let slice = &pool[offset..offset + size];
+            let mut group: Vec<EntryCandidate> = Vec::with_capacity(size);
+            for mut c in slice.iter().cloned() {
+                // Skip candidates whose expiration is before the shuffled entry date
+                // to avoid negative DTE producing degenerate 1-day trades.
+                if date > c.expiration {
+                    continue;
+                }
                 c.entry_date = date;
+                group.push(c);
             }
             shuffled.insert(date, group);
             offset += size;
@@ -324,4 +331,87 @@ fn build_histogram(sorted: &[f64], num_buckets: usize) -> Vec<HistogramBucket> {
     }
 
     buckets
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_percentile_basic() {
+        let sorted = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        assert!((percentile(&sorted, 0.0) - 1.0).abs() < f64::EPSILON);
+        assert!((percentile(&sorted, 50.0) - 3.0).abs() < f64::EPSILON);
+        assert!((percentile(&sorted, 100.0) - 5.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_percentile_empty() {
+        assert!((percentile(&[], 50.0) - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_percentile_single() {
+        assert!((percentile(&[42.0], 50.0) - 42.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_histogram_empty() {
+        assert!(build_histogram(&[], 10).is_empty());
+    }
+
+    #[test]
+    fn test_histogram_single_value() {
+        let h = build_histogram(&[5.0, 5.0, 5.0], 10);
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0].count, 3);
+    }
+
+    #[test]
+    fn test_histogram_counts_sum() {
+        let sorted: Vec<f64> = (0..100).map(f64::from).collect();
+        let h = build_histogram(&sorted, 10);
+        let total: usize = h.iter().map(|b| b.count).sum();
+        assert_eq!(total, 100);
+        assert_eq!(h.len(), 10);
+    }
+
+    #[test]
+    fn test_compute_metric_real_exceeds_all() {
+        let permuted = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let result = compute_metric_result("test", 10.0, &permuted);
+        assert!((result.p_value - 0.0).abs() < f64::EPSILON);
+        assert_eq!(result.metric_name, "test");
+        assert!((result.real_value - 10.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_compute_metric_real_below_all() {
+        let permuted = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let result = compute_metric_result("test", -1.0, &permuted);
+        assert!((result.p_value - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_compute_metric_empty_permuted() {
+        let result = compute_metric_result("test", 5.0, &[]);
+        assert!((result.p_value - 1.0).abs() < f64::EPSILON);
+        assert!(result.histogram.is_empty());
+    }
+
+    #[test]
+    fn test_compute_metric_mean_and_std() {
+        let permuted = vec![2.0, 4.0, 6.0];
+        let result = compute_metric_result("test", 5.0, &permuted);
+        assert!((result.mean_permuted - 4.0).abs() < f64::EPSILON);
+        assert!((result.std_permuted - 2.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_compute_metric_p_value_fraction() {
+        // 3 out of 5 values >= 3.0
+        let permuted = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let result = compute_metric_result("test", 3.0, &permuted);
+        assert!((result.p_value - 0.6).abs() < f64::EPSILON);
+    }
 }

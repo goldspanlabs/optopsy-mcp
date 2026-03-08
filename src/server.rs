@@ -1228,12 +1228,14 @@ impl OptopsyServer {
         };
 
         tokio::task::spawn_blocking(move || {
+            let (entry_dates, exit_dates) =
+                crate::engine::core::build_signal_filters(&backtest_params, &df)?;
             tools::permutation_test::execute(
                 &df,
                 &backtest_params,
                 &perm_params,
-                &None::<std::collections::HashSet<chrono::NaiveDate>>,
-                None::<&std::collections::HashSet<chrono::NaiveDate>>,
+                &entry_dates,
+                exit_dates.as_ref(),
             )
         })
         .await
