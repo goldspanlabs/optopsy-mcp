@@ -477,8 +477,17 @@ pub fn compute_sensitivity(
 /// parameter combination (strategy, leg deltas, entry DTE, exit DTE, slippage).
 /// Signals and slippage are excluded from neighbor search (categorical).
 fn stability_fingerprint(r: &SweepResult) -> (String, Vec<String>, i32, i32) {
-    let delta_keys: Vec<String> = r.leg_deltas.iter().map(|d| format!("{:.4}", d.target)).collect();
-    (r.strategy.clone(), delta_keys, r.entry_dte.target, r.exit_dte)
+    let delta_keys: Vec<String> = r
+        .leg_deltas
+        .iter()
+        .map(|d| format!("{:.4}", d.target))
+        .collect();
+    (
+        r.strategy.clone(),
+        delta_keys,
+        r.entry_dte.target,
+        r.exit_dte,
+    )
 }
 
 /// Compute parameter stability scores for the top results in a sweep.
@@ -544,9 +553,7 @@ pub fn compute_stability(results: &[SweepResult], params: &SweepParams) -> Vec<S
                     continue;
                 }
                 let current_delta = r.leg_deltas[leg_idx].target;
-                let pos = grid
-                    .iter()
-                    .position(|&v| (v - current_delta).abs() < 1e-9);
+                let pos = grid.iter().position(|&v| (v - current_delta).abs() < 1e-9);
                 if let Some(pos) = pos {
                     let neighbors: Vec<f64> = [pos.wrapping_sub(1), pos + 1]
                         .iter()
@@ -580,9 +587,7 @@ pub fn compute_stability(results: &[SweepResult], params: &SweepParams) -> Vec<S
 
         // Check entry DTE dimension
         if entry_dte_grid.len() > 1 {
-            let pos = entry_dte_grid
-                .iter()
-                .position(|&v| v == r.entry_dte.target);
+            let pos = entry_dte_grid.iter().position(|&v| v == r.entry_dte.target);
             if let Some(pos) = pos {
                 let neighbors: Vec<i32> = [pos.wrapping_sub(1), pos + 1]
                     .iter()
@@ -646,10 +651,13 @@ pub fn compute_stability(results: &[SweepResult], params: &SweepParams) -> Vec<S
 
         // Compute overall score
         let (overall_score, warning) = if dim_stabilities.is_empty() {
-            (1.0, Some("Single-point sweep — no neighbors to compare.".to_string()))
+            (
+                1.0,
+                Some("Single-point sweep — no neighbors to compare.".to_string()),
+            )
         } else {
-            let avg = dim_stabilities.iter().map(|d| d.score).sum::<f64>()
-                / dim_stabilities.len() as f64;
+            let avg =
+                dim_stabilities.iter().map(|d| d.score).sum::<f64>() / dim_stabilities.len() as f64;
             let warn = if avg < 0.5 {
                 Some(format!(
                     "UNSTABLE — performance is fragile across neighboring parameters (score: {avg:.2})."
@@ -1577,7 +1585,11 @@ mod tests {
         assert!(!scores.is_empty());
         // Top result (Sharpe 2.0 at 0.40) has neighbors at 0.1 → relative change = 1.9/2.0 = 0.95
         let top = &scores[0];
-        assert!(top.overall_score < 0.5, "Expected unstable, got {}", top.overall_score);
+        assert!(
+            top.overall_score < 0.5,
+            "Expected unstable, got {}",
+            top.overall_score
+        );
         assert!(!top.is_stable);
         assert!(top.warning.is_some());
         assert!(top.warning.as_ref().unwrap().contains("UNSTABLE"));
@@ -1612,8 +1624,7 @@ mod tests {
             make_sweep_result("long_call", 0.40, 30, 0, 1.0),
             make_sweep_result("long_call", 0.40, 45, 0, 1.0),
         ];
-        let params =
-            make_sweep_params("long_call", vec![0.30, 0.40], vec![30, 45], vec![0]);
+        let params = make_sweep_params("long_call", vec![0.30, 0.40], vec![30, 45], vec![0]);
 
         let scores = compute_stability(&results, &params);
         assert!(!scores.is_empty());
