@@ -126,7 +126,11 @@ pub fn run_walk_forward(
     }
     let step = step_days.unwrap_or(test_days);
     if step < 5 {
-        bail!("step_days must be >= 5 to avoid generating an excessive number of windows");
+        if step_days.is_some() {
+            bail!("step_days ({step}) must be >= 5 to avoid generating an excessive number of windows");
+        } else {
+            bail!("test_days ({step}) is used as step size when step_days is omitted, and must be >= 5 to avoid generating an excessive number of windows");
+        }
     }
 
     let (min_date, max_date) = date_range(df)?;
@@ -145,10 +149,8 @@ pub fn run_walk_forward(
     let mut windows = Vec::new();
     let mut failed_count = 0usize;
     let mut cursor = min_date + Days::new(train_days as u64);
-    let mut attempt = 0usize;
 
     while cursor + Days::new(test_days as u64) <= max_date + Days::new(1) {
-        attempt += 1;
         let train_start = cursor - Days::new(train_days as u64);
         let train_end = cursor;
         let test_start = cursor;
@@ -169,7 +171,7 @@ pub fn run_walk_forward(
         match (train_result, test_result) {
             (Ok(train_r), Ok(test_r)) => {
                 windows.push(WindowResult {
-                    window_number: attempt,
+                    window_number: windows.len() + 1,
                     train_start,
                     train_end,
                     test_start,
