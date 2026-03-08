@@ -202,10 +202,10 @@ fn load_underlying_closes(path: &std::path::Path) -> Vec<tools::response_types::
         return vec![];
     };
 
-    let Ok(dates) = df.column("date").map(|c| c.date().unwrap().clone()) else {
+    let Ok(dates) = df.column("date").and_then(|c| Ok(c.date()?.clone())) else {
         return vec![];
     };
-    let Ok(closes) = df.column("close").map(|c| c.f64().unwrap().clone()) else {
+    let Ok(closes) = df.column("close").and_then(|c| Ok(c.f64()?.clone())) else {
         return vec![];
     };
 
