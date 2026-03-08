@@ -35,7 +35,11 @@ fn walk_forward_produces_windows_and_aggregate() {
 
     // Window numbering should be sequential starting at 1
     for (i, w) in result.windows.iter().enumerate() {
-        assert_eq!(w.window_number, i + 1, "Window numbering should be sequential");
+        assert_eq!(
+            w.window_number,
+            i + 1,
+            "Window numbering should be sequential"
+        );
     }
 
     // Train end == test start (contiguous windows)
@@ -86,7 +90,10 @@ fn walk_forward_insufficient_data_errors() {
     let result = run_walk_forward(&df, &params, 20, 15, None);
     assert!(result.is_err());
     assert!(
-        result.unwrap_err().to_string().contains("walk-forward requires at least"),
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("walk-forward requires at least"),
         "Should mention minimum data requirement"
     );
 }
@@ -114,10 +121,7 @@ fn walk_forward_test_days_as_step_too_small_errors() {
     let result = run_walk_forward(&df, &params, 14, 3, None);
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
-    assert!(
-        msg.contains("test_days"),
-        "Should mention test_days: {msg}"
-    );
+    assert!(msg.contains("test_days"), "Should mention test_days: {msg}");
 }
 
 #[test]
@@ -199,10 +203,7 @@ fn walk_forward_multi_leg_strategy() {
         }
         Err(e) => {
             // "No valid windows" is acceptable if spread legs don't match in small windows
-            assert!(
-                e.to_string().contains("No valid"),
-                "Unexpected error: {e}"
-            );
+            assert!(e.to_string().contains("No valid"), "Unexpected error: {e}");
         }
     }
 }

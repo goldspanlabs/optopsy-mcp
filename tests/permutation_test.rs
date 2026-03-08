@@ -28,7 +28,14 @@ fn permutation_test_produces_metric_results() {
         seed: Some(42),
     };
 
-    let output = run_permutation_test(&df, &params, &perm_params, &None::<std::collections::HashSet<chrono::NaiveDate>>, None::<&std::collections::HashSet<chrono::NaiveDate>>).unwrap();
+    let output = run_permutation_test(
+        &df,
+        &params,
+        &perm_params,
+        &None::<std::collections::HashSet<chrono::NaiveDate>>,
+        None::<&std::collections::HashSet<chrono::NaiveDate>>,
+    )
+    .unwrap();
 
     // Should complete all permutations (or most)
     assert!(
@@ -45,7 +52,11 @@ fn permutation_test_produces_metric_results() {
         output.metric_results.len()
     );
 
-    let metric_names: Vec<&str> = output.metric_results.iter().map(|m| m.metric_name.as_str()).collect();
+    let metric_names: Vec<&str> = output
+        .metric_results
+        .iter()
+        .map(|m| m.metric_name.as_str())
+        .collect();
     assert!(metric_names.contains(&"sharpe"));
     assert!(metric_names.contains(&"total_pnl"));
     assert!(metric_names.contains(&"win_rate"));
@@ -102,8 +113,22 @@ fn permutation_test_deterministic_with_seed() {
         seed: Some(123),
     };
 
-    let out1 = run_permutation_test(&df, &params, &perm_params, &None::<std::collections::HashSet<chrono::NaiveDate>>, None::<&std::collections::HashSet<chrono::NaiveDate>>).unwrap();
-    let out2 = run_permutation_test(&df, &params, &perm_params, &None::<std::collections::HashSet<chrono::NaiveDate>>, None::<&std::collections::HashSet<chrono::NaiveDate>>).unwrap();
+    let out1 = run_permutation_test(
+        &df,
+        &params,
+        &perm_params,
+        &None::<std::collections::HashSet<chrono::NaiveDate>>,
+        None::<&std::collections::HashSet<chrono::NaiveDate>>,
+    )
+    .unwrap();
+    let out2 = run_permutation_test(
+        &df,
+        &params,
+        &perm_params,
+        &None::<std::collections::HashSet<chrono::NaiveDate>>,
+        None::<&std::collections::HashSet<chrono::NaiveDate>>,
+    )
+    .unwrap();
 
     assert_eq!(out1.num_completed, out2.num_completed);
     for (m1, m2) in out1.metric_results.iter().zip(out2.metric_results.iter()) {
@@ -132,7 +157,13 @@ fn permutation_test_unknown_strategy_errors() {
         seed: Some(1),
     };
 
-    let result = run_permutation_test(&df, &params, &perm_params, &None::<std::collections::HashSet<chrono::NaiveDate>>, None::<&std::collections::HashSet<chrono::NaiveDate>>);
+    let result = run_permutation_test(
+        &df,
+        &params,
+        &perm_params,
+        &None::<std::collections::HashSet<chrono::NaiveDate>>,
+        None::<&std::collections::HashSet<chrono::NaiveDate>>,
+    );
     assert!(result.is_err(), "Should fail for unknown strategy");
     assert!(
         result.unwrap_err().to_string().contains("Unknown strategy"),
@@ -154,7 +185,13 @@ fn permutation_test_no_candidates_returns_empty_metrics() {
         seed: Some(1),
     };
 
-    let result = run_permutation_test(&df, &params, &perm_params, &None::<std::collections::HashSet<chrono::NaiveDate>>, None::<&std::collections::HashSet<chrono::NaiveDate>>);
+    let result = run_permutation_test(
+        &df,
+        &params,
+        &perm_params,
+        &None::<std::collections::HashSet<chrono::NaiveDate>>,
+        None::<&std::collections::HashSet<chrono::NaiveDate>>,
+    );
     // Should either error (no trades in real backtest) or return empty metrics (no candidates)
     if let Ok(output) = result {
         assert_eq!(output.num_completed, 0);
@@ -177,7 +214,14 @@ fn permutation_test_with_entry_date_filter() {
     let mut allowed = std::collections::HashSet::new();
     allowed.insert(chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap());
 
-    let output = run_permutation_test(&df, &params, &perm_params, &Some(allowed), None::<&std::collections::HashSet<chrono::NaiveDate>>).unwrap();
+    let output = run_permutation_test(
+        &df,
+        &params,
+        &perm_params,
+        &Some(allowed),
+        None::<&std::collections::HashSet<chrono::NaiveDate>>,
+    )
+    .unwrap();
 
     // Should still produce results (Jan 15 is a valid entry date in the test data)
     assert!(output.real_result.trade_count > 0 || output.num_completed == 0);
@@ -194,7 +238,13 @@ fn permutation_test_multi_leg_strategy() {
         seed: Some(99),
     };
 
-    let result = run_permutation_test(&df, &params, &perm_params, &None::<std::collections::HashSet<chrono::NaiveDate>>, None::<&std::collections::HashSet<chrono::NaiveDate>>);
+    let result = run_permutation_test(
+        &df,
+        &params,
+        &perm_params,
+        &None::<std::collections::HashSet<chrono::NaiveDate>>,
+        None::<&std::collections::HashSet<chrono::NaiveDate>>,
+    );
 
     // Multi-leg strategy should work through the pipeline without panicking.
     // May produce 0 candidates if spreads don't match in synthetic data.
