@@ -359,6 +359,64 @@ mod tests {
     }
 
     #[test]
+    fn sharpe_exact_value() {
+        // Capital=10000, equity=[11000, 9900, 10890] → returns [0.1, -0.1, 0.1]
+        // mean = 1/30, std (sample) = 1/sqrt(75)
+        // sharpe = mean/std * sqrt(252) = sqrt(21) ≈ 4.58257569...
+        let curve = make_equity_curve(&[11000.0, 9900.0, 10890.0]);
+        let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
+        let expected_sharpe = 21.0_f64.sqrt();
+        assert!(
+            (m.sharpe - expected_sharpe).abs() < 1e-10,
+            "Sharpe {:.12} should equal sqrt(21) = {:.12}",
+            m.sharpe,
+            expected_sharpe
+        );
+    }
+
+    #[test]
+    fn sortino_exact_value() {
+        // Same curve: returns [0.1, -0.1, 0.1]
+        // negative returns: [-0.1], downside_dev = sqrt(0.01/3)
+        // sortino = mean/downside_dev * sqrt(252) = 2*sqrt(21) ≈ 9.16515139...
+        let curve = make_equity_curve(&[11000.0, 9900.0, 10890.0]);
+        let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
+        let expected_sortino = 2.0 * 21.0_f64.sqrt();
+        assert!(
+            (m.sortino - expected_sortino).abs() < 1e-10,
+            "Sortino {:.12} should equal 2*sqrt(21) = {:.12}",
+            m.sortino,
+            expected_sortino
+        );
+    }
+
+    #[test]
+    fn var_95_exact_value() {
+        // Returns [0.1, -0.1, 0.1], sorted: [-0.1, 0.1, 0.1]
+        // VaR index = floor(0.05 * 3) = 0 → sorted[0] = -0.1 → VaR = 0.1
+        let curve = make_equity_curve(&[11000.0, 9900.0, 10890.0]);
+        let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
+        assert!(
+            (m.var_95 - 0.1).abs() < 1e-10,
+            "VaR 95% {:.12} should equal 0.1",
+            m.var_95
+        );
+    }
+
+    #[test]
+    fn sortino_zero_when_no_negative_returns() {
+        // All positive returns → downside deviation is 0 → Sortino is 0
+        let curve = make_equity_curve(&[10100.0, 10200.0, 10300.0]);
+        let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
+        assert!(m.sharpe > 0.0, "Sharpe should be positive");
+        assert!(
+            (m.sortino - 0.0).abs() < f64::EPSILON,
+            "Sortino should be 0 when no negative returns, got {}",
+            m.sortino
+        );
+    }
+
+    #[test]
     fn all_wins_profit_factor_capped() {
         let curve = make_equity_curve(&[10100.0, 10200.0, 10300.0]);
         let trades = vec![make_trade(100.0, 5), make_trade(200.0, 10)];
