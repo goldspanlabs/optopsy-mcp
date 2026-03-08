@@ -564,7 +564,7 @@ impl TradeRecord {
                 CashflowLabel::DR
             },
             exit_amount: exit_proceeds.abs(),
-            exit_label: if exit_proceeds < 0.0 {
+            exit_label: if exit_proceeds > 0.0 {
                 CashflowLabel::CR
             } else {
                 CashflowLabel::DR
