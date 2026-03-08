@@ -259,7 +259,8 @@ fn downside_deviation(returns: &[f64]) -> f64 {
     if negative_returns.is_empty() {
         return 0.0;
     }
-    let variance = negative_returns.iter().map(|r| r.powi(2)).sum::<f64>() / returns.len() as f64;
+    let variance =
+        negative_returns.iter().map(|r| r.powi(2)).sum::<f64>() / (returns.len() - 1) as f64;
     variance.sqrt()
 }
 
@@ -378,14 +379,14 @@ mod tests {
     #[test]
     fn sortino_exact_value() {
         // Same curve: returns [0.1, -0.1, 0.1]
-        // negative returns: [-0.1], downside_dev = sqrt(0.01/3)
-        // sortino = mean/downside_dev * sqrt(252) = 2*sqrt(21) ≈ 9.16515139...
+        // negative returns: [-0.1], downside_dev = sqrt(0.01/(3-1)) = sqrt(0.005)
+        // sortino = mean/downside_dev * sqrt(252) = (1/30)/sqrt(0.005)*sqrt(252) = sqrt(56)
         let curve = make_equity_curve(&[11000.0, 9900.0, 10890.0]);
         let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
-        let expected_sortino = 2.0 * 21.0_f64.sqrt();
+        let expected_sortino = 56.0_f64.sqrt();
         assert!(
             (m.sortino - expected_sortino).abs() < 1e-10,
-            "Sortino {:.12} should equal 2*sqrt(21) = {:.12}",
+            "Sortino {:.12} should equal sqrt(56) = {:.12}",
             m.sortino,
             expected_sortino
         );
