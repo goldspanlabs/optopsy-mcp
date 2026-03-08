@@ -287,6 +287,9 @@ fn calculate_max_drawdown(equity_curve: &[EquityPoint], initial_capital: f64) ->
     clippy::cast_sign_loss
 )]
 fn calculate_var(returns: &[f64], confidence: f64) -> f64 {
+    if returns.is_empty() {
+        return 0.0;
+    }
     let mut sorted = returns.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
