@@ -474,7 +474,7 @@ pub fn compute_sensitivity(
 // ---------------------------------------------------------------------------
 
 /// Build a fingerprint key for a `SweepResult` that identifies its exact
-/// parameter combination (strategy, leg deltas, entry DTE, exit DTE, slippage).
+/// parameter combination (strategy, leg deltas, entry DTE, exit DTE).
 /// Signals and slippage are excluded from neighbor search (categorical).
 fn stability_fingerprint(r: &SweepResult) -> (String, Vec<String>, i32, i32) {
     let delta_keys: Vec<String> = r
@@ -675,7 +675,7 @@ pub fn compute_stability(results: &[SweepResult], params: &SweepParams) -> Vec<S
         scores.push(StabilityScore {
             label: r.label.clone(),
             overall_score,
-            is_stable: overall_score >= 0.5,
+            is_stable: overall_score >= 0.7,
             warning,
             per_dimension: dim_stabilities,
         });

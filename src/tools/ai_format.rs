@@ -583,6 +583,7 @@ pub fn format_raw_prices(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn format_sweep(output: SweepOutput) -> SweepResponse {
     let best = output.ranked_results.first().cloned();
 
@@ -665,10 +666,15 @@ pub fn format_sweep(output: SweepOutput) -> SweepResponse {
         if let Some(top) = scores.first() {
             if top.overall_score < 0.5 {
                 suggested_next_steps.push(format!(
-                    "[CAUTION] Best combination has low parameter stability ({:.2}). Performance may be fragile — consider a more stable alternative.",
+                    "[UNSTABLE] Best combination has low parameter stability ({:.2}). Performance may be fragile — consider a more stable alternative.",
                     top.overall_score,
                 ));
-            } else if top.overall_score >= 0.7 {
+            } else if top.overall_score < 0.7 {
+                suggested_next_steps.push(format!(
+                    "[CAUTION] Best combination has moderate parameter stability ({:.2}). Re-sweep with a narrower grid around this region to confirm robustness before deploying.",
+                    top.overall_score,
+                ));
+            } else {
                 suggested_next_steps.push(format!(
                     "[GOOD] Best combination shows stable performance across neighboring parameters (stability: {:.2}).",
                     top.overall_score,
