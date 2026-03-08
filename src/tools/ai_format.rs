@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::engine::permutation::PermutationOutput;
 use crate::engine::types::{
     BacktestParams, BacktestQualityStats, BacktestResult, CompareEntry, CompareResult, ExitType,
     TradeRecord,
@@ -10,9 +11,9 @@ use crate::engine::walk_forward::WalkForwardResult;
 
 use super::response_types::{
     BacktestDataQuality, BacktestParamsSummary, BacktestResponse, CompareResponse,
-    CompareStrategyEntry, DateRange, LoadDataResponse, OosValidation, PriceBar, RawPricesResponse,
-    StrategiesResponse, StrategyInfo, SweepResponse, TradeStat, TradeSummary, WalkForwardAggregate,
-    WalkForwardResponse, WalkForwardWindowResult,
+    CompareStrategyEntry, DateRange, LoadDataResponse, OosValidation, PermutationTestResponse,
+    PriceBar, RawPricesResponse, StrategiesResponse, StrategyInfo, SweepResponse, TradeStat,
+    TradeSummary, WalkForwardAggregate, WalkForwardResponse, WalkForwardWindowResult,
 };
 
 fn assess_sharpe(sharpe: f64) -> &'static str {
@@ -784,6 +785,138 @@ pub fn format_walk_forward(
             total_test_pnl: agg.total_test_pnl,
         },
         key_findings,
+        suggested_next_steps,
+    }
+}
+
+fn interpret_p_value(p: f64) -> &'static str {
+    if p < 0.01 {
+        "highly significant"
+    } else if p < 0.05 {
+        "significant"
+    } else if p < 0.10 {
+        "marginally significant"
+    } else {
+        "not significant"
+    }
+}
+
+fn build_params_summary(params: &BacktestParams) -> BacktestParamsSummary {
+    BacktestParamsSummary {
+        strategy: params.strategy.clone(),
+        leg_deltas: params.leg_deltas.clone(),
+        entry_dte: params.entry_dte.clone(),
+        exit_dte: params.exit_dte,
+        slippage: params.slippage.clone(),
+        commission: params.commission.clone(),
+        capital: params.capital,
+        quantity: params.quantity,
+        multiplier: params.multiplier,
+        max_positions: params.max_positions,
+        stop_loss: params.stop_loss,
+        take_profit: params.take_profit,
+        max_hold_days: params.max_hold_days,
+        selector: params.selector.clone(),
+        entry_signal: params
+            .entry_signal
+            .as_ref()
+            .map(|s| serde_json::to_value(s).unwrap_or(serde_json::Value::Null)),
+        exit_signal: params
+            .exit_signal
+            .as_ref()
+            .map(|s| serde_json::to_value(s).unwrap_or(serde_json::Value::Null)),
+        min_net_premium: params.min_net_premium,
+        max_net_premium: params.max_net_premium,
+        min_net_delta: params.min_net_delta,
+        max_net_delta: params.max_net_delta,
+        min_days_between_entries: params.min_days_between_entries,
+        expiration_filter: params.expiration_filter.clone(),
+        exit_net_delta: params.exit_net_delta,
+    }
+}
+
+pub fn format_permutation_test(
+    output: PermutationOutput,
+    params: &BacktestParams,
+) -> PermutationTestResponse {
+    let real = &output.real_result;
+    let real_total_pnl: f64 = real.trade_log.iter().map(|t| t.pnl).sum();
+
+    let sharpe_p = output
+        .metric_results
+        .iter()
+        .find(|m| m.metric_name == "sharpe")
+        .map_or(1.0, |m| m.p_value);
+    let pnl_p = output
+        .metric_results
+        .iter()
+        .find(|m| m.metric_name == "total_pnl")
+        .map_or(1.0, |m| m.p_value);
+    let is_significant = sharpe_p < 0.05 && pnl_p < 0.05;
+
+    let sig_label = if is_significant {
+        "statistically significant"
+    } else {
+        "NOT statistically significant"
+    };
+    let pnl_str = format_pnl(real_total_pnl);
+
+    let summary = format!(
+        "Permutation test for {} ({} permutations, {} completed): results are {sig_label}. \
+         Real Sharpe {:.2} (p={sharpe_p:.3}), real PnL {pnl_str} (p={pnl_p:.3}).",
+        params.strategy, output.num_permutations, output.num_completed, real.metrics.sharpe,
+    );
+
+    let assessment = if is_significant {
+        let sig = interpret_p_value(sharpe_p.max(pnl_p));
+        format!("The strategy shows a {sig} edge over random entry timing (Sharpe p={sharpe_p:.3}, PnL p={pnl_p:.3})")
+    } else {
+        format!(
+            "The strategy does NOT show a significant edge over random entry timing \
+                 (Sharpe p={sharpe_p:.3}, PnL p={pnl_p:.3}). Results could be due to chance."
+        )
+    };
+
+    let key_findings: Vec<String> = output
+        .metric_results
+        .iter()
+        .map(|m| {
+            let sig = interpret_p_value(m.p_value);
+            format!(
+                "{}: real={:.4}, permuted mean={:.4} (±{:.4}), p={:.3} ({sig})",
+                m.metric_name, m.real_value, m.mean_permuted, m.std_permuted, m.p_value,
+            )
+        })
+        .collect();
+
+    let suggested_next_steps = if is_significant {
+        vec![
+            format!(
+                "[NEXT] Run parameter_sweep to optimize {} parameters further",
+                params.strategy
+            ),
+            "[VALIDATE] Run with more permutations (500-1000) for tighter p-value estimates"
+                .to_string(),
+        ]
+    } else {
+        vec![
+            "[ITERATE] Try different delta targets, DTE ranges, or entry signals to find a significant edge".to_string(),
+            "[COMPARE] Use compare_strategies to test alternative strategies".to_string(),
+        ]
+    };
+
+    PermutationTestResponse {
+        summary,
+        assessment,
+        key_findings,
+        parameters: build_params_summary(params),
+        num_permutations: output.num_permutations,
+        num_completed: output.num_completed,
+        real_metrics: real.metrics.clone(),
+        real_trade_count: real.trade_count,
+        real_total_pnl,
+        metric_tests: output.metric_results,
+        is_significant,
         suggested_next_steps,
     }
 }
