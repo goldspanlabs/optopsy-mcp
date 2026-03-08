@@ -260,6 +260,47 @@ pub fn filter_valid_quotes(df: &DataFrame, min_bid_ask: f64) -> Result<DataFrame
     Ok(result)
 }
 
+/// Combined filter: option type + DTE computation + DTE range + valid quotes in a single lazy pass.
+/// Eliminates intermediate DataFrame materializations from chaining individual filters.
+pub fn filter_leg_candidates(
+    df: &DataFrame,
+    option_type: &str,
+    max_dte: i32,
+    min_dte: i32,
+    min_bid_ask: f64,
+) -> Result<DataFrame> {
+    let ms_per_day = 86_400_000i64;
+    let result = df
+        .clone()
+        .lazy()
+        // filter_option_type
+        .filter(col("option_type").eq(lit(option_type)))
+        // compute_dte
+        .with_column(
+            ((col("expiration").cast(DataType::Date)
+                - col(QUOTE_DATETIME_COL).cast(DataType::Date))
+            .dt()
+            .total_milliseconds(false)
+                / lit(ms_per_day))
+            .cast(DataType::Int32)
+            .alias("dte"),
+        )
+        // filter_dte_range
+        .filter(
+            col("dte")
+                .gt_eq(lit(min_dte))
+                .and(col("dte").lt_eq(lit(max_dte))),
+        )
+        // filter_valid_quotes
+        .filter(
+            col("bid")
+                .gt(lit(min_bid_ask))
+                .and(col("ask").gt(lit(min_bid_ask))),
+        )
+        .collect()?;
+    Ok(result)
+}
+
 /// Returns `true` if `date` falls on the third Friday of its month.
 pub fn is_third_friday(date: chrono::NaiveDate) -> bool {
     use chrono::Weekday;

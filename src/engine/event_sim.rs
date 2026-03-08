@@ -266,8 +266,6 @@ pub fn find_entry_candidates(
         .zip(params.leg_deltas.iter())
         .enumerate()
     {
-        let filtered = filters::filter_option_type(df, leg.option_type.as_str())?;
-        let with_dte = filters::compute_dte(&filtered)?;
         // For entry candidates, use entry_dte.min as lower bound.
         // Secondary legs get wider DTE range to find far-term expirations
         let max_dte = if leg.expiration_cycle == ExpirationCycle::Secondary {
@@ -275,8 +273,14 @@ pub fn find_entry_candidates(
         } else {
             params.entry_dte.max
         };
-        let dte_filtered = filters::filter_dte_range(&with_dte, max_dte, params.entry_dte.min)?;
-        let valid = filters::filter_valid_quotes(&dte_filtered, params.min_bid_ask)?;
+        // Combined filter: option type + DTE + valid quotes in a single lazy pass
+        let valid = filters::filter_leg_candidates(
+            df,
+            leg.option_type.as_str(),
+            max_dte,
+            params.entry_dte.min,
+            params.min_bid_ask,
+        )?;
         // Apply expiration type filter before delta selection
         let exp_filtered = filters::filter_expiration_type(&valid, &params.expiration_filter)?;
         let selected = filters::select_closest_delta(&exp_filtered, delta_target)?;
