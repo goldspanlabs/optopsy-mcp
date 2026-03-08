@@ -648,8 +648,11 @@ fn check_exit_triggers(
         return Some(ExitType::Expiration);
     }
 
-    // DTE exit check
-    let dte = (position.expiration - today).num_days();
+    // DTE exit check — use the earliest expiration across all legs
+    let earliest_exp = position
+        .secondary_expiration
+        .map_or(position.expiration, |sec| position.expiration.min(sec));
+    let dte = (earliest_exp - today).num_days();
     if dte <= i64::from(params.exit_dte) {
         return Some(ExitType::DteExit);
     }
