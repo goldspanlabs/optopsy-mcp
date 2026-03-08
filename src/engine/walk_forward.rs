@@ -128,9 +128,8 @@ pub fn run_walk_forward(
     if step < 5 {
         if step_days.is_some() {
             bail!("step_days ({step}) must be >= 5 to avoid generating an excessive number of windows");
-        } else {
-            bail!("test_days ({step}) is used as step size when step_days is omitted, and must be >= 5 to avoid generating an excessive number of windows");
         }
+        bail!("test_days ({step}) is used as step size when step_days is omitted, and must be >= 5 to avoid generating an excessive number of windows");
     }
 
     let (min_date, max_date) = date_range(df)?;
