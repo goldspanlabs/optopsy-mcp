@@ -163,16 +163,20 @@ fn build_price_table_slow(
     for i in 0..df.height() {
         let quote_date = extract_date_from_column(quote_col, i)?;
         let exp_date = extract_date_from_column(exp_col, i)?;
-        let strike = strikes.get(i).unwrap_or(0.0);
-        let opt_type_str = option_types.get(i).unwrap_or("");
+        let Some(strike) = strikes.get(i) else {
+            continue;
+        };
+        let Some(opt_type_str) = option_types.get(i) else {
+            continue;
+        };
         let opt_type = match opt_type_str {
             "call" => OptionType::Call,
             "put" => OptionType::Put,
             _ => continue,
         };
-        let bid = bids.get(i).unwrap_or(0.0);
-        let ask = asks.get(i).unwrap_or(0.0);
-        let delta = deltas.get(i).unwrap_or(0.0);
+        let Some(bid) = bids.get(i) else { continue };
+        let Some(ask) = asks.get(i) else { continue };
+        let Some(delta) = deltas.get(i) else { continue };
 
         let key = (quote_date, exp_date, OrderedFloat(strike), opt_type);
         table.insert(key, QuoteSnapshot { bid, ask, delta });
