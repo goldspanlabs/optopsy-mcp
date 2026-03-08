@@ -47,8 +47,9 @@ pub struct WalkForwardResult {
 }
 
 /// Filter a `DataFrame` to rows within `[start, end)` by calendar date.
-/// Filters directly on the native `quote_datetime` Datetime column (microseconds since epoch)
-/// using midnight-boundary `NaiveDateTimes`, avoiding an expensive per-window cast to `Date`.
+/// Filters directly on the native `quote_datetime` Datetime column (Polars `Datetime`
+/// with its existing time unit, e.g. microseconds/milliseconds/nanoseconds) using
+/// midnight-boundary `NaiveDateTimes`, avoiding an expensive per-window cast to `Date`.
 fn slice_by_date_range(df: &DataFrame, start: NaiveDate, end: NaiveDate) -> Result<DataFrame> {
     let start_dt: NaiveDateTime = start.and_hms_opt(0, 0, 0).unwrap();
     let end_dt: NaiveDateTime = end.and_hms_opt(0, 0, 0).unwrap();
@@ -312,7 +313,7 @@ mod tests {
 
     #[test]
     fn get_date_range_handles_pre_epoch_dates() {
-        // Dates before 1970-01-01 produce negative Polars Date values (signed i32).
+        // Dates before 1970-01-01 produce negative Polars Datetime timestamps (pre-epoch values).
         let start = NaiveDate::from_ymd_opt(1960, 6, 15).unwrap();
         let end = NaiveDate::from_ymd_opt(1960, 12, 31).unwrap();
         let df = make_df_for_dates(start, end);

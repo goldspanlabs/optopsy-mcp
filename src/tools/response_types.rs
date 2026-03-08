@@ -370,9 +370,11 @@ pub struct WalkForwardWindowResult {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WalkForwardAggregate {
     /// Number of windows successfully completed and included in aggregate statistics.
-    /// Does NOT include failed windows — see `failed_windows` for those.
+    /// Excludes any window counted in `failed_windows` (e.g. errors or no usable data).
     pub successful_windows: usize,
-    /// Number of windows where the backtest failed and were excluded from aggregates
+    /// Number of windows that could not be evaluated and were excluded from aggregates
+    /// (includes backtest failures as well as windows where the train/test slice was
+    /// empty or otherwise unusable).
     pub failed_windows: usize,
     pub avg_test_sharpe: f64,
     pub std_test_sharpe: f64,
