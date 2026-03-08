@@ -16,8 +16,13 @@ pub fn execute(prompt: &str) -> ConstructSignalResponse {
 
     // Generate live JSON Schema for SignalSpec
     let schema = schema_for!(SignalSpec);
-    let schema_value =
-        serde_json::to_value(&schema).expect("Failed to serialize SignalSpec schema to JSON value");
+    let schema_value = match serde_json::to_value(&schema) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("Failed to serialize SignalSpec schema: {e}");
+            Value::Null
+        }
+    };
 
     // Build column defaults
     let column_defaults = json!({
