@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::{DateTime, NaiveDate, Utc};
 use polars::prelude::*;
 use std::path::PathBuf;
 
@@ -159,17 +159,17 @@ fn scalar_to_date(scalar: &Scalar) -> Result<NaiveDate> {
     match scalar.value() {
         AnyValue::Date(days) => NaiveDate::from_num_days_from_ce_opt(*days + 719_163)
             .ok_or_else(|| anyhow::anyhow!("Invalid date value: {days}")),
-        AnyValue::Datetime(micros, tu, _) => {
-            let micros_per_sec = match tu {
+        AnyValue::Datetime(ts_value, tu, _) => {
+            let units_per_sec = match tu {
                 TimeUnit::Microseconds => 1_000_000i64,
                 TimeUnit::Milliseconds => 1_000i64,
                 TimeUnit::Nanoseconds => 1_000_000_000i64,
             };
-            let secs = micros / micros_per_sec;
-            let nsecs = ((micros % micros_per_sec).abs() * (1_000_000_000 / micros_per_sec)) as u32;
-            NaiveDateTime::from_timestamp_opt(secs, nsecs)
-                .map(|dt| dt.date())
-                .ok_or_else(|| anyhow::anyhow!("Invalid datetime value: {micros}"))
+            let secs = ts_value / units_per_sec;
+            let nsecs = ((ts_value % units_per_sec).abs() * (1_000_000_000 / units_per_sec)) as u32;
+            DateTime::<Utc>::from_timestamp(secs, nsecs)
+                .map(|dt| dt.date_naive())
+                .ok_or_else(|| anyhow::anyhow!("Invalid datetime value: {ts_value}"))
         }
         AnyValue::String(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d")
             .or_else(|_| NaiveDate::parse_from_str(&s[..10.min(s.len())], "%Y-%m-%d"))

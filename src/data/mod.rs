@@ -8,6 +8,7 @@ use chrono::NaiveDate;
 use polars::prelude::*;
 
 pub trait DataStore: Send + Sync {
+    #[allow(async_fn_in_trait)]
     async fn load_options(
         &self,
         symbol: &str,

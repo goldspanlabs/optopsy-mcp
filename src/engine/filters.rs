@@ -261,7 +261,7 @@ pub fn filter_valid_quotes(df: &DataFrame, min_bid_ask: f64) -> Result<DataFrame
 }
 
 /// Combined filter: option type + DTE computation + DTE range + valid quotes in a single lazy pass.
-/// Eliminates intermediate DataFrame materializations from chaining individual filters.
+/// Eliminates intermediate `DataFrame` materializations from chaining individual filters.
 pub fn filter_leg_candidates(
     df: &DataFrame,
     option_type: &str,

@@ -12,6 +12,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::data::cache::CachedStore;
+use crate::data::DataStore;
 use crate::engine::types::{
     default_min_bid_ask, default_multiplier, validate_exit_dte_lt_entry_min, BacktestParams,
     Commission, CompareEntry, CompareParams, Direction, DteRange, ExpirationFilter, SimParams,
@@ -51,18 +52,28 @@ impl OptopsyServer {
         &self,
         symbol: Option<&str>,
     ) -> Result<(String, DataFrame), String> {
-        // Acquire write lock upfront to prevent TOCTOU races where concurrent
-        // requests both see no data and trigger redundant loads.
+        // Fast path: try a read lock first to avoid serializing all requests when data
+        // is already loaded. This covers the common case of concurrent reads.
+        {
+            let data = self.data.read().await;
+            if !data.is_empty() {
+                return match Self::resolve_symbol(&data, symbol) {
+                    Ok((sym, df)) => Ok((sym.clone(), df.clone())),
+                    Err(e) => Err(format!("Error: {e}")),
+                };
+            }
+        }
+
+        // Slow path: acquire write lock to perform auto-load. Re-check under the
+        // write lock to prevent TOCTOU races where two requests both see empty data.
         let mut data = self.data.write().await;
 
-        // Check if already loaded under the write lock
-        match Self::resolve_symbol(&data, symbol) {
-            Ok((sym, df)) => return Ok((sym.clone(), df.clone())),
-            Err(e) if !data.is_empty() => {
-                // Data exists but wrong symbol or ambiguous — propagate the error as-is
-                return Err(format!("Error: {e}"));
-            }
-            Err(_) => {} // No data loaded — proceed to auto-load
+        // Double-check: another request may have loaded data while we waited for the lock.
+        if !data.is_empty() {
+            return match Self::resolve_symbol(&data, symbol) {
+                Ok((sym, df)) => Ok((sym.clone(), df.clone())),
+                Err(e) => Err(format!("Error: {e}")),
+            };
         }
 
         // Auto-load requires a symbol
@@ -70,18 +81,27 @@ impl OptopsyServer {
             "No data loaded and no symbol provided. Pass a symbol (e.g. \"SPY\").".to_string()
         })?;
 
+        // Validate the symbol to prevent path traversal attacks before passing to the data layer.
+        let sym_upper = sym.to_uppercase();
+        if sym_upper.is_empty()
+            || sym_upper.contains('/')
+            || sym_upper.contains('\\')
+            || sym_upper.contains("..")
+        {
+            return Err(format!("Invalid symbol: {sym}"));
+        }
+
         tracing::info!(symbol = %sym, "Auto-loading options data from cache");
 
         // Load data while holding the write lock to prevent concurrent duplicate loads
         let df = self
             .cache
-            .load_options(sym, None, None)
+            .load_options(&sym_upper, None, None)
             .await
             .map_err(|e| format!("Failed to auto-load data for {sym}: {e}"))?;
 
-        let key = sym.to_uppercase();
-        data.insert(key.clone(), df.clone());
-        Ok((key, df))
+        data.insert(sym_upper.clone(), df.clone());
+        Ok((sym_upper, df))
     }
 
     /// Ensure OHLCV price data exists for a symbol, auto-fetching from Yahoo Finance if needed.
