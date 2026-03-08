@@ -2,6 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::engine::permutation::MetricPermutationResult;
 use crate::engine::sweep::{DimensionStats, OosResult};
 use crate::engine::types::{
     Commission, CompareResult, DteRange, ExpirationFilter, PerformanceMetrics, Slippage,
@@ -319,6 +320,24 @@ pub struct ConstructSignalResponse {
     pub column_defaults: serde_json::Value,
     /// Example JSON structures showing how to combine signals using And/Or operators
     pub combinator_examples: Vec<serde_json::Value>,
+    pub suggested_next_steps: Vec<String>,
+}
+
+/// AI-enriched response for `permutation_test`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PermutationTestResponse {
+    pub summary: String,
+    pub assessment: String,
+    pub key_findings: Vec<String>,
+    pub parameters: BacktestParamsSummary,
+    pub num_permutations: usize,
+    pub num_completed: usize,
+    pub real_metrics: PerformanceMetrics,
+    pub real_trade_count: usize,
+    pub real_total_pnl: f64,
+    pub metric_tests: Vec<MetricPermutationResult>,
+    /// Whether all primary metrics (Sharpe, `PnL`) have p-value < 0.05
+    pub is_significant: bool,
     pub suggested_next_steps: Vec<String>,
 }
 
