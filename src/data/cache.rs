@@ -130,11 +130,13 @@ impl CachedStore {
 
             // Ensure parent directory exists
             if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)
+                tokio::fs::create_dir_all(parent)
+                    .await
                     .with_context(|| format!("Failed to create cache dir: {}", parent.display()))?;
             }
 
-            std::fs::write(&path, response.as_slice())
+            tokio::fs::write(&path, response.as_slice())
+                .await
                 .with_context(|| format!("Failed to write cache file: {}", path.display()))?;
 
             tracing::info!(%symbol, path = %path.display(), "Cached locally");
