@@ -134,11 +134,6 @@ fn build_dataframe_from_quotes(quotes: &[yahoo::Quote], symbol: &str) -> Result<
         anyhow::bail!("All quotes for {symbol} had invalid timestamps");
     }
 
-    let date_col = Column::new_scalar(
-        PlSmallStr::from("date"),
-        Scalar::null(DataType::Date),
-        dates.len(),
-    );
     let mut df = df! {
         "open" => &open,
         "high" => &high,
@@ -148,10 +143,8 @@ fn build_dataframe_from_quotes(quotes: &[yahoo::Quote], symbol: &str) -> Result<
         "volume" => &volume,
     }?;
 
-    // Replace placeholder date column with actual dates
     let date_series =
         DateChunked::from_naive_date(PlSmallStr::from("date"), dates.iter().copied()).into_column();
-    drop(date_col);
     df = df.hstack(&[date_series])?;
 
     // Reorder so date is first
