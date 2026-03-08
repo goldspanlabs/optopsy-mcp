@@ -433,6 +433,39 @@ pub struct WalkForwardParams {
     #[garde(skip)]
     pub exit_signal: Option<SignalSpec>,
 
+    // ── Entry filters ─────────────────────────────────────────────────────
+    /// Minimum absolute net premium (debit or credit) at entry, in dollars per share.
+    #[serde(default)]
+    #[garde(inner(range(min = 0.0)))]
+    pub min_net_premium: Option<f64>,
+    /// Maximum absolute net premium at entry, in dollars per share.
+    #[serde(default)]
+    #[garde(inner(range(min = 0.0)))]
+    pub max_net_premium: Option<f64>,
+    /// Minimum signed net position delta at entry.
+    #[serde(default)]
+    #[garde(skip)]
+    pub min_net_delta: Option<f64>,
+    /// Maximum signed net position delta at entry.
+    #[serde(default)]
+    #[garde(skip)]
+    pub max_net_delta: Option<f64>,
+    /// Minimum calendar days between consecutive position entries (cooldown / stagger).
+    #[serde(default)]
+    #[garde(inner(range(min = 1)))]
+    pub min_days_between_entries: Option<i32>,
+    /// Filter expirations by calendar type: `Any` (default), `Weekly` (Fridays only),
+    /// or `Monthly` (third Friday of the month only).
+    #[serde(default)]
+    #[garde(skip)]
+    pub expiration_filter: Option<ExpirationFilter>,
+
+    // ── Exit filters ──────────────────────────────────────────────────────
+    /// Exit the position when the absolute net position delta exceeds this value.
+    #[serde(default)]
+    #[garde(inner(range(min = 0.0)))]
+    pub exit_net_delta: Option<f64>,
+
     /// Symbol to analyze (required if multiple symbols loaded)
     #[serde(default)]
     #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
@@ -1236,7 +1269,7 @@ impl OptopsyServer {
     /// **Prerequisites**: None — data is auto-loaded from cache when you pass a symbol
     ///
     /// **How it works**:
-    ///   1. Sorts data by date, slides rolling train/test windows across the full date range
+    ///   1. Slides rolling train/test windows across the full date range
     ///   2. For each window: runs backtest on train slice, then on test slice
     ///   3. Collects per-window train/test metrics (Sharpe, P&L, trades, win rate)
     ///   4. Computes aggregate statistics: avg test Sharpe, % profitable windows, Sharpe decay
@@ -1308,13 +1341,13 @@ impl OptopsyServer {
             exit_signal: params.exit_signal,
             ohlcv_path,
             cross_ohlcv_paths,
-            min_net_premium: None,
-            max_net_premium: None,
-            min_net_delta: None,
-            max_net_delta: None,
-            min_days_between_entries: None,
-            expiration_filter: ExpirationFilter::default(),
-            exit_net_delta: None,
+            min_net_premium: params.min_net_premium,
+            max_net_premium: params.max_net_premium,
+            min_net_delta: params.min_net_delta,
+            max_net_delta: params.max_net_delta,
+            min_days_between_entries: params.min_days_between_entries,
+            expiration_filter: params.expiration_filter.unwrap_or_default(),
+            exit_net_delta: params.exit_net_delta,
         };
         backtest_params
             .validate()

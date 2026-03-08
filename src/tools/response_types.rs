@@ -351,6 +351,8 @@ pub struct WalkForwardWindowResult {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WalkForwardAggregate {
     pub total_windows: usize,
+    /// Number of windows where the backtest failed and were excluded from aggregates
+    pub failed_windows: usize,
     pub avg_test_sharpe: f64,
     pub std_test_sharpe: f64,
     pub avg_test_pnl: f64,

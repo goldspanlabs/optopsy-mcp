@@ -759,6 +759,7 @@ pub fn format_walk_forward(
         windows,
         aggregate: WalkForwardAggregate {
             total_windows: agg.total_windows,
+            failed_windows: agg.failed_windows,
             avg_test_sharpe: agg.avg_test_sharpe,
             std_test_sharpe: agg.std_test_sharpe,
             avg_test_pnl: agg.avg_test_pnl,
