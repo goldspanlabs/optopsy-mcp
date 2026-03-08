@@ -354,6 +354,7 @@ fn default_test_days() -> i32 {
     63
 }
 
+
 fn default_num_permutations() -> usize {
     100
 }
@@ -475,6 +476,7 @@ pub struct WalkForwardParams {
     #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
     pub symbol: Option<String>,
 }
+
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct PermutationTestParams {
