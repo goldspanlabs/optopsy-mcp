@@ -13,7 +13,8 @@ use super::response_types::{
     BacktestDataQuality, BacktestParamsSummary, BacktestResponse, CompareResponse,
     CompareStrategyEntry, DateRange, LoadDataResponse, OosValidation, PermutationTestResponse,
     PriceBar, RawPricesResponse, StrategiesResponse, StrategyInfo, SweepResponse, TradeStat,
-    TradeSummary, WalkForwardAggregate, WalkForwardResponse, WalkForwardWindowResult,
+    TradeSummary, UnderlyingPrice, WalkForwardAggregate, WalkForwardResponse,
+    WalkForwardWindowResult,
 };
 
 fn assess_sharpe(sharpe: f64) -> &'static str {
@@ -239,7 +240,11 @@ fn backtest_key_findings(
 }
 
 #[allow(clippy::too_many_lines)]
-pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> BacktestResponse {
+pub fn format_backtest(
+    result: BacktestResult,
+    params: &BacktestParams,
+    underlying_prices: Vec<UnderlyingPrice>,
+) -> BacktestResponse {
     let m = &result.metrics;
     let trade_summary = compute_trade_summary(&result.trade_log, m);
     let data_quality = build_backtest_quality(&result.quality);
@@ -291,6 +296,7 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
             trade_summary,
             trade_log: result.trade_log,
             data_quality,
+            underlying_prices,
             suggested_next_steps: vec![
                     "[RETRY] Widen DTE range or delta targets to capture more entry opportunities".to_string(),
                 format!(
@@ -382,6 +388,7 @@ pub fn format_backtest(result: BacktestResult, params: &BacktestParams) -> Backt
         trade_summary,
         trade_log: result.trade_log,
         data_quality,
+        underlying_prices,
         suggested_next_steps,
     }
 }
@@ -1375,7 +1382,7 @@ mod tests {
         ];
         let result = make_backtest_result(350.0, 1.8, 0.05, 3.0, 2.0, trades, vec![]);
         let params = make_backtest_params("short_put", 100_000.0);
-        let response = format_backtest(result, &params);
+        let response = format_backtest(result, &params, vec![]);
 
         assert!(response.summary.contains("excellent"));
         assert_eq!(response.assessment, "excellent");
@@ -1401,7 +1408,7 @@ mod tests {
         ];
         let result = make_backtest_result(-250.0, -0.5, 0.25, 0.3, -0.2, trades, vec![]);
         let params = make_backtest_params("long_call", 10_000.0);
-        let response = format_backtest(result, &params);
+        let response = format_backtest(result, &params, vec![]);
 
         assert!(response.summary.contains("poor"));
         assert_eq!(response.assessment, "poor");
@@ -1429,7 +1436,7 @@ mod tests {
         ];
         let result = make_backtest_result(300.0, 1.2, 0.02, 999.99, 5.0, trades, vec![]);
         let params = make_backtest_params("bull_call_spread", 50_000.0);
-        let response = format_backtest(result, &params);
+        let response = format_backtest(result, &params, vec![]);
 
         assert_eq!(response.assessment, "strong");
         // Capped profit factor (999.99) should show no losing trades
@@ -1446,7 +1453,7 @@ mod tests {
     fn format_backtest_zero_trades() {
         let result = make_backtest_result(0.0, 0.0, 0.0, 0.0, 0.0, vec![], vec![]);
         let params = make_backtest_params("iron_condor", 100_000.0);
-        let response = format_backtest(result, &params);
+        let response = format_backtest(result, &params, vec![]);
 
         assert!(response.summary.contains("no trades"));
         assert_eq!(response.assessment, "N/A");

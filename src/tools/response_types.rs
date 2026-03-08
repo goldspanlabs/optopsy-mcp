@@ -23,6 +23,13 @@ pub struct BacktestDataQuality {
     pub warnings: Vec<String>,
 }
 
+/// A date + close price point for underlying price overlay.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct UnderlyingPrice {
+    pub date: String,
+    pub close: f64,
+}
+
 /// AI-enriched response for `run_backtest`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BacktestResponse {
@@ -35,6 +42,9 @@ pub struct BacktestResponse {
     pub trade_summary: TradeSummary,
     pub trade_log: Vec<TradeRecord>,
     pub data_quality: BacktestDataQuality,
+    /// Underlying close prices for the backtest period (empty if OHLCV data not cached)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub underlying_prices: Vec<UnderlyingPrice>,
     pub suggested_next_steps: Vec<String>,
 }
 

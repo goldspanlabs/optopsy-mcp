@@ -185,6 +185,44 @@ impl OptopsyServer {
     }
 }
 
+/// Load close prices from a cached OHLCV parquet file for chart overlay.
+fn load_underlying_closes(path: &std::path::Path) -> Vec<tools::response_types::UnderlyingPrice> {
+    const EPOCH_DAYS_CE: i32 = 719_163;
+
+    let args = ScanArgsParquet::default();
+    let path_str = path.to_string_lossy();
+    let Ok(lf) = LazyFrame::scan_parquet(path_str.as_ref().into(), args) else {
+        return vec![];
+    };
+    let Ok(df) = lf
+        .select([col("date"), col("close")])
+        .sort(["date"], SortMultipleOptions::default())
+        .collect()
+    else {
+        return vec![];
+    };
+
+    let Ok(dates) = df.column("date").map(|c| c.date().unwrap().clone()) else {
+        return vec![];
+    };
+    let Ok(closes) = df.column("close").map(|c| c.f64().unwrap().clone()) else {
+        return vec![];
+    };
+
+    let mut prices = Vec::with_capacity(df.height());
+    for i in 0..df.height() {
+        if let (Some(days), Some(close)) = (dates.phys.get(i), closes.get(i)) {
+            if let Some(date) = chrono::NaiveDate::from_num_days_from_ce_opt(days + EPOCH_DAYS_CE) {
+                prices.push(tools::response_types::UnderlyingPrice {
+                    date: date.format("%Y-%m-%d").to_string(),
+                    close,
+                });
+            }
+        }
+    }
+    prices
+}
+
 /// Validate that `end_date >= start_date` when both are present.
 /// Signature uses `&Option<String>` because garde's `custom()` passes `&self.field`.
 #[allow(clippy::ref_option)]
@@ -1260,13 +1298,31 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
+        // Try to load underlying OHLCV close prices from cache for chart overlay
+        let underlying_prices = match self.cache.ensure_local_for(&symbol, "prices").await {
+            Ok(path) => {
+                // Read on blocking thread since it's Polars I/O
+                let prices = tokio::task::spawn_blocking(
+                    move || -> Vec<tools::response_types::UnderlyingPrice> {
+                        load_underlying_closes(&path)
+                    },
+                )
+                .await
+                .unwrap_or_default();
+                prices
+            }
+            Err(_) => vec![],
+        };
+
         // Run backtest on a blocking thread — the engine performs synchronous
         // Polars I/O (scan_parquet) which conflicts with the tokio runtime.
-        tokio::task::spawn_blocking(move || tools::backtest::execute(&df, &backtest_params))
-            .await
-            .map_err(|e| format!("Backtest task panicked: {e}"))?
-            .map(Json)
-            .map_err(|e| format!("Error: {e}"))
+        tokio::task::spawn_blocking(move || {
+            tools::backtest::execute(&df, &backtest_params, underlying_prices)
+        })
+        .await
+        .map_err(|e| format!("Backtest task panicked: {e}"))?
+        .map(Json)
+        .map_err(|e| format!("Error: {e}"))
     }
 
     /// Permutation test for statistical significance of backtest results.

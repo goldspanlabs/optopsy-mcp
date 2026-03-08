@@ -4,9 +4,13 @@ use polars::prelude::*;
 use crate::engine::types::BacktestParams;
 
 use super::ai_format;
-use super::response_types::BacktestResponse;
+use super::response_types::{BacktestResponse, UnderlyingPrice};
 
-pub fn execute(df: &DataFrame, params: &BacktestParams) -> Result<BacktestResponse> {
+pub fn execute(
+    df: &DataFrame,
+    params: &BacktestParams,
+    underlying_prices: Vec<UnderlyingPrice>,
+) -> Result<BacktestResponse> {
     let start = std::time::Instant::now();
     let result = crate::engine::core::run_backtest(df, params)?;
     let elapsed = start.elapsed();
@@ -15,5 +19,9 @@ pub fn execute(df: &DataFrame, params: &BacktestParams) -> Result<BacktestRespon
         trades = result.trade_count,
         "Backtest engine finished"
     );
-    Ok(ai_format::format_backtest(result, params))
+    Ok(ai_format::format_backtest(
+        result,
+        params,
+        underlying_prices,
+    ))
 }
