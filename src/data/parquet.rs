@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use chrono::NaiveDate;
+use chrono::{NaiveDate, NaiveDateTime};
 use polars::prelude::*;
 use std::path::PathBuf;
 
@@ -151,13 +151,34 @@ impl DataStore for ParquetStore {
         let min = date_col.min_reduce()?;
         let max = date_col.max_reduce()?;
 
-        let min_str = format!("{:?}", min.value());
-        let max_str = format!("{:?}", max.value());
-
-        let start = NaiveDate::parse_from_str(min_str.trim_matches('"'), "%Y-%m-%d")?;
-        let end = NaiveDate::parse_from_str(max_str.trim_matches('"'), "%Y-%m-%d")?;
+        let start = scalar_to_date(&min)?;
+        let end = scalar_to_date(&max)?;
 
         Ok((start, end))
+    }
+}
+
+/// Extract a `NaiveDate` from a Polars `Scalar`, handling Date, Datetime, and String types.
+fn scalar_to_date(scalar: &Scalar) -> Result<NaiveDate> {
+    match scalar.value() {
+        AnyValue::Date(days) => NaiveDate::from_num_days_from_ce_opt(*days + 719_163)
+            .ok_or_else(|| anyhow::anyhow!("Invalid date value: {days}")),
+        AnyValue::Datetime(micros, tu, _) => {
+            let micros_per_sec = match tu {
+                TimeUnit::Microseconds => 1_000_000i64,
+                TimeUnit::Milliseconds => 1_000i64,
+                TimeUnit::Nanoseconds => 1_000_000_000i64,
+            };
+            let secs = micros / micros_per_sec;
+            let nsecs = ((micros % micros_per_sec).abs() * (1_000_000_000 / micros_per_sec)) as u32;
+            NaiveDateTime::from_timestamp_opt(secs, nsecs)
+                .map(|dt| dt.date())
+                .ok_or_else(|| anyhow::anyhow!("Invalid datetime value: {micros}"))
+        }
+        AnyValue::String(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d")
+            .or_else(|_| NaiveDate::parse_from_str(&s[..10.min(s.len())], "%Y-%m-%d"))
+            .context("Failed to parse date string"),
+        other => anyhow::bail!("Unexpected scalar type for date: {other:?}"),
     }
 }
 
