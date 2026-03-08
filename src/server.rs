@@ -22,7 +22,7 @@ use crate::tools;
 use crate::tools::response_types::{
     BacktestResponse, BuildSignalResponse, CheckCacheResponse, CompareResponse,
     ConstructSignalResponse, FetchResponse, RawPricesResponse, StatusResponse, StrategiesResponse,
-    SuggestResponse, SweepResponse,
+    SuggestResponse, SweepResponse, WalkForwardResponse,
 };
 use crate::tools::signals::SignalsResponse;
 
@@ -344,6 +344,99 @@ pub struct RunBacktestParams {
     #[serde(default)]
     #[garde(inner(range(min = 0.0)))]
     pub exit_net_delta: Option<f64>,
+}
+
+fn default_train_days() -> i32 {
+    252
+}
+
+fn default_test_days() -> i32 {
+    63
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema, Validate)]
+pub struct WalkForwardParams {
+    /// The option strategy name (e.g. `short_put`, `iron_condor`).
+    #[garde(length(min = 1))]
+    pub strategy: String,
+    /// Per-leg delta targets (optional — uses strategy-specific defaults if omitted)
+    #[serde(default)]
+    #[garde(inner(length(min = 1)))]
+    pub leg_deltas: Option<Vec<TargetRange>>,
+    /// Entry DTE range: { target, min, max } (default: { target: 45, min: 30, max: 60 })
+    #[serde(default = "default_entry_dte")]
+    #[garde(dive)]
+    pub entry_dte: DteRange,
+    /// DTE at exit (default: 0 — hold to expiration)
+    #[serde(default = "default_exit_dte")]
+    #[garde(range(min = 0), custom(validate_exit_dte_lt_entry_min(&self.entry_dte)))]
+    pub exit_dte: i32,
+    /// Slippage model (default: Spread)
+    #[serde(default)]
+    #[garde(dive)]
+    pub slippage: Slippage,
+    /// Commission structure
+    #[serde(default)]
+    #[garde(dive)]
+    pub commission: Option<Commission>,
+    /// Minimum bid/ask threshold (default: 0.05)
+    #[serde(default = "default_min_bid_ask")]
+    #[garde(range(min = 0.0))]
+    pub min_bid_ask: f64,
+    /// Stop loss threshold
+    #[garde(inner(range(min = 0.0)))]
+    pub stop_loss: Option<f64>,
+    /// Take profit threshold
+    #[garde(inner(range(min = 0.0)))]
+    pub take_profit: Option<f64>,
+    /// Maximum days to hold
+    #[garde(inner(range(min = 1)))]
+    pub max_hold_days: Option<i32>,
+    /// Starting capital (default: 10000)
+    #[serde(default = "default_capital")]
+    #[garde(range(min = 0.01))]
+    pub capital: f64,
+    /// Number of contracts per trade (default: 1)
+    #[serde(default = "default_quantity")]
+    #[garde(range(min = 1))]
+    pub quantity: i32,
+    /// Contract multiplier (default: 100)
+    #[serde(default = "default_multiplier")]
+    #[garde(range(min = 1))]
+    pub multiplier: i32,
+    /// Maximum concurrent positions (default: 1)
+    #[serde(default = "default_max_positions")]
+    #[garde(range(min = 1))]
+    pub max_positions: i32,
+    /// Trade selection method
+    #[garde(skip)]
+    pub selector: Option<TradeSelector>,
+
+    // ── Walk-forward specific ──────────────────────────────────────────────
+    /// Training window in calendar days (default: 252, ~1 year)
+    #[serde(default = "default_train_days")]
+    #[garde(range(min = 1))]
+    pub train_days: i32,
+    /// Test window in calendar days (default: 63, ~1 quarter)
+    #[serde(default = "default_test_days")]
+    #[garde(range(min = 1))]
+    pub test_days: i32,
+    /// Step size in calendar days (default: `test_days` — non-overlapping windows)
+    #[garde(inner(range(min = 1)))]
+    pub step_days: Option<i32>,
+
+    // ── Signals ────────────────────────────────────────────────────────────
+    /// Entry signal — only open trades on dates where this TA signal fires.
+    #[garde(skip)]
+    pub entry_signal: Option<SignalSpec>,
+    /// Exit signal — close open positions on dates where this TA signal fires.
+    #[garde(skip)]
+    pub exit_signal: Option<SignalSpec>,
+
+    /// Symbol to analyze (required if multiple symbols loaded)
+    #[serde(default)]
+    #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
+    pub symbol: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema, Validate)]
@@ -1134,6 +1227,110 @@ impl OptopsyServer {
             .map_err(|e| format!("Sweep task panicked: {e}"))?
             .map(Json)
             .map_err(|e| format!("Error: {e}"))
+    }
+
+    /// Rolling walk-forward validation: train on window 1, test on window 2, slide forward, repeat.
+    ///
+    /// **When to use**: After finding promising parameters via `run_backtest` or `parameter_sweep`,
+    ///   validate that the strategy performs consistently across multiple time periods
+    /// **Prerequisites**: None — data is auto-loaded from cache when you pass a symbol
+    ///
+    /// **How it works**:
+    ///   1. Sorts data by date, slides rolling train/test windows across the full date range
+    ///   2. For each window: runs backtest on train slice, then on test slice
+    ///   3. Collects per-window train/test metrics (Sharpe, P&L, trades, win rate)
+    ///   4. Computes aggregate statistics: avg test Sharpe, % profitable windows, Sharpe decay
+    ///
+    /// **Key metrics**:
+    ///   - `avg_train_test_sharpe_decay`: high values (>0.5) indicate overfitting
+    ///   - `pct_profitable_windows`: % of test windows with positive P&L
+    ///   - `std_test_sharpe`: lower = more consistent performance
+    ///
+    /// **Time to run**: Proportional to number of windows × backtest time per window
+    #[tool(name = "walk_forward", annotations(read_only_hint = true))]
+    async fn walk_forward(
+        &self,
+        Parameters(params): Parameters<WalkForwardParams>,
+    ) -> Result<Json<WalkForwardResponse>, String> {
+        params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
+
+        let strategy = params.strategy;
+
+        tracing::info!(
+            strategy = strategy.as_str(),
+            symbol = params.symbol.as_deref().unwrap_or("auto"),
+            train_days = params.train_days,
+            test_days = params.test_days,
+            step_days = ?params.step_days,
+            "Walk-forward request received"
+        );
+
+        let (symbol, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
+
+        // Auto-fetch OHLCV data if signals are requested
+        let ohlcv_path = if params.entry_signal.is_some() || params.exit_signal.is_some() {
+            Some(self.ensure_ohlcv(&symbol).await?)
+        } else {
+            None
+        };
+
+        let cross_ohlcv_paths = self
+            .resolve_cross_ohlcv_paths(
+                params.entry_signal.as_ref(),
+                params.exit_signal.as_ref(),
+                &[],
+                &[],
+            )
+            .await?;
+
+        let leg_deltas = resolve_leg_deltas(params.leg_deltas, &strategy)?;
+
+        let backtest_params = BacktestParams {
+            strategy: strategy.clone(),
+            leg_deltas,
+            entry_dte: params.entry_dte,
+            exit_dte: params.exit_dte,
+            slippage: params.slippage,
+            commission: params.commission,
+            min_bid_ask: params.min_bid_ask,
+            stop_loss: params.stop_loss,
+            take_profit: params.take_profit,
+            max_hold_days: params.max_hold_days,
+            capital: params.capital,
+            quantity: params.quantity,
+            multiplier: params.multiplier,
+            max_positions: params.max_positions,
+            selector: params.selector.unwrap_or_default(),
+            adjustment_rules: vec![],
+            entry_signal: params.entry_signal,
+            exit_signal: params.exit_signal,
+            ohlcv_path,
+            cross_ohlcv_paths,
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: None,
+            max_net_delta: None,
+            min_days_between_entries: None,
+            expiration_filter: ExpirationFilter::default(),
+            exit_net_delta: None,
+        };
+        backtest_params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
+
+        let train_days = params.train_days;
+        let test_days = params.test_days;
+        let step_days = params.step_days;
+
+        tokio::task::spawn_blocking(move || {
+            tools::walk_forward::execute(&df, &backtest_params, train_days, test_days, step_days)
+        })
+        .await
+        .map_err(|e| format!("Walk-forward task panicked: {e}"))?
+        .map(Json)
+        .map_err(|e| format!("Error: {e}"))
     }
 
     /// Run multiple strategies in parallel and rank by performance metrics.

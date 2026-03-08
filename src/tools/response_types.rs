@@ -329,6 +329,48 @@ pub struct OosValidation {
     pub results: Vec<OosResult>,
 }
 
+/// Per-window result from walk-forward analysis
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct WalkForwardWindowResult {
+    pub window_number: usize,
+    pub train_start: String,
+    pub train_end: String,
+    pub test_start: String,
+    pub test_end: String,
+    pub train_sharpe: f64,
+    pub test_sharpe: f64,
+    pub train_pnl: f64,
+    pub test_pnl: f64,
+    pub train_trades: usize,
+    pub test_trades: usize,
+    pub train_win_rate: f64,
+    pub test_win_rate: f64,
+}
+
+/// Aggregate statistics across all walk-forward windows
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct WalkForwardAggregate {
+    pub total_windows: usize,
+    pub avg_test_sharpe: f64,
+    pub std_test_sharpe: f64,
+    pub avg_test_pnl: f64,
+    /// Percentage of test windows with positive P&L
+    pub pct_profitable_windows: f64,
+    /// Average difference between train and test Sharpe (higher = more overfitting)
+    pub avg_train_test_sharpe_decay: f64,
+    pub total_test_pnl: f64,
+}
+
+/// AI-enriched response for `walk_forward`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct WalkForwardResponse {
+    pub summary: String,
+    pub windows: Vec<WalkForwardWindowResult>,
+    pub aggregate: WalkForwardAggregate,
+    pub key_findings: Vec<String>,
+    pub suggested_next_steps: Vec<String>,
+}
+
 /// AI-enriched response for `parameter_sweep`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SweepResponse {
