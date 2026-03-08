@@ -592,16 +592,16 @@ fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
             threshold,
         } => Box::new(DrawdownBelow {
             column: column.clone(),
-            window: *window,
+            window: (*window).max(1),
             threshold: *threshold,
         }),
         SignalSpec::ConsecutiveUp { column, count } => Box::new(ConsecutiveUp {
             column: column.clone(),
-            count: *count,
+            count: (*count).max(1),
         }),
         SignalSpec::ConsecutiveDown { column, count } => Box::new(ConsecutiveDown {
             column: column.clone(),
-            count: *count,
+            count: (*count).max(1),
         }),
         SignalSpec::RateOfChange {
             column,
@@ -609,7 +609,7 @@ fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
             threshold,
         } => Box::new(RateOfChange {
             column: column.clone(),
-            period: *period,
+            period: (*period).max(1),
             threshold: *threshold,
         }),
 
