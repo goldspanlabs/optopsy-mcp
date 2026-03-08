@@ -139,8 +139,8 @@ fn fuzzy_search(prompt: &str) -> (Vec<SignalCandidate>, bool) {
                 else if name_lower.contains(token) {
                     score += 2;
                 }
-                // +1 for substring in description
-                if desc_lower.contains(token) {
+                // +1 for substring in description only
+                else if desc_lower.contains(token) {
                     score += 1;
                 }
             }
