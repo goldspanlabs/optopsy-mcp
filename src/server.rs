@@ -1874,7 +1874,7 @@ impl ServerHandler for OptopsyServer {
             server_info: Implementation {
                 name: "optopsy-mcp".into(),
                 title: Some("Optopsy Options Backtesting Engine".into()),
-                version: "0.1.0".into(),
+                version: env!("CARGO_PKG_VERSION").into(),
                 description: Some("Event-driven options backtesting engine with 32 strategies, realistic position management, and AI-compatible analysis tools".into()),
                 icons: None,
                 website_url: None,
