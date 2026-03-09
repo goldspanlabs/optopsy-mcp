@@ -75,13 +75,13 @@ fn build_price_table_fast(
                 Some("put") => OptionType::Put,
                 _ => continue,
             };
-            let quote_days = q_vals[i].div_euclid(micros_per_day) + 719_163;
+            let quote_days = q_vals[i].div_euclid(micros_per_day) + i64::from(EPOCH_DAYS_CE_OFFSET);
             let quote_days_i32 = i32::try_from(quote_days).map_err(|_| {
                 anyhow::anyhow!("quote_datetime value {quote_days} overflows i32 (row {i})")
             })?;
             let quote_date = NaiveDate::from_num_days_from_ce_opt(quote_days_i32)
                 .ok_or_else(|| anyhow::anyhow!("Invalid quote_datetime value at row {i}"))?;
-            let exp_days = i64::from(e_vals[i]) + 719_163_i64;
+            let exp_days = i64::from(e_vals[i]) + i64::from(EPOCH_DAYS_CE_OFFSET);
             let exp_days_i32 = i32::try_from(exp_days).map_err(|_| {
                 anyhow::anyhow!("expiration value {exp_days} overflows i32 (row {i})")
             })?;
@@ -127,13 +127,13 @@ fn build_price_table_fast(
                 "put" => OptionType::Put,
                 _ => continue,
             };
-            let qv_days = qv.div_euclid(micros_per_day) + 719_163;
+            let qv_days = qv.div_euclid(micros_per_day) + i64::from(EPOCH_DAYS_CE_OFFSET);
             let qv_days_i32 = i32::try_from(qv_days).map_err(|_| {
                 anyhow::anyhow!("quote_datetime value {qv_days} overflows i32 (row {row_idx})")
             })?;
             let quote_date = NaiveDate::from_num_days_from_ce_opt(qv_days_i32)
                 .ok_or_else(|| anyhow::anyhow!("Invalid quote_datetime value (row {row_idx})"))?;
-            let exp_date = NaiveDate::from_num_days_from_ce_opt(ev + 719_163)
+            let exp_date = NaiveDate::from_num_days_from_ce_opt(ev + EPOCH_DAYS_CE_OFFSET)
                 .ok_or_else(|| anyhow::anyhow!("Invalid expiration value (row {row_idx})"))?;
 
             table.insert(
@@ -206,7 +206,7 @@ pub(crate) fn extract_date_from_column(col: &Column, idx: usize) -> Result<Naive
             match days {
                 Some(d) => {
                     let date = chrono::NaiveDate::from_num_days_from_ce_opt(
-                        d + 719_163, // epoch offset: days from CE to 1970-01-01
+                        d + EPOCH_DAYS_CE_OFFSET, // epoch offset: days from CE to 1970-01-01
                     )
                     .ok_or_else(|| anyhow::anyhow!("Invalid date at index {idx}"))?;
                     Ok(date)

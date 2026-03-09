@@ -4,6 +4,7 @@ use polars::prelude::*;
 use std::path::PathBuf;
 
 use super::DataStore;
+use crate::engine::types::EPOCH_DAYS_CE_OFFSET;
 
 /// The canonical timestamp column name used internally after normalization.
 pub const QUOTE_DATETIME_COL: &str = "quote_datetime";
@@ -156,7 +157,7 @@ impl DataStore for ParquetStore {
 /// Extract a `NaiveDate` from a Polars `Scalar`, handling Date, Datetime, and String types.
 fn scalar_to_date(scalar: &Scalar) -> Result<NaiveDate> {
     match scalar.value() {
-        AnyValue::Date(days) => NaiveDate::from_num_days_from_ce_opt(*days + 719_163)
+        AnyValue::Date(days) => NaiveDate::from_num_days_from_ce_opt(*days + EPOCH_DAYS_CE_OFFSET)
             .ok_or_else(|| anyhow::anyhow!("Invalid date value: {days}")),
         AnyValue::Datetime(ts_value, tu, _) => {
             let units_per_sec = match tu {

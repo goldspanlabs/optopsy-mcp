@@ -7,8 +7,10 @@ use crate::data::cache::CachedStore;
 use super::ai_format;
 use super::response_types::{DateRange, PriceBar, RawPricesResponse};
 
+use crate::engine::types::EPOCH_DAYS_CE_OFFSET;
+
 /// Epoch offset: days from CE to 1970-01-01 (matches `event_sim::extract_date_from_column`).
-const EPOCH_DAYS_CE: i32 = 719_163;
+const EPOCH_DAYS_CE: i32 = EPOCH_DAYS_CE_OFFSET;
 
 pub fn execute(
     df: &DataFrame,

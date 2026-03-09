@@ -212,7 +212,8 @@ impl OptopsyServer {
 
 /// Load close prices from a cached OHLCV parquet file for chart overlay.
 fn load_underlying_closes(path: &std::path::Path) -> Vec<tools::response_types::UnderlyingPrice> {
-    const EPOCH_DAYS_CE: i32 = 719_163;
+    use crate::engine::types::EPOCH_DAYS_CE_OFFSET;
+    const EPOCH_DAYS_CE: i32 = EPOCH_DAYS_CE_OFFSET;
 
     let args = ScanArgsParquet::default();
     let path_str = path.to_string_lossy();

@@ -8,6 +8,12 @@ use std::collections::HashMap;
 
 use crate::signals::registry::SignalSpec;
 
+/// Days-from-epoch offset: Polars stores `Date` as days since 1970-01-01 (Unix epoch).
+/// `chrono::NaiveDate::from_num_days_from_ce` counts from day 1 CE, which is day 719 163
+/// relative to the Unix epoch. Add this constant to a Polars date value before passing
+/// it to `from_num_days_from_ce_opt`.
+pub const EPOCH_DAYS_CE_OFFSET: i32 = 719_163;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Direction {
