@@ -81,8 +81,12 @@ fn build_price_table_fast(
             })?;
             let quote_date = NaiveDate::from_num_days_from_ce_opt(quote_days_i32)
                 .ok_or_else(|| anyhow::anyhow!("Invalid quote_datetime value at row {i}"))?;
-            let exp_date = NaiveDate::from_num_days_from_ce_opt(e_vals[i] + 719_163)
-                .ok_or_else(|| anyhow::anyhow!("Invalid expiration value"))?;
+            let exp_days = i64::from(e_vals[i]) + 719_163_i64;
+            let exp_days_i32 = i32::try_from(exp_days).map_err(|_| {
+                anyhow::anyhow!("expiration value {exp_days} overflows i32 (row {i})")
+            })?;
+            let exp_date = NaiveDate::from_num_days_from_ce_opt(exp_days_i32)
+                .ok_or_else(|| anyhow::anyhow!("Invalid expiration value at row {i}"))?;
 
             table.insert(
                 (quote_date, exp_date, OrderedFloat(s_vals[i]), ot),
