@@ -88,37 +88,63 @@ impl DataStore for ParquetStore {
         end_date: Option<NaiveDate>,
     ) -> Result<DataFrame> {
         let path_str = self.path.to_string_lossy().to_string();
+        let start_dt = start_date.and_then(|d| d.and_hms_opt(0, 0, 0));
+        let end_dt = end_date.and_then(|d| d.and_hms_opt(23, 59, 59));
 
-        // Parquet I/O is synchronous and blocking, so run it on a blocking thread pool
+        // Scan lazily so Polars can push date predicates down to the Parquet
+        // row-group level, avoiding loading data that will be filtered out.
         let df = tokio::task::spawn_blocking(move || {
-            LazyFrame::scan_parquet(path_str.as_str().into(), ScanArgsParquet::default())?
-                .collect()
-                .context("Failed to read Parquet file")
+            let mut lazy =
+                LazyFrame::scan_parquet(path_str.as_str().into(), ScanArgsParquet::default())?;
+
+            // Detect and normalize the date column in the lazy pipeline
+            let schema = lazy.collect_schema()?;
+            let (src_col, src_dtype) = if let Some(dt) = schema.get(QUOTE_DATETIME_COL) {
+                (QUOTE_DATETIME_COL, dt.clone())
+            } else if let Some(dt) = schema.get("quote_date") {
+                ("quote_date", dt.clone())
+            } else {
+                // No recognized date column — just collect as-is
+                return lazy.collect().context("Failed to read Parquet file");
+            };
+
+            // Normalize to Datetime in the lazy pipeline
+            lazy = match &src_dtype {
+                DataType::Date => lazy.with_column(
+                    col(src_col)
+                        .cast(DataType::Datetime(TimeUnit::Microseconds, None))
+                        .alias(QUOTE_DATETIME_COL),
+                ),
+                DataType::Datetime(_, _) if src_col != QUOTE_DATETIME_COL => {
+                    lazy.rename([src_col], [QUOTE_DATETIME_COL], true)
+                }
+                DataType::String => lazy.with_column(
+                    col(src_col)
+                        .cast(DataType::Date)
+                        .cast(DataType::Datetime(TimeUnit::Microseconds, None))
+                        .alias(QUOTE_DATETIME_COL),
+                ),
+                _ => lazy, // already Datetime with correct name
+            };
+
+            // Apply date filters in the lazy pipeline for predicate pushdown
+            if let Some(start) = start_dt {
+                lazy = lazy.filter(col(QUOTE_DATETIME_COL).gt_eq(lit(start)));
+            }
+            if let Some(end) = end_dt {
+                lazy = lazy.filter(col(QUOTE_DATETIME_COL).lt_eq(lit(end)));
+            }
+
+            // Drop original column if it was renamed/aliased and a duplicate remains
+            let df = lazy.collect().context("Failed to read Parquet file")?;
+            if src_col != QUOTE_DATETIME_COL && df.schema().contains(src_col) {
+                df.drop(src_col).context("Failed to drop original date column")
+            } else {
+                Ok(df)
+            }
         })
         .await
         .context("Parquet read task panicked")??;
-
-        // Normalize to quote_datetime
-        let mut df = normalize_quote_datetime(df)?;
-
-        // Apply date filters if quote_datetime exists
-        if df.schema().contains(QUOTE_DATETIME_COL) && (start_date.is_some() || end_date.is_some())
-        {
-            let start_dt = start_date.and_then(|d| d.and_hms_opt(0, 0, 0));
-            let end_dt = end_date.and_then(|d| d.and_hms_opt(23, 59, 59));
-            df = tokio::task::spawn_blocking(move || {
-                let mut lazy = df.lazy();
-                if let Some(start) = start_dt {
-                    lazy = lazy.filter(col(QUOTE_DATETIME_COL).gt_eq(lit(start)));
-                }
-                if let Some(end) = end_dt {
-                    lazy = lazy.filter(col(QUOTE_DATETIME_COL).lt_eq(lit(end)));
-                }
-                lazy.collect()
-            })
-            .await
-            .context("Parquet date filter task panicked")??;
-        }
 
         Ok(df)
     }
