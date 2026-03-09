@@ -77,9 +77,7 @@ fn build_price_table_fast(
             };
             let quote_days = q_vals[i].div_euclid(micros_per_day) + 719_163;
             let quote_days_i32 = i32::try_from(quote_days).map_err(|_| {
-                anyhow::anyhow!(
-                    "quote_datetime value {quote_days} overflows i32 (row {i})"
-                )
+                anyhow::anyhow!("quote_datetime value {quote_days} overflows i32 (row {i})")
             })?;
             let quote_date = NaiveDate::from_num_days_from_ce_opt(quote_days_i32)
                 .ok_or_else(|| anyhow::anyhow!("Invalid quote_datetime value at row {i}"))?;
@@ -127,9 +125,7 @@ fn build_price_table_fast(
             };
             let qv_days = qv.div_euclid(micros_per_day) + 719_163;
             let qv_days_i32 = i32::try_from(qv_days).map_err(|_| {
-                anyhow::anyhow!(
-                    "quote_datetime value {qv_days} overflows i32 (row {row_idx})"
-                )
+                anyhow::anyhow!("quote_datetime value {qv_days} overflows i32 (row {row_idx})")
             })?;
             let quote_date = NaiveDate::from_num_days_from_ce_opt(qv_days_i32)
                 .ok_or_else(|| anyhow::anyhow!("Invalid quote_datetime value"))?;
@@ -359,11 +355,7 @@ pub fn find_entry_candidates(
 
         let mut skip_row = false;
         for (i, leg_def) in strategy_def.legs.iter().enumerate() {
-            let Some(strike) = combined
-                .column(&format!("strike_{i}"))?
-                .f64()?
-                .get(row_idx)
-            else {
+            let Some(strike) = combined.column(&format!("strike_{i}"))?.f64()?.get(row_idx) else {
                 tracing::debug!(
                     row = row_idx,
                     leg = i,
@@ -372,11 +364,7 @@ pub fn find_entry_candidates(
                 skip_row = true;
                 break;
             };
-            let Some(bid) = combined
-                .column(&format!("bid_{i}"))?
-                .f64()?
-                .get(row_idx)
-            else {
+            let Some(bid) = combined.column(&format!("bid_{i}"))?.f64()?.get(row_idx) else {
                 tracing::debug!(
                     row = row_idx,
                     leg = i,
@@ -385,11 +373,7 @@ pub fn find_entry_candidates(
                 skip_row = true;
                 break;
             };
-            let Some(ask) = combined
-                .column(&format!("ask_{i}"))?
-                .f64()?
-                .get(row_idx)
-            else {
+            let Some(ask) = combined.column(&format!("ask_{i}"))?.f64()?.get(row_idx) else {
                 tracing::debug!(
                     row = row_idx,
                     leg = i,
@@ -398,11 +382,7 @@ pub fn find_entry_candidates(
                 skip_row = true;
                 break;
             };
-            let Some(delta) = combined
-                .column(&format!("delta_{i}"))?
-                .f64()?
-                .get(row_idx)
-            else {
+            let Some(delta) = combined.column(&format!("delta_{i}"))?.f64()?.get(row_idx) else {
                 tracing::debug!(
                     row = row_idx,
                     leg = i,
