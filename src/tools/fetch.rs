@@ -32,25 +32,26 @@ impl QuoteProvider for YahooQuoteProvider {
     }
 }
 
+/// OHLCV category — all fetched price data lives under `prices/`.
+const OHLCV_CATEGORY: &str = "prices";
+
 pub async fn execute(
     cache: &Arc<CachedStore>,
     symbol: &str,
-    category: &str,
     period: &str,
 ) -> Result<FetchResponse> {
     let provider = YahooQuoteProvider;
-    execute_with_provider(cache, symbol, category, period, &provider).await
+    execute_with_provider(cache, symbol, period, &provider).await
 }
 
 pub async fn execute_with_provider(
     cache: &Arc<CachedStore>,
     symbol: &str,
-    category: &str,
     period: &str,
     provider: &dyn QuoteProvider,
 ) -> Result<FetchResponse> {
     let upper = symbol.to_uppercase();
-    let path = cache.cache_path(&upper, category)?;
+    let path = cache.cache_path(&upper, OHLCV_CATEGORY)?;
 
     let quotes = provider.fetch_quotes(&upper, period).await?;
 
@@ -287,7 +288,7 @@ mod tests {
             quotes: make_mock_quotes(),
         };
 
-        let response = execute_with_provider(&cache, "SPY", "prices", "1mo", &mock_provider)
+        let response = execute_with_provider(&cache, "SPY", "1mo", &mock_provider)
             .await
             .unwrap();
 
@@ -316,7 +317,7 @@ mod tests {
 
         let mock_provider = MockQuoteProviderFixture { quotes: vec![] };
 
-        let result = execute_with_provider(&cache, "SPY", "prices", "1mo", &mock_provider).await;
+        let result = execute_with_provider(&cache, "SPY", "1mo", &mock_provider).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("No data returned"));
     }
