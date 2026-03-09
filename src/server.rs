@@ -786,6 +786,7 @@ pub struct ParameterSweepParams {
 
 /// `SimParams` variant with sweep-friendly defaults (`max_positions=3`)
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
+#[garde(custom(validate_signal_exclusivity))]
 pub struct SweepSimParams {
     /// Starting capital (default: 10000)
     #[serde(default = "default_capital")]
@@ -846,6 +847,21 @@ pub struct SweepSimParams {
     #[serde(default)]
     #[garde(inner(range(min = 0.0)))]
     pub exit_net_delta: Option<f64>,
+}
+
+/// Validate that singular and plural signal fields are mutually exclusive.
+fn validate_signal_exclusivity(value: &SweepSimParams, _ctx: &()) -> garde::Result {
+    if value.entry_signal.is_some() && !value.entry_signals.is_empty() {
+        return Err(garde::Error::new(
+            "cannot use both `entry_signal` (singular) and `entry_signals` (plural)",
+        ));
+    }
+    if value.exit_signal.is_some() && !value.exit_signals.is_empty() {
+        return Err(garde::Error::new(
+            "cannot use both `exit_signal` (singular) and `exit_signals` (plural)",
+        ));
+    }
+    Ok(())
 }
 
 /// Resolve sweep strategies from input params.
@@ -1248,22 +1264,6 @@ impl OptopsyServer {
         params
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
-
-        // Validate: singular and plural signal fields are mutually exclusive
-        if params.sim_params.entry_signal.is_some() && !params.sim_params.entry_signals.is_empty() {
-            return Err(
-                "Cannot use both `entry_signal` (singular) and `entry_signals` (plural). \
-                 Use `entry_signals` for sweeping multiple signals, or `entry_signal` for a fixed signal."
-                    .to_string(),
-            );
-        }
-        if params.sim_params.exit_signal.is_some() && !params.sim_params.exit_signals.is_empty() {
-            return Err(
-                "Cannot use both `exit_signal` (singular) and `exit_signals` (plural). \
-                 Use `exit_signals` for sweeping multiple signals, or `exit_signal` for a fixed signal."
-                    .to_string(),
-            );
-        }
 
         let (symbol, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
 
