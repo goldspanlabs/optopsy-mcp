@@ -17,6 +17,50 @@ use super::response_types::{
     WalkForwardWindowResult,
 };
 
+// ── Assessment thresholds ────────────────────────────────────────────────────
+// Centralised so they can be tuned (or made configurable) in one place.
+
+/// Sharpe ratio tier boundaries (descending).
+const SHARPE_EXCELLENT: f64 = 1.5;
+const SHARPE_STRONG: f64 = 1.0;
+const SHARPE_MODERATE: f64 = 0.5;
+
+/// Profit factor thresholds.
+const PF_CONSISTENTLY_PROFITABLE: f64 = 1.5;
+const PF_MARGINALLY_PROFITABLE: f64 = 1.0;
+
+/// Calmar ratio boundary: above = moderate drawdown, below = high drawdown.
+const CALMAR_MODERATE: f64 = 1.0;
+
+/// VaR 95% daily risk tiers (percentage).
+const VAR_CONTAINED_PCT: f64 = 2.0;
+const VAR_MODERATE_PCT: f64 = 5.0;
+
+/// Data quality warning thresholds.
+const PRICE_DATA_COVERAGE_WARN_PCT: f64 = 80.0;
+const FILL_RATE_WARN_PCT: f64 = 50.0;
+
+/// Backtest suggested-next-steps thresholds.
+const SHARPE_NEEDS_IMPROVEMENT: f64 = 1.0;
+const DRAWDOWN_HIGH: f64 = 0.15;
+
+/// P-value significance tiers.
+const P_HIGHLY_SIGNIFICANT: f64 = 0.01;
+const P_SIGNIFICANT: f64 = 0.05;
+const P_MARGINALLY_SIGNIFICANT: f64 = 0.10;
+
+/// Walk-forward Sharpe decay thresholds.
+const WF_SHARPE_DECAY_HIGH: f64 = 0.5;
+const WF_SHARPE_DECAY_LOW: f64 = 0.1;
+
+/// Walk-forward profitable window thresholds (percentage).
+const WF_PROFITABLE_WINDOWS_GOOD: f64 = 70.0;
+const WF_PROFITABLE_WINDOWS_BAD: f64 = 50.0;
+
+/// Sweep overall score tiers.
+const SWEEP_SCORE_WEAK: f64 = 0.5;
+const SWEEP_SCORE_MODERATE: f64 = 0.7;
+
 fn build_params_summary(params: &BacktestParams) -> BacktestParamsSummary {
     BacktestParamsSummary {
         display_name: to_display_name(&params.strategy),
@@ -57,11 +101,11 @@ fn build_params_summary(params: &BacktestParams) -> BacktestParamsSummary {
 }
 
 fn assess_sharpe(sharpe: f64) -> &'static str {
-    if sharpe >= 1.5 {
+    if sharpe >= SHARPE_EXCELLENT {
         "excellent"
-    } else if sharpe >= 1.0 {
+    } else if sharpe >= SHARPE_STRONG {
         "strong"
-    } else if sharpe >= 0.5 {
+    } else if sharpe >= SHARPE_MODERATE {
         "moderate"
     } else if sharpe >= 0.0 {
         "weak"
@@ -184,13 +228,13 @@ fn build_backtest_quality(quality: &BacktestQualityStats) -> BacktestDataQuality
     };
 
     let mut warnings = Vec::new();
-    if price_data_coverage_pct < 80.0 {
+    if price_data_coverage_pct < PRICE_DATA_COVERAGE_WARN_PCT {
         warnings.push(format!(
             "Price data missing for {:.0}% of trading days. Mark-to-market accuracy may be reduced.",
             100.0 - price_data_coverage_pct
         ));
     }
-    if quality.total_candidates > 0 && fill_rate_pct < 50.0 {
+    if quality.total_candidates > 0 && fill_rate_pct < FILL_RATE_WARN_PCT {
         warnings.push(format!(
             "Only {fill_rate_pct:.0}% of entry candidates were opened. Consider increasing max_positions."
         ));
@@ -223,9 +267,9 @@ fn backtest_key_findings(
             " — no losing trades"
         } else if m.win_rate == 0.0 && m.avg_loser == 0.0 {
             " — all scratch trades"
-        } else if m.profit_factor >= 1.5 {
+        } else if m.profit_factor >= PF_CONSISTENTLY_PROFITABLE {
             " — consistently profitable"
-        } else if m.profit_factor >= 1.0 {
+        } else if m.profit_factor >= PF_MARGINALLY_PROFITABLE {
             " — marginally profitable"
         } else {
             " — losses exceed wins"
@@ -243,7 +287,7 @@ fn backtest_key_findings(
     let dd_pct = m.max_drawdown * 100.0;
     findings.push(format!(
         "Max drawdown of {dd_pct:.1}%{}",
-        if m.calmar > 1.0 {
+        if m.calmar > CALMAR_MODERATE {
             format!(" is moderate relative to returns (Calmar {:.2})", m.calmar)
         } else if m.calmar > 0.0 {
             format!(" is high relative to returns (Calmar {:.2})", m.calmar)
@@ -256,9 +300,9 @@ fn backtest_key_findings(
     let var_pct = m.var_95 * 100.0;
     findings.push(format!(
         "VaR 95% of {var_pct:.1}% — daily risk is {}",
-        if var_pct < 2.0 {
+        if var_pct < VAR_CONTAINED_PCT {
             "contained"
-        } else if var_pct < 5.0 {
+        } else if var_pct < VAR_MODERATE_PCT {
             "moderate"
         } else {
             "elevated"
@@ -345,13 +389,13 @@ pub fn format_backtest(
         ),
     ];
 
-    if m.sharpe < 1.0 {
+    if m.sharpe < SHARPE_NEEDS_IMPROVEMENT {
         suggested_next_steps.push(
             "[ITERATE]Adjust stop_loss/take_profit thresholds and re-run run_backtest to improve risk-adjusted returns"
                 .to_string(),
         );
     }
-    if m.max_drawdown > 0.15 {
+    if m.max_drawdown > DRAWDOWN_HIGH {
         suggested_next_steps.push(
             "[ITERATE]Max drawdown is significant — tighten risk management and re-run run_backtest"
                 .to_string(),
@@ -654,12 +698,12 @@ pub fn format_sweep(output: SweepOutput) -> SweepResponse {
     // Add stability-specific next steps
     if let Some(ref scores) = stability {
         if let Some(top) = scores.first() {
-            if top.overall_score < 0.5 {
+            if top.overall_score < SWEEP_SCORE_WEAK {
                 suggested_next_steps.push(format!(
                     "[UNSTABLE] Best combination has low parameter stability ({:.2}). Performance may be fragile — consider a more stable alternative.",
                     top.overall_score,
                 ));
-            } else if top.overall_score < 0.7 {
+            } else if top.overall_score < SWEEP_SCORE_MODERATE {
                 suggested_next_steps.push(format!(
                     "[CAUTION] Best combination has moderate parameter stability ({:.2}). Re-sweep with a narrower grid around this region to confirm robustness before deploying.",
                     top.overall_score,
@@ -697,23 +741,23 @@ fn walk_forward_findings(agg: &crate::engine::walk_forward::WalkForwardAggregate
             agg.failed_windows
         ));
     }
-    if agg.avg_train_test_sharpe_decay > 0.5 {
+    if agg.avg_train_test_sharpe_decay > WF_SHARPE_DECAY_HIGH {
         findings.push(format!(
             "High train→test Sharpe decay ({:.2}) suggests overfitting risk",
             agg.avg_train_test_sharpe_decay
         ));
-    } else if agg.avg_train_test_sharpe_decay < 0.1 {
+    } else if agg.avg_train_test_sharpe_decay < WF_SHARPE_DECAY_LOW {
         findings.push(format!(
             "Low train→test Sharpe decay ({:.2}) indicates robust strategy",
             agg.avg_train_test_sharpe_decay
         ));
     }
-    if agg.pct_profitable_windows >= 70.0 {
+    if agg.pct_profitable_windows >= WF_PROFITABLE_WINDOWS_GOOD {
         findings.push(format!(
             "{:.0}% of test windows profitable — strong consistency",
             agg.pct_profitable_windows
         ));
-    } else if agg.pct_profitable_windows < 50.0 {
+    } else if agg.pct_profitable_windows < WF_PROFITABLE_WINDOWS_BAD {
         findings.push(format!(
             "Only {:.0}% of test windows profitable — strategy may be unreliable",
             agg.pct_profitable_windows
@@ -826,11 +870,11 @@ pub fn format_walk_forward(
 }
 
 fn interpret_p_value(p: f64) -> &'static str {
-    if p < 0.01 {
+    if p < P_HIGHLY_SIGNIFICANT {
         "highly significant"
-    } else if p < 0.05 {
+    } else if p < P_SIGNIFICANT {
         "significant"
-    } else if p < 0.10 {
+    } else if p < P_MARGINALLY_SIGNIFICANT {
         "marginally significant"
     } else {
         "not significant"
@@ -854,7 +898,7 @@ pub fn format_permutation_test(
         .iter()
         .find(|m| m.metric_name == "total_pnl")
         .map_or(1.0, |m| m.p_value);
-    let is_significant = sharpe_p < 0.05 && pnl_p < 0.05;
+    let is_significant = sharpe_p < P_SIGNIFICANT && pnl_p < P_SIGNIFICANT;
 
     let sig_label = if is_significant {
         "statistically significant"
