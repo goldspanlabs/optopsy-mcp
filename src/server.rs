@@ -16,7 +16,7 @@ use crate::data::DataStore;
 use crate::engine::types::{
     default_min_bid_ask, default_multiplier, validate_exit_dte_lt_entry_min, BacktestParams,
     Commission, CompareEntry, CompareParams, Direction, DteRange, ExpirationFilter, SimParams,
-    Slippage, TargetRange, TradeSelector,
+    Slippage, TargetRange, TradeSelector, EPOCH_DAYS_CE_OFFSET,
 };
 use crate::signals::registry::{collect_cross_symbols, SignalSpec};
 use crate::tools;
@@ -217,9 +217,6 @@ impl OptopsyServer {
 
 /// Load close prices from a cached OHLCV parquet file for chart overlay.
 fn load_underlying_closes(path: &std::path::Path) -> Vec<tools::response_types::UnderlyingPrice> {
-    use crate::engine::types::EPOCH_DAYS_CE_OFFSET;
-    const EPOCH_DAYS_CE: i32 = EPOCH_DAYS_CE_OFFSET;
-
     let args = ScanArgsParquet::default();
     let path_str = path.to_string_lossy();
     let Ok(lf) = LazyFrame::scan_parquet(path_str.as_ref().into(), args) else {
@@ -243,7 +240,7 @@ fn load_underlying_closes(path: &std::path::Path) -> Vec<tools::response_types::
     let mut prices = Vec::with_capacity(df.height());
     for i in 0..df.height() {
         if let (Some(days), Some(close)) = (dates.phys.get(i), closes.get(i)) {
-            if let Some(date) = chrono::NaiveDate::from_num_days_from_ce_opt(days + EPOCH_DAYS_CE) {
+            if let Some(date) = chrono::NaiveDate::from_num_days_from_ce_opt(days + EPOCH_DAYS_CE_OFFSET) {
                 prices.push(tools::response_types::UnderlyingPrice {
                     date: date.format("%Y-%m-%d").to_string(),
                     close,

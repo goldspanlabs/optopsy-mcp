@@ -312,9 +312,6 @@ pub fn is_third_friday(date: chrono::NaiveDate) -> bool {
     (15..=21).contains(&d)
 }
 
-/// Alias for backward compatibility within this module.
-const EXPIRATION_EPOCH_OFFSET: i32 = EPOCH_DAYS_CE_OFFSET;
-
 /// Filter the options `DataFrame` to only rows whose expiration satisfies `filter`.
 ///
 /// * `Any` — no-op, returns the `DataFrame` as-is.
@@ -336,7 +333,7 @@ pub fn filter_expiration_type(df: &DataFrame, filter: &ExpirationFilter) -> Resu
                 return false;
             };
             let Some(date) =
-                chrono::NaiveDate::from_num_days_from_ce_opt(days + EXPIRATION_EPOCH_OFFSET)
+                chrono::NaiveDate::from_num_days_from_ce_opt(days + EPOCH_DAYS_CE_OFFSET)
             else {
                 return false;
             };
