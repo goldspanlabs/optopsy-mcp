@@ -32,7 +32,7 @@ const PF_MARGINALLY_PROFITABLE: f64 = 1.0;
 /// Calmar ratio boundary: above = moderate drawdown, below = high drawdown.
 const CALMAR_MODERATE: f64 = 1.0;
 
-/// VaR 95% daily risk tiers (percentage).
+/// `VaR` 95% daily risk tiers (percentage).
 const VAR_CONTAINED_PCT: f64 = 2.0;
 const VAR_MODERATE_PCT: f64 = 5.0;
 
