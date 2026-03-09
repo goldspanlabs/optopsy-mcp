@@ -357,8 +357,8 @@ fn default_capital() -> f64 {
     10000.0
 }
 
-/// Shared base parameters for all backtest-related tools (run_backtest, walk_forward,
-/// permutation_test). Extracted to eliminate field duplication across parameter structs.
+/// Shared base parameters for all backtest-related tools (`run_backtest`, `walk_forward`,
+/// `permutation_test`). Extracted to eliminate field duplication across parameter structs.
 #[derive(Debug, Clone, Deserialize, JsonSchema, Validate)]
 pub struct BacktestBaseParams {
     /// The option strategy name (e.g. `short_put`, `iron_condor`, `short_strangle`).
@@ -786,7 +786,6 @@ pub struct ParameterSweepParams {
 
 /// `SimParams` variant with sweep-friendly defaults (`max_positions=3`)
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
-#[garde(custom(validate_signal_exclusivity))]
 pub struct SweepSimParams {
     /// Starting capital (default: 10000)
     #[serde(default = "default_capital")]
@@ -847,21 +846,6 @@ pub struct SweepSimParams {
     #[serde(default)]
     #[garde(inner(range(min = 0.0)))]
     pub exit_net_delta: Option<f64>,
-}
-
-/// Validate that singular and plural signal fields are mutually exclusive.
-fn validate_signal_exclusivity(value: &SweepSimParams, _ctx: &()) -> garde::Result {
-    if value.entry_signal.is_some() && !value.entry_signals.is_empty() {
-        return Err(garde::Error::new(
-            "cannot use both `entry_signal` (singular) and `entry_signals` (plural)",
-        ));
-    }
-    if value.exit_signal.is_some() && !value.exit_signals.is_empty() {
-        return Err(garde::Error::new(
-            "cannot use both `exit_signal` (singular) and `exit_signals` (plural)",
-        ));
-    }
-    Ok(())
 }
 
 /// Resolve sweep strategies from input params.
@@ -1155,8 +1139,7 @@ impl OptopsyServer {
             "Backtest request received"
         );
 
-        let (symbol, df, backtest_params) =
-            self.resolve_backtest_params(params.base).await?;
+        let (symbol, df, backtest_params) = self.resolve_backtest_params(params.base).await?;
 
         // Try to load underlying OHLCV close prices from cache for chart overlay
         let underlying_prices = match self.cache.ensure_local_for(&symbol, "prices").await {
@@ -1211,8 +1194,7 @@ impl OptopsyServer {
             "Permutation test request received"
         );
 
-        let (_symbol, df, backtest_params) =
-            self.resolve_backtest_params(params.base).await?;
+        let (_symbol, df, backtest_params) = self.resolve_backtest_params(params.base).await?;
 
         let perm_params = crate::engine::permutation::PermutationParams {
             num_permutations: params.num_permutations,
@@ -1264,6 +1246,22 @@ impl OptopsyServer {
         params
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
+
+        // Validate: singular and plural signal fields are mutually exclusive
+        if params.sim_params.entry_signal.is_some() && !params.sim_params.entry_signals.is_empty() {
+            return Err(
+                "Cannot use both `entry_signal` (singular) and `entry_signals` (plural). \
+                 Use `entry_signals` for sweeping multiple signals, or `entry_signal` for a fixed signal."
+                    .to_string(),
+            );
+        }
+        if params.sim_params.exit_signal.is_some() && !params.sim_params.exit_signals.is_empty() {
+            return Err(
+                "Cannot use both `exit_signal` (singular) and `exit_signals` (plural). \
+                 Use `exit_signals` for sweeping multiple signals, or `exit_signal` for a fixed signal."
+                    .to_string(),
+            );
+        }
 
         let (symbol, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
 
@@ -1361,8 +1359,7 @@ impl OptopsyServer {
             "Walk-forward request received"
         );
 
-        let (_symbol, df, backtest_params) =
-            self.resolve_backtest_params(params.base).await?;
+        let (_symbol, df, backtest_params) = self.resolve_backtest_params(params.base).await?;
 
         let train_days = params.train_days;
         let test_days = params.test_days;
