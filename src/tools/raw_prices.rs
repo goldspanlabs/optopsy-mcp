@@ -133,7 +133,7 @@ pub async fn load_and_execute(
         .map_err(|_| {
             anyhow::anyhow!(
                 "No OHLCV price data cached for {upper}. \
-             Call fetch_to_parquet({{ symbol: \"{upper}\", category: \"prices\" }}) first."
+             Call fetch_to_parquet({{ symbol: \"{upper}\" }}) first."
             )
         })?;
 
