@@ -18,19 +18,9 @@ static TEST_SIGNALS_DIR: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::n
 /// Using `components()` ensures that non-canonical representations such as `///`
 /// are treated identically to `/`, unlike direct `Path` equality which compares
 /// raw byte strings and would consider them different.
-///
-/// On Windows, absolute drive roots such as `C:\` are represented as
-/// `Prefix("C:") + RootDir` and are also treated as roots.
 fn is_root_path(path: &std::path::Path) -> bool {
     let mut comps = path.components();
-    match comps.next() {
-        Some(Component::RootDir) => comps.next().is_none(),
-        // Windows: drive prefix (e.g. "C:") followed by RootDir ("\") with nothing after
-        Some(Component::Prefix(_)) => {
-            matches!(comps.next(), Some(Component::RootDir)) && comps.next().is_none()
-        }
-        _ => false,
-    }
+    matches!(comps.next(), Some(Component::RootDir)) && comps.next().is_none()
 }
 
 /// Returns `true` if `path` has no meaningful components (empty string) or is a root path.
@@ -39,32 +29,16 @@ fn is_empty_or_root(path: &std::path::Path) -> bool {
     match comps.next() {
         None => true,
         Some(Component::RootDir) => comps.next().is_none(),
-        // Windows: drive prefix + RootDir with nothing after
-        Some(Component::Prefix(_)) => {
-            matches!(comps.next(), Some(Component::RootDir)) && comps.next().is_none()
-        }
         _ => false,
     }
 }
 
 /// Returns `true` if `path` resolves to exactly `/signals` (i.e. `RootDir` + `Normal("signals")`).
-///
-/// On Windows also matches `C:\signals` (`Prefix + RootDir + Normal("signals")`).
 fn is_root_signals_path(path: &std::path::Path) -> bool {
     let mut comps = path.components();
-    match comps.next() {
-        Some(Component::RootDir) => {
-            matches!(comps.next(), Some(Component::Normal(n)) if n == "signals")
-                && comps.next().is_none()
-        }
-        // Windows: drive prefix + RootDir + Normal("signals")
-        Some(Component::Prefix(_)) => {
-            matches!(comps.next(), Some(Component::RootDir))
-                && matches!(comps.next(), Some(Component::Normal(n)) if n == "signals")
-                && comps.next().is_none()
-        }
-        _ => false,
-    }
+    matches!(comps.next(), Some(Component::RootDir))
+        && matches!(comps.next(), Some(Component::Normal(n)) if n == "signals")
+        && comps.next().is_none()
 }
 
 /// Compute the signals directory path from a `DATA_ROOT` value.
