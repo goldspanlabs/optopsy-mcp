@@ -189,7 +189,7 @@ impl OptopsyServer {
             }
             None => {
                 if data.len() == 1 {
-                    Ok(data.iter().next().unwrap())
+                    Ok(data.iter().next().expect("data.len() == 1 but iter is empty"))
                 } else {
                     let mut keys: Vec<&String> = data.keys().collect();
                     keys.sort();

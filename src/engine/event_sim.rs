@@ -75,10 +75,14 @@ fn build_price_table_fast(
                 Some("put") => OptionType::Put,
                 _ => continue,
             };
-            let quote_date = NaiveDate::from_num_days_from_ce_opt(
-                (q_vals[i].div_euclid(micros_per_day)) as i32 + 719_163,
-            )
-            .ok_or_else(|| anyhow::anyhow!("Invalid quote_datetime value"))?;
+            let quote_days = q_vals[i].div_euclid(micros_per_day) + 719_163;
+            let quote_days_i32 = i32::try_from(quote_days).map_err(|_| {
+                anyhow::anyhow!(
+                    "quote_datetime value {quote_days} overflows i32 (row {i})"
+                )
+            })?;
+            let quote_date = NaiveDate::from_num_days_from_ce_opt(quote_days_i32)
+                .ok_or_else(|| anyhow::anyhow!("Invalid quote_datetime value at row {i}"))?;
             let exp_date = NaiveDate::from_num_days_from_ce_opt(e_vals[i] + 719_163)
                 .ok_or_else(|| anyhow::anyhow!("Invalid expiration value"))?;
 
@@ -120,10 +124,12 @@ fn build_price_table_fast(
                 "put" => OptionType::Put,
                 _ => continue,
             };
-            let quote_date = NaiveDate::from_num_days_from_ce_opt(
-                (qv.div_euclid(micros_per_day)) as i32 + 719_163,
-            )
-            .ok_or_else(|| anyhow::anyhow!("Invalid quote_datetime value"))?;
+            let qv_days = qv.div_euclid(micros_per_day) + 719_163;
+            let qv_days_i32 = i32::try_from(qv_days).map_err(|_| {
+                anyhow::anyhow!("quote_datetime value {qv_days} overflows i32")
+            })?;
+            let quote_date = NaiveDate::from_num_days_from_ce_opt(qv_days_i32)
+                .ok_or_else(|| anyhow::anyhow!("Invalid quote_datetime value"))?;
             let exp_date = NaiveDate::from_num_days_from_ce_opt(ev + 719_163)
                 .ok_or_else(|| anyhow::anyhow!("Invalid expiration value"))?;
 
@@ -348,27 +354,72 @@ pub fn find_entry_candidates(
         let mut net_premium = 0.0;
         let mut net_delta = 0.0;
 
+        let mut skip_row = false;
         for (i, leg_def) in strategy_def.legs.iter().enumerate() {
-            let strike = combined
+            let strike = match combined
                 .column(&format!("strike_{i}"))?
                 .f64()?
                 .get(row_idx)
-                .unwrap_or(0.0);
-            let bid = combined
+            {
+                Some(v) => v,
+                None => {
+                    tracing::warn!(
+                        row = row_idx,
+                        leg = i,
+                        "Skipping entry candidate: null strike value"
+                    );
+                    skip_row = true;
+                    break;
+                }
+            };
+            let bid = match combined
                 .column(&format!("bid_{i}"))?
                 .f64()?
                 .get(row_idx)
-                .unwrap_or(0.0);
-            let ask = combined
+            {
+                Some(v) => v,
+                None => {
+                    tracing::warn!(
+                        row = row_idx,
+                        leg = i,
+                        "Skipping entry candidate: null bid value"
+                    );
+                    skip_row = true;
+                    break;
+                }
+            };
+            let ask = match combined
                 .column(&format!("ask_{i}"))?
                 .f64()?
                 .get(row_idx)
-                .unwrap_or(0.0);
-            let delta = combined
+            {
+                Some(v) => v,
+                None => {
+                    tracing::warn!(
+                        row = row_idx,
+                        leg = i,
+                        "Skipping entry candidate: null ask value"
+                    );
+                    skip_row = true;
+                    break;
+                }
+            };
+            let delta = match combined
                 .column(&format!("delta_{i}"))?
                 .f64()?
                 .get(row_idx)
-                .unwrap_or(0.0);
+            {
+                Some(v) => v,
+                None => {
+                    tracing::warn!(
+                        row = row_idx,
+                        leg = i,
+                        "Skipping entry candidate: null delta value"
+                    );
+                    skip_row = true;
+                    break;
+                }
+            };
 
             let mid = f64::midpoint(bid, ask);
             // Long pays mid, short receives mid
@@ -390,6 +441,10 @@ pub fn find_entry_candidates(
                 ask,
                 delta,
             });
+        }
+
+        if skip_row {
+            continue;
         }
 
         // Apply net premium filter
@@ -502,8 +557,13 @@ pub fn run_event_loop(
                 realized_equity += pnl;
 
                 trade_id += 1;
-                let entry_dt = positions[i].entry_date.and_hms_opt(0, 0, 0).unwrap();
-                let exit_dt = today.and_hms_opt(0, 0, 0).unwrap();
+                let entry_dt = positions[i]
+                    .entry_date
+                    .and_hms_opt(0, 0, 0)
+                    .expect("and_hms_opt(0,0,0) should never fail");
+                let exit_dt = today
+                    .and_hms_opt(0, 0, 0)
+                    .expect("and_hms_opt(0,0,0) should never fail");
                 let days_held = (today - positions[i].entry_date).num_days();
 
                 let leg_details: Vec<LegDetail> = positions[i]
@@ -619,7 +679,9 @@ pub fn run_event_loop(
             .sum();
 
         equity_curve.push(EquityPoint {
-            datetime: today.and_hms_opt(0, 0, 0).unwrap(),
+            datetime: today
+                .and_hms_opt(0, 0, 0)
+                .expect("and_hms_opt(0,0,0) should never fail"),
             equity: realized_equity + unrealized,
         });
     }
@@ -1233,8 +1295,12 @@ fn finalize_if_all_closed(
         .collect();
     trade_log.push(TradeRecord::new(
         *trade_id,
-        pos.entry_date.and_hms_opt(0, 0, 0).unwrap(),
-        today.and_hms_opt(0, 0, 0).unwrap(),
+        pos.entry_date
+            .and_hms_opt(0, 0, 0)
+            .expect("and_hms_opt(0,0,0) should never fail"),
+        today
+            .and_hms_opt(0, 0, 0)
+            .expect("and_hms_opt(0,0,0) should never fail"),
         pos.entry_cost,
         pos.entry_cost + pnl,
         pnl,

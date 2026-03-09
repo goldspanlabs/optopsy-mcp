@@ -31,8 +31,17 @@ fn signals_dir() -> Result<PathBuf> {
     }
 
     let dir = if let Ok(val) = std::env::var("DATA_ROOT") {
-        let data_root = PathBuf::from(val);
-        data_root.parent().unwrap_or(&data_root).join("signals")
+        let data_root = PathBuf::from(&val);
+        let parent = data_root.parent().filter(|p| p != &std::path::Path::new("") && p != &std::path::Path::new("/"));
+        match parent {
+            Some(p) => p.join("signals"),
+            None => {
+                anyhow::bail!(
+                    "DATA_ROOT '{}' has no suitable parent directory for signals storage",
+                    val
+                );
+            }
+        }
     } else {
         let expanded = shellexpand::tilde("~/.optopsy/signals");
         if expanded.as_ref() == "~/.optopsy/signals" {
