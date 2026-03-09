@@ -5,13 +5,69 @@
 
 use anyhow::{bail, Context, Result};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Component, PathBuf};
 
 use super::registry::SignalSpec;
 
 /// Test-only override for signals directory, allowing isolation via temp dirs.
 #[cfg(test)]
 static TEST_SIGNALS_DIR: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+/// Returns `true` if `path` is a filesystem root (normalised via `components()`).
+///
+/// Using `components()` ensures that non-canonical representations such as `///`
+/// are treated identically to `/`, unlike direct `Path` equality which compares
+/// raw byte strings and would consider them different.
+fn is_root_path(path: &std::path::Path) -> bool {
+    let mut comps = path.components();
+    matches!(comps.next(), Some(Component::RootDir)) && comps.next().is_none()
+}
+
+/// Returns `true` if `path` has no meaningful components (empty string) or is a root path.
+fn is_empty_or_root(path: &std::path::Path) -> bool {
+    let mut comps = path.components();
+    match comps.next() {
+        None => true,
+        Some(Component::RootDir) => comps.next().is_none(),
+        _ => false,
+    }
+}
+
+/// Returns `true` if `path` resolves to exactly `/signals` (i.e. `RootDir` + `Normal("signals")`).
+fn is_root_signals_path(path: &std::path::Path) -> bool {
+    let mut comps = path.components();
+    matches!(comps.next(), Some(Component::RootDir))
+        && matches!(comps.next(), Some(Component::Normal(n)) if n == "signals")
+        && comps.next().is_none()
+}
+
+/// Compute the signals directory path from a `DATA_ROOT` value.
+///
+/// Uses `components()`-based helpers so that non-normalised representations such as `///`
+/// are handled correctly — string/path equality against `"/"` is not reliable because
+/// it compares raw byte strings and does not account for repeated or trailing separators.
+///
+/// - `DATA_ROOT="/"` (or any path whose components reduce to a single `RootDir`) is rejected.
+/// - For multi-component roots like `/data/cache`, returns the sibling `/data/signals`.
+/// - For single-component roots like `/data` (parent is `/`), falls back to
+///   `data_root.join("signals")` → `/data/signals`.
+/// - The computed path `/signals` is also rejected as unsafe.
+fn compute_signals_dir_from_data_root(data_root: &std::path::Path, val: &str) -> Result<PathBuf> {
+    if is_root_path(data_root) {
+        anyhow::bail!("DATA_ROOT '{val}' is not a safe directory for signals storage");
+    }
+
+    let candidate = match data_root.parent() {
+        Some(p) if !is_empty_or_root(p) => p.join("signals"),
+        _ => data_root.join("signals"),
+    };
+
+    if is_root_signals_path(&candidate) {
+        anyhow::bail!("DATA_ROOT '{val}' would place signals in an unsafe directory ('/signals')");
+    }
+
+    Ok(candidate)
+}
 
 /// Get the signals storage directory, creating it if needed.
 ///
@@ -31,8 +87,8 @@ fn signals_dir() -> Result<PathBuf> {
     }
 
     let dir = if let Ok(val) = std::env::var("DATA_ROOT") {
-        let data_root = PathBuf::from(val);
-        data_root.parent().unwrap_or(&data_root).join("signals")
+        let data_root = PathBuf::from(&val);
+        compute_signals_dir_from_data_root(&data_root, &val)?
     } else {
         let expanded = shellexpand::tilde("~/.optopsy/signals");
         if expanded.as_ref() == "~/.optopsy/signals" {
@@ -253,6 +309,45 @@ mod tests {
         fn drop(&mut self) {
             *TEST_SIGNALS_DIR.lock().unwrap() = None;
         }
+    }
+
+    #[test]
+    fn signals_dir_deep_path_uses_sibling() {
+        // DATA_ROOT=/data/cache → /data/signals (sibling of parent)
+        let result =
+            compute_signals_dir_from_data_root(std::path::Path::new("/data/cache"), "/data/cache");
+        assert_eq!(result.unwrap(), std::path::Path::new("/data/signals"));
+    }
+
+    #[test]
+    fn signals_dir_single_component_falls_back_to_subdir() {
+        // DATA_ROOT=/data → parent is "/", falls back to /data/signals
+        let result = compute_signals_dir_from_data_root(std::path::Path::new("/data"), "/data");
+        assert_eq!(result.unwrap(), std::path::Path::new("/data/signals"));
+    }
+
+    #[test]
+    fn signals_dir_root_returns_error() {
+        // DATA_ROOT=/ is unsafe
+        let result = compute_signals_dir_from_data_root(std::path::Path::new("/"), "/");
+        assert!(result.is_err(), "DATA_ROOT='/' should return an error");
+    }
+
+    #[test]
+    fn signals_dir_triple_slash_root_returns_error() {
+        // "///" normalises to a single RootDir component and must be rejected like "/"
+        let result = compute_signals_dir_from_data_root(std::path::Path::new("///"), "///");
+        assert!(
+            result.is_err(),
+            "DATA_ROOT='///' should return an error (non-normalised root)"
+        );
+    }
+
+    #[test]
+    fn signals_dir_nested_three_levels_uses_sibling() {
+        // DATA_ROOT=/a/b/c → sibling /a/b/signals
+        let result = compute_signals_dir_from_data_root(std::path::Path::new("/a/b/c"), "/a/b/c");
+        assert_eq!(result.unwrap(), std::path::Path::new("/a/b/signals"));
     }
 
     #[test]
