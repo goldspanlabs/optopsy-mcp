@@ -1,6 +1,7 @@
 // Volume signals: MFI, OBV, CMF
 
 use super::helpers::{column_to_f64, pad_and_compare, pad_series, SignalFn};
+use super::momentum::threshold_signal_pair;
 use polars::prelude::*;
 
 /// Computes typical price as `(high + low + close) / 3` for each row.
@@ -12,75 +13,28 @@ fn compute_typical_price(high: &[f64], low: &[f64], close: &[f64]) -> Vec<f64> {
         .collect()
 }
 
-/// Signal: Money Flow Index is below a threshold.
-/// Typical price is computed internally as `(high + low + close) / 3`.
-pub struct MfiBelow {
-    pub high_col: String,
-    pub low_col: String,
-    pub close_col: String,
-    pub volume_col: String,
-    pub period: usize,
-    pub threshold: f64,
-}
-
-impl SignalFn for MfiBelow {
-    fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
+threshold_signal_pair! {
+    /// Signal: Money Flow Index is below a threshold.
+    /// Typical price is computed internally as `(high + low + close) / 3`.
+    MfiBelow /
+    /// Signal: Money Flow Index is above a threshold.
+    MfiAbove,
+    fields { high_col: String, low_col: String, close_col: String, volume_col: String, period: usize, threshold: f64 },
+    below_name = "mfi_below",
+    above_name = "mfi_above",
+    compute(self, df) -> (mfi_values, n, self.period) {
         let high = column_to_f64(df, &self.high_col)?;
         let low = column_to_f64(df, &self.low_col)?;
         let close = column_to_f64(df, &self.close_col)?;
         let volume = column_to_f64(df, &self.volume_col)?;
         let typical = compute_typical_price(&high, &low, &close);
         let n = typical.len();
-        if n < self.period {
-            return Ok(BooleanChunked::new("mfi_below".into(), vec![false; n]).into_series());
-        }
-        let mfi_values =
-            rust_ti::momentum_indicators::bulk::money_flow_index(&typical, &volume, self.period);
-        Ok(pad_and_compare(
-            &mfi_values,
-            n,
-            |v| v < self.threshold,
-            "mfi_below",
-        ))
-    }
-    fn name(&self) -> &'static str {
-        "mfi_below"
-    }
-}
-
-/// Signal: Money Flow Index is above a threshold.
-/// Typical price is computed internally as `(high + low + close) / 3`.
-pub struct MfiAbove {
-    pub high_col: String,
-    pub low_col: String,
-    pub close_col: String,
-    pub volume_col: String,
-    pub period: usize,
-    pub threshold: f64,
-}
-
-impl SignalFn for MfiAbove {
-    fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
-        let high = column_to_f64(df, &self.high_col)?;
-        let low = column_to_f64(df, &self.low_col)?;
-        let close = column_to_f64(df, &self.close_col)?;
-        let volume = column_to_f64(df, &self.volume_col)?;
-        let typical = compute_typical_price(&high, &low, &close);
-        let n = typical.len();
-        if n < self.period {
-            return Ok(BooleanChunked::new("mfi_above".into(), vec![false; n]).into_series());
-        }
-        let mfi_values =
-            rust_ti::momentum_indicators::bulk::money_flow_index(&typical, &volume, self.period);
-        Ok(pad_and_compare(
-            &mfi_values,
-            n,
-            |v| v > self.threshold,
-            "mfi_above",
-        ))
-    }
-    fn name(&self) -> &'static str {
-        "mfi_above"
+        let mfi_values = if self.period > 0 && n >= self.period {
+            rust_ti::momentum_indicators::bulk::money_flow_index(&typical, &volume, self.period)
+        } else {
+            vec![]
+        };
+        (mfi_values, n)
     }
 }
 

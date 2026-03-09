@@ -36,6 +36,18 @@ fn build_date_index(table: &PriceTable) -> DateIndex {
     index
 }
 
+/// Convert a raw epoch-offset day count (with a `719_163` CE-epoch bias) to a `NaiveDate`.
+///
+/// `raw` is the integer value already biased by `719_163` (i.e., `raw_stored + 719_163`).
+/// Returns an error if the value overflows `i32` or does not map to a valid calendar date.
+#[inline]
+fn days_to_naive_date(raw: i64, label: &str, row: usize) -> Result<NaiveDate> {
+    let days = i32::try_from(raw)
+        .map_err(|_| anyhow::anyhow!("{label} value {raw} overflows i32 (row {row})"))?;
+    NaiveDate::from_num_days_from_ce_opt(days)
+        .ok_or_else(|| anyhow::anyhow!("Invalid {label} value (row {row})"))
+}
+
 /// Fast path: columns already typed as Datetime/Date after `ParquetStore` normalization.
 /// Uses `cont_slice()` for zero-copy raw value access when possible.
 fn build_price_table_fast(
@@ -76,17 +88,9 @@ fn build_price_table_fast(
                 _ => continue,
             };
             let quote_days = q_vals[i].div_euclid(micros_per_day) + i64::from(EPOCH_DAYS_CE_OFFSET);
-            let quote_days_i32 = i32::try_from(quote_days).map_err(|_| {
-                anyhow::anyhow!("quote_datetime value {quote_days} overflows i32 (row {i})")
-            })?;
-            let quote_date = NaiveDate::from_num_days_from_ce_opt(quote_days_i32)
-                .ok_or_else(|| anyhow::anyhow!("Invalid quote_datetime value at row {i}"))?;
+            let quote_date = days_to_naive_date(quote_days, "quote_datetime", i)?;
             let exp_days = i64::from(e_vals[i]) + i64::from(EPOCH_DAYS_CE_OFFSET);
-            let exp_days_i32 = i32::try_from(exp_days).map_err(|_| {
-                anyhow::anyhow!("expiration value {exp_days} overflows i32 (row {i})")
-            })?;
-            let exp_date = NaiveDate::from_num_days_from_ce_opt(exp_days_i32)
-                .ok_or_else(|| anyhow::anyhow!("Invalid expiration value at row {i}"))?;
+            let exp_date = days_to_naive_date(exp_days, "expiration", i)?;
 
             table.insert(
                 (quote_date, exp_date, OrderedFloat(s_vals[i]), ot),
@@ -128,13 +132,9 @@ fn build_price_table_fast(
                 _ => continue,
             };
             let qv_days = qv.div_euclid(micros_per_day) + i64::from(EPOCH_DAYS_CE_OFFSET);
-            let qv_days_i32 = i32::try_from(qv_days).map_err(|_| {
-                anyhow::anyhow!("quote_datetime value {qv_days} overflows i32 (row {row_idx})")
-            })?;
-            let quote_date = NaiveDate::from_num_days_from_ce_opt(qv_days_i32)
-                .ok_or_else(|| anyhow::anyhow!("Invalid quote_datetime value (row {row_idx})"))?;
-            let exp_date = NaiveDate::from_num_days_from_ce_opt(ev + EPOCH_DAYS_CE_OFFSET)
-                .ok_or_else(|| anyhow::anyhow!("Invalid expiration value (row {row_idx})"))?;
+            let quote_date = days_to_naive_date(qv_days, "quote_datetime", row_idx)?;
+            let ev_days = i64::from(ev) + i64::from(EPOCH_DAYS_CE_OFFSET);
+            let exp_date = days_to_naive_date(ev_days, "expiration", row_idx)?;
 
             table.insert(
                 (quote_date, exp_date, OrderedFloat(strike_val), opt_type),

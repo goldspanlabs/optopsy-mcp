@@ -69,17 +69,26 @@ fn filter_strike_order_by_cycle(
 }
 
 /// Apply sequential strike-ordering filters for a group of leg indices.
-fn apply_window_ordering(mut lazy: LazyFrame, indices: &[usize], strict: bool) -> LazyFrame {
-    for w in indices.windows(2) {
+/// Combines all pairwise constraints into a single `.filter()` call so
+/// Polars can optimise the predicate as one expression.
+fn apply_window_ordering(lazy: LazyFrame, indices: &[usize], strict: bool) -> LazyFrame {
+    let expr: Option<Expr> = indices.windows(2).fold(None, |acc, w| {
         let prev_col = format!("strike_{}", w[0]);
         let curr_col = format!("strike_{}", w[1]);
-        lazy = if strict {
-            lazy.filter(col(&curr_col).gt(col(&prev_col)))
+        let cmp = if strict {
+            col(&curr_col).gt(col(&prev_col))
         } else {
-            lazy.filter(col(&curr_col).gt_eq(col(&prev_col)))
+            col(&curr_col).gt_eq(col(&prev_col))
         };
+        Some(match acc {
+            Some(e) => e.and(cmp),
+            None => cmp,
+        })
+    });
+    match expr {
+        Some(e) => lazy.filter(e),
+        None => lazy,
     }
-    lazy
 }
 
 #[cfg(test)]

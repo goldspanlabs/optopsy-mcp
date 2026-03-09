@@ -82,10 +82,11 @@ pub fn execute(
             .phys
             .get(i)
             .ok_or_else(|| anyhow::anyhow!("Null date at row {i}; OHLCV data may be corrupted"))?;
-        let date = chrono::NaiveDate::from_num_days_from_ce_opt(days_since_epoch + EPOCH_DAYS_CE_OFFSET)
-            .ok_or_else(|| anyhow::anyhow!("Invalid date value at row {i}"))?
-            .format("%Y-%m-%d")
-            .to_string();
+        let date =
+            chrono::NaiveDate::from_num_days_from_ce_opt(days_since_epoch + EPOCH_DAYS_CE_OFFSET)
+                .ok_or_else(|| anyhow::anyhow!("Invalid date value at row {i}"))?
+                .format("%Y-%m-%d")
+                .to_string();
 
         bars.push(PriceBar {
             date,
