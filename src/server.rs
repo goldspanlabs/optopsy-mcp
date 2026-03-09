@@ -39,28 +39,17 @@ use crate::tools::signals::SignalsResponse;
 
 /// Wrapper whose `Serialize` impl delegates to `T` but replaces any
 /// non-finite `f64` values (NaN, ±Infinity) with `0.0` during serialization.
-///
-/// Uses a raw pointer internally to support both `Sized` and `?Sized` types
-/// (required by serde's compound serialize methods like `serialize_element`).
-struct FiniteF64Wrap<T: serde::Serialize + ?Sized>(*const T);
+struct FiniteF64Wrap<'a, T: serde::Serialize + ?Sized>(&'a T);
 
-// SAFETY: FiniteF64Wrap is only used within a single synchronous serialization
-// call and never sent across threads or shared.
-unsafe impl<T: serde::Serialize + ?Sized> Send for FiniteF64Wrap<T> {}
-unsafe impl<T: serde::Serialize + ?Sized> Sync for FiniteF64Wrap<T> {}
-
-impl<T: serde::Serialize + ?Sized> serde::Serialize for FiniteF64Wrap<T> {
+impl<T: serde::Serialize + ?Sized> serde::Serialize for FiniteF64Wrap<'_, T> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        // SAFETY: The pointer is created from a valid reference in `finite_f64()`
-        // and used only within the same serialization call.
-        unsafe { &*self.0 }.serialize(FiniteF64Serializer(serializer))
+        self.0.serialize(FiniteF64Serializer(serializer))
     }
 }
 
-/// Create a `FiniteF64Wrap` from a reference. The wrapper is only valid for the
-/// lifetime of the reference, enforced by the caller (used within single `serialize_*` calls).
-fn finite_f64<T: serde::Serialize + ?Sized>(value: &T) -> FiniteF64Wrap<T> {
-    FiniteF64Wrap(std::ptr::from_ref::<T>(value))
+/// Create a `FiniteF64Wrap` from a reference.
+fn finite_f64<T: serde::Serialize + ?Sized>(value: &T) -> FiniteF64Wrap<'_, T> {
+    FiniteF64Wrap(value)
 }
 
 /// A `Serializer` wrapper that intercepts `serialize_f64` calls and clamps
