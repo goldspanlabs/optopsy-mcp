@@ -9,9 +9,6 @@ use super::response_types::{DateRange, PriceBar, RawPricesResponse};
 
 use crate::engine::types::EPOCH_DAYS_CE_OFFSET;
 
-/// Epoch offset: days from CE to 1970-01-01 (matches `event_sim::extract_date_from_column`).
-const EPOCH_DAYS_CE: i32 = EPOCH_DAYS_CE_OFFSET;
-
 pub fn execute(
     df: &DataFrame,
     symbol: &str,
@@ -85,7 +82,7 @@ pub fn execute(
             .phys
             .get(i)
             .ok_or_else(|| anyhow::anyhow!("Null date at row {i}; OHLCV data may be corrupted"))?;
-        let date = chrono::NaiveDate::from_num_days_from_ce_opt(days_since_epoch + EPOCH_DAYS_CE)
+        let date = chrono::NaiveDate::from_num_days_from_ce_opt(days_since_epoch + EPOCH_DAYS_CE_OFFSET)
             .ok_or_else(|| anyhow::anyhow!("Invalid date value at row {i}"))?
             .format("%Y-%m-%d")
             .to_string();

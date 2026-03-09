@@ -630,18 +630,17 @@ pub fn run_event_loop(
                             if entry_spread_pcts.len() < MAX_SPREAD_SAMPLES {
                                 entry_spread_pcts.push(spread_pct);
                             } else {
-                                // Reservoir sampling: replace a random element with
-                                // probability MAX_SPREAD_SAMPLES / spread_sample_count.
-                                // Use a simple deterministic hash to avoid RNG dependency.
-                                let idx = (spread_sample_count
+                                // Reservoir sampling: pick j uniformly in [0, spread_sample_count).
+                                // Replace entry_spread_pcts[j] only when j < MAX_SPREAD_SAMPLES,
+                                // giving each sample a MAX_SPREAD_SAMPLES/spread_sample_count
+                                // probability of replacement.  Two separate LCG steps are used to
+                                // keep the accept/reject decision independent of the slot index.
+                                let hash = spread_sample_count
                                     .wrapping_mul(6_364_136_223_846_793_005)
-                                    .wrapping_add(1_442_695_040_888_963_407))
-                                    as usize
-                                    % MAX_SPREAD_SAMPLES;
-                                let keep_prob =
-                                    MAX_SPREAD_SAMPLES as f64 / spread_sample_count as f64;
-                                if (idx as f64 / MAX_SPREAD_SAMPLES as f64) < keep_prob {
-                                    entry_spread_pcts[idx] = spread_pct;
+                                    .wrapping_add(1_442_695_040_888_963_407);
+                                let j = (hash % spread_sample_count) as usize;
+                                if j < MAX_SPREAD_SAMPLES {
+                                    entry_spread_pcts[j] = spread_pct;
                                 }
                             }
                         }
