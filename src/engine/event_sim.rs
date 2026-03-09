@@ -633,8 +633,8 @@ pub fn run_event_loop(
                                 // Reservoir sampling: pick j uniformly in [0, spread_sample_count).
                                 // Replace entry_spread_pcts[j] only when j < MAX_SPREAD_SAMPLES,
                                 // giving each sample a MAX_SPREAD_SAMPLES/spread_sample_count
-                                // probability of replacement.  Two separate LCG steps are used to
-                                // keep the accept/reject decision independent of the slot index.
+                                // probability of replacement. A single LCG step produces `hash`,
+                                // from which j = hash % spread_sample_count is derived.
                                 let hash = spread_sample_count
                                     .wrapping_mul(6_364_136_223_846_793_005)
                                     .wrapping_add(1_442_695_040_888_963_407);
