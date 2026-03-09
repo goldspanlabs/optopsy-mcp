@@ -487,7 +487,11 @@ pub fn run_event_loop(
     let mut trading_days_with_data = std::collections::HashSet::new();
     let mut total_candidates = 0usize;
     let mut positions_opened = 0usize;
-    let mut entry_spread_pcts = Vec::new();
+    // Capped reservoir sample for spread percentages to bound memory.
+    // 10 000 samples is enough for an accurate median estimate.
+    const MAX_SPREAD_SAMPLES: usize = 10_000;
+    let mut entry_spread_pcts: Vec<f64> = Vec::new();
+    let mut spread_sample_count: u64 = 0;
 
     // Stagger: track the last date on which a new position was opened
     let mut last_entry_date: Option<NaiveDate> = None;
@@ -616,12 +620,28 @@ pub fn run_event_loop(
                 if let Some(candidate) =
                     select_candidate(&available, &params.selector, params.entry_dte.target)
                 {
-                    // Collect entry spread percentages
+                    // Collect entry spread percentages (reservoir sampled to cap memory)
                     for leg in &candidate.legs {
                         if leg.bid > 0.0 && leg.ask > 0.0 {
                             let mid = f64::midpoint(leg.bid, leg.ask);
                             let spread_pct = (leg.ask - leg.bid) / mid * 100.0;
-                            entry_spread_pcts.push(spread_pct);
+                            spread_sample_count += 1;
+                            if entry_spread_pcts.len() < MAX_SPREAD_SAMPLES {
+                                entry_spread_pcts.push(spread_pct);
+                            } else {
+                                // Reservoir sampling: replace a random element with
+                                // probability MAX_SPREAD_SAMPLES / spread_sample_count.
+                                // Use a simple deterministic hash to avoid RNG dependency.
+                                let idx = (spread_sample_count.wrapping_mul(6_364_136_223_846_793_005)
+                                    .wrapping_add(1_442_695_040_888_963_407))
+                                    as usize
+                                    % MAX_SPREAD_SAMPLES;
+                                let keep_prob =
+                                    MAX_SPREAD_SAMPLES as f64 / spread_sample_count as f64;
+                                if (idx as f64 / MAX_SPREAD_SAMPLES as f64) < keep_prob {
+                                    entry_spread_pcts[idx] = spread_pct;
+                                }
+                            }
                         }
                     }
 
