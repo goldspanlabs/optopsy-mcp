@@ -15,6 +15,25 @@ fn iv_column(df: &DataFrame) -> Result<Vec<f64>, PolarsError> {
     })
 }
 
+/// Compute ATR values for a given period.
+fn compute_atr(close: &[f64], high: &[f64], low: &[f64], period: usize) -> Vec<f64> {
+    let n = close.len();
+    if n < period {
+        return vec![];
+    }
+    (0..=n - period)
+        .map(|i| {
+            let end = i + period;
+            rust_ti::other_indicators::single::average_true_range(
+                &close[i..end],
+                &high[i..end],
+                &low[i..end],
+                rust_ti::ConstantModelType::SimpleMovingAverage,
+            )
+        })
+        .collect()
+}
+
 /// Signal: ATR is above a threshold, indicating high volatility.
 /// Requires `close_col`, `high_col`, and `low_col` columns.
 pub struct AtrAbove {
@@ -34,17 +53,7 @@ impl SignalFn for AtrAbove {
         if n < self.period {
             return Ok(BooleanChunked::new("atr_above".into(), vec![false; n]).into_series());
         }
-        let atr_values: Vec<f64> = (0..=n - self.period)
-            .map(|i| {
-                let end = i + self.period;
-                rust_ti::other_indicators::single::average_true_range(
-                    &close[i..end],
-                    &high[i..end],
-                    &low[i..end],
-                    rust_ti::ConstantModelType::SimpleMovingAverage,
-                )
-            })
-            .collect();
+        let atr_values = compute_atr(&close, &high, &low, self.period);
         let padded = pad_series(&atr_values, n);
         let bools: Vec<bool> = padded
             .iter()
@@ -75,17 +84,7 @@ impl SignalFn for AtrBelow {
         if n < self.period {
             return Ok(BooleanChunked::new("atr_below".into(), vec![false; n]).into_series());
         }
-        let atr_values: Vec<f64> = (0..=n - self.period)
-            .map(|i| {
-                let end = i + self.period;
-                rust_ti::other_indicators::single::average_true_range(
-                    &close[i..end],
-                    &high[i..end],
-                    &low[i..end],
-                    rust_ti::ConstantModelType::SimpleMovingAverage,
-                )
-            })
-            .collect();
+        let atr_values = compute_atr(&close, &high, &low, self.period);
         let padded = pad_series(&atr_values, n);
         let bools: Vec<bool> = padded
             .iter()
@@ -96,6 +95,20 @@ impl SignalFn for AtrBelow {
     fn name(&self) -> &'static str {
         "atr_below"
     }
+}
+
+/// Compute Bollinger Bands and return (lower, upper) band values.
+fn compute_bollinger_bands(prices: &[f64], period: usize) -> (Vec<f64>, Vec<f64>) {
+    let bbands = rust_ti::candle_indicators::bulk::moving_constant_bands(
+        prices,
+        rust_ti::ConstantModelType::SimpleMovingAverage,
+        rust_ti::DeviationModel::StandardDeviation,
+        2.0,
+        period,
+    );
+    let lower: Vec<f64> = bbands.iter().map(|t| t.0).collect();
+    let upper: Vec<f64> = bbands.iter().map(|t| t.2).collect();
+    (lower, upper)
 }
 
 /// Signal: price touches or crosses below the lower Bollinger Band.
@@ -114,14 +127,7 @@ impl SignalFn for BollingerLowerTouch {
                 BooleanChunked::new("bollinger_lower_touch".into(), vec![false; n]).into_series(),
             );
         }
-        let bbands = rust_ti::candle_indicators::bulk::moving_constant_bands(
-            &prices,
-            rust_ti::ConstantModelType::SimpleMovingAverage,
-            rust_ti::DeviationModel::StandardDeviation,
-            2.0,
-            self.period,
-        );
-        let lower: Vec<f64> = bbands.iter().map(|t| t.0).collect();
+        let (lower, _) = compute_bollinger_bands(&prices, self.period);
         let lower_padded = pad_series(&lower, n);
         let bools: Vec<bool> = prices
             .iter()
@@ -151,14 +157,7 @@ impl SignalFn for BollingerUpperTouch {
                 BooleanChunked::new("bollinger_upper_touch".into(), vec![false; n]).into_series(),
             );
         }
-        let bbands = rust_ti::candle_indicators::bulk::moving_constant_bands(
-            &prices,
-            rust_ti::ConstantModelType::SimpleMovingAverage,
-            rust_ti::DeviationModel::StandardDeviation,
-            2.0,
-            self.period,
-        );
-        let upper: Vec<f64> = bbands.iter().map(|t| t.2).collect();
+        let (_, upper) = compute_bollinger_bands(&prices, self.period);
         let upper_padded = pad_series(&upper, n);
         let bools: Vec<bool> = prices
             .iter()
@@ -170,6 +169,28 @@ impl SignalFn for BollingerUpperTouch {
     fn name(&self) -> &'static str {
         "bollinger_upper_touch"
     }
+}
+
+/// Compute Keltner Channel and return (lower, upper) band values.
+fn compute_keltner_channel(
+    close: &[f64],
+    high: &[f64],
+    low: &[f64],
+    period: usize,
+    multiplier: f64,
+) -> (Vec<f64>, Vec<f64>) {
+    let kc = rust_ti::candle_indicators::bulk::keltner_channel(
+        high,
+        low,
+        close,
+        rust_ti::ConstantModelType::ExponentialMovingAverage,
+        rust_ti::ConstantModelType::SimpleMovingAverage,
+        multiplier,
+        period,
+    );
+    let lower: Vec<f64> = kc.iter().map(|t| t.0).collect();
+    let upper: Vec<f64> = kc.iter().map(|t| t.2).collect();
+    (lower, upper)
 }
 
 /// Signal: price is below the lower Keltner Channel.
@@ -193,16 +214,7 @@ impl SignalFn for KeltnerLowerBreak {
                 BooleanChunked::new("keltner_lower_break".into(), vec![false; n]).into_series(),
             );
         }
-        let kc = rust_ti::candle_indicators::bulk::keltner_channel(
-            &high,
-            &low,
-            &close,
-            rust_ti::ConstantModelType::ExponentialMovingAverage,
-            rust_ti::ConstantModelType::SimpleMovingAverage,
-            self.multiplier,
-            self.period,
-        );
-        let lower: Vec<f64> = kc.iter().map(|t| t.0).collect();
+        let (lower, _) = compute_keltner_channel(&close, &high, &low, self.period, self.multiplier);
         let lower_padded = pad_series(&lower, n);
         let bools: Vec<bool> = close
             .iter()
@@ -236,16 +248,7 @@ impl SignalFn for KeltnerUpperBreak {
                 BooleanChunked::new("keltner_upper_break".into(), vec![false; n]).into_series(),
             );
         }
-        let kc = rust_ti::candle_indicators::bulk::keltner_channel(
-            &high,
-            &low,
-            &close,
-            rust_ti::ConstantModelType::ExponentialMovingAverage,
-            rust_ti::ConstantModelType::SimpleMovingAverage,
-            self.multiplier,
-            self.period,
-        );
-        let upper: Vec<f64> = kc.iter().map(|t| t.2).collect();
+        let (_, upper) = compute_keltner_channel(&close, &high, &low, self.period, self.multiplier);
         let upper_padded = pad_series(&upper, n);
         let bools: Vec<bool> = close
             .iter()
