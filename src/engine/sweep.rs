@@ -4,11 +4,13 @@ use anyhow::{bail, Result};
 use polars::prelude::*;
 
 use super::core::run_backtest;
+use super::multiple_comparisons::{self, MultipleComparisonsResult};
 use super::types::{
     to_display_name, BacktestParams, Direction, DteRange, ExpirationFilter, SimParams, Slippage,
     SweepResult, TargetRange,
 };
 use crate::data::parquet::QUOTE_DATETIME_COL;
+use crate::engine::permutation::{run_permutation_test, PermutationParams};
 use crate::engine::types::default_min_bid_ask;
 use crate::signals::registry::SignalSpec;
 use crate::strategies;
@@ -44,6 +46,11 @@ pub struct SweepParams {
     pub entry_signals: Vec<SignalSpec>,
     /// Exit signal variants to sweep. Empty = use `sim_params.exit_signal` as-is.
     pub exit_signals: Vec<SignalSpec>,
+    /// If set, run this many permutations per combination to compute Sharpe p-values,
+    /// then apply Bonferroni and BH-FDR multiple comparisons corrections.
+    pub num_permutations: Option<usize>,
+    /// Optional RNG seed for reproducible permutation tests.
+    pub permutation_seed: Option<u64>,
 }
 
 /// Per-dimension-value averages
@@ -98,6 +105,9 @@ pub struct SweepOutput {
     pub dimension_sensitivity: HashMap<String, HashMap<String, DimensionStats>>,
     pub oos_results: Vec<OosResult>,
     pub stability_scores: Vec<StabilityScore>,
+    /// Multiple comparisons correction results, populated when `num_permutations` is set.
+    /// Tuple of (Bonferroni, Benjamini-Hochberg) corrections applied to Sharpe p-values.
+    pub multiple_comparisons: Option<(MultipleComparisonsResult, MultipleComparisonsResult)>,
 }
 
 // ---------------------------------------------------------------------------
@@ -895,6 +905,7 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
                     entry_signal: combo.entry_signal.clone(),
                     exit_signal: combo.exit_signal.clone(),
                     signal_dim_keys: combo.signal_dim_keys.clone(),
+                    p_value: None,
                 });
             }
             Err(e) => {
@@ -981,6 +992,9 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
     // 7. Compute parameter stability for top results
     let stability_scores = compute_stability(&results, params);
 
+    // 8. Optional: run permutation tests per combo and apply multiple comparisons correction
+    let multiple_comparisons = run_multiple_comparisons(&train_df, &mut results, params);
+
     Ok(SweepOutput {
         combinations_total: total,
         combinations_run,
@@ -995,7 +1009,113 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
         dimension_sensitivity,
         oos_results,
         stability_scores,
+        multiple_comparisons,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Multiple comparisons helper
+// ---------------------------------------------------------------------------
+
+/// Run permutation tests for each sweep result (if `params.num_permutations` is set),
+/// populate `p_value` on each result, and apply Bonferroni + BH-FDR corrections.
+///
+/// Always populates `result.p_value` when `num_permutations` is set (even for a single result).
+/// Only returns a correction tuple when there are ≥2 results (multiple comparisons require ≥2 tests).
+/// Returns `None` if permutation testing is not requested.
+fn run_multiple_comparisons(
+    train_df: &DataFrame,
+    results: &mut [SweepResult],
+    params: &SweepParams,
+) -> Option<(MultipleComparisonsResult, MultipleComparisonsResult)> {
+    let num_permutations = params.num_permutations?;
+
+    let perm_params = PermutationParams {
+        num_permutations,
+        seed: params.permutation_seed,
+    };
+
+    // Always compute p-values when permutation testing is requested
+    for result in results.iter_mut() {
+        let entry_signal = result
+            .entry_signal
+            .clone()
+            .or_else(|| params.sim_params.entry_signal.clone());
+        let exit_signal = result
+            .exit_signal
+            .clone()
+            .or_else(|| params.sim_params.exit_signal.clone());
+
+        let backtest_params = BacktestParams {
+            strategy: result.strategy.clone(),
+            leg_deltas: result.leg_deltas.clone(),
+            entry_dte: result.entry_dte.clone(),
+            exit_dte: result.exit_dte,
+            slippage: result.slippage.clone(),
+            commission: None,
+            min_bid_ask: default_min_bid_ask(),
+            stop_loss: params.sim_params.stop_loss,
+            take_profit: params.sim_params.take_profit,
+            max_hold_days: params.sim_params.max_hold_days,
+            capital: params.sim_params.capital,
+            quantity: params.sim_params.quantity,
+            multiplier: params.sim_params.multiplier,
+            max_positions: params.sim_params.max_positions,
+            selector: params.sim_params.selector.clone(),
+            adjustment_rules: vec![],
+            entry_signal,
+            exit_signal,
+            ohlcv_path: params.sim_params.ohlcv_path.clone(),
+            cross_ohlcv_paths: params.sim_params.cross_ohlcv_paths.clone(),
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: None,
+            max_net_delta: None,
+            min_days_between_entries: params.sim_params.min_days_between_entries,
+            expiration_filter: ExpirationFilter::Any,
+            exit_net_delta: params.sim_params.exit_net_delta,
+        };
+
+        match run_permutation_test(
+            train_df,
+            &backtest_params,
+            &perm_params,
+            &None::<HashSet<chrono::NaiveDate>>,
+            None::<&HashSet<chrono::NaiveDate>>,
+        ) {
+            Ok(output) => {
+                let sharpe_p = output
+                    .metric_results
+                    .iter()
+                    .find(|m| m.metric_name == "sharpe")
+                    .map_or(1.0, |m| m.p_value);
+                result.p_value = Some(sharpe_p);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Permutation test for sweep combo '{}' failed: {e}",
+                    result.label
+                );
+                result.p_value = Some(1.0);
+            }
+        }
+    }
+
+    // Multiple comparisons correction requires ≥2 tests
+    if results.len() < 2 {
+        return None;
+    }
+
+    // Collect labels and p-values
+    let labels: Vec<String> = results.iter().map(|r| r.label.clone()).collect();
+    let p_values: Vec<f64> = results
+        .iter()
+        .map(|r| r.p_value.unwrap_or(1.0))
+        .collect();
+
+    let bon = multiple_comparisons::bonferroni(&labels, &p_values, 0.05);
+    let bh = multiple_comparisons::benjamini_hochberg(&labels, &p_values, 0.05);
+    Some((bon, bh))
 }
 
 // ---------------------------------------------------------------------------
@@ -1200,6 +1320,8 @@ mod tests {
             direction: None,
             entry_signals: vec![],
             exit_signals: vec![],
+            num_permutations: None,
+            permutation_seed: None,
         };
 
         // Use a minimal DataFrame
@@ -1267,6 +1389,8 @@ mod tests {
             direction: None,
             entry_signals: vec![],
             exit_signals: vec![],
+            num_permutations: None,
+            permutation_seed: None,
         };
 
         // Use minimal df
@@ -1437,6 +1561,8 @@ mod tests {
                 },
             ],
             exit_signals: vec![],
+            num_permutations: None,
+            permutation_seed: None,
         };
 
         // Use a minimal DataFrame
@@ -1519,6 +1645,7 @@ mod tests {
             entry_signal: None,
             exit_signal: None,
             signal_dim_keys: vec![],
+            p_value: None,
         }
     }
 
@@ -1558,6 +1685,8 @@ mod tests {
             direction: None,
             entry_signals: vec![],
             exit_signals: vec![],
+            num_permutations: None,
+            permutation_seed: None,
         }
     }
 

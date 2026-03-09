@@ -2,6 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::engine::multiple_comparisons::MultipleComparisonsResult;
 use crate::engine::permutation::MetricPermutationResult;
 use crate::engine::sweep::{DimensionStats, OosResult, StabilityScore};
 use crate::engine::types::{
@@ -409,6 +410,15 @@ pub struct WalkForwardResponse {
     pub suggested_next_steps: Vec<String>,
 }
 
+/// Multiple comparisons corrections applied to sweep Sharpe p-values
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MultipleComparisonsCorrection {
+    /// Bonferroni correction (conservative; controls family-wise error rate)
+    pub bonferroni: MultipleComparisonsResult,
+    /// Benjamini-Hochberg FDR correction (less conservative; controls false discovery rate)
+    pub benjamini_hochberg: MultipleComparisonsResult,
+}
+
 /// AI-enriched response for `parameter_sweep`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SweepResponse {
@@ -428,6 +438,10 @@ pub struct SweepResponse {
     /// Parameter stability scores for the top-ranked results
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stability: Option<Vec<StabilityScore>>,
+    /// Multiple comparisons correction (Bonferroni + BH-FDR) applied to per-combo Sharpe
+    /// p-values. Populated only when `num_permutations` is set in sweep params.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub multiple_comparisons: Option<MultipleComparisonsCorrection>,
     pub ranked_results: Vec<SweepResult>,
     pub suggested_next_steps: Vec<String>,
 }
