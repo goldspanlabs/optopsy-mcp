@@ -442,16 +442,30 @@ fn build_momentum(spec: &SignalSpec) -> Box<dyn SignalFn> {
             column: column.clone(),
         }),
         SignalSpec::StochasticBelow {
-            close_col, high_col, low_col, period, threshold,
+            close_col,
+            high_col,
+            low_col,
+            period,
+            threshold,
         } => Box::new(StochasticBelow {
-            close_col: close_col.clone(), high_col: high_col.clone(),
-            low_col: low_col.clone(), period: *period, threshold: *threshold,
+            close_col: close_col.clone(),
+            high_col: high_col.clone(),
+            low_col: low_col.clone(),
+            period: *period,
+            threshold: *threshold,
         }),
         SignalSpec::StochasticAbove {
-            close_col, high_col, low_col, period, threshold,
+            close_col,
+            high_col,
+            low_col,
+            period,
+            threshold,
         } => Box::new(StochasticAbove {
-            close_col: close_col.clone(), high_col: high_col.clone(),
-            low_col: low_col.clone(), period: *period, threshold: *threshold,
+            close_col: close_col.clone(),
+            high_col: high_col.clone(),
+            low_col: low_col.clone(),
+            period: *period,
+            threshold: *threshold,
         }),
         _ => unreachable!(),
     }
@@ -461,28 +475,56 @@ fn build_momentum(spec: &SignalSpec) -> Box<dyn SignalFn> {
 fn build_overlap(spec: &SignalSpec) -> Box<dyn SignalFn> {
     match spec {
         SignalSpec::PriceAboveSma { column, period } => Box::new(PriceAboveSma {
-            column: column.clone(), period: *period,
+            column: column.clone(),
+            period: *period,
         }),
         SignalSpec::PriceBelowSma { column, period } => Box::new(PriceBelowSma {
-            column: column.clone(), period: *period,
+            column: column.clone(),
+            period: *period,
         }),
         SignalSpec::PriceAboveEma { column, period } => Box::new(PriceAboveEma {
-            column: column.clone(), period: *period,
+            column: column.clone(),
+            period: *period,
         }),
         SignalSpec::PriceBelowEma { column, period } => Box::new(PriceBelowEma {
-            column: column.clone(), period: *period,
+            column: column.clone(),
+            period: *period,
         }),
-        SignalSpec::SmaCrossover { column, fast_period, slow_period } => Box::new(SmaCrossover {
-            column: column.clone(), fast_period: *fast_period, slow_period: *slow_period,
+        SignalSpec::SmaCrossover {
+            column,
+            fast_period,
+            slow_period,
+        } => Box::new(SmaCrossover {
+            column: column.clone(),
+            fast_period: *fast_period,
+            slow_period: *slow_period,
         }),
-        SignalSpec::SmaCrossunder { column, fast_period, slow_period } => Box::new(SmaCrossunder {
-            column: column.clone(), fast_period: *fast_period, slow_period: *slow_period,
+        SignalSpec::SmaCrossunder {
+            column,
+            fast_period,
+            slow_period,
+        } => Box::new(SmaCrossunder {
+            column: column.clone(),
+            fast_period: *fast_period,
+            slow_period: *slow_period,
         }),
-        SignalSpec::EmaCrossover { column, fast_period, slow_period } => Box::new(EmaCrossover {
-            column: column.clone(), fast_period: *fast_period, slow_period: *slow_period,
+        SignalSpec::EmaCrossover {
+            column,
+            fast_period,
+            slow_period,
+        } => Box::new(EmaCrossover {
+            column: column.clone(),
+            fast_period: *fast_period,
+            slow_period: *slow_period,
         }),
-        SignalSpec::EmaCrossunder { column, fast_period, slow_period } => Box::new(EmaCrossunder {
-            column: column.clone(), fast_period: *fast_period, slow_period: *slow_period,
+        SignalSpec::EmaCrossunder {
+            column,
+            fast_period,
+            slow_period,
+        } => Box::new(EmaCrossunder {
+            column: column.clone(),
+            fast_period: *fast_period,
+            slow_period: *slow_period,
         }),
         _ => unreachable!(),
     }
@@ -491,26 +533,58 @@ fn build_overlap(spec: &SignalSpec) -> Box<dyn SignalFn> {
 /// Build trend signal variants.
 fn build_trend(spec: &SignalSpec) -> Box<dyn SignalFn> {
     match spec {
-        SignalSpec::AroonUptrend { high_col, low_col, period } => Box::new(AroonUptrend {
-            high_col: high_col.clone(), low_col: low_col.clone(), period: *period,
+        SignalSpec::AroonUptrend {
+            high_col,
+            low_col,
+            period,
+        } => Box::new(AroonUptrend {
+            high_col: high_col.clone(),
+            low_col: low_col.clone(),
+            period: *period,
         }),
-        SignalSpec::AroonDowntrend { high_col, low_col, period } => Box::new(AroonDowntrend {
-            high_col: high_col.clone(), low_col: low_col.clone(), period: *period,
+        SignalSpec::AroonDowntrend {
+            high_col,
+            low_col,
+            period,
+        } => Box::new(AroonDowntrend {
+            high_col: high_col.clone(),
+            low_col: low_col.clone(),
+            period: *period,
         }),
-        SignalSpec::AroonUpAbove { high_col, period, threshold } => Box::new(AroonUpAbove {
-            high_col: high_col.clone(), period: *period, threshold: *threshold,
+        SignalSpec::AroonUpAbove {
+            high_col,
+            period,
+            threshold,
+        } => Box::new(AroonUpAbove {
+            high_col: high_col.clone(),
+            period: *period,
+            threshold: *threshold,
         }),
         SignalSpec::SupertrendBullish {
-            close_col, high_col, low_col, period, multiplier,
+            close_col,
+            high_col,
+            low_col,
+            period,
+            multiplier,
         } => Box::new(SupertrendBullish {
-            close_col: close_col.clone(), high_col: high_col.clone(),
-            low_col: low_col.clone(), period: *period, multiplier: *multiplier,
+            close_col: close_col.clone(),
+            high_col: high_col.clone(),
+            low_col: low_col.clone(),
+            period: *period,
+            multiplier: *multiplier,
         }),
         SignalSpec::SupertrendBearish {
-            close_col, high_col, low_col, period, multiplier,
+            close_col,
+            high_col,
+            low_col,
+            period,
+            multiplier,
         } => Box::new(SupertrendBearish {
-            close_col: close_col.clone(), high_col: high_col.clone(),
-            low_col: low_col.clone(), period: *period, multiplier: *multiplier,
+            close_col: close_col.clone(),
+            high_col: high_col.clone(),
+            low_col: low_col.clone(),
+            period: *period,
+            multiplier: *multiplier,
         }),
         _ => unreachable!(),
     }
@@ -520,46 +594,92 @@ fn build_trend(spec: &SignalSpec) -> Box<dyn SignalFn> {
 fn build_volatility(spec: &SignalSpec) -> Box<dyn SignalFn> {
     match spec {
         SignalSpec::AtrAbove {
-            close_col, high_col, low_col, period, threshold,
+            close_col,
+            high_col,
+            low_col,
+            period,
+            threshold,
         } => Box::new(AtrAbove {
-            close_col: close_col.clone(), high_col: high_col.clone(),
-            low_col: low_col.clone(), period: *period, threshold: *threshold,
+            close_col: close_col.clone(),
+            high_col: high_col.clone(),
+            low_col: low_col.clone(),
+            period: *period,
+            threshold: *threshold,
         }),
         SignalSpec::AtrBelow {
-            close_col, high_col, low_col, period, threshold,
+            close_col,
+            high_col,
+            low_col,
+            period,
+            threshold,
         } => Box::new(AtrBelow {
-            close_col: close_col.clone(), high_col: high_col.clone(),
-            low_col: low_col.clone(), period: *period, threshold: *threshold,
+            close_col: close_col.clone(),
+            high_col: high_col.clone(),
+            low_col: low_col.clone(),
+            period: *period,
+            threshold: *threshold,
         }),
         SignalSpec::BollingerLowerTouch { column, period } => Box::new(BollingerLowerTouch {
-            column: column.clone(), period: *period,
+            column: column.clone(),
+            period: *period,
         }),
         SignalSpec::BollingerUpperTouch { column, period } => Box::new(BollingerUpperTouch {
-            column: column.clone(), period: *period,
+            column: column.clone(),
+            period: *period,
         }),
         SignalSpec::KeltnerLowerBreak {
-            close_col, high_col, low_col, period, multiplier,
+            close_col,
+            high_col,
+            low_col,
+            period,
+            multiplier,
         } => Box::new(KeltnerLowerBreak {
-            close_col: close_col.clone(), high_col: high_col.clone(),
-            low_col: low_col.clone(), period: *period, multiplier: *multiplier,
+            close_col: close_col.clone(),
+            high_col: high_col.clone(),
+            low_col: low_col.clone(),
+            period: *period,
+            multiplier: *multiplier,
         }),
         SignalSpec::KeltnerUpperBreak {
-            close_col, high_col, low_col, period, multiplier,
+            close_col,
+            high_col,
+            low_col,
+            period,
+            multiplier,
         } => Box::new(KeltnerUpperBreak {
-            close_col: close_col.clone(), high_col: high_col.clone(),
-            low_col: low_col.clone(), period: *period, multiplier: *multiplier,
+            close_col: close_col.clone(),
+            high_col: high_col.clone(),
+            low_col: low_col.clone(),
+            period: *period,
+            multiplier: *multiplier,
         }),
-        SignalSpec::IvRankAbove { lookback, threshold } => Box::new(IvRankAbove {
-            lookback: *lookback, threshold: *threshold,
+        SignalSpec::IvRankAbove {
+            lookback,
+            threshold,
+        } => Box::new(IvRankAbove {
+            lookback: *lookback,
+            threshold: *threshold,
         }),
-        SignalSpec::IvRankBelow { lookback, threshold } => Box::new(IvRankBelow {
-            lookback: *lookback, threshold: *threshold,
+        SignalSpec::IvRankBelow {
+            lookback,
+            threshold,
+        } => Box::new(IvRankBelow {
+            lookback: *lookback,
+            threshold: *threshold,
         }),
-        SignalSpec::IvPercentileAbove { lookback, threshold } => Box::new(IvPercentileAbove {
-            lookback: *lookback, threshold: *threshold,
+        SignalSpec::IvPercentileAbove {
+            lookback,
+            threshold,
+        } => Box::new(IvPercentileAbove {
+            lookback: *lookback,
+            threshold: *threshold,
         }),
-        SignalSpec::IvPercentileBelow { lookback, threshold } => Box::new(IvPercentileBelow {
-            lookback: *lookback, threshold: *threshold,
+        SignalSpec::IvPercentileBelow {
+            lookback,
+            threshold,
+        } => Box::new(IvPercentileBelow {
+            lookback: *lookback,
+            threshold: *threshold,
         }),
         _ => unreachable!(),
     }
@@ -568,23 +688,49 @@ fn build_volatility(spec: &SignalSpec) -> Box<dyn SignalFn> {
 /// Build price signal variants.
 fn build_price(spec: &SignalSpec) -> Box<dyn SignalFn> {
     match spec {
-        SignalSpec::GapUp { open_col, close_col, threshold } => Box::new(GapUp {
-            open_col: open_col.clone(), close_col: close_col.clone(), threshold: *threshold,
+        SignalSpec::GapUp {
+            open_col,
+            close_col,
+            threshold,
+        } => Box::new(GapUp {
+            open_col: open_col.clone(),
+            close_col: close_col.clone(),
+            threshold: *threshold,
         }),
-        SignalSpec::GapDown { open_col, close_col, threshold } => Box::new(GapDown {
-            open_col: open_col.clone(), close_col: close_col.clone(), threshold: *threshold,
+        SignalSpec::GapDown {
+            open_col,
+            close_col,
+            threshold,
+        } => Box::new(GapDown {
+            open_col: open_col.clone(),
+            close_col: close_col.clone(),
+            threshold: *threshold,
         }),
-        SignalSpec::DrawdownBelow { column, window, threshold } => Box::new(DrawdownBelow {
-            column: column.clone(), window: (*window).max(1), threshold: *threshold,
+        SignalSpec::DrawdownBelow {
+            column,
+            window,
+            threshold,
+        } => Box::new(DrawdownBelow {
+            column: column.clone(),
+            window: (*window).max(1),
+            threshold: *threshold,
         }),
         SignalSpec::ConsecutiveUp { column, count } => Box::new(ConsecutiveUp {
-            column: column.clone(), count: (*count).max(1),
+            column: column.clone(),
+            count: (*count).max(1),
         }),
         SignalSpec::ConsecutiveDown { column, count } => Box::new(ConsecutiveDown {
-            column: column.clone(), count: (*count).max(1),
+            column: column.clone(),
+            count: (*count).max(1),
         }),
-        SignalSpec::RateOfChange { column, period, threshold } => Box::new(RateOfChange {
-            column: column.clone(), period: (*period).max(1), threshold: *threshold,
+        SignalSpec::RateOfChange {
+            column,
+            period,
+            threshold,
+        } => Box::new(RateOfChange {
+            column: column.clone(),
+            period: (*period).max(1),
+            threshold: *threshold,
         }),
         _ => unreachable!(),
     }
@@ -594,36 +740,74 @@ fn build_price(spec: &SignalSpec) -> Box<dyn SignalFn> {
 fn build_volume(spec: &SignalSpec) -> Box<dyn SignalFn> {
     match spec {
         SignalSpec::MfiBelow {
-            high_col, low_col, close_col, volume_col, period, threshold,
+            high_col,
+            low_col,
+            close_col,
+            volume_col,
+            period,
+            threshold,
         } => Box::new(MfiBelow {
-            high_col: high_col.clone(), low_col: low_col.clone(),
-            close_col: close_col.clone(), volume_col: volume_col.clone(),
-            period: *period, threshold: *threshold,
+            high_col: high_col.clone(),
+            low_col: low_col.clone(),
+            close_col: close_col.clone(),
+            volume_col: volume_col.clone(),
+            period: *period,
+            threshold: *threshold,
         }),
         SignalSpec::MfiAbove {
-            high_col, low_col, close_col, volume_col, period, threshold,
+            high_col,
+            low_col,
+            close_col,
+            volume_col,
+            period,
+            threshold,
         } => Box::new(MfiAbove {
-            high_col: high_col.clone(), low_col: low_col.clone(),
-            close_col: close_col.clone(), volume_col: volume_col.clone(),
-            period: *period, threshold: *threshold,
+            high_col: high_col.clone(),
+            low_col: low_col.clone(),
+            close_col: close_col.clone(),
+            volume_col: volume_col.clone(),
+            period: *period,
+            threshold: *threshold,
         }),
-        SignalSpec::ObvRising { price_col, volume_col } => Box::new(ObvRising {
-            price_col: price_col.clone(), volume_col: volume_col.clone(),
+        SignalSpec::ObvRising {
+            price_col,
+            volume_col,
+        } => Box::new(ObvRising {
+            price_col: price_col.clone(),
+            volume_col: volume_col.clone(),
         }),
-        SignalSpec::ObvFalling { price_col, volume_col } => Box::new(ObvFalling {
-            price_col: price_col.clone(), volume_col: volume_col.clone(),
+        SignalSpec::ObvFalling {
+            price_col,
+            volume_col,
+        } => Box::new(ObvFalling {
+            price_col: price_col.clone(),
+            volume_col: volume_col.clone(),
         }),
         SignalSpec::CmfPositive {
-            close_col, high_col, low_col, volume_col, period,
+            close_col,
+            high_col,
+            low_col,
+            volume_col,
+            period,
         } => Box::new(CmfPositive {
-            close_col: close_col.clone(), high_col: high_col.clone(),
-            low_col: low_col.clone(), volume_col: volume_col.clone(), period: *period,
+            close_col: close_col.clone(),
+            high_col: high_col.clone(),
+            low_col: low_col.clone(),
+            volume_col: volume_col.clone(),
+            period: *period,
         }),
         SignalSpec::CmfNegative {
-            close_col, high_col, low_col, volume_col, period,
+            close_col,
+            high_col,
+            low_col,
+            volume_col,
+            period,
         } => Box::new(CmfNegative {
-            close_col: close_col.clone(), high_col: high_col.clone(),
-            low_col: low_col.clone(), volume_col: volume_col.clone(), period: *period,
+            close_col: close_col.clone(),
+            high_col: high_col.clone(),
+            low_col: low_col.clone(),
+            volume_col: volume_col.clone(),
+            period: *period,
         }),
         _ => unreachable!(),
     }
