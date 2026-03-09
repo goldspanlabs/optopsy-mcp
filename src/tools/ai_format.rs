@@ -11,10 +11,10 @@ use crate::engine::walk_forward::WalkForwardResult;
 
 use super::response_types::{
     BacktestDataQuality, BacktestParamsSummary, BacktestResponse, CompareResponse,
-    CompareStrategyEntry, DateRange, LoadDataResponse, OosValidation, PermutationTestResponse,
-    PriceBar, RawPricesResponse, StrategiesResponse, StrategyInfo, SweepResponse, TradeStat,
-    TradeSummary, UnderlyingPrice, WalkForwardAggregate, WalkForwardResponse,
-    WalkForwardWindowResult,
+    CompareStrategyEntry, DateRange, LoadDataResponse, MultipleComparisonsCorrection, OosValidation,
+    PermutationTestResponse, PriceBar, RawPricesResponse, StrategiesResponse, StrategyInfo,
+    SweepResponse, TradeStat, TradeSummary, UnderlyingPrice, WalkForwardAggregate,
+    WalkForwardResponse, WalkForwardWindowResult,
 };
 
 fn build_params_summary(params: &BacktestParams) -> BacktestParamsSummary {
@@ -669,6 +669,37 @@ pub fn format_sweep(output: SweepOutput) -> SweepResponse {
         }
     }
 
+    // Build multiple comparisons correction response
+    let multiple_comparisons = output.multiple_comparisons.map(|(bon, bh)| {
+        let bon_sig = bon.num_significant;
+        let bh_sig = bh.num_significant;
+        let num_tests = bon.num_tests;
+
+        // Add multiple comparisons next steps
+        if bon_sig == 0 && bh_sig == 0 {
+            suggested_next_steps.push(format!(
+                "[MC] Multiple comparisons correction: 0/{num_tests} configurations survive \
+                 significance after Bonferroni or BH-FDR correction (α=0.05). \
+                 Results may be noise — consider more data or fewer parameter combinations."
+            ));
+        } else if bh_sig > bon_sig {
+            suggested_next_steps.push(format!(
+                "[MC] Multiple comparisons: {bh_sig}/{num_tests} combinations survive BH-FDR, \
+                 {bon_sig}/{num_tests} survive the stricter Bonferroni correction (α=0.05)."
+            ));
+        } else {
+            suggested_next_steps.push(format!(
+                "[MC] Multiple comparisons: {bon_sig}/{num_tests} combinations remain significant \
+                 after Bonferroni and BH-FDR correction (α=0.05) — strong evidence of a real edge."
+            ));
+        }
+
+        MultipleComparisonsCorrection {
+            bonferroni: bon,
+            benjamini_hochberg: bh,
+        }
+    });
+
     SweepResponse {
         summary,
         combinations_total: output.combinations_total,
@@ -680,6 +711,7 @@ pub fn format_sweep(output: SweepOutput) -> SweepResponse {
         dimension_sensitivity: output.dimension_sensitivity,
         out_of_sample,
         stability,
+        multiple_comparisons,
         ranked_results: output.ranked_results,
         suggested_next_steps,
     }
@@ -1460,6 +1492,7 @@ mod tests {
                 entry_signal: None,
                 exit_signal: None,
                 signal_dim_keys: vec![],
+                p_value: None,
             },
             SweepResult {
                 label: "long_call(Δ0.35,DTE45,exit0)".to_string(),
@@ -1490,6 +1523,7 @@ mod tests {
                 entry_signal: None,
                 exit_signal: None,
                 signal_dim_keys: vec![],
+                p_value: None,
             },
         ];
 
@@ -1503,6 +1537,7 @@ mod tests {
             dimension_sensitivity: HashMap::new(),
             oos_results: vec![],
             stability_scores: vec![],
+            multiple_comparisons: None,
         };
 
         let response = format_sweep(output);
@@ -1537,6 +1572,7 @@ mod tests {
             dimension_sensitivity: HashMap::new(),
             oos_results: vec![],
             stability_scores: vec![],
+            multiple_comparisons: None,
         };
 
         let response = format_sweep(output);
@@ -1589,6 +1625,7 @@ mod tests {
                 entry_signal: None,
                 exit_signal: None,
                 signal_dim_keys: vec![],
+                p_value: None,
             }],
             dimension_sensitivity: HashMap::new(),
             oos_results: vec![OosResult {
@@ -1599,6 +1636,7 @@ mod tests {
                 test_pnl: 50.0,
             }],
             stability_scores: vec![],
+            multiple_comparisons: None,
         };
 
         let response = format_sweep(output);

@@ -909,6 +909,18 @@ pub struct ParameterSweepParams {
     #[serde(default)]
     #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
     pub symbol: Option<String>,
+    /// Number of permutations to run per combination to compute Sharpe p-values.
+    /// When set (e.g. 100), Bonferroni and BH-FDR multiple comparisons corrections are
+    /// applied automatically and included in the response. Omit to skip (default).
+    /// Note: each permutation adds one extra backtest per combination.
+    #[serde(default)]
+    #[garde(inner(range(min = 10, max = 1000)))]
+    pub num_permutations: Option<usize>,
+    /// Optional RNG seed for reproducible permutation tests.
+    /// This value is only used when `num_permutations` is provided; otherwise it is ignored.
+    #[serde(default)]
+    #[garde(skip)]
+    pub permutation_seed: Option<u64>,
 }
 
 /// `SimParams` variant with sweep-friendly defaults (`max_positions=3`)
@@ -1548,6 +1560,8 @@ impl OptopsyServer {
             direction: params.direction,
             entry_signals: params.sim_params.entry_signals,
             exit_signals: params.sim_params.exit_signals,
+            num_permutations: params.num_permutations,
+            permutation_seed: params.permutation_seed,
         };
 
         tokio::task::spawn_blocking(move || tools::sweep::execute(&df, &sweep_params))
