@@ -158,6 +158,69 @@ impl OptopsyServer {
         Ok(paths)
     }
 
+    /// Resolve shared backtest base parameters into engine `BacktestParams`, auto-loading
+    /// data and OHLCV as needed. Returns `(symbol, DataFrame, BacktestParams)`.
+    async fn resolve_backtest_params(
+        &self,
+        base: BacktestBaseParams,
+    ) -> Result<(String, DataFrame, BacktestParams), String> {
+        let strategy = base.strategy;
+
+        let (symbol, df) = self.ensure_data_loaded(base.symbol.as_deref()).await?;
+
+        let ohlcv_path = if base.entry_signal.is_some() || base.exit_signal.is_some() {
+            Some(self.ensure_ohlcv(&symbol).await?)
+        } else {
+            None
+        };
+
+        let cross_ohlcv_paths = self
+            .resolve_cross_ohlcv_paths(
+                base.entry_signal.as_ref(),
+                base.exit_signal.as_ref(),
+                &[],
+                &[],
+            )
+            .await?;
+
+        let leg_deltas = resolve_leg_deltas(base.leg_deltas, &strategy)?;
+
+        let backtest_params = BacktestParams {
+            strategy,
+            leg_deltas,
+            entry_dte: base.entry_dte,
+            exit_dte: base.exit_dte,
+            slippage: base.slippage,
+            commission: base.commission,
+            min_bid_ask: base.min_bid_ask,
+            stop_loss: base.stop_loss,
+            take_profit: base.take_profit,
+            max_hold_days: base.max_hold_days,
+            capital: base.capital,
+            quantity: base.quantity,
+            multiplier: base.multiplier,
+            max_positions: base.max_positions,
+            selector: base.selector.unwrap_or_default(),
+            adjustment_rules: vec![],
+            entry_signal: base.entry_signal,
+            exit_signal: base.exit_signal,
+            ohlcv_path,
+            cross_ohlcv_paths,
+            min_net_premium: base.min_net_premium,
+            max_net_premium: base.max_net_premium,
+            min_net_delta: base.min_net_delta,
+            max_net_delta: base.max_net_delta,
+            min_days_between_entries: base.min_days_between_entries,
+            expiration_filter: base.expiration_filter.unwrap_or_default(),
+            exit_net_delta: base.exit_net_delta,
+        };
+        backtest_params
+            .validate()
+            .map_err(|e| format!("Validation error: {e}"))?;
+
+        Ok((symbol, df, backtest_params))
+    }
+
     /// Resolve a symbol from the loaded data.
     /// If `symbol` is provided, look it up explicitly.
     /// If `symbol` is None:
@@ -301,8 +364,10 @@ fn default_capital() -> f64 {
     10000.0
 }
 
-#[derive(Debug, Deserialize, JsonSchema, Validate)]
-pub struct RunBacktestParams {
+/// Shared base parameters for all backtest-related tools (run_backtest, walk_forward,
+/// permutation_test). Extracted to eliminate field duplication across parameter structs.
+#[derive(Debug, Clone, Deserialize, JsonSchema, Validate)]
+pub struct BacktestBaseParams {
     /// The option strategy name (e.g. `short_put`, `iron_condor`, `short_strangle`).
     /// Call `list_strategies` to see all 32 options.
     #[garde(length(min = 1))]
@@ -406,6 +471,13 @@ pub struct RunBacktestParams {
     pub exit_net_delta: Option<f64>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+pub struct RunBacktestParams {
+    #[serde(flatten)]
+    #[garde(dive)]
+    pub base: BacktestBaseParams,
+}
+
 fn default_train_days() -> i32 {
     252
 }
@@ -420,61 +492,9 @@ fn default_num_permutations() -> usize {
 
 #[derive(Debug, Clone, Deserialize, JsonSchema, Validate)]
 pub struct WalkForwardParams {
-    /// The option strategy name (e.g. `short_put`, `iron_condor`).
-    #[garde(length(min = 1))]
-    pub strategy: String,
-    /// Per-leg delta targets (optional — uses strategy-specific defaults if omitted)
-    #[serde(default)]
-    #[garde(inner(length(min = 1)))]
-    pub leg_deltas: Option<Vec<TargetRange>>,
-    /// Entry DTE range: { target, min, max } (default: { target: 45, min: 30, max: 60 })
-    #[serde(default = "default_entry_dte")]
+    #[serde(flatten)]
     #[garde(dive)]
-    pub entry_dte: DteRange,
-    /// DTE at exit (default: 0 — hold to expiration)
-    #[serde(default = "default_exit_dte")]
-    #[garde(range(min = 0), custom(validate_exit_dte_lt_entry_min(&self.entry_dte)))]
-    pub exit_dte: i32,
-    /// Slippage model (default: Spread)
-    #[serde(default)]
-    #[garde(dive)]
-    pub slippage: Slippage,
-    /// Commission structure
-    #[serde(default)]
-    #[garde(dive)]
-    pub commission: Option<Commission>,
-    /// Minimum bid/ask threshold (default: 0.05)
-    #[serde(default = "default_min_bid_ask")]
-    #[garde(range(min = 0.0))]
-    pub min_bid_ask: f64,
-    /// Stop loss threshold
-    #[garde(inner(range(min = 0.0)))]
-    pub stop_loss: Option<f64>,
-    /// Take profit threshold
-    #[garde(inner(range(min = 0.0)))]
-    pub take_profit: Option<f64>,
-    /// Maximum days to hold
-    #[garde(inner(range(min = 1)))]
-    pub max_hold_days: Option<i32>,
-    /// Starting capital (default: 10000)
-    #[serde(default = "default_capital")]
-    #[garde(range(min = 0.01))]
-    pub capital: f64,
-    /// Number of contracts per trade (default: 1)
-    #[serde(default = "default_quantity")]
-    #[garde(range(min = 1))]
-    pub quantity: i32,
-    /// Contract multiplier (default: 100)
-    #[serde(default = "default_multiplier")]
-    #[garde(range(min = 1))]
-    pub multiplier: i32,
-    /// Maximum concurrent positions (default: 1)
-    #[serde(default = "default_max_positions")]
-    #[garde(range(min = 1))]
-    pub max_positions: i32,
-    /// Trade selection method
-    #[garde(skip)]
-    pub selector: Option<TradeSelector>,
+    pub base: BacktestBaseParams,
 
     // ── Walk-forward specific ──────────────────────────────────────────────
     /// Training window in calendar days (default: 252, ~1 year)
@@ -489,121 +509,14 @@ pub struct WalkForwardParams {
     /// Minimum 5 days to prevent generating an excessive number of windows.
     #[garde(inner(range(min = 5)))]
     pub step_days: Option<i32>,
-
-    // ── Signals ────────────────────────────────────────────────────────────
-    /// Entry signal — only open trades on dates where this TA signal fires.
-    #[garde(skip)]
-    pub entry_signal: Option<SignalSpec>,
-    /// Exit signal — close open positions on dates where this TA signal fires.
-    #[garde(skip)]
-    pub exit_signal: Option<SignalSpec>,
-
-    // ── Entry filters ─────────────────────────────────────────────────────
-    /// Minimum absolute net premium (debit or credit) at entry, in dollars per share.
-    #[serde(default)]
-    #[garde(inner(range(min = 0.0)))]
-    pub min_net_premium: Option<f64>,
-    /// Maximum absolute net premium at entry, in dollars per share.
-    #[serde(default)]
-    #[garde(inner(range(min = 0.0)))]
-    pub max_net_premium: Option<f64>,
-    /// Minimum signed net position delta at entry.
-    #[serde(default)]
-    #[garde(skip)]
-    pub min_net_delta: Option<f64>,
-    /// Maximum signed net position delta at entry.
-    #[serde(default)]
-    #[garde(skip)]
-    pub max_net_delta: Option<f64>,
-    /// Minimum calendar days between consecutive position entries (cooldown / stagger).
-    #[serde(default)]
-    #[garde(inner(range(min = 1)))]
-    pub min_days_between_entries: Option<i32>,
-    /// Filter expirations by calendar type: `Any` (default), `Weekly` (Fridays only),
-    /// or `Monthly` (third Friday of the month only).
-    #[serde(default)]
-    #[garde(skip)]
-    pub expiration_filter: Option<ExpirationFilter>,
-
-    // ── Exit filters ──────────────────────────────────────────────────────
-    /// Exit the position when the absolute net position delta exceeds this value.
-    #[serde(default)]
-    #[garde(inner(range(min = 0.0)))]
-    pub exit_net_delta: Option<f64>,
-
-    /// Symbol to analyze (required if multiple symbols loaded)
-    #[serde(default)]
-    #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
-    pub symbol: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct PermutationTestParams {
-    /// The option strategy name (e.g. `short_put`, `iron_condor`).
-    #[garde(length(min = 1))]
-    pub strategy: String,
-    /// Per-leg delta targets (optional — uses strategy-specific defaults if omitted)
-    #[serde(default)]
-    #[garde(inner(length(min = 1)))]
-    pub leg_deltas: Option<Vec<TargetRange>>,
-    /// Entry DTE range: { target, min, max }
-    #[serde(default = "default_entry_dte")]
+    #[serde(flatten)]
     #[garde(dive)]
-    pub entry_dte: DteRange,
-    /// DTE at exit (default: 0)
-    #[serde(default = "default_exit_dte")]
-    #[garde(range(min = 0), custom(validate_exit_dte_lt_entry_min(&self.entry_dte)))]
-    pub exit_dte: i32,
-    /// Slippage model (default: Spread)
-    #[serde(default)]
-    #[garde(dive)]
-    pub slippage: Slippage,
-    /// Commission structure
-    #[serde(default)]
-    #[garde(dive)]
-    pub commission: Option<Commission>,
-    /// Minimum bid/ask threshold (default: 0.05)
-    #[serde(default = "default_min_bid_ask")]
-    #[garde(range(min = 0.0))]
-    pub min_bid_ask: f64,
-    /// Stop loss threshold
-    #[garde(inner(range(min = 0.0)))]
-    pub stop_loss: Option<f64>,
-    /// Take profit threshold
-    #[garde(inner(range(min = 0.0)))]
-    pub take_profit: Option<f64>,
-    /// Maximum days to hold
-    #[garde(inner(range(min = 1)))]
-    pub max_hold_days: Option<i32>,
-    /// Starting capital (default: 10000)
-    #[serde(default = "default_capital")]
-    #[garde(range(min = 0.01))]
-    pub capital: f64,
-    /// Number of contracts per trade (default: 1)
-    #[serde(default = "default_quantity")]
-    #[garde(range(min = 1))]
-    pub quantity: i32,
-    /// Contract multiplier (default: 100)
-    #[serde(default = "default_multiplier")]
-    #[garde(range(min = 1))]
-    pub multiplier: i32,
-    /// Maximum concurrent positions (default: 1)
-    #[serde(default = "default_max_positions")]
-    #[garde(range(min = 1))]
-    pub max_positions: i32,
-    /// Trade selection method
-    #[garde(skip)]
-    pub selector: Option<TradeSelector>,
-    /// Entry signal
-    #[garde(skip)]
-    pub entry_signal: Option<SignalSpec>,
-    /// Exit signal
-    #[garde(skip)]
-    pub exit_signal: Option<SignalSpec>,
-    /// Symbol to backtest
-    #[serde(default)]
-    #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
-    pub symbol: Option<String>,
+    pub base: BacktestBaseParams,
+
     /// Number of random permutations to run (default: 100, max: 10000)
     #[serde(default = "default_num_permutations")]
     #[garde(range(min = 1, max = 10000))]
@@ -612,36 +525,6 @@ pub struct PermutationTestParams {
     #[serde(default)]
     #[garde(skip)]
     pub seed: Option<u64>,
-
-    // ── Entry filters ────────────────────────────────────────────────────────
-    /// Minimum absolute net premium at entry
-    #[serde(default)]
-    #[garde(inner(range(min = 0.0)))]
-    pub min_net_premium: Option<f64>,
-    /// Maximum absolute net premium at entry
-    #[serde(default)]
-    #[garde(inner(range(min = 0.0)))]
-    pub max_net_premium: Option<f64>,
-    /// Minimum signed net position delta at entry
-    #[serde(default)]
-    #[garde(skip)]
-    pub min_net_delta: Option<f64>,
-    /// Maximum signed net position delta at entry
-    #[serde(default)]
-    #[garde(skip)]
-    pub max_net_delta: Option<f64>,
-    /// Minimum calendar days between entries
-    #[serde(default)]
-    #[garde(inner(range(min = 1)))]
-    pub min_days_between_entries: Option<i32>,
-    /// Filter expirations by calendar type
-    #[serde(default)]
-    #[garde(skip)]
-    pub expiration_filter: Option<ExpirationFilter>,
-    /// Exit net delta threshold
-    #[serde(default)]
-    #[garde(inner(range(min = 0.0)))]
-    pub exit_net_delta: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema, Validate)]
@@ -1251,74 +1134,20 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
-        let strategy = params.strategy;
-
         tracing::info!(
-            strategy = strategy.as_str(),
-            symbol = params.symbol.as_deref().unwrap_or("auto"),
-            entry_dte_target = params.entry_dte.target,
-            entry_dte_min = params.entry_dte.min,
-            entry_dte_max = params.entry_dte.max,
-            exit_dte = params.exit_dte,
-            max_positions = params.max_positions,
-            capital = params.capital,
+            strategy = params.base.strategy.as_str(),
+            symbol = params.base.symbol.as_deref().unwrap_or("auto"),
+            entry_dte_target = params.base.entry_dte.target,
+            entry_dte_min = params.base.entry_dte.min,
+            entry_dte_max = params.base.entry_dte.max,
+            exit_dte = params.base.exit_dte,
+            max_positions = params.base.max_positions,
+            capital = params.base.capital,
             "Backtest request received"
         );
 
-        // Auto-load options data if not already loaded
-        let (symbol, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
-
-        // Auto-fetch OHLCV data if signals are requested
-        let ohlcv_path = if params.entry_signal.is_some() || params.exit_signal.is_some() {
-            Some(self.ensure_ohlcv(&symbol).await?)
-        } else {
-            None
-        };
-
-        // Resolve cross-symbol OHLCV paths for CrossSymbol signal variants
-        let cross_ohlcv_paths = self
-            .resolve_cross_ohlcv_paths(
-                params.entry_signal.as_ref(),
-                params.exit_signal.as_ref(),
-                &[],
-                &[],
-            )
-            .await?;
-
-        let leg_deltas = resolve_leg_deltas(params.leg_deltas, &strategy)?;
-
-        let backtest_params = BacktestParams {
-            strategy: strategy.clone(),
-            leg_deltas,
-            entry_dte: params.entry_dte,
-            exit_dte: params.exit_dte,
-            slippage: params.slippage,
-            commission: params.commission,
-            min_bid_ask: params.min_bid_ask,
-            stop_loss: params.stop_loss,
-            take_profit: params.take_profit,
-            max_hold_days: params.max_hold_days,
-            capital: params.capital,
-            quantity: params.quantity,
-            multiplier: params.multiplier,
-            max_positions: params.max_positions,
-            selector: params.selector.unwrap_or_default(),
-            adjustment_rules: vec![],
-            entry_signal: params.entry_signal,
-            exit_signal: params.exit_signal,
-            ohlcv_path,
-            cross_ohlcv_paths,
-            min_net_premium: params.min_net_premium,
-            max_net_premium: params.max_net_premium,
-            min_net_delta: params.min_net_delta,
-            max_net_delta: params.max_net_delta,
-            min_days_between_entries: params.min_days_between_entries,
-            expiration_filter: params.expiration_filter.unwrap_or_default(),
-            exit_net_delta: params.exit_net_delta,
-        };
-        backtest_params
-            .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+        let (symbol, df, backtest_params) =
+            self.resolve_backtest_params(params.base).await?;
 
         // Try to load underlying OHLCV close prices from cache for chart overlay
         let underlying_prices = match self.cache.ensure_local_for(&symbol, "prices").await {
@@ -1366,66 +1195,15 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
-        let strategy = params.strategy;
-
         tracing::info!(
-            strategy = strategy.as_str(),
-            symbol = params.symbol.as_deref().unwrap_or("auto"),
+            strategy = params.base.strategy.as_str(),
+            symbol = params.base.symbol.as_deref().unwrap_or("auto"),
             num_permutations = params.num_permutations,
             "Permutation test request received"
         );
 
-        let (symbol, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
-
-        let ohlcv_path = if params.entry_signal.is_some() || params.exit_signal.is_some() {
-            Some(self.ensure_ohlcv(&symbol).await?)
-        } else {
-            None
-        };
-
-        let cross_ohlcv_paths = self
-            .resolve_cross_ohlcv_paths(
-                params.entry_signal.as_ref(),
-                params.exit_signal.as_ref(),
-                &[],
-                &[],
-            )
-            .await?;
-
-        let leg_deltas = resolve_leg_deltas(params.leg_deltas, &strategy)?;
-
-        let backtest_params = BacktestParams {
-            strategy: strategy.clone(),
-            leg_deltas,
-            entry_dte: params.entry_dte,
-            exit_dte: params.exit_dte,
-            slippage: params.slippage,
-            commission: params.commission,
-            min_bid_ask: params.min_bid_ask,
-            stop_loss: params.stop_loss,
-            take_profit: params.take_profit,
-            max_hold_days: params.max_hold_days,
-            capital: params.capital,
-            quantity: params.quantity,
-            multiplier: params.multiplier,
-            max_positions: params.max_positions,
-            selector: params.selector.unwrap_or_default(),
-            adjustment_rules: vec![],
-            entry_signal: params.entry_signal,
-            exit_signal: params.exit_signal,
-            ohlcv_path,
-            cross_ohlcv_paths,
-            min_net_premium: params.min_net_premium,
-            max_net_premium: params.max_net_premium,
-            min_net_delta: params.min_net_delta,
-            max_net_delta: params.max_net_delta,
-            min_days_between_entries: params.min_days_between_entries,
-            expiration_filter: params.expiration_filter.unwrap_or_default(),
-            exit_net_delta: params.exit_net_delta,
-        };
-        backtest_params
-            .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+        let (_symbol, df, backtest_params) =
+            self.resolve_backtest_params(params.base).await?;
 
         let perm_params = crate::engine::permutation::PermutationParams {
             num_permutations: params.num_permutations,
@@ -1581,69 +1359,17 @@ impl OptopsyServer {
             .validate()
             .map_err(|e| format!("Validation error: {e}"))?;
 
-        let strategy = params.strategy;
-
         tracing::info!(
-            strategy = strategy.as_str(),
-            symbol = params.symbol.as_deref().unwrap_or("auto"),
+            strategy = params.base.strategy.as_str(),
+            symbol = params.base.symbol.as_deref().unwrap_or("auto"),
             train_days = params.train_days,
             test_days = params.test_days,
             step_days = ?params.step_days,
             "Walk-forward request received"
         );
 
-        let (symbol, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
-
-        // Auto-fetch OHLCV data if signals are requested
-        let ohlcv_path = if params.entry_signal.is_some() || params.exit_signal.is_some() {
-            Some(self.ensure_ohlcv(&symbol).await?)
-        } else {
-            None
-        };
-
-        let cross_ohlcv_paths = self
-            .resolve_cross_ohlcv_paths(
-                params.entry_signal.as_ref(),
-                params.exit_signal.as_ref(),
-                &[],
-                &[],
-            )
-            .await?;
-
-        let leg_deltas = resolve_leg_deltas(params.leg_deltas, &strategy)?;
-
-        let backtest_params = BacktestParams {
-            strategy: strategy.clone(),
-            leg_deltas,
-            entry_dte: params.entry_dte,
-            exit_dte: params.exit_dte,
-            slippage: params.slippage,
-            commission: params.commission,
-            min_bid_ask: params.min_bid_ask,
-            stop_loss: params.stop_loss,
-            take_profit: params.take_profit,
-            max_hold_days: params.max_hold_days,
-            capital: params.capital,
-            quantity: params.quantity,
-            multiplier: params.multiplier,
-            max_positions: params.max_positions,
-            selector: params.selector.unwrap_or_default(),
-            adjustment_rules: vec![],
-            entry_signal: params.entry_signal,
-            exit_signal: params.exit_signal,
-            ohlcv_path,
-            cross_ohlcv_paths,
-            min_net_premium: params.min_net_premium,
-            max_net_premium: params.max_net_premium,
-            min_net_delta: params.min_net_delta,
-            max_net_delta: params.max_net_delta,
-            min_days_between_entries: params.min_days_between_entries,
-            expiration_filter: params.expiration_filter.unwrap_or_default(),
-            exit_net_delta: params.exit_net_delta,
-        };
-        backtest_params
-            .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+        let (_symbol, df, backtest_params) =
+            self.resolve_backtest_params(params.base).await?;
 
         let train_days = params.train_days;
         let test_days = params.test_days;
