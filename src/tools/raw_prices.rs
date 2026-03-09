@@ -90,10 +90,10 @@ pub fn execute(
 
         bars.push(PriceBar {
             date,
-            open: opens.get(i).unwrap_or(f64::NAN),
-            high: highs.get(i).unwrap_or(f64::NAN),
-            low: lows.get(i).unwrap_or(f64::NAN),
-            close: closes.get(i).unwrap_or(f64::NAN),
+            open: opens.get(i).unwrap_or(0.0),
+            high: highs.get(i).unwrap_or(0.0),
+            low: lows.get(i).unwrap_or(0.0),
+            close: closes.get(i).unwrap_or(0.0),
             adjclose: adjcloses.as_ref().and_then(|ac| ac.get(i)),
             volume: volumes.get(i).unwrap_or(0),
         });
@@ -133,7 +133,7 @@ pub async fn load_and_execute(
         .map_err(|_| {
             anyhow::anyhow!(
                 "No OHLCV price data cached for {upper}. \
-             Call fetch_to_parquet({{ symbol: \"{upper}\", category: \"prices\" }}) first."
+             Call fetch_to_parquet({{ symbol: \"{upper}\" }}) first."
             )
         })?;
 

@@ -1,7 +1,7 @@
 use garde::Validate;
 use polars::prelude::*;
 use rmcp::{
-    handler::server::{router::tool::ToolRouter, wrapper::Json},
+    handler::server::router::tool::ToolRouter,
     model::{Implementation, ServerCapabilities, ServerInfo},
     tool, tool_handler, tool_router, ServerHandler,
 };
@@ -26,6 +26,337 @@ use crate::tools::response_types::{
     StatusResponse, StrategiesResponse, SuggestResponse, SweepResponse, WalkForwardResponse,
 };
 use crate::tools::signals::SignalsResponse;
+
+// ---------------------------------------------------------------------------
+// SanitizedJson — drop-in replacement for rmcp::Json that replaces NaN/Infinity
+// with 0.0 so that `serde_json::to_value` never fails on non-finite floats.
+//
+// `serde_json::to_value` rejects NaN/Infinity *during* serialization, so we
+// cannot sanitize after the fact. Instead we wrap the inner `Serialize` impl
+// with `FiniteF64` which intercepts `serialize_f64` and maps non-finite values
+// to `0.0` before they reach serde_json.
+// ---------------------------------------------------------------------------
+
+/// Wrapper whose `Serialize` impl delegates to `T` but replaces any
+/// non-finite `f64` values (NaN, ±Infinity) with `0.0` during serialization.
+struct FiniteF64Wrap<'a, T: serde::Serialize + ?Sized>(&'a T);
+
+impl<T: serde::Serialize + ?Sized> serde::Serialize for FiniteF64Wrap<'_, T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(FiniteF64Serializer(serializer))
+    }
+}
+
+/// Create a `FiniteF64Wrap` from a reference.
+fn finite_f64<T: serde::Serialize + ?Sized>(value: &T) -> FiniteF64Wrap<'_, T> {
+    FiniteF64Wrap(value)
+}
+
+/// A `Serializer` wrapper that intercepts `serialize_f64` calls and clamps
+/// non-finite values to `0.0`. All other methods delegate unchanged.
+struct FiniteF64Serializer<S>(S);
+
+macro_rules! delegate_serialize {
+    ($method:ident, $ty:ty) => {
+        fn $method(self, v: $ty) -> Result<Self::Ok, Self::Error> {
+            self.0.$method(v)
+        }
+    };
+}
+
+impl<S: serde::Serializer> serde::Serializer for FiniteF64Serializer<S> {
+    type Ok = S::Ok;
+    type Error = S::Error;
+    type SerializeSeq = FiniteF64Compound<S::SerializeSeq>;
+    type SerializeTuple = FiniteF64Compound<S::SerializeTuple>;
+    type SerializeTupleStruct = FiniteF64Compound<S::SerializeTupleStruct>;
+    type SerializeTupleVariant = FiniteF64Compound<S::SerializeTupleVariant>;
+    type SerializeMap = FiniteF64Compound<S::SerializeMap>;
+    type SerializeStruct = FiniteF64Compound<S::SerializeStruct>;
+    type SerializeStructVariant = FiniteF64Compound<S::SerializeStructVariant>;
+
+    delegate_serialize!(serialize_bool, bool);
+    delegate_serialize!(serialize_i8, i8);
+    delegate_serialize!(serialize_i16, i16);
+    delegate_serialize!(serialize_i32, i32);
+    delegate_serialize!(serialize_i64, i64);
+    delegate_serialize!(serialize_i128, i128);
+    delegate_serialize!(serialize_u8, u8);
+    delegate_serialize!(serialize_u16, u16);
+    delegate_serialize!(serialize_u32, u32);
+    delegate_serialize!(serialize_u64, u64);
+    delegate_serialize!(serialize_u128, u128);
+    delegate_serialize!(serialize_f32, f32);
+    delegate_serialize!(serialize_char, char);
+    delegate_serialize!(serialize_str, &str);
+    delegate_serialize!(serialize_bytes, &[u8]);
+
+    fn serialize_f64(self, v: f64) -> Result<Self::Ok, Self::Error> {
+        self.0.serialize_f64(if v.is_finite() { v } else { 0.0 })
+    }
+
+    fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
+        self.0.serialize_none()
+    }
+
+    fn serialize_some<T: serde::Serialize + ?Sized>(
+        self,
+        value: &T,
+    ) -> Result<Self::Ok, Self::Error> {
+        self.0.serialize_some(&finite_f64(value))
+    }
+
+    fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
+        self.0.serialize_unit()
+    }
+
+    fn serialize_unit_struct(self, name: &'static str) -> Result<Self::Ok, Self::Error> {
+        self.0.serialize_unit_struct(name)
+    }
+
+    fn serialize_unit_variant(
+        self,
+        name: &'static str,
+        variant_index: u32,
+        variant: &'static str,
+    ) -> Result<Self::Ok, Self::Error> {
+        self.0.serialize_unit_variant(name, variant_index, variant)
+    }
+
+    fn serialize_newtype_struct<T: serde::Serialize + ?Sized>(
+        self,
+        name: &'static str,
+        value: &T,
+    ) -> Result<Self::Ok, Self::Error> {
+        self.0.serialize_newtype_struct(name, &finite_f64(value))
+    }
+
+    fn serialize_newtype_variant<T: serde::Serialize + ?Sized>(
+        self,
+        name: &'static str,
+        variant_index: u32,
+        variant: &'static str,
+        value: &T,
+    ) -> Result<Self::Ok, Self::Error> {
+        self.0
+            .serialize_newtype_variant(name, variant_index, variant, &finite_f64(value))
+    }
+
+    fn serialize_seq(self, len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
+        self.0.serialize_seq(len).map(FiniteF64Compound)
+    }
+
+    fn serialize_tuple(self, len: usize) -> Result<Self::SerializeTuple, Self::Error> {
+        self.0.serialize_tuple(len).map(FiniteF64Compound)
+    }
+
+    fn serialize_tuple_struct(
+        self,
+        name: &'static str,
+        len: usize,
+    ) -> Result<Self::SerializeTupleStruct, Self::Error> {
+        self.0
+            .serialize_tuple_struct(name, len)
+            .map(FiniteF64Compound)
+    }
+
+    fn serialize_tuple_variant(
+        self,
+        name: &'static str,
+        variant_index: u32,
+        variant: &'static str,
+        len: usize,
+    ) -> Result<Self::SerializeTupleVariant, Self::Error> {
+        self.0
+            .serialize_tuple_variant(name, variant_index, variant, len)
+            .map(FiniteF64Compound)
+    }
+
+    fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
+        self.0.serialize_map(len).map(FiniteF64Compound)
+    }
+
+    fn serialize_struct(
+        self,
+        name: &'static str,
+        len: usize,
+    ) -> Result<Self::SerializeStruct, Self::Error> {
+        self.0.serialize_struct(name, len).map(FiniteF64Compound)
+    }
+
+    fn serialize_struct_variant(
+        self,
+        name: &'static str,
+        variant_index: u32,
+        variant: &'static str,
+        len: usize,
+    ) -> Result<Self::SerializeStructVariant, Self::Error> {
+        self.0
+            .serialize_struct_variant(name, variant_index, variant, len)
+            .map(FiniteF64Compound)
+    }
+}
+
+/// Compound-type wrapper that wraps each element/field through `FiniteF64`.
+struct FiniteF64Compound<C>(C);
+
+impl<C: serde::ser::SerializeSeq> serde::ser::SerializeSeq for FiniteF64Compound<C> {
+    type Ok = C::Ok;
+    type Error = C::Error;
+    fn serialize_element<T: serde::Serialize + ?Sized>(
+        &mut self,
+        value: &T,
+    ) -> Result<(), Self::Error> {
+        self.0.serialize_element(&finite_f64(value))
+    }
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        self.0.end()
+    }
+}
+
+impl<C: serde::ser::SerializeTuple> serde::ser::SerializeTuple for FiniteF64Compound<C> {
+    type Ok = C::Ok;
+    type Error = C::Error;
+    fn serialize_element<T: serde::Serialize + ?Sized>(
+        &mut self,
+        value: &T,
+    ) -> Result<(), Self::Error> {
+        self.0.serialize_element(&finite_f64(value))
+    }
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        self.0.end()
+    }
+}
+
+impl<C: serde::ser::SerializeTupleStruct> serde::ser::SerializeTupleStruct
+    for FiniteF64Compound<C>
+{
+    type Ok = C::Ok;
+    type Error = C::Error;
+    fn serialize_field<T: serde::Serialize + ?Sized>(
+        &mut self,
+        value: &T,
+    ) -> Result<(), Self::Error> {
+        self.0.serialize_field(&finite_f64(value))
+    }
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        self.0.end()
+    }
+}
+
+impl<C: serde::ser::SerializeTupleVariant> serde::ser::SerializeTupleVariant
+    for FiniteF64Compound<C>
+{
+    type Ok = C::Ok;
+    type Error = C::Error;
+    fn serialize_field<T: serde::Serialize + ?Sized>(
+        &mut self,
+        value: &T,
+    ) -> Result<(), Self::Error> {
+        self.0.serialize_field(&finite_f64(value))
+    }
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        self.0.end()
+    }
+}
+
+impl<C: serde::ser::SerializeMap> serde::ser::SerializeMap for FiniteF64Compound<C> {
+    type Ok = C::Ok;
+    type Error = C::Error;
+    fn serialize_key<T: serde::Serialize + ?Sized>(&mut self, key: &T) -> Result<(), Self::Error> {
+        self.0.serialize_key(&finite_f64(key))
+    }
+    fn serialize_value<T: serde::Serialize + ?Sized>(
+        &mut self,
+        value: &T,
+    ) -> Result<(), Self::Error> {
+        self.0.serialize_value(&finite_f64(value))
+    }
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        self.0.end()
+    }
+}
+
+impl<C: serde::ser::SerializeStruct> serde::ser::SerializeStruct for FiniteF64Compound<C> {
+    type Ok = C::Ok;
+    type Error = C::Error;
+    fn serialize_field<T: serde::Serialize + ?Sized>(
+        &mut self,
+        key: &'static str,
+        value: &T,
+    ) -> Result<(), Self::Error> {
+        self.0.serialize_field(key, &finite_f64(value))
+    }
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        self.0.end()
+    }
+}
+
+impl<C: serde::ser::SerializeStructVariant> serde::ser::SerializeStructVariant
+    for FiniteF64Compound<C>
+{
+    type Ok = C::Ok;
+    type Error = C::Error;
+    fn serialize_field<T: serde::Serialize + ?Sized>(
+        &mut self,
+        key: &'static str,
+        value: &T,
+    ) -> Result<(), Self::Error> {
+        self.0.serialize_field(key, &finite_f64(value))
+    }
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        self.0.end()
+    }
+}
+
+/// Serialize `T` into a `serde_json::Value`, replacing any non-finite f64 with `0.0`.
+fn serialize_finite<T: serde::Serialize>(
+    value: &T,
+) -> Result<serde_json::Value, serde_json::Error> {
+    serde_json::to_value(finite_f64(value))
+}
+
+/// Like `rmcp::handler::server::wrapper::Json`, but sanitises non-finite f64 values
+/// during serialisation so that `serde_json::to_value` never fails on NaN/±Infinity.
+pub struct SanitizedJson<T>(pub T);
+
+impl<T: schemars::JsonSchema> schemars::JsonSchema for SanitizedJson<T> {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        T::schema_name()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        T::json_schema(generator)
+    }
+}
+
+impl<T: serde::Serialize + schemars::JsonSchema + 'static>
+    rmcp::handler::server::tool::IntoCallToolResult for SanitizedJson<T>
+{
+    fn into_call_tool_result(self) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
+        let value = serialize_finite(&self.0).map_err(|e| {
+            rmcp::ErrorData::internal_error(
+                format!("Failed to serialize structured content: {e}"),
+                None,
+            )
+        })?;
+        Ok(rmcp::model::CallToolResult::structured(value))
+    }
+}
+
+/// Newtype wrapper around `Result` to work around orphan rule for `IntoCallToolResult`.
+pub struct SanitizedResult<T, E>(pub Result<T, E>);
+
+impl<T: serde::Serialize + schemars::JsonSchema + 'static, E: rmcp::model::IntoContents>
+    rmcp::handler::server::tool::IntoCallToolResult for SanitizedResult<T, E>
+{
+    fn into_call_tool_result(self) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
+        match self.0 {
+            Ok(value) => SanitizedJson(value).into_call_tool_result(),
+            Err(error) => Ok(rmcp::model::CallToolResult::error(error.into_contents())),
+        }
+    }
+}
 
 /// Loaded data: `HashMap<Symbol, DataFrame>` for multi-symbol support.
 type LoadedData = HashMap<String, DataFrame>;
@@ -112,7 +443,7 @@ impl OptopsyServer {
 
         tracing::info!(symbol = %symbol, "Auto-fetching OHLCV data from Yahoo Finance");
 
-        tools::fetch::execute(&self.cache, symbol, "prices", "5y")
+        tools::fetch::execute(&self.cache, symbol, "5y")
             .await
             .map_err(|e| format!("Failed to auto-fetch OHLCV data for {symbol}: {e}"))?;
 
@@ -600,7 +931,7 @@ pub struct CompareStrategiesParams {
     pub symbol: Option<String>,
 }
 
-fn validate_category(category: &str) -> Result<&str, String> {
+fn validate_category_read(category: &str) -> Result<&str, String> {
     match category {
         "options" | "prices" => Ok(category),
         _ => Err(format!(
@@ -666,9 +997,6 @@ pub struct FetchToParquetParams {
     /// Ticker symbol (e.g. "SPY")
     #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub symbol: String,
-    /// Data category: "options" for options chain data, "prices" for OHLCV price data
-    #[garde(length(min = 1))]
-    pub category: String,
     /// Time period to fetch (e.g. "6mo", "1y", "5y", "max"). Defaults to "5y".
     #[garde(inner(length(min = 1)))]
     pub period: Option<String>,
@@ -1004,8 +1332,8 @@ impl OptopsyServer {
     /// **Categories**: singles, spreads, straddles, strangles, butterflies, condors, iron, calendars, diagonals
     /// **Next tools**: `suggest_parameters()` or `run_backtest()` (once you pick a strategy)
     #[tool(name = "list_strategies", annotations(read_only_hint = true))]
-    async fn list_strategies(&self) -> Json<StrategiesResponse> {
-        Json(tools::strategies::execute())
+    async fn list_strategies(&self) -> SanitizedJson<StrategiesResponse> {
+        SanitizedJson(tools::strategies::execute())
     }
 
     /// Browse all 40+ available technical analysis (TA) signals for entry/exit filtering.
@@ -1017,8 +1345,8 @@ impl OptopsyServer {
     /// **Next tool**: `construct_signal()` (if you want to use signals in backtest)
     /// **Note**: Signals are optional — only needed if you want signal-filtered entry/exit
     #[tool(name = "list_signals", annotations(read_only_hint = true))]
-    async fn list_signals(&self) -> Json<SignalsResponse> {
-        Json(tools::signals::execute())
+    async fn list_signals(&self) -> SanitizedJson<SignalsResponse> {
+        SanitizedJson(tools::signals::execute())
     }
 
     /// Get status of currently loaded data.
@@ -1029,8 +1357,8 @@ impl OptopsyServer {
     /// **Next tool**: Proceed with `suggest_parameters()` or `run_backtest()`
     /// **Example usage**: After loading SPY, call this to confirm it's loaded and see column names
     #[tool(name = "get_loaded_symbol", annotations(read_only_hint = true))]
-    async fn get_loaded_symbol(&self) -> Json<StatusResponse> {
-        Json(tools::status::execute(&self.data).await)
+    async fn get_loaded_symbol(&self) -> SanitizedJson<StatusResponse> {
+        SanitizedJson(tools::status::execute(&self.data).await)
     }
 
     /// Construct a signal specification from natural language.
@@ -1049,11 +1377,16 @@ impl OptopsyServer {
     async fn construct_signal(
         &self,
         Parameters(params): Parameters<ConstructSignalParams>,
-    ) -> Result<Json<ConstructSignalResponse>, String> {
-        params
-            .validate()
-            .map_err(|e| validation_err("construct_signal", e))?;
-        Ok(Json(tools::construct_signal::execute(&params.prompt)))
+    ) -> SanitizedResult<ConstructSignalResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("construct_signal", e))?;
+                Ok(tools::construct_signal::execute(&params.prompt))
+            }
+            .await,
+        )
     }
 
     /// Build, validate, save, list, and manage custom formula-based signals.
@@ -1093,51 +1426,53 @@ impl OptopsyServer {
     async fn build_signal(
         &self,
         Parameters(params): Parameters<BuildSignalParams>,
-    ) -> Result<Json<BuildSignalResponse>, String> {
-        params
-            .validate()
-            .map_err(|e| validation_err("build_signal", e))?;
+    ) -> SanitizedResult<BuildSignalResponse, String> {
+        SanitizedResult(async {
+            params
+                .validate()
+                .map_err(|e| validation_err("build_signal", e))?;
 
-        let action = match params.action.as_str() {
-            "create" => {
-                let name = params
-                    .name
-                    .ok_or("'name' is required for action='create'")?;
-                let formula = params
-                    .formula
-                    .ok_or("'formula' is required for action='create'")?;
-                tools::build_signal::Action::Create {
-                    name,
-                    formula,
-                    description: params.description,
-                    save: params.save,
+            let action = match params.action.as_str() {
+                "create" => {
+                    let name = params
+                        .name
+                        .ok_or("'name' is required for action='create'")?;
+                    let formula = params
+                        .formula
+                        .ok_or("'formula' is required for action='create'")?;
+                    tools::build_signal::Action::Create {
+                        name,
+                        formula,
+                        description: params.description,
+                        save: params.save,
+                    }
                 }
-            }
-            "list" => tools::build_signal::Action::List,
-            "delete" => {
-                let name = params
-                    .name
-                    .ok_or("'name' is required for action='delete'")?;
-                tools::build_signal::Action::Delete { name }
-            }
-            "validate" => {
-                let formula = params
-                    .formula
-                    .ok_or("'formula' is required for action='validate'")?;
-                tools::build_signal::Action::Validate { formula }
-            }
-            "get" => {
-                let name = params.name.ok_or("'name' is required for action='get'")?;
-                tools::build_signal::Action::Get { name }
-            }
-            other => {
-                return Err(format!(
-                    "Invalid action: \"{other}\". Must be \"create\", \"list\", \"delete\", \"validate\", or \"get\"."
-                ));
-            }
-        };
+                "list" => tools::build_signal::Action::List,
+                "delete" => {
+                    let name = params
+                        .name
+                        .ok_or("'name' is required for action='delete'")?;
+                    tools::build_signal::Action::Delete { name }
+                }
+                "validate" => {
+                    let formula = params
+                        .formula
+                        .ok_or("'formula' is required for action='validate'")?;
+                    tools::build_signal::Action::Validate { formula }
+                }
+                "get" => {
+                    let name = params.name.ok_or("'name' is required for action='get'")?;
+                    tools::build_signal::Action::Get { name }
+                }
+                other => {
+                    return Err(format!(
+                        "Invalid action: \"{other}\". Must be \"create\", \"list\", \"delete\", \"validate\", or \"get\"."
+                    ));
+                }
+            };
 
-        Ok(Json(tools::build_signal::execute(action)))
+            Ok(tools::build_signal::execute(action))
+        }.await)
     }
 
     /// Full event-driven day-by-day simulation with position management and metrics.
@@ -1165,50 +1500,55 @@ impl OptopsyServer {
     async fn run_backtest(
         &self,
         Parameters(params): Parameters<RunBacktestParams>,
-    ) -> Result<Json<BacktestResponse>, String> {
-        params
-            .validate()
-            .map_err(|e| validation_err("run_backtest", e))?;
+    ) -> SanitizedResult<BacktestResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("run_backtest", e))?;
 
-        tracing::info!(
-            strategy = params.base.strategy.as_str(),
-            symbol = params.base.symbol.as_deref().unwrap_or("auto"),
-            entry_dte_target = params.base.entry_dte.target,
-            entry_dte_min = params.base.entry_dte.min,
-            entry_dte_max = params.base.entry_dte.max,
-            exit_dte = params.base.exit_dte,
-            max_positions = params.base.max_positions,
-            capital = params.base.capital,
-            "Backtest request received"
-        );
+                tracing::info!(
+                    strategy = params.base.strategy.as_str(),
+                    symbol = params.base.symbol.as_deref().unwrap_or("auto"),
+                    entry_dte_target = params.base.entry_dte.target,
+                    entry_dte_min = params.base.entry_dte.min,
+                    entry_dte_max = params.base.entry_dte.max,
+                    exit_dte = params.base.exit_dte,
+                    max_positions = params.base.max_positions,
+                    capital = params.base.capital,
+                    "Backtest request received"
+                );
 
-        let (symbol, df, backtest_params) = self.resolve_backtest_params(params.base).await?;
+                let (symbol, df, backtest_params) =
+                    self.resolve_backtest_params(params.base).await?;
 
-        // Try to load underlying OHLCV close prices from cache for chart overlay
-        let underlying_prices = match self.cache.ensure_local_for(&symbol, "prices").await {
-            Ok(path) => {
-                // Read on blocking thread since it's Polars I/O
-                let prices = tokio::task::spawn_blocking(
-                    move || -> Vec<tools::response_types::UnderlyingPrice> {
-                        load_underlying_closes(&path)
-                    },
-                )
+                // Try to load underlying OHLCV close prices from cache for chart overlay
+                let underlying_prices = match self.cache.ensure_local_for(&symbol, "prices").await {
+                    Ok(path) => {
+                        // Read on blocking thread since it's Polars I/O
+                        let prices = tokio::task::spawn_blocking(
+                            move || -> Vec<tools::response_types::UnderlyingPrice> {
+                                load_underlying_closes(&path)
+                            },
+                        )
+                        .await
+                        .unwrap_or_default();
+                        prices
+                    }
+                    Err(_) => vec![],
+                };
+
+                // Run backtest on a blocking thread — the engine performs synchronous
+                // Polars I/O (scan_parquet) which conflicts with the tokio runtime.
+                tokio::task::spawn_blocking(move || {
+                    tools::backtest::execute(&df, &backtest_params, underlying_prices)
+                })
                 .await
-                .unwrap_or_default();
-                prices
+                .map_err(|e| format!("Backtest task panicked: {e}"))?
+                .map_err(|e| format!("Error: {e}"))
             }
-            Err(_) => vec![],
-        };
-
-        // Run backtest on a blocking thread — the engine performs synchronous
-        // Polars I/O (scan_parquet) which conflicts with the tokio runtime.
-        tokio::task::spawn_blocking(move || {
-            tools::backtest::execute(&df, &backtest_params, underlying_prices)
-        })
-        .await
-        .map_err(|e| format!("Backtest task panicked: {e}"))?
-        .map(Json)
-        .map_err(|e| format!("Error: {e}"))
+            .await,
+        )
     }
 
     /// Permutation test for statistical significance of backtest results.
@@ -1225,40 +1565,45 @@ impl OptopsyServer {
     async fn permutation_test(
         &self,
         Parameters(params): Parameters<PermutationTestParams>,
-    ) -> Result<Json<PermutationTestResponse>, String> {
-        params
-            .validate()
-            .map_err(|e| validation_err("permutation_test", e))?;
+    ) -> SanitizedResult<PermutationTestResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("permutation_test", e))?;
 
-        tracing::info!(
-            strategy = params.base.strategy.as_str(),
-            symbol = params.base.symbol.as_deref().unwrap_or("auto"),
-            num_permutations = params.num_permutations,
-            "Permutation test request received"
-        );
+                tracing::info!(
+                    strategy = params.base.strategy.as_str(),
+                    symbol = params.base.symbol.as_deref().unwrap_or("auto"),
+                    num_permutations = params.num_permutations,
+                    "Permutation test request received"
+                );
 
-        let (_symbol, df, backtest_params) = self.resolve_backtest_params(params.base).await?;
+                let (_symbol, df, backtest_params) =
+                    self.resolve_backtest_params(params.base).await?;
 
-        let perm_params = crate::engine::permutation::PermutationParams {
-            num_permutations: params.num_permutations,
-            seed: params.seed,
-        };
+                let perm_params = crate::engine::permutation::PermutationParams {
+                    num_permutations: params.num_permutations,
+                    seed: params.seed,
+                };
 
-        tokio::task::spawn_blocking(move || {
-            let (entry_dates, exit_dates) =
-                crate::engine::core::build_signal_filters(&backtest_params, &df)?;
-            tools::permutation_test::execute(
-                &df,
-                &backtest_params,
-                &perm_params,
-                &entry_dates,
-                exit_dates.as_ref(),
-            )
-        })
-        .await
-        .map_err(|e| format!("Permutation test task panicked: {e}"))?
-        .map(Json)
-        .map_err(|e| format!("Error: {e}"))
+                tokio::task::spawn_blocking(move || {
+                    let (entry_dates, exit_dates) =
+                        crate::engine::core::build_signal_filters(&backtest_params, &df)?;
+                    tools::permutation_test::execute(
+                        &df,
+                        &backtest_params,
+                        &perm_params,
+                        &entry_dates,
+                        exit_dates.as_ref(),
+                    )
+                })
+                .await
+                .map_err(|e| format!("Permutation test task panicked: {e}"))?
+                .map_err(|e| format!("Error: {e}"))
+            }
+            .await,
+        )
     }
 
     /// Sweep parameter combinations across strategies, DTE, exit DTE, and slippage.
@@ -1285,87 +1630,92 @@ impl OptopsyServer {
     async fn parameter_sweep(
         &self,
         Parameters(params): Parameters<ParameterSweepParams>,
-    ) -> Result<Json<SweepResponse>, String> {
-        params
-            .validate()
-            .map_err(|e| validation_err("parameter_sweep", e))?;
+    ) -> SanitizedResult<SweepResponse, String> {
+        SanitizedResult(async {
+            params
+                .validate()
+                .map_err(|e| validation_err("parameter_sweep", e))?;
 
-        // Validate: singular and plural signal fields are mutually exclusive
-        if params.sim_params.entry_signal.is_some() && !params.sim_params.entry_signals.is_empty() {
-            return Err(
-                "Cannot use both `entry_signal` (singular) and `entry_signals` (plural). \
-                 Use `entry_signals` for sweeping multiple signals, or `entry_signal` for a fixed signal."
-                    .to_string(),
-            );
-        }
-        if params.sim_params.exit_signal.is_some() && !params.sim_params.exit_signals.is_empty() {
-            return Err(
-                "Cannot use both `exit_signal` (singular) and `exit_signals` (plural). \
-                 Use `exit_signals` for sweeping multiple signals, or `exit_signal` for a fixed signal."
-                    .to_string(),
-            );
-        }
+            // Validate: singular and plural signal fields are mutually exclusive
+            if params.sim_params.entry_signal.is_some()
+                && !params.sim_params.entry_signals.is_empty()
+            {
+                return Err(
+                    "Cannot use both `entry_signal` (singular) and `entry_signals` (plural). \
+                     Use `entry_signals` for sweeping multiple signals, or `entry_signal` for a fixed signal."
+                        .to_string(),
+                );
+            }
+            if params.sim_params.exit_signal.is_some()
+                && !params.sim_params.exit_signals.is_empty()
+            {
+                return Err(
+                    "Cannot use both `exit_signal` (singular) and `exit_signals` (plural). \
+                     Use `exit_signals` for sweeping multiple signals, or `exit_signal` for a fixed signal."
+                        .to_string(),
+                );
+            }
 
-        let (symbol, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
+            let (symbol, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
 
-        // Auto-fetch OHLCV data if any signals are requested
-        let needs_ohlcv = params.sim_params.entry_signal.is_some()
-            || params.sim_params.exit_signal.is_some()
-            || !params.sim_params.entry_signals.is_empty()
-            || !params.sim_params.exit_signals.is_empty();
-        let ohlcv_path = if needs_ohlcv {
-            Some(self.ensure_ohlcv(&symbol).await?)
-        } else {
-            None
-        };
+            // Auto-fetch OHLCV data if any signals are requested
+            let needs_ohlcv = params.sim_params.entry_signal.is_some()
+                || params.sim_params.exit_signal.is_some()
+                || !params.sim_params.entry_signals.is_empty()
+                || !params.sim_params.exit_signals.is_empty();
+            let ohlcv_path = if needs_ohlcv {
+                Some(self.ensure_ohlcv(&symbol).await?)
+            } else {
+                None
+            };
 
-        let cross_ohlcv_paths = self
-            .resolve_cross_ohlcv_paths(
-                params.sim_params.entry_signal.as_ref(),
-                params.sim_params.exit_signal.as_ref(),
-                &params.sim_params.entry_signals,
-                &params.sim_params.exit_signals,
-            )
-            .await?;
+            let cross_ohlcv_paths = self
+                .resolve_cross_ohlcv_paths(
+                    params.sim_params.entry_signal.as_ref(),
+                    params.sim_params.exit_signal.as_ref(),
+                    &params.sim_params.entry_signals,
+                    &params.sim_params.exit_signals,
+                )
+                .await?;
 
-        let strategies = resolve_sweep_strategies(params.strategies, params.direction)?;
+            let strategies = resolve_sweep_strategies(params.strategies, params.direction)?;
 
-        let sweep_params = crate::engine::sweep::SweepParams {
-            strategies,
-            sweep: crate::engine::sweep::SweepDimensions {
-                entry_dte_targets: params.sweep.entry_dte_targets,
-                exit_dtes: params.sweep.exit_dtes,
-                slippage_models: params.sweep.slippage_models,
-            },
-            sim_params: SimParams {
-                capital: params.sim_params.capital,
-                quantity: params.sim_params.quantity,
-                multiplier: params.sim_params.multiplier,
-                max_positions: params.sim_params.max_positions,
-                selector: params.sim_params.selector,
-                stop_loss: params.sim_params.stop_loss,
-                take_profit: params.sim_params.take_profit,
-                max_hold_days: params.sim_params.max_hold_days,
-                entry_signal: params.sim_params.entry_signal,
-                exit_signal: params.sim_params.exit_signal,
-                ohlcv_path,
-                cross_ohlcv_paths,
-                min_days_between_entries: params.sim_params.min_days_between_entries,
-                exit_net_delta: params.sim_params.exit_net_delta,
-            },
-            out_of_sample_pct: params.out_of_sample_pct / 100.0,
-            direction: params.direction,
-            entry_signals: params.sim_params.entry_signals,
-            exit_signals: params.sim_params.exit_signals,
-            num_permutations: params.num_permutations,
-            permutation_seed: params.permutation_seed,
-        };
+            let sweep_params = crate::engine::sweep::SweepParams {
+                strategies,
+                sweep: crate::engine::sweep::SweepDimensions {
+                    entry_dte_targets: params.sweep.entry_dte_targets,
+                    exit_dtes: params.sweep.exit_dtes,
+                    slippage_models: params.sweep.slippage_models,
+                },
+                sim_params: SimParams {
+                    capital: params.sim_params.capital,
+                    quantity: params.sim_params.quantity,
+                    multiplier: params.sim_params.multiplier,
+                    max_positions: params.sim_params.max_positions,
+                    selector: params.sim_params.selector,
+                    stop_loss: params.sim_params.stop_loss,
+                    take_profit: params.sim_params.take_profit,
+                    max_hold_days: params.sim_params.max_hold_days,
+                    entry_signal: params.sim_params.entry_signal,
+                    exit_signal: params.sim_params.exit_signal,
+                    ohlcv_path,
+                    cross_ohlcv_paths,
+                    min_days_between_entries: params.sim_params.min_days_between_entries,
+                    exit_net_delta: params.sim_params.exit_net_delta,
+                },
+                out_of_sample_pct: params.out_of_sample_pct / 100.0,
+                direction: params.direction,
+                entry_signals: params.sim_params.entry_signals,
+                exit_signals: params.sim_params.exit_signals,
+                num_permutations: params.num_permutations,
+                permutation_seed: params.permutation_seed,
+            };
 
-        tokio::task::spawn_blocking(move || tools::sweep::execute(&df, &sweep_params))
-            .await
-            .map_err(|e| format!("Sweep task panicked: {e}"))?
-            .map(Json)
-            .map_err(|e| format!("Error: {e}"))
+            tokio::task::spawn_blocking(move || tools::sweep::execute(&df, &sweep_params))
+                .await
+                .map_err(|e| format!("Sweep task panicked: {e}"))?
+                .map_err(|e| format!("Error: {e}"))
+        }.await)
     }
 
     /// Rolling walk-forward validation: train on window 1, test on window 2, slide forward, repeat.
@@ -1390,33 +1740,44 @@ impl OptopsyServer {
     async fn walk_forward(
         &self,
         Parameters(params): Parameters<WalkForwardParams>,
-    ) -> Result<Json<WalkForwardResponse>, String> {
-        params
-            .validate()
-            .map_err(|e| validation_err("walk_forward", e))?;
+    ) -> SanitizedResult<WalkForwardResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("walk_forward", e))?;
 
-        tracing::info!(
-            strategy = params.base.strategy.as_str(),
-            symbol = params.base.symbol.as_deref().unwrap_or("auto"),
-            train_days = params.train_days,
-            test_days = params.test_days,
-            step_days = ?params.step_days,
-            "Walk-forward request received"
-        );
+                tracing::info!(
+                    strategy = params.base.strategy.as_str(),
+                    symbol = params.base.symbol.as_deref().unwrap_or("auto"),
+                    train_days = params.train_days,
+                    test_days = params.test_days,
+                    step_days = ?params.step_days,
+                    "Walk-forward request received"
+                );
 
-        let (_symbol, df, backtest_params) = self.resolve_backtest_params(params.base).await?;
+                let (_symbol, df, backtest_params) =
+                    self.resolve_backtest_params(params.base).await?;
 
-        let train_days = params.train_days;
-        let test_days = params.test_days;
-        let step_days = params.step_days;
+                let train_days = params.train_days;
+                let test_days = params.test_days;
+                let step_days = params.step_days;
 
-        tokio::task::spawn_blocking(move || {
-            tools::walk_forward::execute(&df, &backtest_params, train_days, test_days, step_days)
-        })
-        .await
-        .map_err(|e| format!("Walk-forward task panicked: {e}"))?
-        .map(Json)
-        .map_err(|e| format!("Error: {e}"))
+                tokio::task::spawn_blocking(move || {
+                    tools::walk_forward::execute(
+                        &df,
+                        &backtest_params,
+                        train_days,
+                        test_days,
+                        step_days,
+                    )
+                })
+                .await
+                .map_err(|e| format!("Walk-forward task panicked: {e}"))?
+                .map_err(|e| format!("Error: {e}"))
+            }
+            .await,
+        )
     }
 
     /// Run multiple strategies in parallel and rank by performance metrics.
@@ -1438,62 +1799,66 @@ impl OptopsyServer {
     async fn compare_strategies(
         &self,
         Parameters(params): Parameters<CompareStrategiesParams>,
-    ) -> Result<Json<CompareResponse>, String> {
-        params
-            .validate()
-            .map_err(|e| validation_err("compare_strategies", e))?;
+    ) -> SanitizedResult<CompareResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("compare_strategies", e))?;
 
-        let (symbol, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
+                let (symbol, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
 
-        // Auto-fetch OHLCV data if signals are requested
-        let ohlcv_path = if params.entry_signal.is_some() || params.exit_signal.is_some() {
-            Some(self.ensure_ohlcv(&symbol).await?)
-        } else {
-            None
-        };
+                // Auto-fetch OHLCV data if signals are requested
+                let ohlcv_path = if params.entry_signal.is_some() || params.exit_signal.is_some() {
+                    Some(self.ensure_ohlcv(&symbol).await?)
+                } else {
+                    None
+                };
 
-        let cross_ohlcv_paths = self
-            .resolve_cross_ohlcv_paths(
-                params.entry_signal.as_ref(),
-                params.exit_signal.as_ref(),
-                &[],
-                &[],
-            )
-            .await?;
+                let cross_ohlcv_paths = self
+                    .resolve_cross_ohlcv_paths(
+                        params.entry_signal.as_ref(),
+                        params.exit_signal.as_ref(),
+                        &[],
+                        &[],
+                    )
+                    .await?;
 
-        let mut sim_params = params.sim_params;
-        sim_params.entry_signal = params.entry_signal;
-        sim_params.exit_signal = params.exit_signal;
-        sim_params.ohlcv_path = ohlcv_path;
-        sim_params.cross_ohlcv_paths = cross_ohlcv_paths;
+                let mut sim_params = params.sim_params;
+                sim_params.entry_signal = params.entry_signal;
+                sim_params.exit_signal = params.exit_signal;
+                sim_params.ohlcv_path = ohlcv_path;
+                sim_params.cross_ohlcv_paths = cross_ohlcv_paths;
 
-        let compare_params = CompareParams {
-            strategies: params
-                .strategies
-                .into_iter()
-                .map(|s| {
-                    let leg_deltas = resolve_leg_deltas(s.leg_deltas, &s.name)?;
-                    Ok(CompareEntry {
-                        name: s.name,
-                        leg_deltas,
-                        entry_dte: s.entry_dte,
-                        exit_dte: s.exit_dte,
-                        slippage: s.slippage,
-                        commission: s.commission,
-                    })
-                })
-                .collect::<Result<Vec<_>, String>>()?,
-            sim_params,
-        };
-        compare_params
-            .validate()
-            .map_err(|e| validation_err("compare_strategies", e))?;
+                let compare_params = CompareParams {
+                    strategies: params
+                        .strategies
+                        .into_iter()
+                        .map(|s| {
+                            let leg_deltas = resolve_leg_deltas(s.leg_deltas, &s.name)?;
+                            Ok(CompareEntry {
+                                name: s.name,
+                                leg_deltas,
+                                entry_dte: s.entry_dte,
+                                exit_dte: s.exit_dte,
+                                slippage: s.slippage,
+                                commission: s.commission,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()?,
+                    sim_params,
+                };
+                compare_params
+                    .validate()
+                    .map_err(|e| validation_err("compare_strategies", e))?;
 
-        tokio::task::spawn_blocking(move || tools::compare::execute(&df, &compare_params))
-            .await
-            .map_err(|e| format!("Compare task panicked: {e}"))?
-            .map(Json)
-            .map_err(|e| format!("Error: {e}"))
+                tokio::task::spawn_blocking(move || tools::compare::execute(&df, &compare_params))
+                    .await
+                    .map_err(|e| format!("Compare task panicked: {e}"))?
+                    .map_err(|e| format!("Error: {e}"))
+            }
+            .await,
+        )
     }
 
     /// Check if cached Parquet data exists and when it was last updated.
@@ -1510,14 +1875,18 @@ impl OptopsyServer {
     async fn check_cache_status(
         &self,
         Parameters(params): Parameters<CheckCacheParams>,
-    ) -> Result<Json<CheckCacheResponse>, String> {
-        params
-            .validate()
-            .map_err(|e| validation_err("check_cache_status", e))?;
-        let category = validate_category(&params.category)?;
-        tools::cache_status::execute(&self.cache, &params.symbol, category)
-            .map(Json)
-            .map_err(|e| format!("Error: {e}"))
+    ) -> SanitizedResult<CheckCacheResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("check_cache_status", e))?;
+                let category = validate_category_read(&params.category)?;
+                tools::cache_status::execute(&self.cache, &params.symbol, category)
+                    .map_err(|e| format!("Error: {e}"))
+            }
+            .await,
+        )
     }
 
     /// Download OHLCV price data from Yahoo Finance and cache locally as Parquet.
@@ -1527,7 +1896,6 @@ impl OptopsyServer {
     /// **Prerequisites**: None
     /// **Note**: OHLCV data is auto-fetched when signals are used in `run_backtest`,
     ///   so this tool is only needed for explicit pre-caching or standalone use.
-    /// **Categories**: Use "prices" for standard price data
     /// **Periods**: "5y" (default), "6mo", "1y", "max"
     #[tool(
         name = "fetch_to_parquet",
@@ -1540,16 +1908,19 @@ impl OptopsyServer {
     async fn fetch_to_parquet(
         &self,
         Parameters(params): Parameters<FetchToParquetParams>,
-    ) -> Result<Json<FetchResponse>, String> {
-        params
-            .validate()
-            .map_err(|e| validation_err("fetch_to_parquet", e))?;
-        let category = validate_category(&params.category)?;
-        let period = params.period.as_deref().unwrap_or("5y");
-        tools::fetch::execute(&self.cache, &params.symbol, category, period)
-            .await
-            .map(Json)
-            .map_err(|e| format!("Error: {e}"))
+    ) -> SanitizedResult<FetchResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("fetch_to_parquet", e))?;
+                let period = params.period.as_deref().unwrap_or("5y");
+                tools::fetch::execute(&self.cache, &params.symbol, period)
+                    .await
+                    .map_err(|e| format!("Error: {e}"))
+            }
+            .await,
+        )
     }
 
     /// Return raw OHLCV price data for a symbol, ready for chart generation.
@@ -1571,20 +1942,24 @@ impl OptopsyServer {
     async fn get_raw_prices(
         &self,
         Parameters(params): Parameters<GetRawPricesParams>,
-    ) -> Result<Json<RawPricesResponse>, String> {
-        params
-            .validate()
-            .map_err(|e| validation_err("get_raw_prices", e))?;
-        tools::raw_prices::load_and_execute(
-            &self.cache,
-            &params.symbol,
-            params.start_date.as_deref(),
-            params.end_date.as_deref(),
-            params.limit,
+    ) -> SanitizedResult<RawPricesResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("get_raw_prices", e))?;
+                tools::raw_prices::load_and_execute(
+                    &self.cache,
+                    &params.symbol,
+                    params.start_date.as_deref(),
+                    params.end_date.as_deref(),
+                    params.limit,
+                )
+                .await
+                .map_err(|e| format!("Error: {e}"))
+            }
+            .await,
         )
-        .await
-        .map(Json)
-        .map_err(|e| format!("Error: {e}"))
     }
 
     /// Analyze the loaded options chain and suggest data-driven parameters.
@@ -1611,38 +1986,39 @@ impl OptopsyServer {
     async fn suggest_parameters(
         &self,
         Parameters(params): Parameters<SuggestParametersParams>,
-    ) -> Result<Json<SuggestResponse>, String> {
-        params
-            .validate()
-            .map_err(|e| validation_err("suggest_parameters", e))?;
+    ) -> SanitizedResult<SuggestResponse, String> {
+        SanitizedResult(async {
+            params
+                .validate()
+                .map_err(|e| validation_err("suggest_parameters", e))?;
 
-        let strategy = params.strategy;
+            let strategy = params.strategy;
 
-        let risk_pref = match params.risk_preference.as_str() {
-            "conservative" => crate::engine::suggest::RiskPreference::Conservative,
-            "moderate" => crate::engine::suggest::RiskPreference::Moderate,
-            "aggressive" => crate::engine::suggest::RiskPreference::Aggressive,
-            other => {
-                return Err(format!(
-                    "Invalid risk_preference: \"{other}\". Must be \"conservative\", \"moderate\", or \"aggressive\"."
-                ));
-            }
-        };
+            let risk_pref = match params.risk_preference.as_str() {
+                "conservative" => crate::engine::suggest::RiskPreference::Conservative,
+                "moderate" => crate::engine::suggest::RiskPreference::Moderate,
+                "aggressive" => crate::engine::suggest::RiskPreference::Aggressive,
+                other => {
+                    return Err(format!(
+                        "Invalid risk_preference: \"{other}\". Must be \"conservative\", \"moderate\", or \"aggressive\"."
+                    ));
+                }
+            };
 
-        let suggest_params = crate::engine::suggest::SuggestParams {
-            strategy: strategy.clone(),
-            risk_preference: risk_pref,
-            target_win_rate: params.target_win_rate,
-            target_sharpe: params.target_sharpe,
-        };
+            let suggest_params = crate::engine::suggest::SuggestParams {
+                strategy: strategy.clone(),
+                risk_preference: risk_pref,
+                target_win_rate: params.target_win_rate,
+                target_sharpe: params.target_sharpe,
+            };
 
-        let (_, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
+            let (_, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
 
-        tokio::task::spawn_blocking(move || tools::suggest::execute(&df, &suggest_params))
-            .await
-            .map_err(|e| format!("Suggest task panicked: {e}"))?
-            .map(Json)
-            .map_err(|e| format!("Error: {e}"))
+            tokio::task::spawn_blocking(move || tools::suggest::execute(&df, &suggest_params))
+                .await
+                .map_err(|e| format!("Suggest task panicked: {e}"))?
+                .map_err(|e| format!("Error: {e}"))
+        }.await)
     }
 }
 
@@ -1693,5 +2069,70 @@ impl ServerHandler for OptopsyServer {
                     .into(),
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(serde::Serialize)]
+    struct TestStruct {
+        normal: f64,
+        nan: f64,
+        inf: f64,
+        neg_inf: f64,
+        nested: Vec<f64>,
+    }
+
+    #[test]
+    fn serialize_finite_replaces_nan_with_zero() {
+        let val = TestStruct {
+            normal: 1.5,
+            nan: f64::NAN,
+            inf: f64::INFINITY,
+            neg_inf: f64::NEG_INFINITY,
+            nested: vec![1.0, f64::NAN, f64::INFINITY],
+        };
+        let result = serialize_finite(&val).expect("should not fail on NaN/Inf");
+        assert_eq!(result["normal"], 1.5);
+        assert_eq!(result["nan"], 0.0);
+        assert_eq!(result["inf"], 0.0);
+        assert_eq!(result["neg_inf"], 0.0);
+        assert_eq!(result["nested"][0], 1.0);
+        assert_eq!(result["nested"][1], 0.0);
+        assert_eq!(result["nested"][2], 0.0);
+    }
+
+    #[test]
+    fn serialize_finite_preserves_normal_values() {
+        let val = TestStruct {
+            normal: 42.5,
+            nan: 0.0,
+            inf: -100.0,
+            neg_inf: 99.9,
+            nested: vec![1.0, 2.0, 3.0],
+        };
+        let result = serialize_finite(&val).expect("should succeed");
+        assert_eq!(result["normal"], 42.5);
+        assert_eq!(result["nan"], 0.0);
+        assert_eq!(result["inf"], -100.0);
+        assert_eq!(result["neg_inf"], 99.9);
+    }
+
+    #[test]
+    fn serialize_finite_handles_option_f64() {
+        #[derive(serde::Serialize)]
+        struct WithOption {
+            value: Option<f64>,
+            none_value: Option<f64>,
+        }
+        let val = WithOption {
+            value: Some(f64::NAN),
+            none_value: None,
+        };
+        let result = serialize_finite(&val).expect("should not fail");
+        assert_eq!(result["value"], 0.0);
+        assert!(result["none_value"].is_null());
     }
 }
