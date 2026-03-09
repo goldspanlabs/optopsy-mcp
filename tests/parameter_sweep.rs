@@ -55,6 +55,8 @@ fn sweep_single_strategy_produces_ranked_results() {
         direction: None,
         entry_signals: vec![],
         exit_signals: vec![],
+        num_permutations: None,
+        permutation_seed: None,
     };
 
     let output = run_sweep(&df, &params).unwrap();
@@ -121,6 +123,8 @@ fn sweep_multi_strategy_without_direction_filter() {
         direction: None,
         entry_signals: vec![],
         exit_signals: vec![],
+        num_permutations: None,
+        permutation_seed: None,
     };
 
     let output = run_sweep(&df, &params).unwrap();
@@ -159,6 +163,8 @@ fn sweep_with_oos_validation() {
         direction: None,
         entry_signals: vec![],
         exit_signals: vec![],
+        num_permutations: None,
+        permutation_seed: None,
     };
 
     let output = run_sweep(&df, &params).unwrap();
@@ -208,6 +214,8 @@ fn sweep_oos_disabled_when_zero() {
         direction: None,
         entry_signals: vec![],
         exit_signals: vec![],
+        num_permutations: None,
+        permutation_seed: None,
     };
 
     let output = run_sweep(&df, &params).unwrap();
@@ -241,6 +249,8 @@ fn sweep_dimension_sensitivity_populated() {
         direction: None,
         entry_signals: vec![],
         exit_signals: vec![],
+        num_permutations: None,
+        permutation_seed: None,
     };
 
     let output = run_sweep(&df, &params).unwrap();
@@ -276,6 +286,8 @@ fn sweep_independent_entry_periods_populated() {
         direction: None,
         entry_signals: vec![],
         exit_signals: vec![],
+        num_permutations: None,
+        permutation_seed: None,
     };
 
     let output = run_sweep(&df, &params).unwrap();
@@ -313,6 +325,8 @@ fn sweep_spread_strategy_filters_inverted_deltas() {
         direction: None,
         entry_signals: vec![],
         exit_signals: vec![],
+        num_permutations: None,
+        permutation_seed: None,
     };
 
     let output = run_sweep(&df, &params).unwrap();
@@ -358,6 +372,8 @@ fn sweep_all_combos_skipped_returns_empty() {
         direction: None,
         entry_signals: vec![],
         exit_signals: vec![],
+        num_permutations: None,
+        permutation_seed: None,
     };
 
     let output = run_sweep(&df, &params).unwrap();
@@ -383,6 +399,8 @@ fn sweep_multiple_slippage_models() {
         direction: None,
         entry_signals: vec![],
         exit_signals: vec![],
+        num_permutations: None,
+        permutation_seed: None,
     };
 
     let output = run_sweep(&df, &params).unwrap();
@@ -486,6 +504,8 @@ fn sweep_entry_signal_filters_some_entries() {
         direction: None,
         entry_signals: vec![],
         exit_signals: vec![],
+        num_permutations: None,
+        permutation_seed: None,
     };
     let baseline = run_sweep(&df, &baseline_params).unwrap();
     let baseline_trades: usize = baseline.ranked_results.iter().map(|r| r.trades).sum();
@@ -508,6 +528,8 @@ fn sweep_entry_signal_filters_some_entries() {
         direction: None,
         entry_signals: vec![],
         exit_signals: vec![],
+        num_permutations: None,
+        permutation_seed: None,
     };
     let output = run_sweep(&df, &signal_params).unwrap();
     let signal_trades: usize = output.ranked_results.iter().map(|r| r.trades).sum();
@@ -602,6 +624,8 @@ fn sweep_signal_threads_through_oos_path() {
         direction: None,
         entry_signals: vec![],
         exit_signals: vec![],
+        num_permutations: None,
+        permutation_seed: None,
     };
 
     // Must not panic — exercises both BacktestParams constructions with signals
@@ -648,6 +672,8 @@ fn sweep_entry_signals_multiplies_combos() {
             direction: None,
             entry_signals: vec![],
             exit_signals: vec![],
+            num_permutations: None,
+            permutation_seed: None,
         },
     )
     .unwrap();
@@ -679,6 +705,8 @@ fn sweep_entry_signals_multiplies_combos() {
                 },
             ],
             exit_signals: vec![],
+            num_permutations: None,
+            permutation_seed: None,
         },
     )
     .unwrap();
@@ -698,4 +726,197 @@ fn sweep_entry_signals_multiplies_combos() {
             output.dimension_sensitivity.keys().collect::<Vec<_>>()
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Multiple comparisons correction integration tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn sweep_without_permutations_has_no_multiple_comparisons() {
+    let df = make_multi_strike_df();
+    let params = SweepParams {
+        strategies: vec![SweepStrategyEntry {
+            name: "short_put".to_string(),
+            leg_delta_targets: vec![vec![0.20, 0.30]],
+        }],
+        sweep: SweepDimensions {
+            entry_dte_targets: vec![45],
+            exit_dtes: vec![0],
+            slippage_models: vec![Slippage::Mid],
+        },
+        sim_params: default_sim_params(),
+        out_of_sample_pct: 0.0,
+        direction: None,
+        entry_signals: vec![],
+        exit_signals: vec![],
+        num_permutations: None,
+        permutation_seed: None,
+    };
+
+    let output = run_sweep(&df, &params).unwrap();
+    // Without num_permutations, multiple_comparisons must be None
+    assert!(
+        output.multiple_comparisons.is_none(),
+        "Expected multiple_comparisons to be None when num_permutations is not set"
+    );
+    // p_value on each result should also be None
+    for r in &output.ranked_results {
+        assert!(
+            r.p_value.is_none(),
+            "Expected p_value to be None on result '{}' when num_permutations is not set",
+            r.label
+        );
+    }
+}
+
+#[test]
+fn sweep_with_permutations_produces_multiple_comparisons() {
+    let df = make_multi_strike_df();
+    let params = SweepParams {
+        strategies: vec![SweepStrategyEntry {
+            name: "short_put".to_string(),
+            leg_delta_targets: vec![vec![0.20, 0.30]],
+        }],
+        sweep: SweepDimensions {
+            entry_dte_targets: vec![45],
+            exit_dtes: vec![0],
+            slippage_models: vec![Slippage::Mid],
+        },
+        sim_params: default_sim_params(),
+        out_of_sample_pct: 0.0,
+        direction: None,
+        entry_signals: vec![],
+        exit_signals: vec![],
+        num_permutations: Some(20),
+        permutation_seed: Some(42),
+    };
+
+    let output = run_sweep(&df, &params).unwrap();
+
+    // Each result should have a p_value populated (regardless of multiple_comparisons)
+    for r in &output.ranked_results {
+        assert!(
+            r.p_value.is_some(),
+            "Expected p_value to be Some on result '{}' when num_permutations is set",
+            r.label
+        );
+        let p = r.p_value.unwrap();
+        assert!(
+            (0.0..=1.0).contains(&p),
+            "p_value {} out of [0,1] for '{}'",
+            p,
+            r.label
+        );
+    }
+
+    // multiple_comparisons should be Some only when there are ≥2 results
+    if output.ranked_results.len() >= 2 {
+        let mc = output.multiple_comparisons.as_ref().expect(
+            "Expected multiple_comparisons to be Some when num_permutations is set and ≥2 results",
+        );
+
+        let (bon, bh) = mc;
+
+        // Bonferroni
+        assert_eq!(bon.method, "bonferroni");
+        assert_eq!(bon.num_tests, output.ranked_results.len());
+        assert!((bon.alpha - 0.05).abs() < 1e-10);
+        assert_eq!(bon.results.len(), output.ranked_results.len());
+
+        // BH-FDR
+        assert_eq!(bh.method, "benjamini_hochberg");
+        assert_eq!(bh.num_tests, output.ranked_results.len());
+        assert!((bh.alpha - 0.05).abs() < 1e-10);
+        assert_eq!(bh.results.len(), output.ranked_results.len());
+
+        // BH is never more conservative than Bonferroni
+        assert!(
+            bh.num_significant >= bon.num_significant,
+            "BH ({}) should retain ≥ significant results as Bonferroni ({})",
+            bh.num_significant,
+            bon.num_significant
+        );
+
+        // Adjusted p-values must be in [0, 1]
+        for r in &bon.results {
+            assert!(
+                (0.0..=1.0).contains(&r.adjusted_p_value),
+                "Bonferroni adjusted p-value {} out of [0,1]",
+                r.adjusted_p_value
+            );
+            assert!(
+                (0.0..=1.0).contains(&r.original_p_value),
+                "Original p-value {} out of [0,1]",
+                r.original_p_value
+            );
+        }
+        for r in &bh.results {
+            assert!(
+                (0.0..=1.0).contains(&r.adjusted_p_value),
+                "BH adjusted p-value {} out of [0,1]",
+                r.adjusted_p_value
+            );
+        }
+
+        // Labels in corrections must match sweep result labels
+        let result_labels: std::collections::HashSet<&str> = output
+            .ranked_results
+            .iter()
+            .map(|r| r.label.as_str())
+            .collect();
+        for r in &bon.results {
+            assert!(
+                result_labels.contains(r.label.as_str()),
+                "Bonferroni label '{}' not found in sweep results",
+                r.label
+            );
+        }
+    }
+}
+
+#[test]
+fn sweep_multiple_comparisons_bonferroni_more_conservative_than_bh() {
+    // Bonferroni must always have num_significant ≤ BH num_significant
+    let df = make_multi_strike_df();
+    let params = SweepParams {
+        strategies: vec![SweepStrategyEntry {
+            name: "short_put".to_string(),
+            leg_delta_targets: vec![vec![0.15, 0.20, 0.25]],
+        }],
+        sweep: SweepDimensions {
+            entry_dte_targets: vec![30, 45],
+            exit_dtes: vec![0],
+            slippage_models: vec![Slippage::Mid],
+        },
+        sim_params: default_sim_params(),
+        out_of_sample_pct: 0.0,
+        direction: None,
+        entry_signals: vec![],
+        exit_signals: vec![],
+        num_permutations: Some(15),
+        permutation_seed: Some(99),
+    };
+
+    let output = run_sweep(&df, &params).unwrap();
+
+    if let Some((bon, bh)) = &output.multiple_comparisons {
+        assert!(
+            bh.num_significant >= bon.num_significant,
+            "BH-FDR should be less conservative than Bonferroni: bh={} bon={}",
+            bh.num_significant,
+            bon.num_significant
+        );
+
+        // All original p-values should match between bon and bh
+        let bon_originals: Vec<f64> = bon.results.iter().map(|r| r.original_p_value).collect();
+        let bh_originals: Vec<f64> = bh.results.iter().map(|r| r.original_p_value).collect();
+        for (a, b) in bon_originals.iter().zip(bh_originals.iter()) {
+            assert!(
+                (a - b).abs() < 1e-10,
+                "Original p-values differ between Bonferroni ({a}) and BH ({b})"
+            );
+        }
+    }
+    // If only 0 or 1 results, multiple_comparisons may be None — that's fine
 }

@@ -643,6 +643,10 @@ pub struct SweepResult {
     /// Signal dimension keys for sensitivity analysis (not serialized)
     #[serde(skip)]
     pub signal_dim_keys: Vec<(String, String)>,
+    /// Raw (unadjusted) Sharpe p-value from permutation test, if `num_permutations` was set.
+    /// Use the `multiple_comparisons` field in the sweep response for corrected values.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p_value: Option<f64>,
 }
 
 // --- Event-driven simulation types ---
