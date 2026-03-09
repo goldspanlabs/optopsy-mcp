@@ -34,14 +34,18 @@ fn build_params_summary(params: &BacktestParams) -> BacktestParamsSummary {
         take_profit: params.take_profit,
         max_hold_days: params.max_hold_days,
         selector: params.selector.clone(),
-        entry_signal: params
-            .entry_signal
-            .as_ref()
-            .map(|s| serde_json::to_value(s).unwrap_or(serde_json::Value::Null)),
-        exit_signal: params
-            .exit_signal
-            .as_ref()
-            .map(|s| serde_json::to_value(s).unwrap_or(serde_json::Value::Null)),
+        entry_signal: params.entry_signal.as_ref().map(|s| {
+            serde_json::to_value(s).unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "Failed to serialize entry_signal");
+                serde_json::Value::Null
+            })
+        }),
+        exit_signal: params.exit_signal.as_ref().map(|s| {
+            serde_json::to_value(s).unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "Failed to serialize exit_signal");
+                serde_json::Value::Null
+            })
+        }),
         min_net_premium: params.min_net_premium,
         max_net_premium: params.max_net_premium,
         min_net_delta: params.min_net_delta,
