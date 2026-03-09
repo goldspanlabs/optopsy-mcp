@@ -244,7 +244,7 @@ pub struct LegDef {
     pub expiration_cycle: ExpirationCycle,
 }
 
-/// Convert a snake_case strategy name to Title Case (e.g. "short_put" → "Short Put").
+/// Convert a `snake_case` strategy name to Title Case (e.g. `"short_put"` → `"Short Put"`).
 pub fn to_display_name(name: &str) -> String {
     name.split('_')
         .map(|w| {
