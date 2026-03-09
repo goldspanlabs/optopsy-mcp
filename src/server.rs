@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::data::cache::CachedStore;
+use crate::data::cache::{validate_path_segment, CachedStore};
 use crate::data::DataStore;
 use crate::engine::types::{
     default_min_bid_ask, default_multiplier, validate_exit_dte_lt_entry_min, BacktestParams,
@@ -71,13 +71,7 @@ impl OptopsyServer {
 
         // Validate the symbol to prevent path traversal attacks before passing to the data layer.
         let sym_upper = sym.to_uppercase();
-        if sym_upper.is_empty()
-            || sym_upper.contains('/')
-            || sym_upper.contains('\\')
-            || sym_upper.contains("..")
-        {
-            return Err(format!("Invalid symbol: {sym}"));
-        }
+        validate_path_segment(&sym_upper).map_err(|e| format!("Invalid symbol: {e}"))?;
 
         tracing::info!(symbol = %sym, "Auto-loading options data from cache");
 

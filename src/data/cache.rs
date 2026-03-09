@@ -214,7 +214,7 @@ fn dirs_default_cache() -> PathBuf {
 /// Ensure a path segment (category or symbol) contains only safe characters.
 ///
 /// Rejects empty strings, absolute paths, and segments with directory separators or `..`.
-fn validate_path_segment(segment: &str) -> Result<()> {
+pub(crate) fn validate_path_segment(segment: &str) -> Result<()> {
     if segment.is_empty() {
         bail!("path segment must not be empty");
     }
