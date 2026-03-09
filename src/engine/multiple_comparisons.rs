@@ -42,11 +42,7 @@ pub struct MultipleComparisonsResult {
 ///
 /// Adjusted p-value = min(p × m, 1.0) where m is the number of tests.
 /// A configuration is significant if its adjusted p-value < alpha.
-pub fn bonferroni(
-    labels: &[String],
-    p_values: &[f64],
-    alpha: f64,
-) -> MultipleComparisonsResult {
+pub fn bonferroni(labels: &[String], p_values: &[f64], alpha: f64) -> MultipleComparisonsResult {
     debug_assert_eq!(
         labels.len(),
         p_values.len(),
@@ -108,15 +104,8 @@ pub fn benjamini_hochberg(
     }
 
     // Build sorted indices (ascending p-value order)
-    let mut indexed: Vec<(usize, f64)> = p_values
-        .iter()
-        .copied()
-        .enumerate()
-        .collect();
-    indexed.sort_by(|a, b| {
-        a.1.partial_cmp(&b.1)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    let mut indexed: Vec<(usize, f64)> = p_values.iter().copied().enumerate().collect();
+    indexed.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
     // BH step-up: traverse from largest rank downward, propagating the running minimum
     let mut adjusted = vec![0.0f64; m];

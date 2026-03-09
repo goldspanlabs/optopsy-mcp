@@ -1097,10 +1097,7 @@ fn run_multiple_comparisons(
 
     // Collect labels and p-values
     let labels: Vec<String> = results.iter().map(|r| r.label.clone()).collect();
-    let p_values: Vec<f64> = results
-        .iter()
-        .map(|r| r.p_value.unwrap_or(1.0))
-        .collect();
+    let p_values: Vec<f64> = results.iter().map(|r| r.p_value.unwrap_or(1.0)).collect();
 
     let bon = multiple_comparisons::bonferroni(&labels, &p_values, 0.05);
     let bh = multiple_comparisons::benjamini_hochberg(&labels, &p_values, 0.05);

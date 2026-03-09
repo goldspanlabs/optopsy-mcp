@@ -11,9 +11,9 @@ use crate::engine::walk_forward::WalkForwardResult;
 
 use super::response_types::{
     BacktestDataQuality, BacktestParamsSummary, BacktestResponse, CompareResponse,
-    CompareStrategyEntry, DateRange, LoadDataResponse, MultipleComparisonsCorrection, OosValidation,
-    PermutationTestResponse, PriceBar, RawPricesResponse, StrategiesResponse, StrategyInfo,
-    SweepResponse, TradeStat, TradeSummary, UnderlyingPrice, WalkForwardAggregate,
+    CompareStrategyEntry, DateRange, LoadDataResponse, MultipleComparisonsCorrection,
+    OosValidation, PermutationTestResponse, PriceBar, RawPricesResponse, StrategiesResponse,
+    StrategyInfo, SweepResponse, TradeStat, TradeSummary, UnderlyingPrice, WalkForwardAggregate,
     WalkForwardResponse, WalkForwardWindowResult,
 };
 

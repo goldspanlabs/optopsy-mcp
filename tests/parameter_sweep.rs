@@ -860,8 +860,11 @@ fn sweep_with_permutations_produces_multiple_comparisons() {
         }
 
         // Labels in corrections must match sweep result labels
-        let result_labels: std::collections::HashSet<&str> =
-            output.ranked_results.iter().map(|r| r.label.as_str()).collect();
+        let result_labels: std::collections::HashSet<&str> = output
+            .ranked_results
+            .iter()
+            .map(|r| r.label.as_str())
+            .collect();
         for r in &bon.results {
             assert!(
                 result_labels.contains(r.label.as_str()),

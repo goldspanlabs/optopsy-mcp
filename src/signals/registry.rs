@@ -319,26 +319,111 @@ impl SignalSpec {
 }
 
 /// Convert a `SignalSpec` into a concrete `Box<dyn SignalFn>`.
-#[allow(clippy::too_many_lines)]
 pub fn build_signal(spec: &SignalSpec) -> Box<dyn SignalFn> {
     build_signal_depth(spec, 0)
 }
 
-#[allow(clippy::too_many_lines)]
+const MAX_SIGNAL_DEPTH: usize = 8;
+
 fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
-    const MAX_DEPTH: usize = 8;
-    // Depth 8 accommodates deeply nested And/Or combinator trees and multi-level
-    // Saved signal references while still catching pathological cycles early.
-    if depth >= MAX_DEPTH {
+    if depth >= MAX_SIGNAL_DEPTH {
         tracing::error!(
-            max_depth = MAX_DEPTH,
+            max_depth = MAX_SIGNAL_DEPTH,
             "Signal recursion limit exceeded — possible cycle in Saved signal references. \
              Signal will evaluate as always-false. Check for circular Saved signal references."
         );
         return Box::new(FormulaSignal::new("false".to_string()));
     }
     match spec {
-        // Momentum
+        // Per-category builders
+        SignalSpec::RsiBelow { .. }
+        | SignalSpec::RsiAbove { .. }
+        | SignalSpec::MacdBullish { .. }
+        | SignalSpec::MacdBearish { .. }
+        | SignalSpec::MacdCrossover { .. }
+        | SignalSpec::StochasticBelow { .. }
+        | SignalSpec::StochasticAbove { .. } => build_momentum(spec),
+
+        SignalSpec::PriceAboveSma { .. }
+        | SignalSpec::PriceBelowSma { .. }
+        | SignalSpec::PriceAboveEma { .. }
+        | SignalSpec::PriceBelowEma { .. }
+        | SignalSpec::SmaCrossover { .. }
+        | SignalSpec::SmaCrossunder { .. }
+        | SignalSpec::EmaCrossover { .. }
+        | SignalSpec::EmaCrossunder { .. } => build_overlap(spec),
+
+        SignalSpec::AroonUptrend { .. }
+        | SignalSpec::AroonDowntrend { .. }
+        | SignalSpec::AroonUpAbove { .. }
+        | SignalSpec::SupertrendBullish { .. }
+        | SignalSpec::SupertrendBearish { .. } => build_trend(spec),
+
+        SignalSpec::AtrAbove { .. }
+        | SignalSpec::AtrBelow { .. }
+        | SignalSpec::BollingerLowerTouch { .. }
+        | SignalSpec::BollingerUpperTouch { .. }
+        | SignalSpec::KeltnerLowerBreak { .. }
+        | SignalSpec::KeltnerUpperBreak { .. }
+        | SignalSpec::IvRankAbove { .. }
+        | SignalSpec::IvRankBelow { .. }
+        | SignalSpec::IvPercentileAbove { .. }
+        | SignalSpec::IvPercentileBelow { .. } => build_volatility(spec),
+
+        SignalSpec::GapUp { .. }
+        | SignalSpec::GapDown { .. }
+        | SignalSpec::DrawdownBelow { .. }
+        | SignalSpec::ConsecutiveUp { .. }
+        | SignalSpec::ConsecutiveDown { .. }
+        | SignalSpec::RateOfChange { .. } => build_price(spec),
+
+        SignalSpec::MfiBelow { .. }
+        | SignalSpec::MfiAbove { .. }
+        | SignalSpec::ObvRising { .. }
+        | SignalSpec::ObvFalling { .. }
+        | SignalSpec::CmfPositive { .. }
+        | SignalSpec::CmfNegative { .. } => build_volume(spec),
+
+        // Special cases: Custom, Saved, CrossSymbol, Combinators
+        SignalSpec::Custom {
+            name: _,
+            formula,
+            description: _,
+        } => Box::new(FormulaSignal::new(formula.clone())),
+
+        SignalSpec::Saved { name } => match super::storage::load_signal(name) {
+            Ok(loaded) => {
+                if matches!(loaded, SignalSpec::Saved { .. }) {
+                    tracing::error!(
+                        "Saved signal '{}' references another Saved signal — cycle rejected",
+                        name
+                    );
+                    return Box::new(FormulaSignal::new("false".to_string()));
+                }
+                build_signal_depth(&loaded, depth + 1)
+            }
+            Err(e) => {
+                tracing::error!("Failed to load saved signal '{}': {}", name, e);
+                Box::new(FormulaSignal::new("false".to_string()))
+            }
+        },
+
+        SignalSpec::CrossSymbol { signal, .. } => build_signal_depth(signal, depth + 1),
+
+        SignalSpec::And { left, right } => Box::new(AndSignal {
+            left: build_signal_depth(left, depth + 1),
+            right: build_signal_depth(right, depth + 1),
+        }),
+        SignalSpec::Or { left, right } => Box::new(OrSignal {
+            left: build_signal_depth(left, depth + 1),
+            right: build_signal_depth(right, depth + 1),
+        }),
+    }
+}
+
+/// Build momentum signal variants.
+fn build_momentum(spec: &SignalSpec) -> Box<dyn SignalFn> {
+    match spec {
         SignalSpec::RsiBelow { column, threshold } => Box::new(RsiBelow {
             column: column.clone(),
             threshold: *threshold,
@@ -382,8 +467,13 @@ fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
             period: *period,
             threshold: *threshold,
         }),
+        _ => unreachable!(),
+    }
+}
 
-        // Overlap
+/// Build overlap signal variants.
+fn build_overlap(spec: &SignalSpec) -> Box<dyn SignalFn> {
+    match spec {
         SignalSpec::PriceAboveSma { column, period } => Box::new(PriceAboveSma {
             column: column.clone(),
             period: *period,
@@ -436,8 +526,13 @@ fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
             fast_period: *fast_period,
             slow_period: *slow_period,
         }),
+        _ => unreachable!(),
+    }
+}
 
-        // Trend
+/// Build trend signal variants.
+fn build_trend(spec: &SignalSpec) -> Box<dyn SignalFn> {
+    match spec {
         SignalSpec::AroonUptrend {
             high_col,
             low_col,
@@ -491,8 +586,13 @@ fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
             period: *period,
             multiplier: *multiplier,
         }),
+        _ => unreachable!(),
+    }
+}
 
-        // Volatility
+/// Build volatility signal variants (ATR, Bollinger, Keltner, IV).
+fn build_volatility(spec: &SignalSpec) -> Box<dyn SignalFn> {
+    match spec {
         SignalSpec::AtrAbove {
             close_col,
             high_col,
@@ -553,8 +653,6 @@ fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
             period: *period,
             multiplier: *multiplier,
         }),
-
-        // IV
         SignalSpec::IvRankAbove {
             lookback,
             threshold,
@@ -583,8 +681,13 @@ fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
             lookback: *lookback,
             threshold: *threshold,
         }),
+        _ => unreachable!(),
+    }
+}
 
-        // Price
+/// Build price signal variants.
+fn build_price(spec: &SignalSpec) -> Box<dyn SignalFn> {
+    match spec {
         SignalSpec::GapUp {
             open_col,
             close_col,
@@ -629,8 +732,13 @@ fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
             period: (*period).max(1),
             threshold: *threshold,
         }),
+        _ => unreachable!(),
+    }
+}
 
-        // Volume
+/// Build volume signal variants.
+fn build_volume(spec: &SignalSpec) -> Box<dyn SignalFn> {
+    match spec {
         SignalSpec::MfiBelow {
             high_col,
             low_col,
@@ -701,48 +809,7 @@ fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
             volume_col: volume_col.clone(),
             period: *period,
         }),
-
-        // Custom formula
-        SignalSpec::Custom {
-            name: _,
-            formula,
-            description: _,
-        } => Box::new(FormulaSignal::new(formula.clone())),
-        // Saved signal — resolve from storage at build time
-        SignalSpec::Saved { name } => {
-            match super::storage::load_signal(name) {
-                Ok(spec) => {
-                    // Reject loaded specs that are themselves Saved to prevent cycles
-                    if matches!(spec, SignalSpec::Saved { .. }) {
-                        tracing::error!(
-                            "Saved signal '{}' references another Saved signal — cycle rejected",
-                            name
-                        );
-                        return Box::new(FormulaSignal::new("false".to_string()));
-                    }
-                    build_signal_depth(&spec, depth + 1)
-                }
-                Err(e) => {
-                    tracing::error!("Failed to load saved signal '{}': {}", name, e);
-                    // Propagate as always-false to avoid silently corrupting backtest results
-                    Box::new(FormulaSignal::new("false".to_string()))
-                }
-            }
-        }
-
-        // Cross-symbol — the inner signal is built normally; the caller
-        // (`active_dates_multi`) is responsible for providing the correct DataFrame.
-        SignalSpec::CrossSymbol { signal, .. } => build_signal_depth(signal, depth + 1),
-
-        // Combinators
-        SignalSpec::And { left, right } => Box::new(AndSignal {
-            left: build_signal_depth(left, depth + 1),
-            right: build_signal_depth(right, depth + 1),
-        }),
-        SignalSpec::Or { left, right } => Box::new(OrSignal {
-            left: build_signal_depth(left, depth + 1),
-            right: build_signal_depth(right, depth + 1),
-        }),
+        _ => unreachable!(),
     }
 }
 

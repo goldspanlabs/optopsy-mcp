@@ -10,56 +10,62 @@ const RSI_PERIOD: usize = 14;
 /// Minimum number of data points required to compute MACD (slow EMA + signal line).
 const MACD_MIN_PERIODS: usize = 34;
 
-/// Signal: RSI is below a threshold.
-/// Uses the standard 14-period RSI.
-pub struct RsiBelow {
-    pub column: String,
-    pub threshold: f64,
+/// Generate a pair of threshold signal structs that share identical computation
+/// logic but differ only in the comparison operator.
+macro_rules! threshold_signal_pair {
+    (
+        $(#[$below_doc:meta])* $below:ident / $(#[$above_doc:meta])* $above:ident,
+        fields { $($field:ident : $fty:ty),+ $(,)? },
+        below_name = $below_name:expr,
+        above_name = $above_name:expr,
+        compute($self_:ident, $df:ident) -> ($values:ident, $n:ident, $min_period:expr) $body:block
+    ) => {
+        $(#[$below_doc])*
+        pub struct $below { $(pub $field: $fty),+ }
+
+        impl SignalFn for $below {
+            fn evaluate(&$self_, $df: &DataFrame) -> Result<Series, PolarsError> {
+                let ($values, $n) = $body;
+                if $n < $min_period {
+                    return Ok(BooleanChunked::new($below_name.into(), vec![false; $n]).into_series());
+                }
+                Ok(pad_and_compare(&$values, $n, |v| v < $self_.threshold, $below_name))
+            }
+            fn name(&self) -> &'static str { $below_name }
+        }
+
+        $(#[$above_doc])*
+        pub struct $above { $(pub $field: $fty),+ }
+
+        impl SignalFn for $above {
+            fn evaluate(&$self_, $df: &DataFrame) -> Result<Series, PolarsError> {
+                let ($values, $n) = $body;
+                if $n < $min_period {
+                    return Ok(BooleanChunked::new($above_name.into(), vec![false; $n]).into_series());
+                }
+                Ok(pad_and_compare(&$values, $n, |v| v > $self_.threshold, $above_name))
+            }
+            fn name(&self) -> &'static str { $above_name }
+        }
+    };
 }
 
-impl SignalFn for RsiBelow {
-    fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
+// Re-export the macro for use in other signal modules
+pub(crate) use threshold_signal_pair;
+
+threshold_signal_pair! {
+    /// Signal: RSI is below a threshold. Uses the standard 14-period RSI.
+    RsiBelow /
+    /// Signal: RSI is above a threshold.
+    RsiAbove,
+    fields { column: String, threshold: f64 },
+    below_name = "rsi_below",
+    above_name = "rsi_above",
+    compute(self, df) -> (rsi_values, n, RSI_PERIOD + 1) {
         let prices = column_to_f64(df, &self.column)?;
         let n = prices.len();
-        if n <= RSI_PERIOD {
-            return Ok(BooleanChunked::new("rsi_below".into(), vec![false; n]).into_series());
-        }
-        let rsi_values = sti::rsi(&prices);
-        Ok(pad_and_compare(
-            &rsi_values,
-            n,
-            |v| v < self.threshold,
-            "rsi_below",
-        ))
-    }
-    fn name(&self) -> &'static str {
-        "rsi_below"
-    }
-}
-
-/// Signal: RSI is above a threshold.
-pub struct RsiAbove {
-    pub column: String,
-    pub threshold: f64,
-}
-
-impl SignalFn for RsiAbove {
-    fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
-        let prices = column_to_f64(df, &self.column)?;
-        let n = prices.len();
-        if n <= RSI_PERIOD {
-            return Ok(BooleanChunked::new("rsi_above".into(), vec![false; n]).into_series());
-        }
-        let rsi_values = sti::rsi(&prices);
-        Ok(pad_and_compare(
-            &rsi_values,
-            n,
-            |v| v > self.threshold,
-            "rsi_above",
-        ))
-    }
-    fn name(&self) -> &'static str {
-        "rsi_above"
+        let rsi_values = if n > RSI_PERIOD { sti::rsi(&prices) } else { vec![] };
+        (rsi_values, n)
     }
 }
 
@@ -159,71 +165,26 @@ fn compute_stochastic(close: &[f64], high: &[f64], low: &[f64], period: usize) -
         .collect()
 }
 
-/// Signal: Stochastic oscillator is below threshold.
-/// Uses the standard formula: (close - `lowest_low`) / (`highest_high` - `lowest_low`) * 100.
-pub struct StochasticBelow {
-    pub close_col: String,
-    pub high_col: String,
-    pub low_col: String,
-    pub period: usize,
-    pub threshold: f64,
-}
-
-impl SignalFn for StochasticBelow {
-    fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
+threshold_signal_pair! {
+    /// Signal: Stochastic oscillator is below threshold.
+    /// Uses the standard formula: (close - `lowest_low`) / (`highest_high` - `lowest_low`) * 100.
+    StochasticBelow /
+    /// Signal: Stochastic oscillator is above threshold.
+    StochasticAbove,
+    fields { close_col: String, high_col: String, low_col: String, period: usize, threshold: f64 },
+    below_name = "stochastic_below",
+    above_name = "stochastic_above",
+    compute(self, df) -> (stoch_values, n, self.period.max(1)) {
         let close = column_to_f64(df, &self.close_col)?;
         let high = column_to_f64(df, &self.high_col)?;
         let low = column_to_f64(df, &self.low_col)?;
         let n = close.len();
-        if self.period == 0 || n < self.period {
-            return Ok(
-                BooleanChunked::new("stochastic_below".into(), vec![false; n]).into_series(),
-            );
-        }
-        let stoch_values = compute_stochastic(&close, &high, &low, self.period);
-        Ok(pad_and_compare(
-            &stoch_values,
-            n,
-            |v| v < self.threshold,
-            "stochastic_below",
-        ))
-    }
-    fn name(&self) -> &'static str {
-        "stochastic_below"
-    }
-}
-
-/// Signal: Stochastic oscillator is above threshold.
-/// Uses the standard formula: (close - `lowest_low`) / (`highest_high` - `lowest_low`) * 100.
-pub struct StochasticAbove {
-    pub close_col: String,
-    pub high_col: String,
-    pub low_col: String,
-    pub period: usize,
-    pub threshold: f64,
-}
-
-impl SignalFn for StochasticAbove {
-    fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
-        let close = column_to_f64(df, &self.close_col)?;
-        let high = column_to_f64(df, &self.high_col)?;
-        let low = column_to_f64(df, &self.low_col)?;
-        let n = close.len();
-        if self.period == 0 || n < self.period {
-            return Ok(
-                BooleanChunked::new("stochastic_above".into(), vec![false; n]).into_series(),
-            );
-        }
-        let stoch_values = compute_stochastic(&close, &high, &low, self.period);
-        Ok(pad_and_compare(
-            &stoch_values,
-            n,
-            |v| v > self.threshold,
-            "stochastic_above",
-        ))
-    }
-    fn name(&self) -> &'static str {
-        "stochastic_above"
+        let stoch_values = if self.period > 0 && n >= self.period {
+            compute_stochastic(&close, &high, &low, self.period)
+        } else {
+            vec![]
+        };
+        (stoch_values, n)
     }
 }
 

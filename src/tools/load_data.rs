@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::data::cache::CachedStore;
+use crate::data::cache::{validate_path_segment, CachedStore};
 use crate::data::parquet::QUOTE_DATETIME_COL;
 use crate::data::DataStore;
 
@@ -21,9 +21,7 @@ pub async fn execute(
     end_date: Option<&str>,
 ) -> Result<LoadDataResponse> {
     let symbol = symbol.to_uppercase();
-    if symbol.is_empty() || symbol.contains('/') || symbol.contains('\\') || symbol.contains("..") {
-        anyhow::bail!("Invalid symbol: {symbol}");
-    }
+    validate_path_segment(&symbol)?;
     let start = start_date
         .map(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d"))
         .transpose()?;
