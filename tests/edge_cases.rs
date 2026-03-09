@@ -1,4 +1,4 @@
-//! Edge-case tests: empty DataFrames, NaN/Infinity in metrics,
+//! Edge-case tests: empty `DataFrames`, NaN/Infinity in metrics,
 //! zero-width DTE/delta ranges, and concurrent loading races.
 
 mod common;
@@ -117,8 +117,7 @@ fn metrics_all_fields_are_finite() {
             equity: 10_050.0,
         },
     ];
-    let m =
-        optopsy_mcp::engine::metrics::calculate_metrics(&equity, &[trade], 10_000.0).unwrap();
+    let m = optopsy_mcp::engine::metrics::calculate_metrics(&equity, &[trade], 10_000.0).unwrap();
     assert!(m.sharpe.is_finite(), "sharpe must be finite");
     assert!(m.sortino.is_finite(), "sortino must be finite");
     assert!(m.cagr.is_finite(), "cagr must be finite");
@@ -172,8 +171,7 @@ async fn concurrent_read_access_does_not_panic() {
     use std::sync::Arc;
     use tokio::sync::RwLock;
 
-    let data: Arc<RwLock<HashMap<String, DataFrame>>> =
-        Arc::new(RwLock::new(HashMap::new()));
+    let data: Arc<RwLock<HashMap<String, DataFrame>>> = Arc::new(RwLock::new(HashMap::new()));
 
     // Insert a small DataFrame
     {
@@ -204,15 +202,14 @@ async fn concurrent_write_then_read_consistent() {
     use std::sync::Arc;
     use tokio::sync::RwLock;
 
-    let data: Arc<RwLock<HashMap<String, DataFrame>>> =
-        Arc::new(RwLock::new(HashMap::new()));
+    let data: Arc<RwLock<HashMap<String, DataFrame>>> = Arc::new(RwLock::new(HashMap::new()));
 
     // Writer task
     let data_w = Arc::clone(&data);
     let writer = tokio::spawn(async move {
         for i in 0..10 {
             let mut w = data_w.write().await;
-            let df = df! { "val" => &[i as i32] }.unwrap();
+            let df = df! { "val" => &[i] }.unwrap();
             w.insert(format!("SYM{i}"), df);
         }
     });

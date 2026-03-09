@@ -108,8 +108,10 @@ fn format_scalar(s: &polars::prelude::Scalar) -> Option<String> {
             chrono::DateTime::from_timestamp(secs, nanos)
                 .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S").to_string())
         }
-        AnyValue::Date(days) => chrono::NaiveDate::from_num_days_from_ce_opt(days + EPOCH_DAYS_CE_OFFSET)
-            .map(|d| d.format("%Y-%m-%d").to_string()),
+        AnyValue::Date(days) => {
+            chrono::NaiveDate::from_num_days_from_ce_opt(days + EPOCH_DAYS_CE_OFFSET)
+                .map(|d| d.format("%Y-%m-%d").to_string())
+        }
         other => Some(format!("{other}")),
     }
 }

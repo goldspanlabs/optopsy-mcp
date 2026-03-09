@@ -138,7 +138,8 @@ impl DataStore for ParquetStore {
             // Drop original column if it was renamed/aliased and a duplicate remains
             let df = lazy.collect().context("Failed to read Parquet file")?;
             if src_col != QUOTE_DATETIME_COL && df.schema().contains(src_col) {
-                df.drop(src_col).context("Failed to drop original date column")
+                df.drop(src_col)
+                    .context("Failed to drop original date column")
             } else {
                 Ok(df)
             }
