@@ -29,7 +29,7 @@ threshold_signal_pair! {
         let volume = column_to_f64(df, &self.volume_col)?;
         let typical = compute_typical_price(&high, &low, &close);
         let n = typical.len();
-        let mfi_values = if n >= self.period {
+        let mfi_values = if self.period > 0 && n >= self.period {
             rust_ti::momentum_indicators::bulk::money_flow_index(&typical, &volume, self.period)
         } else {
             vec![]

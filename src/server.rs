@@ -157,55 +157,76 @@ impl OptopsyServer {
         &self,
         base: BacktestBaseParams,
     ) -> Result<(String, DataFrame, BacktestParams), String> {
-        let strategy = base.strategy;
+        let BacktestBaseParams {
+            strategy,
+            leg_deltas,
+            entry_dte,
+            exit_dte,
+            slippage,
+            commission,
+            min_bid_ask,
+            stop_loss,
+            take_profit,
+            max_hold_days,
+            capital,
+            quantity,
+            multiplier,
+            max_positions,
+            selector,
+            entry_signal,
+            exit_signal,
+            symbol: symbol_param,
+            min_net_premium,
+            max_net_premium,
+            min_net_delta,
+            max_net_delta,
+            min_days_between_entries,
+            expiration_filter,
+            exit_net_delta,
+        } = base;
 
-        let (symbol, df) = self.ensure_data_loaded(base.symbol.as_deref()).await?;
+        let (symbol, df) = self.ensure_data_loaded(symbol_param.as_deref()).await?;
 
-        let ohlcv_path = if base.entry_signal.is_some() || base.exit_signal.is_some() {
+        let ohlcv_path = if entry_signal.is_some() || exit_signal.is_some() {
             Some(self.ensure_ohlcv(&symbol).await?)
         } else {
             None
         };
 
         let cross_ohlcv_paths = self
-            .resolve_cross_ohlcv_paths(
-                base.entry_signal.as_ref(),
-                base.exit_signal.as_ref(),
-                &[],
-                &[],
-            )
+            .resolve_cross_ohlcv_paths(entry_signal.as_ref(), exit_signal.as_ref(), &[], &[])
             .await?;
 
-        let leg_deltas = resolve_leg_deltas(base.leg_deltas, &strategy)?;
+        let leg_deltas = resolve_leg_deltas(leg_deltas, &strategy)?;
 
         let backtest_params = BacktestParams {
             strategy,
             leg_deltas,
-            entry_dte: base.entry_dte,
-            exit_dte: base.exit_dte,
-            slippage: base.slippage,
-            commission: base.commission,
-            min_bid_ask: base.min_bid_ask,
-            stop_loss: base.stop_loss,
-            take_profit: base.take_profit,
-            max_hold_days: base.max_hold_days,
-            capital: base.capital,
-            quantity: base.quantity,
-            multiplier: base.multiplier,
-            max_positions: base.max_positions,
-            selector: base.selector.unwrap_or_default(),
+            entry_dte,
+            exit_dte,
+            slippage,
+            commission,
+            min_bid_ask,
+            stop_loss,
+            take_profit,
+            max_hold_days,
+            capital,
+            quantity,
+            multiplier,
+            max_positions,
+            selector: selector.unwrap_or_default(),
             adjustment_rules: vec![],
-            entry_signal: base.entry_signal,
-            exit_signal: base.exit_signal,
+            entry_signal,
+            exit_signal,
             ohlcv_path,
             cross_ohlcv_paths,
-            min_net_premium: base.min_net_premium,
-            max_net_premium: base.max_net_premium,
-            min_net_delta: base.min_net_delta,
-            max_net_delta: base.max_net_delta,
-            min_days_between_entries: base.min_days_between_entries,
-            expiration_filter: base.expiration_filter.unwrap_or_default(),
-            exit_net_delta: base.exit_net_delta,
+            min_net_premium,
+            max_net_premium,
+            min_net_delta,
+            max_net_delta,
+            min_days_between_entries,
+            expiration_filter: expiration_filter.unwrap_or_default(),
+            exit_net_delta,
         };
         backtest_params
             .validate()
