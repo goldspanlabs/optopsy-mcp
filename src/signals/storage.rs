@@ -13,6 +13,39 @@ use super::registry::SignalSpec;
 #[cfg(test)]
 static TEST_SIGNALS_DIR: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 
+/// Compute the signals directory path from a `DATA_ROOT` value.
+///
+/// - `DATA_ROOT="/"` is rejected (unsafe).
+/// - For multi-component roots like `/data/cache`, returns the sibling `/data/signals`.
+/// - For single-component roots like `/data` (parent is `/`), falls back to
+///   `data_root.join("signals")` → `/data/signals`.
+/// - The computed path `/signals` is also rejected as unsafe.
+fn compute_signals_dir_from_data_root(
+    data_root: &std::path::Path,
+    val: &str,
+) -> Result<PathBuf> {
+    if data_root == std::path::Path::new("/") {
+        anyhow::bail!(
+            "DATA_ROOT '{val}' is not a safe directory for signals storage"
+        );
+    }
+
+    let candidate = match data_root.parent() {
+        Some(p) if p != std::path::Path::new("") && p != std::path::Path::new("/") => {
+            p.join("signals")
+        }
+        _ => data_root.join("signals"),
+    };
+
+    if candidate == std::path::Path::new("/signals") {
+        anyhow::bail!(
+            "DATA_ROOT '{val}' would place signals in an unsafe directory ('/signals')"
+        );
+    }
+
+    Ok(candidate)
+}
+
 /// Get the signals storage directory, creating it if needed.
 ///
 /// When `DATA_ROOT` is set (e.g. `/data/cache`), signals are stored as a sibling
@@ -32,16 +65,7 @@ fn signals_dir() -> Result<PathBuf> {
 
     let dir = if let Ok(val) = std::env::var("DATA_ROOT") {
         let data_root = PathBuf::from(&val);
-        let parent = data_root.parent().filter(|p| p != &std::path::Path::new("") && p != &std::path::Path::new("/"));
-        match parent {
-            Some(p) => p.join("signals"),
-            None => {
-                anyhow::bail!(
-                    "DATA_ROOT '{}' has no suitable parent directory for signals storage",
-                    val
-                );
-            }
-        }
+        compute_signals_dir_from_data_root(&data_root, &val)?
     } else {
         let expanded = shellexpand::tilde("~/.optopsy/signals");
         if expanded.as_ref() == "~/.optopsy/signals" {
@@ -262,6 +286,42 @@ mod tests {
         fn drop(&mut self) {
             *TEST_SIGNALS_DIR.lock().unwrap() = None;
         }
+    }
+
+    #[test]
+    fn signals_dir_deep_path_uses_sibling() {
+        // DATA_ROOT=/data/cache → /data/signals (sibling of parent)
+        let result = compute_signals_dir_from_data_root(
+            std::path::Path::new("/data/cache"),
+            "/data/cache",
+        );
+        assert_eq!(result.unwrap(), std::path::Path::new("/data/signals"));
+    }
+
+    #[test]
+    fn signals_dir_single_component_falls_back_to_subdir() {
+        // DATA_ROOT=/data → parent is "/", falls back to /data/signals
+        let result =
+            compute_signals_dir_from_data_root(std::path::Path::new("/data"), "/data");
+        assert_eq!(result.unwrap(), std::path::Path::new("/data/signals"));
+    }
+
+    #[test]
+    fn signals_dir_root_returns_error() {
+        // DATA_ROOT=/ is unsafe
+        let result =
+            compute_signals_dir_from_data_root(std::path::Path::new("/"), "/");
+        assert!(result.is_err(), "DATA_ROOT='/' should return an error");
+    }
+
+    #[test]
+    fn signals_dir_nested_three_levels_uses_sibling() {
+        // DATA_ROOT=/a/b/c → sibling /a/b/signals
+        let result = compute_signals_dir_from_data_root(
+            std::path::Path::new("/a/b/c"),
+            "/a/b/c",
+        );
+        assert_eq!(result.unwrap(), std::path::Path::new("/a/b/signals"));
     }
 
     #[test]
