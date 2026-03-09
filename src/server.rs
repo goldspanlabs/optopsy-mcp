@@ -64,18 +64,6 @@ impl OptopsyServer {
             }
         }
 
-        // Slow path: acquire write lock to perform auto-load. Re-check under the
-        // write lock to prevent TOCTOU races where two requests both see empty data.
-        let mut data = self.data.write().await;
-
-        // Double-check: another request may have loaded data while we waited for the lock.
-        if !data.is_empty() {
-            return match Self::resolve_symbol(&data, symbol) {
-                Ok((sym, df)) => Ok((sym.clone(), df.clone())),
-                Err(e) => Err(format!("Error: {e}")),
-            };
-        }
-
         // Auto-load requires a symbol
         let sym = symbol.ok_or_else(|| {
             "No data loaded and no symbol provided. Pass a symbol (e.g. \"SPY\").".to_string()
@@ -93,12 +81,23 @@ impl OptopsyServer {
 
         tracing::info!(symbol = %sym, "Auto-loading options data from cache");
 
-        // Load data while holding the write lock to prevent concurrent duplicate loads
+        // Load data WITHOUT holding any lock so concurrent requests aren't blocked
+        // during I/O. Two concurrent auto-loads for the same symbol may both fetch,
+        // but the insert is idempotent.
         let df = self
             .cache
             .load_options(&sym_upper, None, None)
             .await
             .map_err(|e| format!("Failed to auto-load data for {sym}: {e}"))?;
+
+        // Brief write lock just for insertion
+        let mut data = self.data.write().await;
+
+        // Another request may have loaded data while we were fetching — check and
+        // use existing data if present for this symbol.
+        if let Some(existing) = data.get(&sym_upper) {
+            return Ok((sym_upper, existing.clone()));
+        }
 
         data.insert(sym_upper.clone(), df.clone());
         Ok((sym_upper, df))
