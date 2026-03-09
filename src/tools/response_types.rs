@@ -439,7 +439,9 @@ pub struct SweepResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stability: Option<Vec<StabilityScore>>,
     /// Multiple comparisons correction (Bonferroni + BH-FDR) applied to per-combo Sharpe
-    /// p-values. Populated only when `num_permutations` is set in sweep params.
+    /// p-values. Populated only when `num_permutations` is set in sweep params and there
+    /// are at least two sweep results; otherwise this will be `None` even if permutations
+    /// were run and per-result `p_value` was computed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub multiple_comparisons: Option<MultipleComparisonsCorrection>,
     pub ranked_results: Vec<SweepResult>,

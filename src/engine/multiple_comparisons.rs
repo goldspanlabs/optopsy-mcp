@@ -47,6 +47,13 @@ pub fn bonferroni(
     p_values: &[f64],
     alpha: f64,
 ) -> MultipleComparisonsResult {
+    debug_assert_eq!(
+        labels.len(),
+        p_values.len(),
+        "bonferroni: labels and p_values must have the same length ({} vs {})",
+        labels.len(),
+        p_values.len()
+    );
     let m = p_values.len();
     let results: Vec<CorrectedPValue> = labels
         .iter()
@@ -82,6 +89,13 @@ pub fn benjamini_hochberg(
     p_values: &[f64],
     alpha: f64,
 ) -> MultipleComparisonsResult {
+    debug_assert_eq!(
+        labels.len(),
+        p_values.len(),
+        "benjamini_hochberg: labels and p_values must have the same length ({} vs {})",
+        labels.len(),
+        p_values.len()
+    );
     let m = p_values.len();
     if m == 0 {
         return MultipleComparisonsResult {

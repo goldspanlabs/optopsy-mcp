@@ -916,7 +916,8 @@ pub struct ParameterSweepParams {
     #[serde(default)]
     #[garde(inner(range(min = 10, max = 1000)))]
     pub num_permutations: Option<usize>,
-    /// Optional RNG seed for reproducible permutation tests (requires `num_permutations`).
+    /// Optional RNG seed for reproducible permutation tests.
+    /// This value is only used when `num_permutations` is provided; otherwise it is ignored.
     #[serde(default)]
     #[garde(skip)]
     pub permutation_seed: Option<u64>,
