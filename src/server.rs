@@ -30,6 +30,11 @@ use crate::tools::signals::SignalsResponse;
 /// Loaded data: `HashMap<Symbol, DataFrame>` for multi-symbol support.
 type LoadedData = HashMap<String, DataFrame>;
 
+/// Format a garde validation error with the originating tool name for easier debugging.
+fn validation_err(tool: &str, e: impl std::fmt::Display) -> String {
+    format!("[{tool}] Validation error: {e}")
+}
+
 #[derive(Clone)]
 pub struct OptopsyServer {
     pub data: Arc<RwLock<LoadedData>>,
@@ -1137,7 +1142,7 @@ impl OptopsyServer {
     ) -> Result<Json<ConstructSignalResponse>, String> {
         params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("construct_signal", e))?;
         Ok(Json(tools::construct_signal::execute(&params.prompt)))
     }
 
@@ -1181,7 +1186,7 @@ impl OptopsyServer {
     ) -> Result<Json<BuildSignalResponse>, String> {
         params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("build_signal", e))?;
 
         let action = match params.action.as_str() {
             "create" => {
@@ -1253,7 +1258,7 @@ impl OptopsyServer {
     ) -> Result<Json<BacktestResponse>, String> {
         params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("run_backtest", e))?;
 
         let strategy = params.strategy;
 
@@ -1322,7 +1327,7 @@ impl OptopsyServer {
         };
         backtest_params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("run_backtest", e))?;
 
         // Try to load underlying OHLCV close prices from cache for chart overlay
         let underlying_prices = match self.cache.ensure_local_for(&symbol, "prices").await {
@@ -1368,7 +1373,7 @@ impl OptopsyServer {
     ) -> Result<Json<PermutationTestResponse>, String> {
         params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("permutation_test", e))?;
 
         let strategy = params.strategy;
 
@@ -1429,7 +1434,7 @@ impl OptopsyServer {
         };
         backtest_params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("permutation_test", e))?;
 
         let perm_params = crate::engine::permutation::PermutationParams {
             num_permutations: params.num_permutations,
@@ -1480,7 +1485,7 @@ impl OptopsyServer {
     ) -> Result<Json<SweepResponse>, String> {
         params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("parameter_sweep", e))?;
 
         // Validate: singular and plural signal fields are mutually exclusive
         if params.sim_params.entry_signal.is_some() && !params.sim_params.entry_signals.is_empty() {
@@ -1583,7 +1588,7 @@ impl OptopsyServer {
     ) -> Result<Json<WalkForwardResponse>, String> {
         params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("walk_forward", e))?;
 
         let strategy = params.strategy;
 
@@ -1647,7 +1652,7 @@ impl OptopsyServer {
         };
         backtest_params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("walk_forward", e))?;
 
         let train_days = params.train_days;
         let test_days = params.test_days;
@@ -1684,7 +1689,7 @@ impl OptopsyServer {
     ) -> Result<Json<CompareResponse>, String> {
         params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("compare_strategies", e))?;
 
         let (symbol, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
 
@@ -1730,7 +1735,7 @@ impl OptopsyServer {
         };
         compare_params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("compare_strategies", e))?;
 
         tokio::task::spawn_blocking(move || tools::compare::execute(&df, &compare_params))
             .await
@@ -1756,7 +1761,7 @@ impl OptopsyServer {
     ) -> Result<Json<CheckCacheResponse>, String> {
         params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("check_cache_status", e))?;
         let category = validate_category(&params.category)?;
         tools::cache_status::execute(&self.cache, &params.symbol, category)
             .map(Json)
@@ -1786,7 +1791,7 @@ impl OptopsyServer {
     ) -> Result<Json<FetchResponse>, String> {
         params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("fetch_to_parquet", e))?;
         let category = validate_category(&params.category)?;
         let period = params.period.as_deref().unwrap_or("5y");
         tools::fetch::execute(&self.cache, &params.symbol, category, period)
@@ -1817,7 +1822,7 @@ impl OptopsyServer {
     ) -> Result<Json<RawPricesResponse>, String> {
         params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("get_raw_prices", e))?;
         tools::raw_prices::load_and_execute(
             &self.cache,
             &params.symbol,
@@ -1857,7 +1862,7 @@ impl OptopsyServer {
     ) -> Result<Json<SuggestResponse>, String> {
         params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("suggest_parameters", e))?;
 
         let strategy = params.strategy;
 
