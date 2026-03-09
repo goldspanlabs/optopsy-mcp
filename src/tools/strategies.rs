@@ -1,3 +1,4 @@
+use crate::engine::types::to_display_name;
 use crate::strategies::all_strategies;
 
 use super::ai_format;
@@ -9,6 +10,7 @@ pub fn execute() -> StrategiesResponse {
         .map(|s| {
             let default_deltas = s.default_deltas();
             StrategyInfo {
+                display_name: to_display_name(&s.name),
                 name: s.name,
                 category: s.category,
                 legs: s.legs.len(),

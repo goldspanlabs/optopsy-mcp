@@ -52,6 +52,7 @@ pub struct BacktestResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BacktestParamsSummary {
     pub strategy: String,
+    pub display_name: String,
     pub leg_deltas: Vec<TargetRange>,
     pub entry_dte: DteRange,
     pub exit_dte: i32,
@@ -126,6 +127,7 @@ pub struct TradeStat {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CompareStrategyEntry {
     pub name: String,
+    pub display_name: String,
     pub leg_deltas: Vec<TargetRange>,
     pub entry_dte: DteRange,
     pub exit_dte: i32,
@@ -178,6 +180,7 @@ pub struct StrategiesResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StrategyInfo {
     pub name: String,
+    pub display_name: String,
     pub category: String,
     pub legs: usize,
     pub description: String,

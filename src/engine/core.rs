@@ -350,6 +350,7 @@ pub fn compare_strategies(
         match run_backtest(df, &backtest_params) {
             Ok(bt) => {
                 results.push(CompareResult {
+                    display_name: to_display_name(&label),
                     strategy: label.clone(),
                     trades: bt.trade_count,
                     pnl: bt.total_pnl,
@@ -366,6 +367,7 @@ pub fn compare_strategies(
             Err(e) => {
                 tracing::warn!("Strategy '{label}' failed: {e}");
                 results.push(CompareResult {
+                    display_name: to_display_name(&label),
                     strategy: label.clone(),
                     trades: 0,
                     pnl: 0.0,

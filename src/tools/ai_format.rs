@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use crate::engine::permutation::PermutationOutput;
 use crate::engine::types::{
-    BacktestParams, BacktestQualityStats, BacktestResult, CompareEntry, CompareResult, ExitType,
-    TradeRecord,
+    to_display_name, BacktestParams, BacktestQualityStats, BacktestResult, CompareEntry,
+    CompareResult, ExitType, TradeRecord,
 };
 
 use crate::engine::sweep::SweepOutput;
@@ -19,6 +19,7 @@ use super::response_types::{
 
 fn build_params_summary(params: &BacktestParams) -> BacktestParamsSummary {
     BacktestParamsSummary {
+        display_name: to_display_name(&params.strategy),
         strategy: params.strategy.clone(),
         leg_deltas: params.leg_deltas.clone(),
         entry_dte: params.entry_dte.clone(),
@@ -442,6 +443,7 @@ pub fn format_compare(
     let strategies_compared = labeled_entries
         .iter()
         .map(|entry| CompareStrategyEntry {
+            display_name: to_display_name(&entry.name),
             name: entry.name.clone(),
             leg_deltas: entry.leg_deltas.clone(),
             entry_dte: entry.entry_dte.clone(),
@@ -1008,6 +1010,7 @@ mod tests {
         let results = vec![
             CompareResult {
                 strategy: "alpha".to_string(),
+                display_name: "Alpha".to_string(),
                 trades: 10,
                 pnl: 500.0,
                 sharpe: 0.8,
@@ -1021,6 +1024,7 @@ mod tests {
             },
             CompareResult {
                 strategy: "beta".to_string(),
+                display_name: "Beta".to_string(),
                 trades: 20,
                 pnl: 300.0,
                 sharpe: 1.5,
@@ -1034,6 +1038,7 @@ mod tests {
             },
             CompareResult {
                 strategy: "gamma".to_string(),
+                display_name: "Gamma".to_string(),
                 trades: 15,
                 pnl: 1000.0,
                 sharpe: 1.2,
@@ -1100,6 +1105,7 @@ mod tests {
         let strategies = vec![
             StrategyInfo {
                 name: "long_call".to_string(),
+                display_name: "Long Call".to_string(),
                 category: "Singles".to_string(),
                 legs: 1,
                 description: "Buy a call".to_string(),
@@ -1107,6 +1113,7 @@ mod tests {
             },
             StrategyInfo {
                 name: "short_put".to_string(),
+                display_name: "Short Put".to_string(),
                 category: "Singles".to_string(),
                 legs: 1,
                 description: "Sell a put".to_string(),
@@ -1114,6 +1121,7 @@ mod tests {
             },
             StrategyInfo {
                 name: "bull_call_spread".to_string(),
+                display_name: "Bull Call Spread".to_string(),
                 category: "Spreads".to_string(),
                 legs: 2,
                 description: "Bullish spread".to_string(),
@@ -1426,6 +1434,7 @@ mod tests {
             SweepResult {
                 label: "long_call(Δ0.50,DTE45,exit0)".to_string(),
                 strategy: "long_call".to_string(),
+                display_name: "Long Call".to_string(),
                 leg_deltas: vec![TargetRange {
                     target: 0.50,
                     min: 0.45,
@@ -1455,6 +1464,7 @@ mod tests {
             SweepResult {
                 label: "long_call(Δ0.35,DTE45,exit0)".to_string(),
                 strategy: "long_call".to_string(),
+                display_name: "Long Call".to_string(),
                 leg_deltas: vec![TargetRange {
                     target: 0.35,
                     min: 0.30,
@@ -1553,6 +1563,7 @@ mod tests {
             ranked_results: vec![SweepResult {
                 label: "test_combo".to_string(),
                 strategy: "long_call".to_string(),
+                display_name: "Long Call".to_string(),
                 leg_deltas: vec![TargetRange {
                     target: 0.50,
                     min: 0.45,

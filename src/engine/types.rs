@@ -244,6 +244,23 @@ pub struct LegDef {
     pub expiration_cycle: ExpirationCycle,
 }
 
+/// Convert a snake_case strategy name to Title Case (e.g. "short_put" → "Short Put").
+pub fn to_display_name(name: &str) -> String {
+    name.split('_')
+        .map(|w| {
+            let mut c = w.chars();
+            match c.next() {
+                None => String::new(),
+                Some(f) => {
+                    let upper: String = f.to_uppercase().collect();
+                    upper + c.as_str()
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[derive(Debug, Clone)]
 pub struct StrategyDef {
     pub name: String,
@@ -582,6 +599,7 @@ impl TradeRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CompareResult {
     pub strategy: String,
+    pub display_name: String,
     pub trades: usize,
     pub pnl: f64,
     pub sharpe: f64,
@@ -601,6 +619,7 @@ pub struct CompareResult {
 pub struct SweepResult {
     pub label: String,
     pub strategy: String,
+    pub display_name: String,
     pub leg_deltas: Vec<TargetRange>,
     pub entry_dte: DteRange,
     pub exit_dte: i32,

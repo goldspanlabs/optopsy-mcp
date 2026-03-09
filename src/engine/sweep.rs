@@ -5,8 +5,8 @@ use polars::prelude::*;
 
 use super::core::run_backtest;
 use super::types::{
-    BacktestParams, Direction, DteRange, ExpirationFilter, SimParams, Slippage, SweepResult,
-    TargetRange,
+    to_display_name, BacktestParams, Direction, DteRange, ExpirationFilter, SimParams, Slippage,
+    SweepResult, TargetRange,
 };
 use crate::data::parquet::QUOTE_DATETIME_COL;
 use crate::engine::types::default_min_bid_ask;
@@ -877,6 +877,7 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
                 results.push(SweepResult {
                     label: combo.label.clone(),
                     strategy: combo.strategy_name.clone(),
+                    display_name: to_display_name(&combo.strategy_name),
                     leg_deltas: combo.leg_deltas.clone(),
                     entry_dte: combo.entry_dte.clone(),
                     exit_dte: combo.exit_dte,
@@ -1500,6 +1501,7 @@ mod tests {
         SweepResult {
             label: format!("{strategy}(Δ{delta_target:.2},DTE{entry_dte},exit{exit_dte})"),
             strategy: strategy.to_string(),
+            display_name: to_display_name(strategy),
             leg_deltas: vec![delta_target_to_range(delta_target)],
             entry_dte: dte_target_to_range(entry_dte),
             exit_dte,
