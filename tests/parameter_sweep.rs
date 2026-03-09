@@ -422,7 +422,7 @@ fn strategy_direction_covers_all_32() {
     let mut neutral = 0;
     let mut volatile = 0;
 
-    for s in &all {
+    for s in all {
         match strategy_direction(&s.name) {
             Direction::Bullish => bullish += 1,
             Direction::Bearish => bearish += 1,

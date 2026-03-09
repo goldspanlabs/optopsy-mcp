@@ -987,14 +987,17 @@ fn resolve_sweep_strategies(
     strategies: Option<Vec<SweepStrategyInput>>,
     direction: Option<Direction>,
 ) -> Result<Vec<crate::engine::sweep::SweepStrategyEntry>, String> {
-    use crate::engine::types::strategy_direction;
-
     match (strategies, direction) {
         (Some(strats), Some(dir)) => {
-            // Filter provided list by direction
+            // Build a name→direction lookup from the cached registry (one pass, no fresh allocation).
+            let dir_map: std::collections::HashMap<&str, Direction> =
+                crate::strategies::all_strategies()
+                    .iter()
+                    .map(|s| (s.name.as_str(), s.direction))
+                    .collect();
             let filtered: Vec<_> = strats
                 .into_iter()
-                .filter(|s| strategy_direction(s.name.as_str()) == dir)
+                .filter(|s| dir_map.get(s.name.as_str()).copied() == Some(dir))
                 .collect();
             if filtered.is_empty() {
                 return Err(format!(
@@ -1014,18 +1017,14 @@ fn resolve_sweep_strategies(
             // StrategyDef already carries a precomputed `direction` field, so
             // we read it directly instead of calling `strategy_direction` (which
             // would redundantly rebuild all strategies via `find_strategy`).
-            let all = crate::strategies::all_strategies();
-            let matching: Result<Vec<_>, String> = all
-                .into_iter()
+            let matching: Vec<_> = crate::strategies::all_strategies()
+                .iter()
                 .filter(|s| s.direction == dir)
-                .map(|s| {
-                    Ok(SweepStrategyInput {
-                        name: s.name,
-                        leg_delta_targets: None,
-                    })
+                .map(|s| SweepStrategyInput {
+                    name: s.name.clone(),
+                    leg_delta_targets: None,
                 })
                 .collect();
-            let matching = matching?;
             if matching.is_empty() {
                 return Err(format!("No strategies match direction {dir:?}.",));
             }

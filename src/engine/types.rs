@@ -1131,7 +1131,7 @@ mod tests {
     #[test]
     fn strategy_direction_all_32_covered() {
         let all = crate::strategies::all_strategies();
-        for s in &all {
+        for s in all {
             // Just ensure it doesn't panic and returns a valid variant
             let dir = strategy_direction(&s.name);
             assert!(
