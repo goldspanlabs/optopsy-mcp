@@ -18,7 +18,7 @@ fn iv_column(df: &DataFrame) -> Result<Vec<f64>, PolarsError> {
 /// Compute ATR values for a given period.
 fn compute_atr(close: &[f64], high: &[f64], low: &[f64], period: usize) -> Vec<f64> {
     let n = close.len();
-    if n < period {
+    if period == 0 || n < period {
         return vec![];
     }
     (0..=n - period)
