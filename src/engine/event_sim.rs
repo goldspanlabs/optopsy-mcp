@@ -87,9 +87,9 @@ fn build_price_table_fast(
                 Some("put") => OptionType::Put,
                 _ => continue,
             };
-            let quote_days = q_vals[i].div_euclid(micros_per_day) + 719_163;
+            let quote_days = q_vals[i].div_euclid(micros_per_day) + i64::from(EPOCH_DAYS_CE_OFFSET);
             let quote_date = days_to_naive_date(quote_days, "quote_datetime", i)?;
-            let exp_days = i64::from(e_vals[i]) + 719_163_i64;
+            let exp_days = i64::from(e_vals[i]) + i64::from(EPOCH_DAYS_CE_OFFSET);
             let exp_date = days_to_naive_date(exp_days, "expiration", i)?;
 
             table.insert(
@@ -131,9 +131,9 @@ fn build_price_table_fast(
                 "put" => OptionType::Put,
                 _ => continue,
             };
-            let qv_days = qv.div_euclid(micros_per_day) + 719_163;
+            let qv_days = qv.div_euclid(micros_per_day) + i64::from(EPOCH_DAYS_CE_OFFSET);
             let quote_date = days_to_naive_date(qv_days, "quote_datetime", row_idx)?;
-            let ev_days = i64::from(ev) + 719_163;
+            let ev_days = i64::from(ev) + i64::from(EPOCH_DAYS_CE_OFFSET);
             let exp_date = days_to_naive_date(ev_days, "expiration", row_idx)?;
 
             table.insert(
@@ -206,7 +206,7 @@ pub(crate) fn extract_date_from_column(col: &Column, idx: usize) -> Result<Naive
             match days {
                 Some(d) => {
                     let date = chrono::NaiveDate::from_num_days_from_ce_opt(
-                        d + 719_163, // epoch offset: days from CE to 1970-01-01
+                        d + EPOCH_DAYS_CE_OFFSET, // epoch offset: days from CE to 1970-01-01
                     )
                     .ok_or_else(|| anyhow::anyhow!("Invalid date at index {idx}"))?;
                     Ok(date)
@@ -474,6 +474,10 @@ pub fn run_event_loop(
     exit_dates: Option<&std::collections::HashSet<NaiveDate>>,
     date_index: &DateIndex,
 ) -> (Vec<TradeRecord>, Vec<EquityPoint>, BacktestQualityStats) {
+    // Capped reservoir sample for spread percentages to bound memory.
+    // 10 000 samples is enough for an accurate median estimate.
+    const MAX_SPREAD_SAMPLES: usize = 10_000;
+
     let mut positions: Vec<Position> = Vec::new();
     let mut trade_log: Vec<TradeRecord> = Vec::new();
     let mut equity_curve: Vec<EquityPoint> = Vec::new();
@@ -487,7 +491,8 @@ pub fn run_event_loop(
     let mut trading_days_with_data = std::collections::HashSet::new();
     let mut total_candidates = 0usize;
     let mut positions_opened = 0usize;
-    let mut entry_spread_pcts = Vec::new();
+    let mut entry_spread_pcts: Vec<f64> = Vec::new();
+    let mut spread_sample_count: u64 = 0;
 
     // Stagger: track the last date on which a new position was opened
     let mut last_entry_date: Option<NaiveDate> = None;
@@ -616,12 +621,28 @@ pub fn run_event_loop(
                 if let Some(candidate) =
                     select_candidate(&available, &params.selector, params.entry_dte.target)
                 {
-                    // Collect entry spread percentages
+                    // Collect entry spread percentages (reservoir sampled to cap memory)
                     for leg in &candidate.legs {
                         if leg.bid > 0.0 && leg.ask > 0.0 {
                             let mid = f64::midpoint(leg.bid, leg.ask);
                             let spread_pct = (leg.ask - leg.bid) / mid * 100.0;
-                            entry_spread_pcts.push(spread_pct);
+                            spread_sample_count += 1;
+                            if entry_spread_pcts.len() < MAX_SPREAD_SAMPLES {
+                                entry_spread_pcts.push(spread_pct);
+                            } else {
+                                // Reservoir sampling: pick j uniformly in [0, spread_sample_count).
+                                // Replace entry_spread_pcts[j] only when j < MAX_SPREAD_SAMPLES,
+                                // giving each sample a MAX_SPREAD_SAMPLES/spread_sample_count
+                                // probability of replacement. A single LCG step produces `hash`,
+                                // from which j = hash % spread_sample_count is derived.
+                                let hash = spread_sample_count
+                                    .wrapping_mul(6_364_136_223_846_793_005)
+                                    .wrapping_add(1_442_695_040_888_963_407);
+                                let j = (hash % spread_sample_count) as usize;
+                                if j < MAX_SPREAD_SAMPLES {
+                                    entry_spread_pcts[j] = spread_pct;
+                                }
+                            }
                         }
                     }
 

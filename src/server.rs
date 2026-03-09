@@ -16,7 +16,7 @@ use crate::data::DataStore;
 use crate::engine::types::{
     default_min_bid_ask, default_multiplier, validate_exit_dte_lt_entry_min, BacktestParams,
     Commission, CompareEntry, CompareParams, Direction, DteRange, ExpirationFilter, SimParams,
-    Slippage, TargetRange, TradeSelector,
+    Slippage, TargetRange, TradeSelector, EPOCH_DAYS_CE_OFFSET,
 };
 use crate::signals::registry::{collect_cross_symbols, SignalSpec};
 use crate::tools;
@@ -29,6 +29,11 @@ use crate::tools::signals::SignalsResponse;
 
 /// Loaded data: `HashMap<Symbol, DataFrame>` for multi-symbol support.
 type LoadedData = HashMap<String, DataFrame>;
+
+/// Format a garde validation error with the originating tool name for easier debugging.
+fn validation_err(tool: &str, e: impl std::fmt::Display) -> String {
+    format!("[{tool}] Validation error: {e}")
+}
 
 #[derive(Clone)]
 pub struct OptopsyServer {
@@ -289,8 +294,6 @@ impl OptopsyServer {
 
 /// Load close prices from a cached OHLCV parquet file for chart overlay.
 fn load_underlying_closes(path: &std::path::Path) -> Vec<tools::response_types::UnderlyingPrice> {
-    const EPOCH_DAYS_CE: i32 = 719_163;
-
     let args = ScanArgsParquet::default();
     let path_str = path.to_string_lossy();
     let Ok(lf) = LazyFrame::scan_parquet(path_str.as_ref().into(), args) else {
@@ -314,7 +317,9 @@ fn load_underlying_closes(path: &std::path::Path) -> Vec<tools::response_types::
     let mut prices = Vec::with_capacity(df.height());
     for i in 0..df.height() {
         if let (Some(days), Some(close)) = (dates.phys.get(i), closes.get(i)) {
-            if let Some(date) = chrono::NaiveDate::from_num_days_from_ce_opt(days + EPOCH_DAYS_CE) {
+            if let Some(date) =
+                chrono::NaiveDate::from_num_days_from_ce_opt(days + EPOCH_DAYS_CE_OFFSET)
+            {
                 prices.push(tools::response_types::UnderlyingPrice {
                     date: date.format("%Y-%m-%d").to_string(),
                     close,
@@ -893,14 +898,17 @@ fn resolve_sweep_strategies(
     strategies: Option<Vec<SweepStrategyInput>>,
     direction: Option<Direction>,
 ) -> Result<Vec<crate::engine::sweep::SweepStrategyEntry>, String> {
-    use crate::engine::types::strategy_direction;
-
     match (strategies, direction) {
         (Some(strats), Some(dir)) => {
-            // Filter provided list by direction
+            // Build a name→direction lookup from the cached registry (one pass, no fresh allocation).
+            let dir_map: std::collections::HashMap<&str, Direction> =
+                crate::strategies::all_strategies()
+                    .iter()
+                    .map(|s| (s.name.as_str(), s.direction))
+                    .collect();
             let filtered: Vec<_> = strats
                 .into_iter()
-                .filter(|s| strategy_direction(s.name.as_str()) == dir)
+                .filter(|s| dir_map.get(s.name.as_str()).copied() == Some(dir))
                 .collect();
             if filtered.is_empty() {
                 return Err(format!(
@@ -916,19 +924,18 @@ fn resolve_sweep_strategies(
             resolve_strategy_entries(strats)
         }
         (None, Some(dir)) => {
-            // Auto-select all strategies matching direction
-            let all = crate::strategies::all_strategies();
-            let matching: Result<Vec<_>, String> = all
-                .into_iter()
-                .filter(|s| strategy_direction(&s.name) == dir)
-                .map(|s| {
-                    Ok(SweepStrategyInput {
-                        name: s.name,
-                        leg_delta_targets: None,
-                    })
+            // Auto-select all strategies matching direction.
+            // StrategyDef already carries a precomputed `direction` field, so
+            // we read it directly instead of calling `strategy_direction` (which
+            // would redundantly rebuild all strategies via `find_strategy`).
+            let matching: Vec<_> = crate::strategies::all_strategies()
+                .iter()
+                .filter(|s| s.direction == dir)
+                .map(|s| SweepStrategyInput {
+                    name: s.name.clone(),
+                    leg_delta_targets: None,
                 })
                 .collect();
-            let matching = matching?;
             if matching.is_empty() {
                 return Err(format!("No strategies match direction {dir:?}.",));
             }
@@ -1045,7 +1052,7 @@ impl OptopsyServer {
     ) -> Result<Json<ConstructSignalResponse>, String> {
         params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("construct_signal", e))?;
         Ok(Json(tools::construct_signal::execute(&params.prompt)))
     }
 
@@ -1089,7 +1096,7 @@ impl OptopsyServer {
     ) -> Result<Json<BuildSignalResponse>, String> {
         params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("build_signal", e))?;
 
         let action = match params.action.as_str() {
             "create" => {
@@ -1161,7 +1168,7 @@ impl OptopsyServer {
     ) -> Result<Json<BacktestResponse>, String> {
         params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("run_backtest", e))?;
 
         tracing::info!(
             strategy = params.base.strategy.as_str(),
@@ -1221,7 +1228,7 @@ impl OptopsyServer {
     ) -> Result<Json<PermutationTestResponse>, String> {
         params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("permutation_test", e))?;
 
         tracing::info!(
             strategy = params.base.strategy.as_str(),
@@ -1281,7 +1288,7 @@ impl OptopsyServer {
     ) -> Result<Json<SweepResponse>, String> {
         params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("parameter_sweep", e))?;
 
         // Validate: singular and plural signal fields are mutually exclusive
         if params.sim_params.entry_signal.is_some() && !params.sim_params.entry_signals.is_empty() {
@@ -1386,7 +1393,7 @@ impl OptopsyServer {
     ) -> Result<Json<WalkForwardResponse>, String> {
         params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("walk_forward", e))?;
 
         tracing::info!(
             strategy = params.base.strategy.as_str(),
@@ -1434,7 +1441,7 @@ impl OptopsyServer {
     ) -> Result<Json<CompareResponse>, String> {
         params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("compare_strategies", e))?;
 
         let (symbol, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
 
@@ -1480,7 +1487,7 @@ impl OptopsyServer {
         };
         compare_params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("compare_strategies", e))?;
 
         tokio::task::spawn_blocking(move || tools::compare::execute(&df, &compare_params))
             .await
@@ -1506,7 +1513,7 @@ impl OptopsyServer {
     ) -> Result<Json<CheckCacheResponse>, String> {
         params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("check_cache_status", e))?;
         let category = validate_category(&params.category)?;
         tools::cache_status::execute(&self.cache, &params.symbol, category)
             .map(Json)
@@ -1536,7 +1543,7 @@ impl OptopsyServer {
     ) -> Result<Json<FetchResponse>, String> {
         params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("fetch_to_parquet", e))?;
         let category = validate_category(&params.category)?;
         let period = params.period.as_deref().unwrap_or("5y");
         tools::fetch::execute(&self.cache, &params.symbol, category, period)
@@ -1567,7 +1574,7 @@ impl OptopsyServer {
     ) -> Result<Json<RawPricesResponse>, String> {
         params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("get_raw_prices", e))?;
         tools::raw_prices::load_and_execute(
             &self.cache,
             &params.symbol,
@@ -1607,7 +1614,7 @@ impl OptopsyServer {
     ) -> Result<Json<SuggestResponse>, String> {
         params
             .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
+            .map_err(|e| validation_err("suggest_parameters", e))?;
 
         let strategy = params.strategy;
 

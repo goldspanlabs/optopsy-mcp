@@ -6,15 +6,15 @@ use super::response_types::{StrategiesResponse, StrategyInfo};
 
 pub fn execute() -> StrategiesResponse {
     let strategies: Vec<StrategyInfo> = all_strategies()
-        .into_iter()
+        .iter()
         .map(|s| {
             let default_deltas = s.default_deltas();
             StrategyInfo {
                 display_name: to_display_name(&s.name),
-                name: s.name,
-                category: s.category,
+                name: s.name.clone(),
+                category: s.category.clone(),
                 legs: s.legs.len(),
-                description: s.description,
+                description: s.description.clone(),
                 default_deltas,
             }
         })

@@ -8,6 +8,7 @@ use tokio::sync::RwLock;
 use crate::data::cache::{validate_path_segment, CachedStore};
 use crate::data::parquet::QUOTE_DATETIME_COL;
 use crate::data::DataStore;
+use crate::engine::types::EPOCH_DAYS_CE_OFFSET;
 
 use super::ai_format;
 use super::response_types::{DateRange, LoadDataResponse};
@@ -105,8 +106,10 @@ fn format_scalar(s: &polars::prelude::Scalar) -> Option<String> {
             chrono::DateTime::from_timestamp(secs, nanos)
                 .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S").to_string())
         }
-        AnyValue::Date(days) => chrono::NaiveDate::from_num_days_from_ce_opt(days + 719_163)
-            .map(|d| d.format("%Y-%m-%d").to_string()),
+        AnyValue::Date(days) => {
+            chrono::NaiveDate::from_num_days_from_ce_opt(days + EPOCH_DAYS_CE_OFFSET)
+                .map(|d| d.format("%Y-%m-%d").to_string())
+        }
         other => Some(format!("{other}")),
     }
 }

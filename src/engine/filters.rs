@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::Datelike;
 use polars::prelude::*;
 
-use super::types::{ExpirationCycle, ExpirationFilter, TargetRange};
+use super::types::{ExpirationCycle, ExpirationFilter, TargetRange, EPOCH_DAYS_CE_OFFSET};
 use crate::data::parquet::QUOTE_DATETIME_COL;
 
 /// Compute DTE (days to expiration) from `quote_datetime` and expiration columns.
@@ -312,10 +312,6 @@ pub fn is_third_friday(date: chrono::NaiveDate) -> bool {
     (15..=21).contains(&d)
 }
 
-/// Days-from-epoch offset: Polars stores Date as days since 1970-01-01 (Unix epoch).
-/// `chrono::from_num_days_from_ce` uses day 1 CE as the origin (= day 719163 of Unix).
-const EXPIRATION_EPOCH_OFFSET: i32 = 719_163;
-
 /// Filter the options `DataFrame` to only rows whose expiration satisfies `filter`.
 ///
 /// * `Any` — no-op, returns the `DataFrame` as-is.
@@ -337,7 +333,7 @@ pub fn filter_expiration_type(df: &DataFrame, filter: &ExpirationFilter) -> Resu
                 return false;
             };
             let Some(date) =
-                chrono::NaiveDate::from_num_days_from_ce_opt(days + EXPIRATION_EPOCH_OFFSET)
+                chrono::NaiveDate::from_num_days_from_ce_opt(days + EPOCH_DAYS_CE_OFFSET)
             else {
                 return false;
             };

@@ -8,6 +8,12 @@ use std::collections::HashMap;
 
 use crate::signals::registry::SignalSpec;
 
+/// Days-from-epoch offset: Polars stores `Date` as days since 1970-01-01 (Unix epoch).
+/// `chrono::NaiveDate::from_num_days_from_ce` counts from day 1 CE, which is day 719 163
+/// relative to the Unix epoch. Add this constant to a Polars date value before passing
+/// it to `from_num_days_from_ce_opt`.
+pub const EPOCH_DAYS_CE_OFFSET: i32 = 719_163;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Direction {
@@ -18,15 +24,14 @@ pub enum Direction {
 }
 
 pub fn strategy_direction(name: &str) -> Direction {
-    match name {
-        "long_call" | "short_put" | "covered_call" | "bull_call_spread" | "bull_put_spread"
-        | "cash_secured_put" => Direction::Bullish,
-        "short_call" | "long_put" | "bear_call_spread" | "bear_put_spread" => Direction::Bearish,
-        "long_straddle" | "long_strangle" | "reverse_iron_condor" | "reverse_iron_butterfly" => {
-            Direction::Volatile
-        }
-        _ => Direction::Neutral,
+    if let Some(def) = crate::strategies::find_strategy(name) {
+        return def.direction;
     }
+    tracing::warn!(
+        strategy = name,
+        "Unknown strategy — defaulting to Neutral direction"
+    );
+    Direction::Neutral
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -270,6 +275,8 @@ pub struct StrategyDef {
     /// When `false`, adjacent legs may share the same strike (e.g. straddles,
     /// iron butterflies). When `true` (default), strikes must be strictly ascending.
     pub strict_strike_order: bool,
+    /// Market direction bias for this strategy.
+    pub direction: Direction,
 }
 
 impl StrategyDef {
@@ -1128,7 +1135,7 @@ mod tests {
     #[test]
     fn strategy_direction_all_32_covered() {
         let all = crate::strategies::all_strategies();
-        for s in &all {
+        for s in all {
             // Just ensure it doesn't panic and returns a valid variant
             let dir = strategy_direction(&s.name);
             assert!(

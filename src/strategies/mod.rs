@@ -6,21 +6,29 @@ pub mod iron;
 pub mod singles;
 pub mod spreads;
 
+use std::sync::OnceLock;
+
 use crate::engine::types::StrategyDef;
 
-pub fn all_strategies() -> Vec<StrategyDef> {
-    let mut strategies = Vec::new();
-    strategies.extend(singles::all());
-    strategies.extend(spreads::all());
-    strategies.extend(butterflies::all());
-    strategies.extend(condors::all());
-    strategies.extend(iron::all());
-    strategies.extend(calendar::all());
-    strategies
+static STRATEGY_REGISTRY: OnceLock<Vec<StrategyDef>> = OnceLock::new();
+
+/// Return the full strategy registry. The list is built once and cached for the
+/// lifetime of the process, so subsequent calls are allocation-free O(1) lookups.
+pub fn all_strategies() -> &'static [StrategyDef] {
+    STRATEGY_REGISTRY.get_or_init(|| {
+        let mut strategies = Vec::new();
+        strategies.extend(singles::all());
+        strategies.extend(spreads::all());
+        strategies.extend(butterflies::all());
+        strategies.extend(condors::all());
+        strategies.extend(iron::all());
+        strategies.extend(calendar::all());
+        strategies
+    })
 }
 
 pub fn find_strategy(name: &str) -> Option<StrategyDef> {
-    all_strategies().into_iter().find(|s| s.name == name)
+    all_strategies().iter().find(|s| s.name == name).cloned()
 }
 
 #[cfg(test)]

@@ -4,6 +4,7 @@ use polars::prelude::*;
 use std::path::PathBuf;
 
 use super::DataStore;
+use crate::engine::types::EPOCH_DAYS_CE_OFFSET;
 
 /// The canonical timestamp column name used internally after normalization.
 pub const QUOTE_DATETIME_COL: &str = "quote_datetime";
@@ -20,13 +21,43 @@ impl ParquetStore {
     }
 }
 
+/// Apply date-column normalization steps to a `LazyFrame`.
+///
+/// Normalizes `src_col` (of type `src_dtype`) to a
+/// `Datetime(Microseconds)` column named [`QUOTE_DATETIME_COL`].
+/// When a new alias is created (`Date` or `String` source), the caller is
+/// responsible for dropping the original column if it differs from
+/// [`QUOTE_DATETIME_COL`] and still appears in the collected schema.
+fn apply_datetime_normalization(
+    lazy: LazyFrame,
+    src_col: &'static str,
+    src_dtype: &DataType,
+) -> LazyFrame {
+    match src_dtype {
+        DataType::Date => lazy.with_column(
+            col(src_col)
+                .cast(DataType::Datetime(TimeUnit::Microseconds, None))
+                .alias(QUOTE_DATETIME_COL),
+        ),
+        DataType::Datetime(_, _) if src_col != QUOTE_DATETIME_COL => {
+            lazy.rename([src_col], [QUOTE_DATETIME_COL], true)
+        }
+        DataType::String => lazy.with_column(
+            col(src_col)
+                .cast(DataType::Date)
+                .cast(DataType::Datetime(TimeUnit::Microseconds, None))
+                .alias(QUOTE_DATETIME_COL),
+        ),
+        _ => lazy, // already Datetime with the correct name
+    }
+}
+
 /// Normalize the quote date/datetime column to a Datetime column named `quote_datetime`.
 /// If the source column is Date, it gets cast to Datetime at midnight (00:00:00).
 /// If it's already Datetime, it just gets renamed.
 pub fn normalize_quote_datetime(df: DataFrame) -> Result<DataFrame> {
-    // Detect the source column
-    let (src_col, src_dtype) = if let Ok(c) = df.column("quote_datetime") {
-        ("quote_datetime", c.dtype().clone())
+    let (src_col, src_dtype) = if let Ok(c) = df.column(QUOTE_DATETIME_COL) {
+        (QUOTE_DATETIME_COL, c.dtype().clone())
     } else if let Ok(c) = df.column("quote_date") {
         ("quote_date", c.dtype().clone())
     } else {
@@ -34,49 +65,13 @@ pub fn normalize_quote_datetime(df: DataFrame) -> Result<DataFrame> {
         return Ok(df);
     };
 
-    let result = match &src_dtype {
-        DataType::Date => {
-            // Cast Date → Datetime(Microseconds, None) at midnight
-            let lf = df.lazy().with_column(
-                col(src_col)
-                    .cast(DataType::Datetime(TimeUnit::Microseconds, None))
-                    .alias(QUOTE_DATETIME_COL),
-            );
-            let collected = lf.collect()?;
-            if src_col == QUOTE_DATETIME_COL {
-                collected
-            } else {
-                collected.drop(src_col)?
-            }
-        }
-        DataType::Datetime(_, _) => {
-            if src_col == QUOTE_DATETIME_COL {
-                df
-            } else {
-                df.lazy()
-                    .rename([src_col], [QUOTE_DATETIME_COL], true)
-                    .collect()?
-            }
-        }
-        DataType::String => {
-            // Cast string to Date first, then to Datetime at midnight
-            let lf = df.lazy().with_column(
-                col(src_col)
-                    .cast(DataType::Date)
-                    .cast(DataType::Datetime(TimeUnit::Microseconds, None))
-                    .alias(QUOTE_DATETIME_COL),
-            );
-            let collected = lf.collect()?;
-            if src_col == QUOTE_DATETIME_COL {
-                collected
-            } else {
-                collected.drop(src_col)?
-            }
-        }
-        _ => df,
-    };
-
-    Ok(result)
+    let lazy = apply_datetime_normalization(df.lazy(), src_col, &src_dtype);
+    let collected = lazy.collect()?;
+    if src_col != QUOTE_DATETIME_COL && collected.schema().contains(src_col) {
+        Ok(collected.drop(src_col)?)
+    } else {
+        Ok(collected)
+    }
 }
 
 impl DataStore for ParquetStore {
@@ -87,37 +82,48 @@ impl DataStore for ParquetStore {
         end_date: Option<NaiveDate>,
     ) -> Result<DataFrame> {
         let path_str = self.path.to_string_lossy().to_string();
+        let start_dt = start_date.and_then(|d| d.and_hms_opt(0, 0, 0));
+        let end_dt = end_date.and_then(|d| d.and_hms_opt(23, 59, 59));
 
-        // Parquet I/O is synchronous and blocking, so run it on a blocking thread pool
+        // Scan lazily so Polars can push date predicates down to the Parquet
+        // row-group level, avoiding loading data that will be filtered out.
         let df = tokio::task::spawn_blocking(move || {
-            LazyFrame::scan_parquet(path_str.as_str().into(), ScanArgsParquet::default())?
-                .collect()
-                .context("Failed to read Parquet file")
+            let mut lazy =
+                LazyFrame::scan_parquet(path_str.as_str().into(), ScanArgsParquet::default())?;
+
+            // Detect and normalize the date column in the lazy pipeline
+            let schema = lazy.collect_schema()?;
+            let (src_col, src_dtype) = if let Some(dt) = schema.get(QUOTE_DATETIME_COL) {
+                (QUOTE_DATETIME_COL, dt.clone())
+            } else if let Some(dt) = schema.get("quote_date") {
+                ("quote_date", dt.clone())
+            } else {
+                // No recognized date column — just collect as-is
+                return lazy.collect().context("Failed to read Parquet file");
+            };
+
+            // Normalize to Datetime in the lazy pipeline using the shared helper
+            lazy = apply_datetime_normalization(lazy, src_col, &src_dtype);
+
+            // Apply date filters in the lazy pipeline for predicate pushdown
+            if let Some(start) = start_dt {
+                lazy = lazy.filter(col(QUOTE_DATETIME_COL).gt_eq(lit(start)));
+            }
+            if let Some(end) = end_dt {
+                lazy = lazy.filter(col(QUOTE_DATETIME_COL).lt_eq(lit(end)));
+            }
+
+            // Drop original column if it was renamed/aliased and a duplicate remains
+            let df = lazy.collect().context("Failed to read Parquet file")?;
+            if src_col != QUOTE_DATETIME_COL && df.schema().contains(src_col) {
+                df.drop(src_col)
+                    .context("Failed to drop original date column")
+            } else {
+                Ok(df)
+            }
         })
         .await
         .context("Parquet read task panicked")??;
-
-        // Normalize to quote_datetime
-        let mut df = normalize_quote_datetime(df)?;
-
-        // Apply date filters if quote_datetime exists
-        if df.schema().contains(QUOTE_DATETIME_COL) && (start_date.is_some() || end_date.is_some())
-        {
-            let start_dt = start_date.and_then(|d| d.and_hms_opt(0, 0, 0));
-            let end_dt = end_date.and_then(|d| d.and_hms_opt(23, 59, 59));
-            df = tokio::task::spawn_blocking(move || {
-                let mut lazy = df.lazy();
-                if let Some(start) = start_dt {
-                    lazy = lazy.filter(col(QUOTE_DATETIME_COL).gt_eq(lit(start)));
-                }
-                if let Some(end) = end_dt {
-                    lazy = lazy.filter(col(QUOTE_DATETIME_COL).lt_eq(lit(end)));
-                }
-                lazy.collect()
-            })
-            .await
-            .context("Parquet date filter task panicked")??;
-        }
 
         Ok(df)
     }
@@ -156,7 +162,7 @@ impl DataStore for ParquetStore {
 /// Extract a `NaiveDate` from a Polars `Scalar`, handling Date, Datetime, and String types.
 fn scalar_to_date(scalar: &Scalar) -> Result<NaiveDate> {
     match scalar.value() {
-        AnyValue::Date(days) => NaiveDate::from_num_days_from_ce_opt(*days + 719_163)
+        AnyValue::Date(days) => NaiveDate::from_num_days_from_ce_opt(*days + EPOCH_DAYS_CE_OFFSET)
             .ok_or_else(|| anyhow::anyhow!("Invalid date value: {days}")),
         AnyValue::Datetime(ts_value, tu, _) => {
             let units_per_sec = match tu {

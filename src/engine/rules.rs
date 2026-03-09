@@ -179,6 +179,7 @@ mod tests {
             description: "test".to_string(),
             legs,
             strict_strike_order: strict,
+            direction: crate::engine::types::Direction::Neutral,
         }
     }
 
