@@ -75,12 +75,18 @@ fn build_price_table_fast(
                 Some("put") => OptionType::Put,
                 _ => continue,
             };
-            let quote_date = NaiveDate::from_num_days_from_ce_opt(
-                (q_vals[i].div_euclid(micros_per_day)) as i32 + 719_163,
-            )
-            .ok_or_else(|| anyhow::anyhow!("Invalid quote_datetime value"))?;
-            let exp_date = NaiveDate::from_num_days_from_ce_opt(e_vals[i] + 719_163)
-                .ok_or_else(|| anyhow::anyhow!("Invalid expiration value"))?;
+            let quote_days = q_vals[i].div_euclid(micros_per_day) + 719_163;
+            let quote_days_i32 = i32::try_from(quote_days).map_err(|_| {
+                anyhow::anyhow!("quote_datetime value {quote_days} overflows i32 (row {i})")
+            })?;
+            let quote_date = NaiveDate::from_num_days_from_ce_opt(quote_days_i32)
+                .ok_or_else(|| anyhow::anyhow!("Invalid quote_datetime value at row {i}"))?;
+            let exp_days = i64::from(e_vals[i]) + 719_163_i64;
+            let exp_days_i32 = i32::try_from(exp_days).map_err(|_| {
+                anyhow::anyhow!("expiration value {exp_days} overflows i32 (row {i})")
+            })?;
+            let exp_date = NaiveDate::from_num_days_from_ce_opt(exp_days_i32)
+                .ok_or_else(|| anyhow::anyhow!("Invalid expiration value at row {i}"))?;
 
             table.insert(
                 (quote_date, exp_date, OrderedFloat(s_vals[i]), ot),
@@ -94,7 +100,7 @@ fn build_price_table_fast(
         }
     } else {
         // Chunked iterator fallback (handles nulls / multi-chunk arrays)
-        for (((((quote_raw, exp_raw), strike), opt_str), bid), (ask, delta)) in quote_ca
+        for (row_idx, (((((quote_raw, exp_raw), strike), opt_str), bid), (ask, delta))) in quote_ca
             .phys
             .iter()
             .zip(exp_ca.phys.iter())
@@ -102,6 +108,7 @@ fn build_price_table_fast(
             .zip(option_types.iter())
             .zip(bids.iter())
             .zip(asks.iter().zip(deltas.iter()))
+            .enumerate()
         {
             let (
                 Some(qv),
@@ -120,12 +127,14 @@ fn build_price_table_fast(
                 "put" => OptionType::Put,
                 _ => continue,
             };
-            let quote_date = NaiveDate::from_num_days_from_ce_opt(
-                (qv.div_euclid(micros_per_day)) as i32 + 719_163,
-            )
-            .ok_or_else(|| anyhow::anyhow!("Invalid quote_datetime value"))?;
+            let qv_days = qv.div_euclid(micros_per_day) + 719_163;
+            let qv_days_i32 = i32::try_from(qv_days).map_err(|_| {
+                anyhow::anyhow!("quote_datetime value {qv_days} overflows i32 (row {row_idx})")
+            })?;
+            let quote_date = NaiveDate::from_num_days_from_ce_opt(qv_days_i32)
+                .ok_or_else(|| anyhow::anyhow!("Invalid quote_datetime value (row {row_idx})"))?;
             let exp_date = NaiveDate::from_num_days_from_ce_opt(ev + 719_163)
-                .ok_or_else(|| anyhow::anyhow!("Invalid expiration value"))?;
+                .ok_or_else(|| anyhow::anyhow!("Invalid expiration value (row {row_idx})"))?;
 
             table.insert(
                 (quote_date, exp_date, OrderedFloat(strike_val), opt_type),
@@ -348,27 +357,44 @@ pub fn find_entry_candidates(
         let mut net_premium = 0.0;
         let mut net_delta = 0.0;
 
+        let mut skip_row = false;
         for (i, leg_def) in strategy_def.legs.iter().enumerate() {
-            let strike = combined
-                .column(&format!("strike_{i}"))?
-                .f64()?
-                .get(row_idx)
-                .unwrap_or(0.0);
-            let bid = combined
-                .column(&format!("bid_{i}"))?
-                .f64()?
-                .get(row_idx)
-                .unwrap_or(0.0);
-            let ask = combined
-                .column(&format!("ask_{i}"))?
-                .f64()?
-                .get(row_idx)
-                .unwrap_or(0.0);
-            let delta = combined
-                .column(&format!("delta_{i}"))?
-                .f64()?
-                .get(row_idx)
-                .unwrap_or(0.0);
+            let Some(strike) = combined.column(&format!("strike_{i}"))?.f64()?.get(row_idx) else {
+                tracing::debug!(
+                    row = row_idx,
+                    leg = i,
+                    "Skipping entry candidate: null strike value"
+                );
+                skip_row = true;
+                break;
+            };
+            let Some(bid) = combined.column(&format!("bid_{i}"))?.f64()?.get(row_idx) else {
+                tracing::debug!(
+                    row = row_idx,
+                    leg = i,
+                    "Skipping entry candidate: null bid value"
+                );
+                skip_row = true;
+                break;
+            };
+            let Some(ask) = combined.column(&format!("ask_{i}"))?.f64()?.get(row_idx) else {
+                tracing::debug!(
+                    row = row_idx,
+                    leg = i,
+                    "Skipping entry candidate: null ask value"
+                );
+                skip_row = true;
+                break;
+            };
+            let Some(delta) = combined.column(&format!("delta_{i}"))?.f64()?.get(row_idx) else {
+                tracing::debug!(
+                    row = row_idx,
+                    leg = i,
+                    "Skipping entry candidate: null delta value"
+                );
+                skip_row = true;
+                break;
+            };
 
             let mid = f64::midpoint(bid, ask);
             // Long pays mid, short receives mid
@@ -390,6 +416,10 @@ pub fn find_entry_candidates(
                 ask,
                 delta,
             });
+        }
+
+        if skip_row {
+            continue;
         }
 
         // Apply net premium filter
@@ -502,8 +532,13 @@ pub fn run_event_loop(
                 realized_equity += pnl;
 
                 trade_id += 1;
-                let entry_dt = positions[i].entry_date.and_hms_opt(0, 0, 0).unwrap();
-                let exit_dt = today.and_hms_opt(0, 0, 0).unwrap();
+                let entry_dt = positions[i]
+                    .entry_date
+                    .and_hms_opt(0, 0, 0)
+                    .expect("and_hms_opt(0,0,0) should never fail");
+                let exit_dt = today
+                    .and_hms_opt(0, 0, 0)
+                    .expect("and_hms_opt(0,0,0) should never fail");
                 let days_held = (today - positions[i].entry_date).num_days();
 
                 let leg_details: Vec<LegDetail> = positions[i]
@@ -619,7 +654,9 @@ pub fn run_event_loop(
             .sum();
 
         equity_curve.push(EquityPoint {
-            datetime: today.and_hms_opt(0, 0, 0).unwrap(),
+            datetime: today
+                .and_hms_opt(0, 0, 0)
+                .expect("and_hms_opt(0,0,0) should never fail"),
             equity: realized_equity + unrealized,
         });
     }
@@ -1233,8 +1270,12 @@ fn finalize_if_all_closed(
         .collect();
     trade_log.push(TradeRecord::new(
         *trade_id,
-        pos.entry_date.and_hms_opt(0, 0, 0).unwrap(),
-        today.and_hms_opt(0, 0, 0).unwrap(),
+        pos.entry_date
+            .and_hms_opt(0, 0, 0)
+            .expect("and_hms_opt(0,0,0) should never fail"),
+        today
+            .and_hms_opt(0, 0, 0)
+            .expect("and_hms_opt(0,0,0) should never fail"),
         pos.entry_cost,
         pos.entry_cost + pnl,
         pnl,
@@ -2216,6 +2257,80 @@ mod tests {
         for cands in candidates.values() {
             assert_eq!(cands[0].legs.len(), 3, "Butterfly should have 3 legs");
         }
+    }
+
+    #[test]
+    fn find_entry_candidates_skips_rows_with_null_strike() {
+        // A row whose strike is null must be skipped even when all other fields are valid.
+        let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
+        let d1 = NaiveDate::from_ymd_opt(2024, 1, 15)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+
+        // Build a column with a null strike so it survives the bid/ask and delta
+        // filters but is caught by the null check in the candidate-building loop.
+        let null_strike: Vec<Option<f64>> = vec![None];
+        let strike_col = Series::new("strike".into(), null_strike).into_column();
+
+        let mut df = df! {
+            QUOTE_DATETIME_COL => &[d1],
+            "option_type" => &["call"],
+            "bid" => &[5.0f64],
+            "ask" => &[5.50f64],
+            "delta" => &[0.50f64],
+        }
+        .unwrap();
+        df.with_column(strike_col).unwrap();
+        df.with_column(
+            DateChunked::from_naive_date(PlSmallStr::from("expiration"), [exp]).into_column(),
+        )
+        .unwrap();
+
+        let strategy_def = crate::strategies::find_strategy("long_call").unwrap();
+        let params = BacktestParams {
+            strategy: "long_call".to_string(),
+            leg_deltas: vec![TargetRange {
+                target: 0.50,
+                min: 0.10,
+                max: 0.90,
+            }],
+            entry_dte: DteRange {
+                target: 45,
+                min: 10,
+                max: 60,
+            },
+            exit_dte: 5,
+            slippage: Slippage::Mid,
+            commission: None,
+            min_bid_ask: 0.0,
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            capital: 10000.0,
+            quantity: 1,
+            multiplier: 100,
+            max_positions: 5,
+            selector: TradeSelector::First,
+            adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
+            cross_ohlcv_paths: HashMap::new(),
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: None,
+            max_net_delta: None,
+            min_days_between_entries: None,
+            expiration_filter: ExpirationFilter::Any,
+            exit_net_delta: None,
+        };
+
+        let candidates = find_entry_candidates(&df, &strategy_def, &params).unwrap();
+        assert!(
+            candidates.is_empty(),
+            "Row with null strike should be skipped; expected no candidates"
+        );
     }
 
     #[test]
