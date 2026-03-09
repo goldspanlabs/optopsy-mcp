@@ -21,13 +21,43 @@ impl ParquetStore {
     }
 }
 
+/// Apply date-column normalization steps to a `LazyFrame`.
+///
+/// Normalizes `src_col` (of type `src_dtype`) to a
+/// `Datetime(Microseconds)` column named [`QUOTE_DATETIME_COL`].
+/// When a new alias is created (`Date` or `String` source), the caller is
+/// responsible for dropping the original column if it differs from
+/// [`QUOTE_DATETIME_COL`] and still appears in the collected schema.
+fn apply_datetime_normalization(
+    lazy: LazyFrame,
+    src_col: &'static str,
+    src_dtype: &DataType,
+) -> LazyFrame {
+    match src_dtype {
+        DataType::Date => lazy.with_column(
+            col(src_col)
+                .cast(DataType::Datetime(TimeUnit::Microseconds, None))
+                .alias(QUOTE_DATETIME_COL),
+        ),
+        DataType::Datetime(_, _) if src_col != QUOTE_DATETIME_COL => {
+            lazy.rename([src_col], [QUOTE_DATETIME_COL], true)
+        }
+        DataType::String => lazy.with_column(
+            col(src_col)
+                .cast(DataType::Date)
+                .cast(DataType::Datetime(TimeUnit::Microseconds, None))
+                .alias(QUOTE_DATETIME_COL),
+        ),
+        _ => lazy, // already Datetime with the correct name
+    }
+}
+
 /// Normalize the quote date/datetime column to a Datetime column named `quote_datetime`.
 /// If the source column is Date, it gets cast to Datetime at midnight (00:00:00).
 /// If it's already Datetime, it just gets renamed.
 pub fn normalize_quote_datetime(df: DataFrame) -> Result<DataFrame> {
-    // Detect the source column
-    let (src_col, src_dtype) = if let Ok(c) = df.column("quote_datetime") {
-        ("quote_datetime", c.dtype().clone())
+    let (src_col, src_dtype) = if let Ok(c) = df.column(QUOTE_DATETIME_COL) {
+        (QUOTE_DATETIME_COL, c.dtype().clone())
     } else if let Ok(c) = df.column("quote_date") {
         ("quote_date", c.dtype().clone())
     } else {
@@ -35,49 +65,13 @@ pub fn normalize_quote_datetime(df: DataFrame) -> Result<DataFrame> {
         return Ok(df);
     };
 
-    let result = match &src_dtype {
-        DataType::Date => {
-            // Cast Date → Datetime(Microseconds, None) at midnight
-            let lf = df.lazy().with_column(
-                col(src_col)
-                    .cast(DataType::Datetime(TimeUnit::Microseconds, None))
-                    .alias(QUOTE_DATETIME_COL),
-            );
-            let collected = lf.collect()?;
-            if src_col == QUOTE_DATETIME_COL {
-                collected
-            } else {
-                collected.drop(src_col)?
-            }
-        }
-        DataType::Datetime(_, _) => {
-            if src_col == QUOTE_DATETIME_COL {
-                df
-            } else {
-                df.lazy()
-                    .rename([src_col], [QUOTE_DATETIME_COL], true)
-                    .collect()?
-            }
-        }
-        DataType::String => {
-            // Cast string to Date first, then to Datetime at midnight
-            let lf = df.lazy().with_column(
-                col(src_col)
-                    .cast(DataType::Date)
-                    .cast(DataType::Datetime(TimeUnit::Microseconds, None))
-                    .alias(QUOTE_DATETIME_COL),
-            );
-            let collected = lf.collect()?;
-            if src_col == QUOTE_DATETIME_COL {
-                collected
-            } else {
-                collected.drop(src_col)?
-            }
-        }
-        _ => df,
-    };
-
-    Ok(result)
+    let lazy = apply_datetime_normalization(df.lazy(), src_col, &src_dtype);
+    let collected = lazy.collect()?;
+    if src_col != QUOTE_DATETIME_COL && collected.schema().contains(src_col) {
+        Ok(collected.drop(src_col)?)
+    } else {
+        Ok(collected)
+    }
 }
 
 impl DataStore for ParquetStore {
@@ -108,24 +102,8 @@ impl DataStore for ParquetStore {
                 return lazy.collect().context("Failed to read Parquet file");
             };
 
-            // Normalize to Datetime in the lazy pipeline
-            lazy = match &src_dtype {
-                DataType::Date => lazy.with_column(
-                    col(src_col)
-                        .cast(DataType::Datetime(TimeUnit::Microseconds, None))
-                        .alias(QUOTE_DATETIME_COL),
-                ),
-                DataType::Datetime(_, _) if src_col != QUOTE_DATETIME_COL => {
-                    lazy.rename([src_col], [QUOTE_DATETIME_COL], true)
-                }
-                DataType::String => lazy.with_column(
-                    col(src_col)
-                        .cast(DataType::Date)
-                        .cast(DataType::Datetime(TimeUnit::Microseconds, None))
-                        .alias(QUOTE_DATETIME_COL),
-                ),
-                _ => lazy, // already Datetime with correct name
-            };
+            // Normalize to Datetime in the lazy pipeline using the shared helper
+            lazy = apply_datetime_normalization(lazy, src_col, &src_dtype);
 
             // Apply date filters in the lazy pipeline for predicate pushdown
             if let Some(start) = start_dt {
