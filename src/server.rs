@@ -1010,11 +1010,14 @@ fn resolve_sweep_strategies(
             resolve_strategy_entries(strats)
         }
         (None, Some(dir)) => {
-            // Auto-select all strategies matching direction
+            // Auto-select all strategies matching direction.
+            // StrategyDef already carries a precomputed `direction` field, so
+            // we read it directly instead of calling `strategy_direction` (which
+            // would redundantly rebuild all strategies via `find_strategy`).
             let all = crate::strategies::all_strategies();
             let matching: Result<Vec<_>, String> = all
                 .into_iter()
-                .filter(|s| strategy_direction(&s.name) == dir)
+                .filter(|s| s.direction == dir)
                 .map(|s| {
                     Ok(SweepStrategyInput {
                         name: s.name,
