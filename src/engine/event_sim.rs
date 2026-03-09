@@ -128,9 +128,9 @@ fn build_price_table_fast(
                 anyhow::anyhow!("quote_datetime value {qv_days} overflows i32 (row {row_idx})")
             })?;
             let quote_date = NaiveDate::from_num_days_from_ce_opt(qv_days_i32)
-                .ok_or_else(|| anyhow::anyhow!("Invalid quote_datetime value"))?;
+                .ok_or_else(|| anyhow::anyhow!("Invalid quote_datetime value (row {row_idx})"))?;
             let exp_date = NaiveDate::from_num_days_from_ce_opt(ev + 719_163)
-                .ok_or_else(|| anyhow::anyhow!("Invalid expiration value"))?;
+                .ok_or_else(|| anyhow::anyhow!("Invalid expiration value (row {row_idx})"))?;
 
             table.insert(
                 (quote_date, exp_date, OrderedFloat(strike_val), opt_type),
