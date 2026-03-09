@@ -99,6 +99,9 @@ impl SignalFn for AtrBelow {
 
 /// Compute Bollinger Bands and return (lower, upper) band values.
 fn compute_bollinger_bands(prices: &[f64], period: usize) -> (Vec<f64>, Vec<f64>) {
+    if period == 0 || prices.len() < period {
+        return (vec![], vec![]);
+    }
     let bbands = rust_ti::candle_indicators::bulk::moving_constant_bands(
         prices,
         rust_ti::ConstantModelType::SimpleMovingAverage,
@@ -179,6 +182,9 @@ fn compute_keltner_channel(
     period: usize,
     multiplier: f64,
 ) -> (Vec<f64>, Vec<f64>) {
+    if period == 0 || close.len() < period {
+        return (vec![], vec![]);
+    }
     let kc = rust_ti::candle_indicators::bulk::keltner_channel(
         high,
         low,
