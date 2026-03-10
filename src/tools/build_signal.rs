@@ -306,7 +306,7 @@ fn execute_search(prompt: &str) -> BuildSignalResponse {
     let result = super::construct_signal::execute(prompt);
     BuildSignalResponse {
         summary: result.summary,
-        success: !result.candidates.is_empty(),
+        success: result.had_real_matches,
         signal_spec: None,
         saved_signals: vec![],
         formula_help: None,

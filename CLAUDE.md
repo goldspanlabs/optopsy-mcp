@@ -227,7 +227,7 @@ Single entry point for discovering built-in signals and creating/managing custom
 - `success` — `true` if formula is valid
 - `signal_spec` — Resulting `SignalSpec` (type `Custom`) on success
 - `formula_help` — Syntax guide (columns, functions, lookback) on failure
-- `saved_signals` — Updated list of saved signals when `save=true`
+- `saved_signals` — Always empty for create/validate; use `action='list'` to see saved signals
 - `suggested_next_steps` — Recommended follow-up actions
 
 **Available formula columns:** `close`, `open`, `high`, `low`, `volume`, `adjclose`

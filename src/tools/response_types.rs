@@ -341,6 +341,8 @@ pub struct SignalCandidate {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ConstructSignalResponse {
     pub summary: String,
+    /// Whether the search found real matches (false = fallback showing all signals)
+    pub had_real_matches: bool,
     pub candidates: Vec<SignalCandidate>,
     /// JSON Schema for `SignalSpec` enum, describing all valid signal types and their parameters
     pub schema: serde_json::Value,
