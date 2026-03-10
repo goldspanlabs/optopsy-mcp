@@ -306,13 +306,27 @@ pub struct BuildSignalResponse {
     /// The resolved signal spec (for create/get actions)
     pub signal_spec: Option<SignalSpec>,
     /// List of saved signals (for list action); empty when not applicable
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub saved_signals: Vec<SavedSignalEntry>,
     /// Formula syntax help (shown on validation errors)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub formula_help: Option<FormulaHelp>,
+    /// Signal candidates from catalog search (action="search" only)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub candidates: Vec<SignalCandidate>,
+    /// JSON Schema for `SignalSpec` enum (action="search" only)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<serde_json::Value>,
+    /// Default OHLCV column names (action="search" only)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column_defaults: Option<serde_json::Value>,
+    /// Example And/Or combinator structures (action="search" only)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub combinator_examples: Vec<serde_json::Value>,
     pub suggested_next_steps: Vec<String>,
 }
 
-/// Signal candidate from `construct_signal`
+/// Signal candidate from `build_signal` action="search"
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SignalCandidate {
     pub name: String,
@@ -323,10 +337,12 @@ pub struct SignalCandidate {
     pub example: serde_json::Value,
 }
 
-/// Response for `construct_signal`
+/// Internal response from signal catalog search (used by `build_signal` action="search")
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ConstructSignalResponse {
     pub summary: String,
+    /// Whether the search found real matches (false = fallback showing all signals)
+    pub had_real_matches: bool,
     pub candidates: Vec<SignalCandidate>,
     /// JSON Schema for `SignalSpec` enum, describing all valid signal types and their parameters
     pub schema: serde_json::Value,

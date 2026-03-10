@@ -21,9 +21,9 @@ use crate::engine::types::{
 use crate::signals::registry::{collect_cross_symbols, SignalSpec};
 use crate::tools;
 use crate::tools::response_types::{
-    BacktestResponse, BuildSignalResponse, CheckCacheResponse, CompareResponse,
-    ConstructSignalResponse, FetchResponse, PermutationTestResponse, RawPricesResponse,
-    StatusResponse, StrategiesResponse, SuggestResponse, SweepResponse, WalkForwardResponse,
+    BacktestResponse, BuildSignalResponse, CheckCacheResponse, CompareResponse, FetchResponse,
+    PermutationTestResponse, RawPricesResponse, StatusResponse, StrategiesResponse,
+    SuggestResponse, SweepResponse, WalkForwardResponse,
 };
 use crate::tools::signals::SignalsResponse;
 
@@ -951,23 +951,14 @@ pub struct CheckCacheParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
-pub struct ConstructSignalParams {
-    /// Natural language description e.g. "RSI oversold" or "MACD bullish and above 50-day SMA"
-    /// Must contain at least one non-whitespace character.
-    #[garde(length(min = 1, max = 500), pattern(r"[^ \t\n\r]"))]
-    pub prompt: String,
-    /// Optional symbol to check if OHLCV data is cached (e.g. "SPY")
-    /// If provided, response will indicate whether data is ready for signal usage
-    #[serde(default)]
-    #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
-    pub symbol: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct BuildSignalParams {
-    /// Action to perform: "create", "list", "delete", "validate", or "get"
+    /// Action to perform: "create", "list", "delete", "validate", "get", or "search"
     #[garde(length(min = 1))]
     pub action: String,
+    /// Natural language description for action="search" (e.g. "RSI oversold", "MACD bullish")
+    #[serde(default)]
+    #[garde(inner(length(min = 1, max = 500), pattern(r"[^ \t\n\r]")))]
+    pub prompt: Option<String>,
     /// Signal name (required for create, delete, get)
     #[serde(default)]
     #[garde(inner(length(min = 1, max = 64), pattern(r"^[A-Za-z0-9_-]+$")))]
@@ -1342,7 +1333,7 @@ impl OptopsyServer {
     /// **Prerequisites**: None (informational, no data required)
     /// **Categories**: momentum (RSI, MACD, Stoch), trend (SMA, EMA, ADX),
     ///   volatility (`BBands`, `ATR`), overlap, price, volume
-    /// **Next tool**: `construct_signal()` (if you want to use signals in backtest)
+    /// **Next tool**: `build_signal(action="search")` (if you want to use signals in backtest)
     /// **Note**: Signals are optional — only needed if you want signal-filtered entry/exit
     #[tool(name = "list_signals", annotations(read_only_hint = true))]
     async fn list_signals(&self) -> SanitizedJson<SignalsResponse> {
@@ -1361,41 +1352,15 @@ impl OptopsyServer {
         SanitizedJson(tools::status::execute(&self.data).await)
     }
 
-    /// Construct a signal specification from natural language.
+    /// Build, validate, save, list, search, and manage signals.
     ///
-    /// **When to use**: If you want to filter backtests by TA signals (e.g., "RSI oversold")
-    /// **Prerequisites**: None (OHLCV data is auto-fetched when signals are used in `run_backtest`)
-    /// **How it works**:
-    ///   - Fuzzy-searches signal catalog for matches
-    ///   - Returns candidate signals with sensible defaults
-    ///   - Generates live JSON schema for all signal variants
-    /// **Next tool**: `run_backtest()` with `entry_signal`/`exit_signal` parameters set to
-    ///   the JSON spec from this tool's response
-    /// **Example usage**: "RSI oversold" → returns RSI signal spec with threshold=30
-    /// **Note**: Signals are optional; `run_backtest` works without them
-    #[tool(name = "construct_signal", annotations(read_only_hint = true))]
-    async fn construct_signal(
-        &self,
-        Parameters(params): Parameters<ConstructSignalParams>,
-    ) -> SanitizedResult<ConstructSignalResponse, String> {
-        SanitizedResult(
-            async {
-                params
-                    .validate()
-                    .map_err(|e| validation_err("construct_signal", e))?;
-                Ok(tools::construct_signal::execute(&params.prompt))
-            }
-            .await,
-        )
-    }
-
-    /// Build, validate, save, list, and manage custom formula-based signals.
-    ///
-    /// **When to use**: When built-in signals don't cover your needs and you want to
-    ///   define custom entry/exit conditions using price column formulas
+    /// **When to use**: When you want to discover and work with trading signals—both
+    ///   searching the built-in signal catalog and defining custom entry/exit conditions
+    ///   using price column formulas
     /// **Prerequisites**: None (formulas are validated at parse time, data needed only at backtest)
     ///
     /// **Actions**:
+    ///   - `search` — Fuzzy-search built-in signal catalog using natural language (requires `prompt`)
     ///   - `create` — Build a signal from a formula, optionally save for later use
     ///   - `validate` — Check formula syntax without saving
     ///   - `list` — Show all saved custom signals
@@ -1447,6 +1412,12 @@ impl OptopsyServer {
                         save: params.save,
                     }
                 }
+                "search" => {
+                    let prompt = params
+                        .prompt
+                        .ok_or("'prompt' is required for action='search'")?;
+                    tools::build_signal::Action::Search { prompt }
+                }
                 "list" => tools::build_signal::Action::List,
                 "delete" => {
                     let name = params
@@ -1466,7 +1437,7 @@ impl OptopsyServer {
                 }
                 other => {
                     return Err(format!(
-                        "Invalid action: \"{other}\". Must be \"create\", \"list\", \"delete\", \"validate\", or \"get\"."
+                        "Invalid action: \"{other}\". Must be \"search\", \"create\", \"list\", \"delete\", \"validate\", or \"get\"."
                     ));
                 }
             };
@@ -2043,7 +2014,7 @@ impl ServerHandler for OptopsyServer {
                 \n\
                 \n### 1. Explore Strategies\
                 \n  - list_strategies() — browse all 32 strategies by category\
-                \n  - list_signals() / construct_signal() / build_signal() — optional: TA signal filters\
+                \n  - list_signals() / build_signal(action=\"search\") — optional: TA signal filters\
                 \n\
                 \n### 2. Get Parameters (recommended)\
                 \n  - suggest_parameters({ strategy, symbol }) — data-driven recommendations\

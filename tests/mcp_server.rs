@@ -105,12 +105,11 @@ async fn tool_router_lists_all_tools() {
     let tools = client.list_all_tools().await.unwrap();
     let tool_names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
 
-    assert_eq!(tools.len(), 14, "Expected 14 tools, got: {tool_names:?}");
+    assert_eq!(tools.len(), 13, "Expected 13 tools, got: {tool_names:?}");
     for expected in [
         "list_strategies",
         "list_signals",
         "get_loaded_symbol",
-        "construct_signal",
         "suggest_parameters",
         "run_backtest",
         "compare_strategies",
@@ -1837,11 +1836,76 @@ async fn build_signal_create_without_save() {
     assert_eq!(spec["type"], "Custom");
     assert_eq!(spec["formula"], "close > close[1]");
     assert_eq!(spec["name"], "my_test_signal");
-    // saved_signals should be empty (not saved)
+    // saved_signals should be empty (not saved); field may be absent when empty
+    let saved_count = resp["saved_signals"].as_array().map_or(0, Vec::len);
     assert_eq!(
-        resp["saved_signals"].as_array().unwrap().len(),
-        0,
+        saved_count, 0,
         "saved_signals should be empty when save=false"
+    );
+
+    client.cancel().await.unwrap();
+    server_handle.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn build_signal_search_returns_candidates() {
+    let (server, _tmp) = make_test_server();
+
+    let (server_tx, server_rx) = tokio::io::duplex(4096);
+    let (client_tx, client_rx) = tokio::io::duplex(4096);
+
+    let server_handle =
+        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
+
+    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
+        ().serve((server_rx, client_tx)).await.unwrap();
+
+    let result = client
+        .peer()
+        .call_tool(CallToolRequestParams {
+            meta: None,
+            name: "build_signal".into(),
+            arguments: Some(
+                serde_json::from_value(json!({
+                    "action": "search",
+                    "prompt": "RSI oversold"
+                }))
+                .unwrap(),
+            ),
+            task: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        !result.is_error.unwrap_or(false),
+        "Expected success response, got MCP error"
+    );
+    let text = result
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .unwrap();
+    let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
+
+    assert_eq!(
+        resp["success"], true,
+        "search should succeed when candidates are found"
+    );
+    let candidates = resp["candidates"]
+        .as_array()
+        .expect("candidates should be an array");
+    assert!(
+        !candidates.is_empty(),
+        "search for 'RSI oversold' should return at least one candidate"
+    );
+    assert!(
+        resp["schema"].is_object(),
+        "schema should be present in search response"
+    );
+    assert!(
+        resp["column_defaults"].is_object(),
+        "column_defaults should be present in search response"
     );
 
     client.cancel().await.unwrap();

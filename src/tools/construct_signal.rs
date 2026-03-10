@@ -79,6 +79,7 @@ pub fn execute(prompt: &str) -> ConstructSignalResponse {
 
     ConstructSignalResponse {
         summary,
+        had_real_matches,
         candidates,
         schema: schema_value,
         column_defaults,
