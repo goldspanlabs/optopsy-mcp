@@ -957,7 +957,7 @@ pub struct BuildSignalParams {
     pub action: String,
     /// Natural language description for action="search" (e.g. "RSI oversold", "MACD bullish")
     #[serde(default)]
-    #[garde(inner(length(min = 1, max = 500)))]
+    #[garde(inner(length(min = 1, max = 500), pattern(r"[^ \t\n\r]")))]
     pub prompt: Option<String>,
     /// Signal name (required for create, delete, get)
     #[serde(default)]
@@ -1354,8 +1354,9 @@ impl OptopsyServer {
 
     /// Build, validate, save, list, search, and manage signals.
     ///
-    /// **When to use**: When built-in signals don't cover your needs and you want to
-    ///   define custom entry/exit conditions using price column formulas
+    /// **When to use**: When you want to discover and work with trading signals—both
+    ///   searching the built-in signal catalog and defining custom entry/exit conditions
+    ///   using price column formulas
     /// **Prerequisites**: None (formulas are validated at parse time, data needed only at backtest)
     ///
     /// **Actions**:
