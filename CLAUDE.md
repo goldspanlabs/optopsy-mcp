@@ -182,6 +182,58 @@ List all ~40 available TA signals across categories (momentum, trend, volatility
 **Response:** `SignalsResponse`
 - Signal catalog with names, parameters, descriptions
 
+#### `build_signal`
+Single entry point for discovering built-in signals and creating/managing custom formula-based signals. Dispatches via `action` field.
+
+**Actions:**
+
+| `action` | Purpose |
+|----------|---------|
+| `search` | NLP search of the built-in signal catalog |
+| `validate` | Check a formula without saving |
+| `create` | Build a custom signal from a price-column formula |
+| `list` | List all saved custom signals |
+| `get` | Load a saved signal by name |
+| `delete` | Remove a saved signal by name |
+
+**Parameters (search):**
+```json
+{
+  "action": "search",
+  "prompt": "RSI oversold"   // Required. Natural-language description (1–500 chars, non-whitespace)
+}
+```
+
+**Response (search):** `BuildSignalResponse`
+- `success` — `true` when at least one candidate is found
+- `candidates` — Ranked list of matching built-in signals with name, score, rationale
+- `schema` — Full SignalSpec JSON schema for reference
+- `column_defaults` — Default column mappings per signal type
+- `combinator_examples` — Example AND/OR combinations
+- `suggested_next_steps` — Recommended follow-up actions
+
+**Parameters (validate / create):**
+```json
+{
+  "action": "validate",          // or "create"
+  "formula": "close > sma(close, 20)",
+  "name": "my_signal",           // Required for create
+  "description": "Price above 20-day SMA",  // Optional
+  "save": true                   // Optional (create only); persists signal for reuse
+}
+```
+
+**Response (validate / create):** `BuildSignalResponse`
+- `success` — `true` if formula is valid
+- `signal_spec` — Resulting `SignalSpec` (type `Custom`) on success
+- `formula_help` — Syntax guide (columns, functions, lookback) on failure
+- `saved_signals` — Updated list of saved signals when `save=true`
+- `suggested_next_steps` — Recommended follow-up actions
+
+**Available formula columns:** `close`, `open`, `high`, `low`, `volume`, `adjclose`
+
+**Available formula functions:** `sma(col, n)`, `ema(col, n)`, `std(col, n)`, `max(col, n)`, `min(col, n)`, `abs(expr)`, `change(col, n)`, `pct_change(col, n)`
+
 ### Analysis Tools
 
 #### `evaluate_strategy`
