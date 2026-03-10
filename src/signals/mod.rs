@@ -16,7 +16,7 @@ use anyhow::Result;
 use chrono::NaiveDate;
 use polars::prelude::*;
 
-use crate::engine::event_sim::extract_date_from_column;
+use crate::engine::price_table::extract_date_from_column;
 use helpers::SignalFn;
 use registry::{build_signal, SignalSpec};
 

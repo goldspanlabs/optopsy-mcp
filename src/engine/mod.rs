@@ -1,9 +1,12 @@
+pub mod adjustments;
 pub mod core;
 pub mod event_sim;
 pub mod filters;
 pub mod metrics;
 pub mod multiple_comparisons;
 pub mod permutation;
+pub mod positions;
+pub mod price_table;
 pub mod pricing;
 pub mod rules;
 pub mod suggest;
