@@ -1836,10 +1836,13 @@ async fn build_signal_create_without_save() {
     assert_eq!(spec["type"], "Custom");
     assert_eq!(spec["formula"], "close > close[1]");
     assert_eq!(spec["name"], "my_test_signal");
-    // saved_signals should be empty (not saved)
+    // saved_signals should be empty (not saved); field may be absent when empty
+    let saved_count = resp["saved_signals"]
+        .as_array()
+        .map(|a| a.len())
+        .unwrap_or(0);
     assert_eq!(
-        resp["saved_signals"].as_array().unwrap().len(),
-        0,
+        saved_count, 0,
         "saved_signals should be empty when save=false"
     );
 

@@ -2,9 +2,7 @@
 
 use std::collections::HashMap;
 
-use super::response_types::{
-    BuildSignalResponse, FormulaHelp, SavedSignalEntry, SavedSignalUsage,
-};
+use super::response_types::{BuildSignalResponse, FormulaHelp, SavedSignalEntry, SavedSignalUsage};
 use crate::signals::custom::validate_formula;
 use crate::signals::registry::SignalSpec;
 use crate::signals::storage;
@@ -139,9 +137,7 @@ fn execute_create(
                 Some(spec),
                 vec![],
                 None,
-                vec![
-                    "[RETRY]Check file permissions for ~/.optopsy/signals/".to_string()
-                ],
+                vec!["[RETRY]Check file permissions for ~/.optopsy/signals/".to_string()],
             );
         }
 
@@ -208,7 +204,8 @@ fn execute_list() -> BuildSignalResponse {
                     vec![
                         "[NEXT]Create a custom signal with build_signal action='create'"
                             .to_string(),
-                        "[ALT]Use build_signal action='search' to find built-in signals".to_string(),
+                        "[ALT]Use build_signal action='search' to find built-in signals"
+                            .to_string(),
                     ]
                 } else {
                     vec![
@@ -224,9 +221,7 @@ fn execute_list() -> BuildSignalResponse {
             None,
             vec![],
             None,
-            vec![
-                "[RETRY]Check permissions for ~/.optopsy/signals/".to_string()
-            ],
+            vec!["[RETRY]Check permissions for ~/.optopsy/signals/".to_string()],
         ),
     }
 }
@@ -239,9 +234,7 @@ fn execute_delete(name: &str) -> BuildSignalResponse {
             None,
             vec![],
             None,
-            vec![
-                "[NEXT]Use build_signal action='list' to see remaining signals".to_string(),
-            ],
+            vec!["[NEXT]Use build_signal action='list' to see remaining signals".to_string()],
         ),
         Err(e) => base_response(
             format!("Failed to delete signal '{name}': {e}"),
@@ -249,9 +242,7 @@ fn execute_delete(name: &str) -> BuildSignalResponse {
             None,
             vec![],
             None,
-            vec![
-                "[RETRY]Check that the signal name exists with action='list'".to_string(),
-            ],
+            vec!["[RETRY]Check that the signal name exists with action='list'".to_string()],
         ),
     }
 }
