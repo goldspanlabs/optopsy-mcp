@@ -1512,7 +1512,7 @@ mod tests {
 
         let results = vec![
             SweepResult {
-                label: "long_call(Δ0.50,DTE45,exit0)".to_string(),
+                label: "long_call(Δ0.50, DTE 45, Exit 0)".to_string(),
                 strategy: "long_call".to_string(),
                 display_name: "Long Call".to_string(),
                 leg_deltas: vec![TargetRange {
@@ -1543,7 +1543,7 @@ mod tests {
                 p_value: None,
             },
             SweepResult {
-                label: "long_call(Δ0.35,DTE45,exit0)".to_string(),
+                label: "long_call(Δ0.35, DTE 45, Exit 0)".to_string(),
                 strategy: "long_call".to_string(),
                 display_name: "Long Call".to_string(),
                 leg_deltas: vec![TargetRange {
@@ -1589,12 +1589,14 @@ mod tests {
         };
 
         let response = format_sweep(output);
-        assert!(response.summary.contains("long_call(Δ0.50,DTE45,exit0)"));
+        assert!(response
+            .summary
+            .contains("long_call(Δ0.50, DTE 45, Exit 0)"));
         assert!(response.summary.contains("1.50"));
         assert!(response.best_combination.is_some());
         assert_eq!(
             response.best_combination.unwrap().label,
-            "long_call(Δ0.50,DTE45,exit0)"
+            "long_call(Δ0.50, DTE 45, Exit 0)"
         );
         assert_eq!(response.combinations_run, 2);
         assert_eq!(response.combinations_skipped, 3);

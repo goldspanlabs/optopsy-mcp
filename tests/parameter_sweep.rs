@@ -418,10 +418,10 @@ fn sweep_multiple_slippage_models() {
         .iter()
         .map(|r| r.label.as_str())
         .collect();
-    let has_mid = labels.iter().any(|l| l.contains(",mid"));
+    let has_mid = labels.iter().any(|l| l.contains(", mid"));
     let has_spread = labels
         .iter()
-        .any(|l| !l.contains(",mid") && !l.contains(",liq"));
+        .any(|l| !l.contains(", mid") && !l.contains(", liq"));
     assert!(has_mid, "Should have a Mid slippage combo");
     assert!(has_spread, "Should have a Spread slippage combo");
 }

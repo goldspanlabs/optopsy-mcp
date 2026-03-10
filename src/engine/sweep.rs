@@ -361,16 +361,16 @@ fn build_sweep_label(
     let delta_str: Vec<String> = deltas.iter().map(|d| format!("{:.2}", d.target)).collect();
     let slippage_suffix = match slippage {
         Slippage::Spread => String::new(),
-        Slippage::Mid => ",mid".to_string(),
+        Slippage::Mid => ", mid".to_string(),
         Slippage::Liquidity {
             fill_ratio,
             ref_volume,
-        } => format!(",liq(fr={fill_ratio:.2},rv={ref_volume})"),
-        Slippage::PerLeg { per_leg } => format!(",pleg({per_leg:.2})"),
-        Slippage::BidAskTravel { pct } => format!(",bat({pct:.2})"),
+        } => format!(", liq(fr={fill_ratio:.2}, rv={ref_volume})"),
+        Slippage::PerLeg { per_leg } => format!(", pleg({per_leg:.2})"),
+        Slippage::BidAskTravel { pct } => format!(", bat({pct:.2})"),
     };
     format!(
-        "{}(Δ{},DTE{},exit{}{})",
+        "{}(Δ{}, DTE {}, Exit {}{})",
         strategy_name,
         delta_str.join("/"),
         dte,

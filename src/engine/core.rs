@@ -428,7 +428,7 @@ fn compare_dedup_key(entry: &CompareEntry) -> String {
 }
 
 /// Builds a human-readable label for each compare entry.
-/// e.g. `long_call(Δ0.40,DTE45)` or `bull_call_spread(Δ0.50/0.10,DTE60)`.
+/// e.g. `long_call(Δ0.40, DTE 45, Exit 7)` or `bull_call_spread(Δ0.50/0.10, DTE 60, Exit 9)`.
 fn build_compare_labels(entries: &[CompareEntry]) -> Vec<String> {
     // Count how many times each strategy name appears
     let mut name_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
@@ -452,16 +452,16 @@ fn build_compare_labels(entries: &[CompareEntry]) -> Vec<String> {
                 let delta_str = deltas.join("/");
                 let slippage_suffix = match &entry.slippage {
                     Slippage::Spread => String::new(),
-                    Slippage::Mid => ",mid".to_string(),
+                    Slippage::Mid => ", mid".to_string(),
                     Slippage::Liquidity {
                         fill_ratio,
                         ref_volume,
-                    } => format!(",liq(fr={fill_ratio:.2},rv={ref_volume})"),
-                    Slippage::PerLeg { per_leg } => format!(",pleg({per_leg:.2})"),
-                    Slippage::BidAskTravel { pct } => format!(",bat({pct:.2})"),
+                    } => format!(", liq(fr={fill_ratio:.2}, rv={ref_volume})"),
+                    Slippage::PerLeg { per_leg } => format!(", pleg({per_leg:.2})"),
+                    Slippage::BidAskTravel { pct } => format!(", bat({pct:.2})"),
                 };
                 format!(
-                    "{}(Δ{},DTE{},exit{}{})",
+                    "{}(Δ{}, DTE {}, Exit {}{})",
                     entry.name, delta_str, entry.entry_dte.target, entry.exit_dte, slippage_suffix
                 )
             }
@@ -512,9 +512,9 @@ mod tests {
             make_entry("long_call", 0.40, 60),
         ];
         let labels = build_compare_labels(&entries);
-        assert_eq!(labels[0], "long_call(Δ0.30,DTE45,exit7)");
-        assert_eq!(labels[1], "long_call(Δ0.40,DTE45,exit7)");
-        assert_eq!(labels[2], "long_call(Δ0.40,DTE60,exit7)");
+        assert_eq!(labels[0], "long_call(Δ0.30, DTE 45, Exit 7)");
+        assert_eq!(labels[1], "long_call(Δ0.40, DTE 45, Exit 7)");
+        assert_eq!(labels[2], "long_call(Δ0.40, DTE 60, Exit 7)");
     }
 
     #[test]
@@ -568,8 +568,8 @@ mod tests {
             },
         ];
         let labels = build_compare_labels(&entries);
-        assert_eq!(labels[0], "bull_call_spread(Δ0.50/0.10,DTE45,exit9)");
-        assert_eq!(labels[1], "bull_call_spread(Δ0.50/0.20,DTE45,exit9)");
+        assert_eq!(labels[0], "bull_call_spread(Δ0.50/0.10, DTE 45, Exit 9)");
+        assert_eq!(labels[1], "bull_call_spread(Δ0.50/0.20, DTE 45, Exit 9)");
     }
 
     #[test]
@@ -578,8 +578,8 @@ mod tests {
         entry_mid.slippage = Slippage::Mid;
         let entry_spread = make_entry("long_call", 0.30, 60);
         let labels = build_compare_labels(&[entry_mid, entry_spread]);
-        assert_eq!(labels[0], "long_call(Δ0.30,DTE45,exit7,mid)");
-        assert_eq!(labels[1], "long_call(Δ0.30,DTE60,exit7)");
+        assert_eq!(labels[0], "long_call(Δ0.30, DTE 45, Exit 7, mid)");
+        assert_eq!(labels[1], "long_call(Δ0.30, DTE 60, Exit 7)");
     }
 
     /// Build a daily options `DataFrame` with intermediate dates for event-driven backtest.
