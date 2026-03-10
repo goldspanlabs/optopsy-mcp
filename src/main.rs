@@ -30,6 +30,16 @@ async fn main() -> Result<()> {
         );
 
         let app = axum::Router::new()
+            .route(
+                "/signals",
+                axum::routing::get(|| async { axum::Json(optopsy_mcp::tools::signals::execute()) }),
+            )
+            .route(
+                "/strategies",
+                axum::routing::get(|| async {
+                    axum::Json(optopsy_mcp::tools::strategies::execute())
+                }),
+            )
             .nest_service("/mcp", service)
             .route("/health", axum::routing::get(|| async { "ok" }));
 
