@@ -1,8 +1,10 @@
-//! `build_signal` tool — create, validate, save, list, and delete custom formula-based signals.
+//! `build_signal` tool — create, validate, save, list, delete, and search signals.
 
 use std::collections::HashMap;
 
-use super::response_types::{BuildSignalResponse, FormulaHelp, SavedSignalEntry, SavedSignalUsage};
+use super::response_types::{
+    BuildSignalResponse, FormulaHelp, SavedSignalEntry, SavedSignalUsage,
+};
 use crate::signals::custom::validate_formula;
 use crate::signals::registry::SignalSpec;
 use crate::signals::storage;
@@ -24,6 +26,8 @@ pub enum Action {
     Validate { formula: String },
     /// Load a saved signal and return its spec
     Get { name: String },
+    /// Search the built-in signal catalog using natural language
+    Search { prompt: String },
 }
 
 pub fn execute(action: Action) -> BuildSignalResponse {
@@ -38,6 +42,30 @@ pub fn execute(action: Action) -> BuildSignalResponse {
         Action::Delete { name } => execute_delete(&name),
         Action::Validate { formula } => execute_validate(&formula),
         Action::Get { name } => execute_get(&name),
+        Action::Search { prompt } => execute_search(&prompt),
+    }
+}
+
+/// Helper to build a non-search response (search-specific fields default to empty/None).
+fn base_response(
+    summary: String,
+    success: bool,
+    signal_spec: Option<SignalSpec>,
+    saved_signals: Vec<SavedSignalEntry>,
+    formula_help: Option<FormulaHelp>,
+    suggested_next_steps: Vec<String>,
+) -> BuildSignalResponse {
+    BuildSignalResponse {
+        summary,
+        success,
+        signal_spec,
+        saved_signals,
+        formula_help,
+        candidates: vec![],
+        schema: None,
+        column_defaults: None,
+        combinator_examples: vec![],
+        suggested_next_steps,
     }
 }
 
@@ -49,17 +77,17 @@ fn execute_create(
 ) -> BuildSignalResponse {
     // Validate the formula first
     if let Err(e) = validate_formula(formula) {
-        return BuildSignalResponse {
-            summary: format!("Formula validation failed: {e}"),
-            success: false,
-            signal_spec: None,
-            saved_signals: vec![],
-            formula_help: Some(formula_help()),
-            suggested_next_steps: vec![
+        return base_response(
+            format!("Formula validation failed: {e}"),
+            false,
+            None,
+            vec![],
+            Some(formula_help()),
+            vec![
                 "[RETRY]Fix the formula syntax and try again".to_string(),
                 "[TIP]Use the formula_help field for syntax reference".to_string(),
             ],
-        };
+        );
     }
 
     // Check for duplicate formula under a different name
@@ -68,15 +96,15 @@ fn execute_create(
             Ok(Some(existing_name)) => {
                 // Load the existing signal and return it instead of creating a duplicate
                 let existing_spec = storage::load_signal(&existing_name).ok();
-                return BuildSignalResponse {
-                    summary: format!(
+                return base_response(
+                    format!(
                         "Duplicate formula detected: this formula already exists as signal '{existing_name}'. Use the existing signal instead of creating a duplicate."
                     ),
-                    success: false,
-                    signal_spec: existing_spec,
-                    saved_signals: vec![],
-                    formula_help: None,
-                    suggested_next_steps: vec![
+                    false,
+                    existing_spec,
+                    vec![],
+                    None,
+                    vec![
                         format!(
                             "[NEXT]Use the existing signal: {{ \"type\": \"Saved\", \"name\": \"{existing_name}\" }}"
                         ),
@@ -84,7 +112,7 @@ fn execute_create(
                             "[TIP]Delete '{existing_name}' first with action='delete' if you want to replace it"
                         ),
                     ],
-                };
+                );
             }
             Ok(None) => {} // No duplicate — proceed
             Err(e) => {
@@ -105,16 +133,16 @@ fn execute_create(
         let is_overwrite = storage::load_signal(name).is_ok();
 
         if let Err(e) = storage::save_signal(name, &spec) {
-            return BuildSignalResponse {
-                summary: format!("Signal validated but save failed: {e}"),
-                success: false,
-                signal_spec: Some(spec),
-                saved_signals: vec![],
-                formula_help: None,
-                suggested_next_steps: vec![
+            return base_response(
+                format!("Signal validated but save failed: {e}"),
+                false,
+                Some(spec),
+                vec![],
+                None,
+                vec![
                     "[RETRY]Check file permissions for ~/.optopsy/signals/".to_string()
                 ],
-            };
+            );
         }
 
         let summary = if is_overwrite {
@@ -123,33 +151,33 @@ fn execute_create(
             format!("Custom signal '{name}' created and saved. Formula: {formula}")
         };
 
-        BuildSignalResponse {
+        base_response(
             summary,
-            success: true,
-            signal_spec: Some(spec),
-            saved_signals: vec![],
-            formula_help: None,
-            suggested_next_steps: vec![
+            true,
+            Some(spec),
+            vec![],
+            None,
+            vec![
                 "[INFO] OHLCV data is auto-fetched when signals are used in run_backtest".to_string(),
                 "[NEXT]Use this signal as entry_signal or exit_signal in run_backtest — you MUST also provide a strategy (e.g. short_put, iron_condor). Signals filter WHEN to trade, not WHAT to trade.".to_string(),
                 format!(
                     "[TIP]Reference this signal later with: {{ \"type\": \"Saved\", \"name\": \"{name}\" }}"
                 ),
             ],
-        }
+        )
     } else {
-        BuildSignalResponse {
-            summary: format!("Custom signal '{name}' created (not saved). Formula: {formula}"),
-            success: true,
-            signal_spec: Some(spec),
-            saved_signals: vec![],
-            formula_help: None,
-            suggested_next_steps: vec![
+        base_response(
+            format!("Custom signal '{name}' created (not saved). Formula: {formula}"),
+            true,
+            Some(spec),
+            vec![],
+            None,
+            vec![
                 "[INFO] OHLCV data is auto-fetched when signals are used in run_backtest".to_string(),
                 "[NEXT]Use this signal as entry_signal or exit_signal in run_backtest — you MUST also provide a strategy (e.g. short_put, iron_condor). Signals filter WHEN to trade, not WHAT to trade.".to_string(),
                 "[TIP]Call build_signal again with save=true to persist this signal".to_string(),
             ],
-        }
+        )
     }
 }
 
@@ -170,17 +198,17 @@ fn execute_list() -> BuildSignalResponse {
                 .collect();
 
             let count = saved.len();
-            BuildSignalResponse {
-                summary: format!("{count} saved signal(s) found."),
-                success: true,
-                signal_spec: None,
-                saved_signals: saved,
-                formula_help: None,
-                suggested_next_steps: if count == 0 {
+            base_response(
+                format!("{count} saved signal(s) found."),
+                true,
+                None,
+                saved,
+                None,
+                if count == 0 {
                     vec![
                         "[NEXT]Create a custom signal with build_signal action='create'"
                             .to_string(),
-                        "[ALT]Use construct_signal to find built-in signals".to_string(),
+                        "[ALT]Use build_signal action='search' to find built-in signals".to_string(),
                     ]
                 } else {
                     vec![
@@ -188,98 +216,114 @@ fn execute_list() -> BuildSignalResponse {
                         "[TIP]Delete signals you no longer need with action='delete'".to_string(),
                     ]
                 },
-            }
+            )
         }
-        Err(e) => BuildSignalResponse {
-            summary: format!("Failed to list signals: {e}"),
-            success: false,
-            signal_spec: None,
-            saved_signals: vec![],
-            formula_help: None,
-            suggested_next_steps: vec![
+        Err(e) => base_response(
+            format!("Failed to list signals: {e}"),
+            false,
+            None,
+            vec![],
+            None,
+            vec![
                 "[RETRY]Check permissions for ~/.optopsy/signals/".to_string()
             ],
-        },
+        ),
     }
 }
 
 fn execute_delete(name: &str) -> BuildSignalResponse {
     match storage::delete_signal(name) {
-        Ok(()) => BuildSignalResponse {
-            summary: format!("Signal '{name}' deleted."),
-            success: true,
-            signal_spec: None,
-            saved_signals: vec![],
-            formula_help: None,
-            suggested_next_steps: vec![
+        Ok(()) => base_response(
+            format!("Signal '{name}' deleted."),
+            true,
+            None,
+            vec![],
+            None,
+            vec![
                 "[NEXT]Use build_signal action='list' to see remaining signals".to_string(),
             ],
-        },
-        Err(e) => BuildSignalResponse {
-            summary: format!("Failed to delete signal '{name}': {e}"),
-            success: false,
-            signal_spec: None,
-            saved_signals: vec![],
-            formula_help: None,
-            suggested_next_steps: vec![
+        ),
+        Err(e) => base_response(
+            format!("Failed to delete signal '{name}': {e}"),
+            false,
+            None,
+            vec![],
+            None,
+            vec![
                 "[RETRY]Check that the signal name exists with action='list'".to_string(),
             ],
-        },
+        ),
     }
 }
 
 fn execute_validate(formula: &str) -> BuildSignalResponse {
     match validate_formula(formula) {
-        Ok(()) => BuildSignalResponse {
-            summary: format!("Formula is valid: {formula}"),
-            success: true,
-            signal_spec: None,
-            saved_signals: vec![],
-            formula_help: None,
-            suggested_next_steps: vec![
+        Ok(()) => base_response(
+            format!("Formula is valid: {formula}"),
+            true,
+            None,
+            vec![],
+            None,
+            vec![
                 "[NEXT]Call build_signal with action='create' to save this signal".to_string(),
                 "[THEN]Use the formula directly in a Custom signal spec for run_backtest"
                     .to_string(),
             ],
-        },
-        Err(e) => BuildSignalResponse {
-            summary: format!("Formula validation failed: {e}"),
-            success: false,
-            signal_spec: None,
-            saved_signals: vec![],
-            formula_help: Some(formula_help()),
-            suggested_next_steps: vec![
+        ),
+        Err(e) => base_response(
+            format!("Formula validation failed: {e}"),
+            false,
+            None,
+            vec![],
+            Some(formula_help()),
+            vec![
                 "[RETRY]Fix the formula syntax and try again".to_string(),
                 "[TIP]Use the formula_help field for syntax reference".to_string(),
             ],
-        },
+        ),
     }
 }
 
 fn execute_get(name: &str) -> BuildSignalResponse {
     match storage::load_signal(name) {
-        Ok(spec) => BuildSignalResponse {
-            summary: format!("Loaded saved signal '{name}'."),
-            success: true,
-            signal_spec: Some(spec),
-            saved_signals: vec![],
-            formula_help: None,
-            suggested_next_steps: vec![
+        Ok(spec) => base_response(
+            format!("Loaded saved signal '{name}'."),
+            true,
+            Some(spec),
+            vec![],
+            None,
+            vec![
                 "[INFO] OHLCV data is auto-fetched when signals are used in run_backtest".to_string(),
                 "[NEXT]Use this signal_spec as entry_signal or exit_signal in run_backtest — you MUST also provide a strategy (e.g. short_put, iron_condor). Signals filter WHEN to trade, not WHAT to trade.".to_string(),
             ],
-        },
-        Err(e) => BuildSignalResponse {
-            summary: format!("Failed to load signal '{name}': {e}"),
-            success: false,
-            signal_spec: None,
-            saved_signals: vec![],
-            formula_help: None,
-            suggested_next_steps: vec![
+        ),
+        Err(e) => base_response(
+            format!("Failed to load signal '{name}': {e}"),
+            false,
+            None,
+            vec![],
+            None,
+            vec![
                 "[RETRY]Check that the signal name exists with action='list'"
                     .to_string(),
             ],
-        },
+        ),
+    }
+}
+
+fn execute_search(prompt: &str) -> BuildSignalResponse {
+    let result = super::construct_signal::execute(prompt);
+    BuildSignalResponse {
+        summary: result.summary,
+        success: true,
+        signal_spec: None,
+        saved_signals: vec![],
+        formula_help: None,
+        candidates: result.candidates,
+        schema: Some(result.schema),
+        column_defaults: Some(result.column_defaults),
+        combinator_examples: result.combinator_examples,
+        suggested_next_steps: result.suggested_next_steps,
     }
 }
 

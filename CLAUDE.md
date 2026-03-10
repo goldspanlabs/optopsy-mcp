@@ -182,21 +182,6 @@ List all ~40 available TA signals across categories (momentum, trend, volatility
 **Response:** `SignalsResponse`
 - Signal catalog with names, parameters, descriptions
 
-#### `construct_signal`
-Use NLP fuzzy search to find signals and generate live JSON schema for TA indicators.
-
-**Parameters:**
-```json
-{
-  "prompt": "RSI oversold"  // Natural language description of desired signal
-}
-```
-
-**Response:** Signal specification JSON
-- Candidate signals with sensible defaults
-- Full JSON schema showing all variants
-- Examples for And/Or combinators
-
 ### Analysis Tools
 
 #### `evaluate_strategy`
