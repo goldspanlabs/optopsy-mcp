@@ -206,7 +206,7 @@ Single entry point for discovering built-in signals and creating/managing custom
 
 **Response (search):** `BuildSignalResponse`
 - `success` — `true` when at least one candidate is found
-- `candidates` — Ranked list of matching built-in signals with name, score, rationale
+- `candidates` — Matching built-in signals with name, category, description, params, example
 - `schema` — Full SignalSpec JSON schema for reference
 - `column_defaults` — Default column mappings per signal type
 - `combinator_examples` — Example AND/OR combinations
