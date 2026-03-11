@@ -40,6 +40,5 @@ cast_possible_wrap = "allow"
 cast_precision_loss = "allow"
 
 [dev-dependencies]
-tokio-test = "0.4"
 tempfile = "3.26.0"
 rmcp = { version = "0.17", features = ["client", "transport-async-rw"] }
