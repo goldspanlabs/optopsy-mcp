@@ -46,6 +46,8 @@ pub struct Position {
     /// Points per contract (typically 100 for equity options).
     pub multiplier: i32,
     pub status: PositionStatus,
+    /// Per-share stock entry price (set when strategy has `has_stock_leg`).
+    pub stock_entry_price: Option<f64>,
 }
 
 /// A single leg of an open position, tracking its fill and close state.

@@ -24,7 +24,15 @@ pub(crate) fn trigger_fires(
 ) -> bool {
     match trigger {
         AdjustmentTrigger::DefensiveRoll { loss_threshold } => {
-            let mtm = mark_to_market(pos, today, price_table, last_known, slippage, multiplier);
+            let mtm = mark_to_market(
+                pos,
+                today,
+                price_table,
+                last_known,
+                slippage,
+                multiplier,
+                None,
+            );
             mtm < -(loss_threshold * pos.entry_cost.abs())
         }
         AdjustmentTrigger::CalendarRoll { dte_trigger, .. } => {
@@ -246,6 +254,7 @@ fn finalize_if_all_closed(
         last_known,
         &params.slippage,
         pos.multiplier,
+        None,
     );
     // Apply commission consistently with normal exits
     let total_contracts: i32 = pos.legs.iter().map(|l| l.qty.abs()).sum();

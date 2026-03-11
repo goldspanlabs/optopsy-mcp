@@ -1,4 +1,6 @@
-use super::helpers::{call_leg, default_otm_delta, put_leg, strategy, Side, StrategyDef};
+use super::helpers::{
+    call_leg, default_otm_delta, put_leg, strategy, strategy_with_stock, Side, StrategyDef,
+};
 
 pub fn long_call() -> StrategyDef {
     strategy(
@@ -37,10 +39,10 @@ pub fn short_put() -> StrategyDef {
 }
 
 pub fn covered_call() -> StrategyDef {
-    strategy(
+    strategy_with_stock(
         "covered_call",
         "Singles",
-        "Sell a call (options-only; does not model the long stock leg)",
+        "Sell a call against 100 shares of long stock per contract",
         vec![call_leg(Side::Short, 1, default_otm_delta())],
     )
 }

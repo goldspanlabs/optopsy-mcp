@@ -105,6 +105,26 @@ pub fn strategy(name: &str, category: &str, description: &str, legs: Vec<LegDef>
         legs,
         strict_strike_order: true,
         direction,
+        has_stock_leg: false,
+    }
+}
+
+/// Build a strategy that includes a long stock leg (e.g. covered call, protective put).
+pub fn strategy_with_stock(
+    name: &str,
+    category: &str,
+    description: &str,
+    legs: Vec<LegDef>,
+) -> StrategyDef {
+    let direction = infer_direction(name, &legs);
+    StrategyDef {
+        name: name.to_string(),
+        category: category.to_string(),
+        description: description.to_string(),
+        legs,
+        strict_strike_order: true,
+        direction,
+        has_stock_leg: true,
     }
 }
 
@@ -124,6 +144,7 @@ pub fn strategy_relaxed(
         legs,
         strict_strike_order: false,
         direction,
+        has_stock_leg: false,
     }
 }
 

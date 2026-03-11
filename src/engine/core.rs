@@ -20,15 +20,17 @@ use crate::strategies;
 
 type DateFilter = Option<HashSet<NaiveDate>>;
 
-/// Load OHLCV close prices into a `BTreeMap<NaiveDate, f64>` for sizing volatility computation.
+/// Load OHLCV close prices into a `BTreeMap<NaiveDate, f64>` for sizing or stock-leg strategies.
 ///
-/// Only loads when the backtest has dynamic sizing configured and an OHLCV path is available.
-/// Returns `None` if sizing is not active or OHLCV data cannot be loaded.
-fn load_ohlcv_closes_for_sizing(
+/// Loads when the backtest has dynamic sizing configured or when the strategy has a stock leg.
+/// Returns `None` if neither condition is met or OHLCV data cannot be loaded.
+fn load_ohlcv_closes(
     params: &BacktestParams,
+    strategy_def: &StrategyDef,
 ) -> Option<std::collections::BTreeMap<NaiveDate, f64>> {
-    // Only load when sizing is active (any method may benefit from vol data)
-    params.sizing.as_ref()?;
+    if params.sizing.is_none() && !strategy_def.has_stock_leg {
+        return None;
+    }
 
     let ohlcv_path = params.ohlcv_path.as_ref()?;
     let df = load_ohlcv(ohlcv_path).ok()?;
@@ -268,8 +270,10 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
         );
     }
 
-    // Dynamic sizing requires sequential equity tracking — force event loop
-    let use_vectorized = params.adjustment_rules.is_empty() && params.sizing.is_none();
+    // Dynamic sizing and stock-leg strategies require sequential equity tracking — force event loop
+    let use_vectorized = params.adjustment_rules.is_empty()
+        && params.sizing.is_none()
+        && !strategy_def.has_stock_leg;
     tracing::info!(
         path = if use_vectorized {
             "vectorized"
@@ -322,8 +326,8 @@ fn run_event_loop_path(
         candidates.retain(|date, _| allowed_dates.contains(date));
     }
 
-    // Load OHLCV closes when dynamic sizing needs volatility data
-    let ohlcv_closes = load_ohlcv_closes_for_sizing(params);
+    // Load OHLCV closes when dynamic sizing or stock-leg strategy needs price data
+    let ohlcv_closes = load_ohlcv_closes(params, strategy_def);
 
     let (trade_log, equity_curve, quality) = event_sim::run_event_loop(
         &price_table,

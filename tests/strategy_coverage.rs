@@ -179,8 +179,103 @@ fn backtest_short_put() {
 
 #[test]
 fn backtest_covered_call() {
-    // S Call@100: same as short_call = +300
-    assert_backtest("covered_call", vec![delta(0.50)], 300.0);
+    // Covered call = long 100 shares + short 1 call
+    // Stock: buy at 100.0 on Jan 15, sell at 102.0 on Feb 11 → stock P&L = (102-100)*100 = +200
+    // Option (short call@100): sold at mid(5.0,5.5)=5.25, bought back at mid(2.0,2.5)=2.25
+    //   option P&L = (2.25 - 5.25) * (-1) * 1 * 100 = +300
+    // Total P&L = 200 + 300 = +500
+    let dates = vec![
+        chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+        chrono::NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(),
+        chrono::NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(),
+    ];
+    let closes = vec![100.0, 101.0, 102.0];
+    let (_dir, ohlcv_path) = common::write_ohlcv_parquet(&dates, &closes);
+
+    let df = make_multi_strike_df();
+    let mut params = backtest_params("covered_call", vec![delta(0.50)]);
+    params.ohlcv_path = Some(ohlcv_path);
+
+    let result = run_backtest(&df, &params);
+    assert!(
+        result.is_ok(),
+        "covered_call: run_backtest failed: {:?}",
+        result.err()
+    );
+
+    let bt = result.unwrap();
+    assert_eq!(bt.trade_count, 1, "covered_call: expected 1 trade");
+
+    let expected_pnl = 500.0;
+    assert!(
+        (bt.total_pnl - expected_pnl).abs() < 0.01,
+        "covered_call: expected PnL {expected_pnl}, got {}",
+        bt.total_pnl
+    );
+
+    let trade = &bt.trade_log[0];
+    assert_eq!(trade.days_held, 27, "covered_call: expected 27 days held");
+    assert!(
+        trade.stock_entry_price.is_some(),
+        "should have stock_entry_price"
+    );
+    assert!(
+        trade.stock_exit_price.is_some(),
+        "should have stock_exit_price"
+    );
+    assert!(trade.stock_pnl.is_some(), "should have stock_pnl");
+    assert!(
+        (trade.stock_pnl.unwrap() - 200.0).abs() < 0.01,
+        "covered_call: expected stock_pnl 200, got {}",
+        trade.stock_pnl.unwrap()
+    );
+}
+
+#[test]
+fn backtest_covered_call_no_ohlcv_zero_trades() {
+    // Without OHLCV data, covered_call cannot open positions (stock leg needs price)
+    let df = make_multi_strike_df();
+    let params = backtest_params("covered_call", vec![delta(0.50)]);
+    // params.ohlcv_path is None by default
+
+    let result = run_backtest(&df, &params);
+    assert!(result.is_ok(), "should not error, just produce 0 trades");
+    let bt = result.unwrap();
+    assert_eq!(
+        bt.trade_count, 0,
+        "covered_call without OHLCV should have 0 trades"
+    );
+}
+
+#[test]
+fn backtest_covered_call_stock_prices_verified() {
+    // Verify the actual stock entry/exit prices in the trade record
+    let dates = vec![
+        chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+        chrono::NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(),
+        chrono::NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(),
+    ];
+    let closes = vec![100.0, 101.0, 102.0];
+    let (_dir, ohlcv_path) = common::write_ohlcv_parquet(&dates, &closes);
+
+    let df = make_multi_strike_df();
+    let mut params = backtest_params("covered_call", vec![delta(0.50)]);
+    params.ohlcv_path = Some(ohlcv_path);
+
+    let bt = run_backtest(&df, &params).unwrap();
+    assert_eq!(bt.trade_count, 1);
+
+    let trade = &bt.trade_log[0];
+    assert!(
+        (trade.stock_entry_price.unwrap() - 100.0).abs() < 0.01,
+        "stock_entry_price should be 100.0, got {}",
+        trade.stock_entry_price.unwrap()
+    );
+    assert!(
+        (trade.stock_exit_price.unwrap() - 102.0).abs() < 0.01,
+        "stock_exit_price should be 102.0, got {}",
+        trade.stock_exit_price.unwrap()
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

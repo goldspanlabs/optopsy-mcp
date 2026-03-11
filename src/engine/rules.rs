@@ -186,6 +186,7 @@ mod tests {
             legs,
             strict_strike_order: strict,
             direction: crate::engine::types::Direction::Neutral,
+            has_stock_leg: false,
         }
     }
 

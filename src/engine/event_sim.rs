@@ -235,6 +235,7 @@ pub fn find_entry_candidates(
 }
 
 /// Build a `TradeRecord` from a closed position.
+#[allow(clippy::too_many_arguments)]
 fn build_trade_record(
     position: &Position,
     today: NaiveDate,
@@ -243,6 +244,7 @@ fn build_trade_record(
     exit_type: ExitType,
     sizing_active: bool,
     entry_equity: f64,
+    ohlcv_closes: Option<&BTreeMap<NaiveDate, f64>>,
 ) -> TradeRecord {
     let entry_dt = position
         .entry_date
@@ -282,6 +284,17 @@ fn build_trade_record(
     if sizing_active {
         record.computed_quantity = Some(position.quantity);
         record.entry_equity = Some(entry_equity);
+    }
+
+    // Stock leg fields
+    if let Some(entry_price) = position.stock_entry_price {
+        let exit_price = ohlcv_closes
+            .and_then(|c| c.range(..=today).next_back().map(|(_, &v)| v))
+            .unwrap_or(entry_price);
+        let shares = f64::from(position.quantity) * f64::from(position.multiplier);
+        record.stock_entry_price = Some(entry_price);
+        record.stock_exit_price = Some(exit_price);
+        record.stock_pnl = Some((exit_price - entry_price) * shares);
     }
 
     record
@@ -325,11 +338,22 @@ fn compute_unrealized_pnl(
     last_known: &HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
     slippage: &Slippage,
     multiplier: i32,
+    ohlcv_closes: Option<&BTreeMap<NaiveDate, f64>>,
 ) -> f64 {
     positions
         .iter()
         .filter(|p| matches!(p.status, PositionStatus::Open))
-        .map(|p| mark_to_market(p, today, price_table, last_known, slippage, multiplier))
+        .map(|p| {
+            mark_to_market(
+                p,
+                today,
+                price_table,
+                last_known,
+                slippage,
+                multiplier,
+                ohlcv_closes,
+            )
+        })
         .sum()
 }
 
@@ -396,7 +420,14 @@ pub fn run_event_loop(
                 .then_some(ExitType::Signal);
 
             let exit_type = signal_exit.or_else(|| {
-                check_exit_triggers(&positions[i], today, price_table, &last_known, params)
+                check_exit_triggers(
+                    &positions[i],
+                    today,
+                    price_table,
+                    &last_known,
+                    params,
+                    ohlcv_closes,
+                )
             });
 
             if let Some(exit_type) = exit_type {
@@ -410,6 +441,7 @@ pub fn run_event_loop(
                     &params.slippage,
                     &params.commission.clone().unwrap_or_default(),
                     exit_type.clone(),
+                    ohlcv_closes,
                 );
                 realized_equity += pnl;
 
@@ -422,6 +454,7 @@ pub fn run_event_loop(
                     exit_type,
                     params.sizing.is_some(),
                     equity_before_close,
+                    ohlcv_closes,
                 ));
             }
 
@@ -504,18 +537,20 @@ pub fn run_event_loop(
                         ))
                     });
 
-                    let position = open_position(
+                    if let Some(position) = open_position(
                         candidate,
                         today,
                         strategy_def,
                         params,
                         next_id,
                         effective_qty,
-                    );
-                    next_id += 1;
-                    positions.push(position);
-                    positions_opened += 1;
-                    last_entry_date = Some(today);
+                        ohlcv_closes,
+                    ) {
+                        next_id += 1;
+                        positions.push(position);
+                        positions_opened += 1;
+                        last_entry_date = Some(today);
+                    }
                 }
             }
         }
@@ -531,6 +566,7 @@ pub fn run_event_loop(
             &last_known,
             &params.slippage,
             params.multiplier,
+            ohlcv_closes,
         );
 
         equity_curve.push(EquityPoint {
@@ -559,6 +595,7 @@ fn check_exit_triggers(
     price_table: &PriceTable,
     last_known: &HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
     params: &BacktestParams,
+    ohlcv_closes: Option<&BTreeMap<NaiveDate, f64>>,
 ) -> Option<ExitType> {
     // Expiration check
     if today >= position.expiration {
@@ -590,6 +627,7 @@ fn check_exit_triggers(
         last_known,
         &params.slippage,
         params.multiplier,
+        ohlcv_closes,
     );
 
     if let Some(sl) = params.stop_loss {

@@ -202,12 +202,14 @@ impl OptopsyServer {
 
         let (symbol, df) = self.ensure_data_loaded(symbol_param.as_deref()).await?;
 
+        let strategy_def = crate::strategies::find_strategy(&strategy);
         let needs_ohlcv = entry_signal.is_some()
             || exit_signal.is_some()
             || matches!(
                 sizing.as_ref().map(|s| &s.method),
                 Some(crate::engine::types::PositionSizing::VolatilityTarget { .. })
-            );
+            )
+            || strategy_def.as_ref().is_some_and(|s| s.has_stock_leg);
         let ohlcv_path = if needs_ohlcv {
             Some(self.ensure_ohlcv(&symbol).await?)
         } else {
@@ -773,11 +775,18 @@ impl OptopsyServer {
 
             let (symbol, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
 
-            // Auto-fetch OHLCV data if any signals are requested
+            let strategies = resolve_sweep_strategies(params.strategies, params.direction)?;
+
+            // Auto-fetch OHLCV data if any signals are requested or any strategy has a stock leg
+            let any_stock_leg = strategies.iter().any(|s| {
+                crate::strategies::find_strategy(&s.name)
+                    .is_some_and(|def| def.has_stock_leg)
+            });
             let needs_ohlcv = params.sim_params.entry_signal.is_some()
                 || params.sim_params.exit_signal.is_some()
                 || !params.sim_params.entry_signals.is_empty()
-                || !params.sim_params.exit_signals.is_empty();
+                || !params.sim_params.exit_signals.is_empty()
+                || any_stock_leg;
             let ohlcv_path = if needs_ohlcv {
                 Some(self.ensure_ohlcv(&symbol).await?)
             } else {
@@ -792,8 +801,6 @@ impl OptopsyServer {
                     &params.sim_params.exit_signals,
                 )
                 .await?;
-
-            let strategies = resolve_sweep_strategies(params.strategies, params.direction)?;
 
             let sweep_params = crate::engine::sweep::SweepParams {
                 strategies,
@@ -924,8 +931,14 @@ impl OptopsyServer {
 
                 let (symbol, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
 
-                // Auto-fetch OHLCV data if signals are requested
-                let ohlcv_path = if params.entry_signal.is_some() || params.exit_signal.is_some() {
+                // Auto-fetch OHLCV data if signals are requested or any strategy has a stock leg
+                let any_stock_leg = params.strategies.iter().any(|s| {
+                    crate::strategies::find_strategy(&s.name).is_some_and(|def| def.has_stock_leg)
+                });
+                let ohlcv_path = if params.entry_signal.is_some()
+                    || params.exit_signal.is_some()
+                    || any_stock_leg
+                {
                     Some(self.ensure_ohlcv(&symbol).await?)
                 } else {
                     None

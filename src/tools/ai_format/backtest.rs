@@ -107,6 +107,31 @@ pub fn format_backtest(
         ));
     }
 
+    // Stock leg P&L breakdown
+    let stock_pnls: Vec<f64> = result
+        .trade_log
+        .iter()
+        .filter_map(|t| t.stock_pnl)
+        .collect();
+    if !stock_pnls.is_empty() {
+        let total_stock_pnl: f64 = stock_pnls.iter().sum();
+        let total_option_pnl: f64 = result.total_pnl - total_stock_pnl;
+        key_findings.push(format!(
+            "Covered call: stock P&L {} + option P&L {} = net {}",
+            format_pnl(total_stock_pnl),
+            format_pnl(total_option_pnl),
+            format_pnl(result.total_pnl),
+        ));
+        let stock_pct = if result.total_pnl.abs() > 0.01 {
+            (total_stock_pnl / result.total_pnl * 100.0).round()
+        } else {
+            0.0
+        };
+        key_findings.push(format!(
+            "Stock leg contributed {stock_pct:.0}% of total P&L"
+        ));
+    }
+
     BacktestResponse {
         summary,
         assessment: assessment.to_string(),

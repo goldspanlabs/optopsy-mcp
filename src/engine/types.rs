@@ -402,6 +402,9 @@ pub struct StrategyDef {
     /// iron butterflies). When `true` (default), strikes must be strictly ascending.
     pub strict_strike_order: bool,
     pub direction: Direction,
+    /// When `true`, the strategy includes a long stock leg (e.g. covered call, protective put).
+    /// The engine will track stock entry/exit prices and include stock P&L in the trade.
+    pub has_stock_leg: bool,
 }
 
 impl StrategyDef {
@@ -741,6 +744,15 @@ pub struct TradeRecord {
     /// Portfolio equity at the time of entry (set when position sizing is active).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entry_equity: Option<f64>,
+    /// Per-share stock entry price (set when strategy has a stock leg).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stock_entry_price: Option<f64>,
+    /// Per-share stock exit price (set when strategy has a stock leg).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stock_exit_price: Option<f64>,
+    /// Stock leg P&L (set when strategy has a stock leg).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stock_pnl: Option<f64>,
 }
 
 impl TradeRecord {
@@ -781,6 +793,9 @@ impl TradeRecord {
             legs,
             computed_quantity: None,
             entry_equity: None,
+            stock_entry_price: None,
+            stock_exit_price: None,
+            stock_pnl: None,
         }
     }
 }
