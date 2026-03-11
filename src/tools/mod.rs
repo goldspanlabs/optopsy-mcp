@@ -13,6 +13,5 @@ pub mod response_types;
 pub mod signals;
 pub mod status;
 pub mod strategies;
-pub mod suggest;
 pub mod sweep;
 pub mod walk_forward;

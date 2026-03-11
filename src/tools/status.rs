@@ -54,17 +54,12 @@ pub async fn execute(data: &Arc<RwLock<HashMap<String, DataFrame>>>) -> StatusRe
         let suggested_next_steps = if symbols.len() == 1 {
             vec![
                 "[NEXT] Call list_strategies() to browse available strategies".to_string(),
-                "[THEN] Call suggest_parameters({ strategy, risk_preference: \"moderate\" }) for data-driven parameters".to_string(),
                 "[THEN] Call run_backtest({ strategy, symbol }) for full simulation".to_string(),
             ]
         } else {
             vec![
                 format!(
                     "[NEXT] Call list_strategies() to browse available strategies (specify symbol: \"{}\" in subsequent tools)",
-                    symbols[0]
-                ),
-                format!(
-                    "[THEN] Call suggest_parameters({{ strategy, risk_preference: \"moderate\", symbol: \"{}\" }})",
                     symbols[0]
                 ),
                 format!(

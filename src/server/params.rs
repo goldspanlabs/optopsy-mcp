@@ -369,26 +369,6 @@ pub struct GetRawPricesParams {
     pub limit: Option<usize>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema, Validate)]
-pub struct SuggestParametersParams {
-    /// Strategy name (e.g. `short_put`, `iron_condor`). Call `list_strategies` to see options.
-    #[garde(length(min = 1))]
-    pub strategy: String,
-    /// Risk preference: "conservative" (tight filters), "moderate" (balanced), or "aggressive" (loose filters)
-    #[garde(length(min = 1))]
-    pub risk_preference: String,
-    /// Target win rate (0.0-1.0), informational only
-    #[garde(inner(range(min = 0.0, max = 1.0)))]
-    pub target_win_rate: Option<f64>,
-    /// Target Sharpe ratio, informational only
-    #[garde(skip)]
-    pub target_sharpe: Option<f64>,
-    /// Symbol to analyze (required if multiple symbols are loaded; optional if only one is loaded)
-    #[serde(default)]
-    #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
-    pub symbol: Option<String>,
-}
-
 fn default_sweep_max_positions() -> i32 {
     3
 }

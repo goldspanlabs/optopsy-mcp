@@ -243,30 +243,6 @@ pub struct RawPricesResponse {
     pub suggested_next_steps: Vec<String>,
 }
 
-/// AI-enriched response for `suggest_parameters`
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct SuggestResponse {
-    pub summary: String,
-    pub strategy: String,
-    pub leg_deltas: Vec<TargetRange>,
-    pub entry_dte: DteRange,
-    pub exit_dte: i32,
-    pub slippage: Slippage,
-    pub rationale: String,
-    pub confidence: f64,
-    pub data_coverage: DataCoverage,
-    pub suggested_next_steps: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct DataCoverage {
-    pub total_rows: usize,
-    pub liquid_rows: usize,
-    pub dte_range: String,
-    pub expiration_count: usize,
-    pub warnings: Vec<String>,
-}
-
 /// Entry representing a saved signal in the `list` action response.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SavedSignalEntry {

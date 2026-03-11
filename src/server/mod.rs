@@ -21,8 +21,8 @@ use crate::signals::registry::{collect_cross_symbols, SignalSpec};
 use crate::tools;
 use crate::tools::response_types::{
     BacktestResponse, BuildSignalResponse, CheckCacheResponse, CompareResponse, FetchResponse,
-    PermutationTestResponse, RawPricesResponse, StatusResponse, StrategiesResponse,
-    SuggestResponse, SweepResponse, WalkForwardResponse,
+    PermutationTestResponse, RawPricesResponse, StatusResponse, StrategiesResponse, SweepResponse,
+    WalkForwardResponse,
 };
 use crate::tools::signals::SignalsResponse;
 
@@ -30,7 +30,7 @@ use params::{
     resolve_leg_deltas, resolve_sweep_strategies, validate_category_read, validation_err,
     BacktestBaseParams, BuildSignalParams, CheckCacheParams, CompareStrategiesParams,
     FetchToParquetParams, GetRawPricesParams, ParameterSweepParams, PermutationTestParams,
-    RunBacktestParams, SuggestParametersParams, WalkForwardParams,
+    RunBacktestParams, WalkForwardParams,
 };
 use sanitize::{SanitizedJson, SanitizedResult};
 
@@ -952,65 +952,6 @@ impl OptopsyServer {
             .await,
         )
     }
-
-    /// Analyze the loaded options chain and suggest data-driven parameters.
-    ///
-    /// **When to use**: To get intelligent parameter suggestions
-    ///   based on actual market data (DTE coverage, spread quality, delta distribution)
-    /// **Prerequisites**: None — data is auto-loaded from cache when you pass a symbol
-    /// **Next tools**: `run_backtest()` with suggested parameters
-    ///
-    /// **What it analyzes**:
-    ///   - DTE distribution and contiguous coverage zones
-    ///   - Bid/ask spread quality per DTE bucket
-    ///   - Delta distribution per leg (quartile-based targeting)
-    ///   - Suggested `exit_dte` based on data coverage
-    /// **Risk preferences**: Conservative (tight filters), Moderate (balanced), Aggressive (loose)
-    /// **Output**:
-    ///   - `leg_deltas` array (optimized delta targets/ranges per leg)
-    ///   - `entry_dte` (target/min/max entry DTE range from data)
-    ///   - `exit_dte` (recommended exit DTE)
-    ///   - slippage model recommendation (Mid/Spread/Liquidity)
-    ///   - Confidence score (combines data coverage and calendar quality)
-    /// **Saves time**: No need to guess parameters; use market-driven recommendations
-    #[tool(name = "suggest_parameters", annotations(read_only_hint = true))]
-    async fn suggest_parameters(
-        &self,
-        Parameters(params): Parameters<SuggestParametersParams>,
-    ) -> SanitizedResult<SuggestResponse, String> {
-        SanitizedResult(async {
-            params
-                .validate()
-                .map_err(|e| validation_err("suggest_parameters", e))?;
-
-            let strategy = params.strategy;
-
-            let risk_pref = match params.risk_preference.as_str() {
-                "conservative" => crate::engine::suggest::RiskPreference::Conservative,
-                "moderate" => crate::engine::suggest::RiskPreference::Moderate,
-                "aggressive" => crate::engine::suggest::RiskPreference::Aggressive,
-                other => {
-                    return Err(format!(
-                        "Invalid risk_preference: \"{other}\". Must be \"conservative\", \"moderate\", or \"aggressive\"."
-                    ));
-                }
-            };
-
-            let suggest_params = crate::engine::suggest::SuggestParams {
-                strategy: strategy.clone(),
-                risk_preference: risk_pref,
-                target_win_rate: params.target_win_rate,
-                target_sharpe: params.target_sharpe,
-            };
-
-            let (_, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
-
-            tokio::task::spawn_blocking(move || tools::suggest::execute(&df, &suggest_params))
-                .await
-                .map_err(|e| format!("Suggest task panicked: {e}"))?
-                .map_err(|e| format!("Error: {e}"))
-        }.await)
-    }
 }
 
 #[tool_handler]
@@ -1036,14 +977,11 @@ impl ServerHandler for OptopsyServer {
                 \n  - list_strategies() — browse all 32 strategies by category\
                 \n  - list_signals() / build_signal(action=\"search\") — optional: TA signal filters\
                 \n\
-                \n### 2. Get Parameters (recommended)\
-                \n  - suggest_parameters({ strategy, symbol }) — data-driven recommendations\
-                \n\
-                \n### 3. Full Simulation\
+                \n### 2. Full Simulation\
                 \n  - run_backtest({ strategy, symbol, ... }) — event-driven backtest with trade log and metrics\
                 \n  - OHLCV data is auto-fetched when signals are used\
                 \n\
-                \n### 4. Compare & Optimize (optional)\
+                \n### 3. Compare & Optimize (optional)\
                 \n  - parameter_sweep — PREFERRED for optimization. Generates cartesian product of delta/DTE/slippage combos automatically.\
                 \n    Use `direction` to auto-select strategies by market outlook (bullish/bearish/neutral/volatile),\
                 \n    or provide explicit `strategies` list with `leg_delta_targets` grids.\
@@ -1052,7 +990,7 @@ impl ServerHandler for OptopsyServer {
                 \n    you've already chosen. NOT for grid search (use parameter_sweep instead).\
                 \n\
                 \n## RULES\
-                \n- strategy is ALWAYS REQUIRED for backtest/suggest — signals do NOT replace strategies\
+                \n- strategy is ALWAYS REQUIRED for backtest — signals do NOT replace strategies\
                 \n- Signals only filter WHEN to trade; the strategy defines WHAT option legs to trade\
                 \n- NEVER pass strategy: null — pick one like short_put, iron_condor, etc.\
                 \n- For optimization, prefer parameter_sweep over manually enumerating compare_strategies entries\
