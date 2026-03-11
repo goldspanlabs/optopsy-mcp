@@ -1,4 +1,7 @@
 //! Return raw OHLCV price bars for a symbol, with optional date filtering and sampling.
+//!
+//! Reads cached Parquet price data, applies date range filters, and
+//! down-samples to the requested limit using evenly-spaced index selection.
 
 use anyhow::{Context, Result};
 use polars::prelude::*;

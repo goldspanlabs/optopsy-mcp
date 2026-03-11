@@ -1,4 +1,8 @@
 //! Fuzzy search over the signal catalog using token-based scoring.
+//!
+//! Splits the user's natural-language prompt into tokens, matches against
+//! `CamelCase`-split signal names and keyword lists, and returns ranked
+//! candidates with concrete JSON examples.
 
 use crate::signals::registry::SIGNAL_CATALOG;
 use crate::tools::response_types::SignalCandidate;

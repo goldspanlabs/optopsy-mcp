@@ -1,4 +1,7 @@
 //! List all built-in options strategies with metadata and default delta targets.
+//!
+//! Iterates the 32-strategy registry, collecting name, category, leg count,
+//! description, and per-leg default deltas into a categorized response.
 
 use crate::engine::types::to_display_name;
 use crate::strategies::all_strategies;

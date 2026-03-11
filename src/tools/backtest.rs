@@ -1,4 +1,8 @@
 //! Run a full event-driven backtest and return an AI-enriched response.
+//!
+//! Resolves strategy parameters, dispatches to `engine::core::run_backtest`,
+//! then enriches the raw result with summary text, key findings, trade
+//! statistics, data quality diagnostics, and suggested next steps.
 
 use anyhow::Result;
 use polars::prelude::*;

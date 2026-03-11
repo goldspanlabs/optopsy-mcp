@@ -1,4 +1,7 @@
 //! Check whether a Parquet cache file exists for a symbol and report its status.
+//!
+//! Inspects the local cache directory for options or OHLCV data, returning
+//! file existence, last-modified timestamp, and the full file path.
 
 use anyhow::Result;
 use std::sync::Arc;

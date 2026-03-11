@@ -1,4 +1,8 @@
 //! Format backtest and strategy comparison results into AI-enriched responses.
+//!
+//! Transforms raw `BacktestResult` and `CompareResult` data into structured
+//! responses with natural-language summaries, key findings, trade statistics,
+//! and actionable next-step suggestions.
 
 use crate::engine::types::{
     to_display_name, BacktestParams, BacktestResult, CompareEntry, CompareResult,

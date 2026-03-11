@@ -1,5 +1,10 @@
-//! Options backtesting engine: strategy evaluation, event-driven simulation,
-//! pricing, metrics, parameter sweeps, and supporting utilities.
+//! Options backtesting engine.
+//!
+//! Contains two main execution paths: `evaluate_strategy` for fast statistical
+//! analysis grouped by DTE x delta buckets, and `run_backtest` for full
+//! event-driven day-by-day simulation with position management. Supporting
+//! modules handle pricing/slippage, performance metrics, parameter sweeps,
+//! walk-forward validation, permutation tests, and strike ordering rules.
 
 pub mod adjustments;
 pub mod core;

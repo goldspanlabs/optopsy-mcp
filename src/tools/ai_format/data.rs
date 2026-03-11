@@ -1,4 +1,8 @@
 //! Format data-loading and strategy-listing results into AI-enriched responses.
+//!
+//! Builds structured responses for `load_data`, `get_raw_prices`, and
+//! `list_strategies` with row counts, date ranges, column lists, and
+//! suggested next steps tailored to each tool's output.
 
 use std::collections::HashMap;
 

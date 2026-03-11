@@ -1,4 +1,8 @@
-// Price signals: Gap, drawdown, consecutive moves
+//! Price-action signals: gap up/down, drawdown from rolling high, consecutive
+//! rising/falling bars, and rate of change.
+//!
+//! Each struct implements `SignalFn` and produces a boolean series indicating
+//! which bars satisfy the signal condition.
 
 use super::helpers::{column_to_f64, SignalFn};
 use polars::prelude::*;

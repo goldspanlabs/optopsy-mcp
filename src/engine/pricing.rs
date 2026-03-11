@@ -1,8 +1,13 @@
 //! Fill price and per-leg P&L calculations under various slippage models.
+//!
+//! Supports five models: `Mid` (midpoint), `Spread` (buy at ask / sell at bid),
+//! `Liquidity` (volume-proportional), `PerLeg` (fixed per-leg offset from mid),
+//! and `BidAskTravel` (configurable fraction of the bid-ask spread).
 
 use super::types::{Side, Slippage};
 
-/// Calculate fill price based on slippage model
+/// Calculate the fill price for a given bid/ask quote, side, and slippage model.
+/// Returns the effective price at which the trade would be filled.
 pub fn fill_price(bid: f64, ask: f64, side: Side, slippage: &Slippage) -> f64 {
     let mid = f64::midpoint(bid, ask);
     let spread = ask - bid;
@@ -30,7 +35,9 @@ pub fn fill_price(bid: f64, ask: f64, side: Side, slippage: &Slippage) -> f64 {
     }
 }
 
-/// Calculate per-trade P&L for a single leg
+/// Calculate the realized P&L for a single option leg, applying the slippage model
+/// at both entry and exit. The exit side is automatically reversed (long closes as
+/// short and vice versa). Result is scaled by quantity and contract multiplier.
 #[allow(clippy::too_many_arguments)]
 pub fn leg_pnl(
     entry_bid: f64,

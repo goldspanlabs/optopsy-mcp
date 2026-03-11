@@ -1,4 +1,7 @@
 //! Run walk-forward analysis to detect overfitting by testing on rolling out-of-sample windows.
+//!
+//! Splits the data into train/test windows, runs a backtest on each, and
+//! compares in-sample vs out-of-sample metrics to assess strategy robustness.
 
 use anyhow::Result;
 use polars::prelude::*;

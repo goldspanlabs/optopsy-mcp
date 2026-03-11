@@ -1,4 +1,8 @@
 //! Run a parameter sweep across delta/DTE grids and rank combinations by Sharpe.
+//!
+//! Delegates to `engine::sweep::run_sweep` for the heavy lifting, then
+//! formats the ranked results, sensitivity analysis, stability scores,
+//! and optional OOS validation into an AI-enriched response.
 
 use anyhow::Result;
 use polars::prelude::*;

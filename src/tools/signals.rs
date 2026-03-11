@@ -1,4 +1,7 @@
 //! List all available TA signals grouped by category, including user-saved custom signals.
+//!
+//! Reads the built-in `SIGNAL_CATALOG` and any persisted custom signals from disk,
+//! then formats them into a categorized listing for the `list_signals` MCP tool.
 
 use std::collections::HashMap;
 

@@ -1,7 +1,9 @@
 //! MCP tool parameter structs with validation.
 //!
 //! Each struct corresponds to a tool's input schema, deriving `JsonSchema` for
-//! MCP schema generation and `garde::Validate` for runtime validation.
+//! MCP schema generation and `garde::Validate` for runtime validation. Common
+//! base parameters are shared via `BacktestBaseParams` to eliminate field
+//! duplication across `run_backtest`, `walk_forward`, and `permutation_test`.
 
 use garde::Validate;
 use schemars::JsonSchema;

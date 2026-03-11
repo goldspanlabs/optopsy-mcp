@@ -1,4 +1,7 @@
 //! Concrete JSON examples for each signal type, used in `build_signal` search results.
+//!
+//! Each example provides sensible default parameters so that an LLM client
+//! can use them directly or adapt them with minimal changes.
 
 use serde_json::{json, Value};
 

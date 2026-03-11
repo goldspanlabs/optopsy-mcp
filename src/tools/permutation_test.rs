@@ -1,4 +1,8 @@
 //! Run a permutation test to assess statistical significance of backtest results.
+//!
+//! Shuffles trade P&L values to build a null distribution, then computes
+//! p-values for Sharpe, total P&L, and other metrics to determine whether
+//! observed performance is statistically distinguishable from random noise.
 
 use std::collections::HashSet;
 use std::hash::BuildHasher;

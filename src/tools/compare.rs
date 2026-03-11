@@ -1,4 +1,8 @@
 //! Compare multiple strategies side-by-side and rank by Sharpe and P&L.
+//!
+//! Runs independent backtests for each strategy using shared simulation
+//! parameters, then assembles a ranked comparison with per-strategy metrics
+//! and trade logs for equity curve overlays.
 
 use anyhow::Result;
 use polars::prelude::*;

@@ -1,4 +1,8 @@
 //! Format advanced analysis results (sweep, walk-forward, permutation test) into AI-enriched responses.
+//!
+//! Converts raw sweep outputs, walk-forward window results, and permutation
+//! test statistics into structured responses with interpretive summaries,
+//! p-value assessments, and recommended follow-up actions.
 
 use crate::engine::permutation::PermutationOutput;
 use crate::engine::sweep::SweepOutput;

@@ -16,7 +16,8 @@ use crate::engine::types::{
 };
 use crate::signals::registry::SignalSpec;
 
-/// Data quality report for `run_backtest`
+/// Data quality report included in backtest responses, summarizing price coverage
+/// and fill statistics to help assess result reliability.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BacktestDataQuality {
     pub trading_days_total: usize,
@@ -29,7 +30,7 @@ pub struct BacktestDataQuality {
     pub warnings: Vec<String>,
 }
 
-/// A date + close price point for underlying price overlay.
+/// A date + close price pair for overlaying the underlying's price on equity curve charts.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct UnderlyingPrice {
     pub date: String,
@@ -54,7 +55,8 @@ pub struct BacktestResponse {
     pub suggested_next_steps: Vec<String>,
 }
 
-/// Summary of backtest parameters for reference in responses
+/// Summary of backtest parameters echoed in responses so callers have full context
+/// for follow-up questions without needing to re-send the original request.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BacktestParamsSummary {
     pub strategy: String,
@@ -71,25 +73,15 @@ pub struct BacktestParamsSummary {
     pub stop_loss: Option<f64>,
     pub take_profit: Option<f64>,
     pub max_hold_days: Option<i32>,
-    /// Trade selector used (`Nearest`, `HighestPremium`, `LowestPremium`, or `First`)
     pub selector: TradeSelector,
-    /// Entry signal specification, if any
     pub entry_signal: Option<serde_json::Value>,
-    /// Exit signal specification, if any
     pub exit_signal: Option<serde_json::Value>,
-    /// Minimum absolute net premium at entry, if set
     pub min_net_premium: Option<f64>,
-    /// Maximum absolute net premium at entry, if set
     pub max_net_premium: Option<f64>,
-    /// Minimum signed net position delta at entry, if set
     pub min_net_delta: Option<f64>,
-    /// Maximum signed net position delta at entry, if set
     pub max_net_delta: Option<f64>,
-    /// Minimum calendar days between entries (cooldown), if set
     pub min_days_between_entries: Option<i32>,
-    /// Expiration type filter applied
     pub expiration_filter: ExpirationFilter,
-    /// Exit net delta threshold, if set
     pub exit_net_delta: Option<f64>,
 }
 
@@ -384,22 +376,18 @@ pub struct WalkForwardWindowResult {
     pub test_win_rate: f64,
 }
 
-/// Aggregate statistics across all walk-forward windows
+/// Aggregate statistics across all walk-forward windows.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WalkForwardAggregate {
-    /// Number of windows successfully completed and included in aggregate statistics.
-    /// Excludes any window counted in `failed_windows` (e.g. errors or no usable data).
+    /// Windows that completed successfully; excludes `failed_windows`.
     pub successful_windows: usize,
-    /// Number of windows that could not be evaluated and were excluded from aggregates
-    /// (includes backtest failures as well as windows where the train/test slice was
-    /// empty or otherwise unusable).
+    /// Windows excluded from aggregates (backtest errors, empty slices, etc.).
     pub failed_windows: usize,
     pub avg_test_sharpe: f64,
     pub std_test_sharpe: f64,
     pub avg_test_pnl: f64,
-    /// Percentage of test windows with positive P&L
     pub pct_profitable_windows: f64,
-    /// Average difference between train and test Sharpe (higher = more overfitting)
+    /// Average train-minus-test Sharpe delta; larger values suggest overfitting.
     pub avg_train_test_sharpe_decay: f64,
     pub total_test_pnl: f64,
 }
