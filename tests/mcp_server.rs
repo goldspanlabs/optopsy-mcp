@@ -697,6 +697,43 @@ async fn compare_strategies_ranks_results() {
     assert_eq!(resp["results"].as_array().unwrap().len(), 2);
     assert!(!resp["ranking_by_sharpe"].as_array().unwrap().is_empty());
 
+    // Each result must include a trade_log with valid entries
+    for result in resp["results"].as_array().unwrap() {
+        let trade_log = result["trade_log"].as_array().unwrap();
+        let trades = result["trades"].as_u64().unwrap() as usize;
+        assert_eq!(
+            trade_log.len(),
+            trades,
+            "trade_log length should match trades count for strategy '{}'",
+            result["strategy"]
+        );
+        assert!(!trade_log.is_empty(), "trade_log should not be empty");
+        for trade in trade_log {
+            assert!(
+                trade["trade_id"].as_u64().is_some(),
+                "trade_id must be present"
+            );
+            assert!(
+                trade["entry_datetime"].as_str().is_some(),
+                "entry_datetime must be present"
+            );
+            assert!(
+                trade["exit_datetime"].as_str().is_some(),
+                "exit_datetime must be present"
+            );
+            assert!(trade["pnl"].as_f64().is_some(), "pnl must be present");
+            assert!(
+                trade["days_held"].as_i64().unwrap() > 0,
+                "days_held must be positive"
+            );
+            assert!(trade["exit_type"].is_string(), "exit_type must be present");
+            assert!(
+                !trade["legs"].as_array().unwrap().is_empty(),
+                "legs must not be empty"
+            );
+        }
+    }
+
     client.cancel().await.unwrap();
     server_handle.await.unwrap();
 }

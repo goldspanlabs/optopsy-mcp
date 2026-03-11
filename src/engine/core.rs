@@ -361,6 +361,7 @@ pub fn compare_strategies(
                     profit_factor: bt.metrics.profit_factor,
                     calmar: bt.metrics.calmar,
                     total_return_pct: bt.metrics.total_return_pct,
+                    trade_log: bt.trade_log,
                     error: None,
                 });
             }
@@ -378,6 +379,7 @@ pub fn compare_strategies(
                     profit_factor: 0.0,
                     calmar: 0.0,
                     total_return_pct: 0.0,
+                    trade_log: vec![],
                     error: Some(e.to_string()),
                 });
             }

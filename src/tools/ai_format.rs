@@ -741,6 +741,7 @@ mod tests {
                 profit_factor: 1.5,
                 calmar: 1.0,
                 total_return_pct: 5.0,
+                trade_log: vec![],
                 error: None,
             },
             CompareResult {
@@ -755,6 +756,7 @@ mod tests {
                 profit_factor: 2.5,
                 calmar: 2.0,
                 total_return_pct: 3.0,
+                trade_log: vec![],
                 error: None,
             },
             CompareResult {
@@ -769,6 +771,7 @@ mod tests {
                 profit_factor: 2.0,
                 calmar: 1.5,
                 total_return_pct: 10.0,
+                trade_log: vec![],
                 error: None,
             },
         ];
