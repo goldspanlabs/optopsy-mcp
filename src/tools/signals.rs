@@ -4,6 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::signals::registry::SIGNAL_CATALOG;
+use crate::signals::storage;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SignalCatalogEntry {
@@ -36,7 +37,27 @@ pub fn execute() -> SignalsResponse {
             });
     }
 
-    let total = SIGNAL_CATALOG.len();
+    // Include user-saved custom signals
+    if let Ok(saved) = storage::list_saved_signals() {
+        if !saved.is_empty() {
+            let custom: Vec<SignalCatalogEntry> = saved
+                .into_iter()
+                .map(|s| SignalCatalogEntry {
+                    name: s.name,
+                    description: s
+                        .description
+                        .unwrap_or_else(|| s.formula.unwrap_or_default()),
+                    params: "custom formula".to_string(),
+                })
+                .collect();
+            categories
+                .entry("custom".to_string())
+                .or_default()
+                .extend(custom);
+        }
+    }
+
+    let total: usize = categories.values().map(|v| v.len()).sum();
 
     SignalsResponse {
         summary: format!(
