@@ -16,7 +16,7 @@ fn iv_column(df: &DataFrame) -> Result<Vec<f64>, PolarsError> {
 }
 
 /// Compute ATR values for a given period.
-fn compute_atr(close: &[f64], high: &[f64], low: &[f64], period: usize) -> Vec<f64> {
+pub(crate) fn compute_atr(close: &[f64], high: &[f64], low: &[f64], period: usize) -> Vec<f64> {
     let n = close.len();
     if period == 0 || n < period {
         return vec![];
@@ -98,7 +98,7 @@ impl SignalFn for AtrBelow {
 }
 
 /// Compute Bollinger Bands and return (lower, upper) band values.
-fn compute_bollinger_bands(prices: &[f64], period: usize) -> (Vec<f64>, Vec<f64>) {
+pub(crate) fn compute_bollinger_bands(prices: &[f64], period: usize) -> (Vec<f64>, Vec<f64>) {
     if period == 0 || prices.len() < period {
         return (vec![], vec![]);
     }
@@ -175,7 +175,7 @@ impl SignalFn for BollingerUpperTouch {
 }
 
 /// Compute Keltner Channel and return (lower, upper) band values.
-fn compute_keltner_channel(
+pub(crate) fn compute_keltner_channel(
     close: &[f64],
     high: &[f64],
     low: &[f64],

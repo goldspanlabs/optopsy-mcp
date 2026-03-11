@@ -1,4 +1,6 @@
 use polars::prelude::*;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 /// A signal function takes a `DataFrame` and returns a boolean Series
 /// indicating which rows meet the signal criteria.
@@ -6,6 +8,40 @@ pub trait SignalFn: Send + Sync {
     fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError>;
     #[allow(dead_code)]
     fn name(&self) -> &'static str;
+}
+
+/// How an indicator should be displayed on a chart.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum DisplayType {
+    /// Overlay on the price chart (e.g., SMA, Bollinger Bands)
+    Overlay,
+    /// Separate subchart below price (e.g., RSI, MACD)
+    Subchart,
+}
+
+/// A single date + value point for an indicator series.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct IndicatorPoint {
+    pub date: String,
+    pub value: f64,
+}
+
+/// A named series of indicator values (e.g., "SMA(20)" or "Upper Band").
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct IndicatorSeries {
+    pub label: String,
+    pub values: Vec<IndicatorPoint>,
+}
+
+/// Complete indicator data for charting, including display hints and threshold lines.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct IndicatorData {
+    pub name: String,
+    pub display_type: DisplayType,
+    pub series: Vec<IndicatorSeries>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub thresholds: Vec<f64>,
 }
 
 /// Extract a column from a `DataFrame` as a `Vec<f64>`.

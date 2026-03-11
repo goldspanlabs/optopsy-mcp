@@ -11,7 +11,8 @@ use serde::Deserialize;
 
 use crate::engine::types::{
     default_min_bid_ask, default_multiplier, validate_exit_dte_lt_entry_min, Commission, Direction,
-    DteRange, ExpirationFilter, SimParams, SizingConfig, Slippage, TargetRange, TradeSelector,
+    DteRange, ExpirationFilter, Interval, SimParams, SizingConfig, Slippage, TargetRange,
+    TradeSelector,
 };
 use crate::signals::registry::SignalSpec;
 
@@ -270,6 +271,11 @@ pub struct RunStockBacktestParams {
     #[serde(default)]
     #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")), custom(validate_end_date_after_start(&self.start_date)))]
     pub end_date: Option<String>,
+    /// Bar interval: "daily" (default), "weekly", or "monthly".
+    /// Resamples OHLCV data before signal evaluation and simulation.
+    #[serde(default)]
+    #[garde(skip)]
+    pub interval: Option<Interval>,
 }
 
 fn default_stock_slippage() -> Slippage {
@@ -458,6 +464,11 @@ pub struct GetRawPricesParams {
     #[serde(default = "default_price_limit")]
     #[garde(skip)]
     pub limit: Option<usize>,
+    /// Bar interval: "daily" (default), "weekly", or "monthly".
+    /// Resamples OHLCV data before returning price bars.
+    #[serde(default)]
+    #[garde(skip)]
+    pub interval: Option<Interval>,
 }
 
 fn default_sweep_max_positions() -> i32 {

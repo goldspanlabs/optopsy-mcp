@@ -5,7 +5,7 @@ use super::momentum::threshold_signal_pair;
 use polars::prelude::*;
 
 /// Computes typical price as `(high + low + close) / 3` for each row.
-fn compute_typical_price(high: &[f64], low: &[f64], close: &[f64]) -> Vec<f64> {
+pub(crate) fn compute_typical_price(high: &[f64], low: &[f64], close: &[f64]) -> Vec<f64> {
     high.iter()
         .zip(low.iter())
         .zip(close.iter())
@@ -100,7 +100,7 @@ impl SignalFn for ObvFalling {
 
 /// Computes the Chaikin Money Flow values over a rolling window.
 /// CMF = `sum(money_flow_volume)` / sum(volume) for each window of `period`.
-fn compute_cmf(
+pub(crate) fn compute_cmf(
     close: &[f64],
     high: &[f64],
     low: &[f64],

@@ -8,6 +8,7 @@ use crate::engine::stock_sim::StockBacktestParams;
 use crate::engine::types::{
     to_display_name, BacktestParams, BacktestResult, CompareEntry, CompareResult,
 };
+use crate::signals::helpers::IndicatorData;
 use crate::tools::ai_helpers::{
     assess_sharpe, backtest_key_findings, build_backtest_quality, build_params_summary,
     compute_trade_summary, format_pnl, DRAWDOWN_HIGH, SHARPE_NEEDS_IMPROVEMENT,
@@ -23,6 +24,7 @@ pub fn format_backtest(
     result: BacktestResult,
     params: &BacktestParams,
     underlying_prices: Vec<UnderlyingPrice>,
+    indicator_data: Vec<IndicatorData>,
 ) -> BacktestResponse {
     let m = &result.metrics;
     let trade_summary = compute_trade_summary(&result.trade_log, m);
@@ -49,6 +51,7 @@ pub fn format_backtest(
             data_quality,
             sizing_summary: None,
             underlying_prices,
+            indicator_data,
             suggested_next_steps: vec![
                 "Widen entry_dte or leg_deltas ranges and re-run".to_string(),
                 "Check that data covers the desired date range".to_string(),
@@ -143,6 +146,7 @@ pub fn format_backtest(
         data_quality,
         sizing_summary,
         underlying_prices,
+        indicator_data,
         suggested_next_steps,
     }
 }
@@ -302,6 +306,7 @@ pub fn format_stock_backtest(
     result: BacktestResult,
     params: &StockBacktestParams,
     underlying_prices: Vec<UnderlyingPrice>,
+    indicator_data: Vec<IndicatorData>,
 ) -> StockBacktestResponse {
     let m = &result.metrics;
     let trade_summary = compute_trade_summary(&result.trade_log, m);
@@ -331,6 +336,7 @@ pub fn format_stock_backtest(
             .map(|s| serde_json::to_value(s).unwrap_or(serde_json::Value::Null)),
         start_date: params.start_date.map(|d| d.format("%Y-%m-%d").to_string()),
         end_date: params.end_date.map(|d| d.format("%Y-%m-%d").to_string()),
+        interval: params.interval.to_string(),
         sizing: params.sizing.clone(),
     };
 
@@ -383,6 +389,7 @@ pub fn format_stock_backtest(
             trade_log: vec![],
             sizing_summary: None,
             underlying_prices,
+            indicator_data,
             warnings: result.warnings,
             suggested_next_steps,
         };
@@ -451,6 +458,7 @@ pub fn format_stock_backtest(
         trade_log: result.trade_log,
         sizing_summary,
         underlying_prices,
+        indicator_data,
         warnings: result.warnings,
         suggested_next_steps,
     }
@@ -780,7 +788,7 @@ mod tests {
         ];
         let result = make_backtest_result(350.0, 1.8, 0.05, 3.0, 2.0, trades, vec![]);
         let params = make_backtest_params("short_put", 100_000.0);
-        let response = format_backtest(result, &params, vec![]);
+        let response = format_backtest(result, &params, vec![], vec![]);
 
         assert!(response.summary.contains("excellent"));
         assert_eq!(response.assessment, "excellent");
@@ -805,7 +813,7 @@ mod tests {
         ];
         let result = make_backtest_result(-250.0, -0.5, 0.25, 0.3, -0.2, trades, vec![]);
         let params = make_backtest_params("long_call", 10_000.0);
-        let response = format_backtest(result, &params, vec![]);
+        let response = format_backtest(result, &params, vec![], vec![]);
 
         assert!(response.summary.contains("poor"));
         assert_eq!(response.assessment, "poor");
@@ -831,7 +839,7 @@ mod tests {
         ];
         let result = make_backtest_result(300.0, 1.2, 0.02, 999.99, 5.0, trades, vec![]);
         let params = make_backtest_params("bull_call_spread", 50_000.0);
-        let response = format_backtest(result, &params, vec![]);
+        let response = format_backtest(result, &params, vec![], vec![]);
 
         assert_eq!(response.assessment, "strong");
         assert!(response
@@ -846,7 +854,7 @@ mod tests {
     fn format_backtest_zero_trades() {
         let result = make_backtest_result(0.0, 0.0, 0.0, 0.0, 0.0, vec![], vec![]);
         let params = make_backtest_params("iron_condor", 100_000.0);
-        let response = format_backtest(result, &params, vec![]);
+        let response = format_backtest(result, &params, vec![], vec![]);
 
         assert!(response.summary.contains("no trades"));
         assert_eq!(response.assessment, "N/A");

@@ -14,6 +14,7 @@ use crate::engine::types::{
     Commission, CompareResult, DteRange, ExpirationFilter, PerformanceMetrics, Side, SizingConfig,
     Slippage, SweepResult, TargetRange, TradeRecord, TradeSelector,
 };
+use crate::signals::helpers::IndicatorData;
 use crate::signals::registry::SignalSpec;
 
 /// Data quality report included in backtest responses, summarizing price coverage
@@ -70,6 +71,9 @@ pub struct BacktestResponse {
     /// Underlying close prices for the backtest period (empty if OHLCV data not cached)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub underlying_prices: Vec<UnderlyingPrice>,
+    /// Raw indicator values for charting (RSI line, SMA curve, etc.)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub indicator_data: Vec<IndicatorData>,
     pub suggested_next_steps: Vec<String>,
 }
 
@@ -123,6 +127,8 @@ pub struct StockBacktestParamsSummary {
     pub exit_signal: Option<serde_json::Value>,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
+    /// Bar interval used (daily, weekly, or monthly)
+    pub interval: String,
     /// Position sizing configuration (only present when sizing is active)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sizing: Option<SizingConfig>,
@@ -144,6 +150,9 @@ pub struct StockBacktestResponse {
     /// Underlying close prices for charting
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub underlying_prices: Vec<UnderlyingPrice>,
+    /// Raw indicator values for charting (RSI line, SMA curve, etc.)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub indicator_data: Vec<IndicatorData>,
     /// Diagnostic warnings (e.g. entries skipped due to insufficient capital).
     /// When non-empty, the LLM should address these before interpreting results.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

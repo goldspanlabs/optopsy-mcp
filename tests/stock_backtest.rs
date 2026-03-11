@@ -39,6 +39,7 @@ fn default_params() -> StockBacktestParams {
         cross_ohlcv_paths: std::collections::HashMap::new(),
         start_date: None,
         end_date: None,
+        interval: optopsy_mcp::engine::types::Interval::Daily,
     }
 }
 

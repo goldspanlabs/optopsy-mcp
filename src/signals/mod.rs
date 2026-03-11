@@ -7,6 +7,7 @@ pub mod builders;
 pub mod combinators;
 pub mod custom;
 pub mod helpers;
+pub mod indicators;
 pub mod momentum;
 pub mod overlap;
 pub mod price;

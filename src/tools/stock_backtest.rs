@@ -6,6 +6,7 @@
 use anyhow::Result;
 
 use crate::engine::stock_sim::{self, StockBacktestParams};
+use crate::signals::helpers::IndicatorData;
 
 use super::ai_format;
 use super::response_types::{StockBacktestResponse, UnderlyingPrice};
@@ -24,10 +25,28 @@ pub fn execute(
         .ok_or_else(|| anyhow::anyhow!("ohlcv_path is required for stock backtest"))?;
 
     let ohlcv_df = stock_sim::load_ohlcv_df(ohlcv_path, params.start_date, params.end_date)?;
+    let ohlcv_df = if params.interval == crate::engine::types::Interval::Daily {
+        ohlcv_df
+    } else {
+        stock_sim::resample_ohlcv(&ohlcv_df, params.interval)?
+    };
     let bars = stock_sim::bars_from_df(&ohlcv_df)?;
 
     // Build signal date filters from the same DataFrame (no double-read)
     let (entry_dates, exit_dates) = stock_sim::build_stock_signal_filters(params, &ohlcv_df)?;
+
+    // Compute raw indicator data for charting from signals
+    let mut indicator_data: Vec<IndicatorData> = vec![];
+    if let Some(ref spec) = params.entry_signal {
+        indicator_data.extend(crate::signals::indicators::compute_indicator_data(
+            spec, &ohlcv_df, "date",
+        ));
+    }
+    if let Some(ref spec) = params.exit_signal {
+        indicator_data.extend(crate::signals::indicators::compute_indicator_data(
+            spec, &ohlcv_df, "date",
+        ));
+    }
 
     // Run the simulation
     let result =
@@ -44,5 +63,6 @@ pub fn execute(
         result,
         params,
         underlying_prices,
+        indicator_data,
     ))
 }

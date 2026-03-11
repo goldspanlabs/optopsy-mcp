@@ -14,13 +14,15 @@ use super::response_types::{DateRange, PriceBar, RawPricesResponse};
 
 use crate::engine::types::EPOCH_DAYS_CE_OFFSET;
 
-/// Extract price bars from an in-memory `DataFrame` with optional date range and row limit.
+/// Extract price bars from an in-memory `DataFrame` with optional date range, row limit,
+/// and interval resampling.
 pub fn execute(
     df: &DataFrame,
     symbol: &str,
     start_date: Option<&str>,
     end_date: Option<&str>,
     limit: Option<usize>,
+    interval: crate::engine::types::Interval,
 ) -> Result<RawPricesResponse> {
     let mut lazy = df.clone().lazy();
 
@@ -42,6 +44,14 @@ pub fn execute(
     lazy = lazy.sort(["date"], SortMultipleOptions::default());
 
     let filtered = lazy.collect()?;
+
+    // Apply interval resampling if needed
+    let filtered = if interval == crate::engine::types::Interval::Daily {
+        filtered
+    } else {
+        crate::engine::stock_sim::resample_ohlcv(&filtered, interval)?
+    };
+
     let total_rows = filtered.height();
 
     // Sample if limit is specified and data exceeds it
@@ -132,6 +142,7 @@ pub async fn load_and_execute(
     start_date: Option<&str>,
     end_date: Option<&str>,
     limit: Option<usize>,
+    interval: crate::engine::types::Interval,
 ) -> Result<RawPricesResponse> {
     let upper = symbol.to_uppercase();
 
@@ -160,7 +171,7 @@ pub async fn load_and_execute(
     .await
     .context("Parquet read task panicked")??;
 
-    execute(&df, &upper, start_date, end_date, limit)
+    execute(&df, &upper, start_date, end_date, limit, interval)
 }
 
 #[cfg(test)]
@@ -198,7 +209,15 @@ mod tests {
     #[test]
     fn returns_all_bars_without_limit() {
         let df = make_test_df();
-        let resp = execute(&df, "SPY", None, None, None).unwrap();
+        let resp = execute(
+            &df,
+            "SPY",
+            None,
+            None,
+            None,
+            crate::engine::types::Interval::Daily,
+        )
+        .unwrap();
 
         assert_eq!(resp.symbol, "SPY");
         assert_eq!(resp.total_rows, 5);
@@ -213,7 +232,15 @@ mod tests {
     #[test]
     fn samples_when_limit_exceeded() {
         let df = make_test_df();
-        let resp = execute(&df, "SPY", None, None, Some(3)).unwrap();
+        let resp = execute(
+            &df,
+            "SPY",
+            None,
+            None,
+            Some(3),
+            crate::engine::types::Interval::Daily,
+        )
+        .unwrap();
 
         assert_eq!(resp.total_rows, 5);
         assert_eq!(resp.returned_rows, 3);
@@ -226,7 +253,15 @@ mod tests {
     #[test]
     fn date_filter_works() {
         let df = make_test_df();
-        let resp = execute(&df, "SPY", Some("2024-01-03"), Some("2024-01-05"), None).unwrap();
+        let resp = execute(
+            &df,
+            "SPY",
+            Some("2024-01-03"),
+            Some("2024-01-05"),
+            None,
+            crate::engine::types::Interval::Daily,
+        )
+        .unwrap();
 
         assert_eq!(resp.returned_rows, 3);
         assert_eq!(resp.prices[0].date, "2024-01-03");
@@ -236,7 +271,15 @@ mod tests {
     #[test]
     fn limit_larger_than_data_returns_all() {
         let df = make_test_df();
-        let resp = execute(&df, "SPY", None, None, Some(100)).unwrap();
+        let resp = execute(
+            &df,
+            "SPY",
+            None,
+            None,
+            Some(100),
+            crate::engine::types::Interval::Daily,
+        )
+        .unwrap();
 
         assert_eq!(resp.returned_rows, 5);
         assert!(!resp.sampled);
@@ -245,14 +288,30 @@ mod tests {
     #[test]
     fn adjclose_included() {
         let df = make_test_df();
-        let resp = execute(&df, "SPY", None, None, None).unwrap();
+        let resp = execute(
+            &df,
+            "SPY",
+            None,
+            None,
+            None,
+            crate::engine::types::Interval::Daily,
+        )
+        .unwrap();
         assert_eq!(resp.prices[0].adjclose, Some(101.0));
     }
 
     #[test]
     fn limit_one_returns_last_row() {
         let df = make_test_df();
-        let resp = execute(&df, "SPY", None, None, Some(1)).unwrap();
+        let resp = execute(
+            &df,
+            "SPY",
+            None,
+            None,
+            Some(1),
+            crate::engine::types::Interval::Daily,
+        )
+        .unwrap();
 
         assert_eq!(resp.returned_rows, 1);
         assert!(resp.sampled);
@@ -263,7 +322,15 @@ mod tests {
     fn sampling_no_duplicate_indices() {
         let df = make_test_df();
         // limit=4 from 5 rows — should produce 4 unique indices with no duplicates
-        let resp = execute(&df, "SPY", None, None, Some(4)).unwrap();
+        let resp = execute(
+            &df,
+            "SPY",
+            None,
+            None,
+            Some(4),
+            crate::engine::types::Interval::Daily,
+        )
+        .unwrap();
 
         assert_eq!(resp.returned_rows, 4);
         assert!(resp.sampled);

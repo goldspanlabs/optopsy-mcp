@@ -393,7 +393,7 @@ impl OptopsyServer {
     ///   - `get` — Load a saved signal's spec
     ///   - `delete` — Remove a saved signal
     ///
-    /// **Common built-in signals** (use directly as entry_signal/exit_signal JSON — no search needed):
+    /// **Common built-in signals** (use directly as `entry_signal`/`exit_signal` JSON — no search needed):
     ///   - Momentum: `RsiBelow` (RSI < threshold), `RsiAbove` (RSI > threshold),
     ///     `MacdBullish`, `MacdBearish`, `MacdCrossover`,
     ///     `StochasticBelow`, `StochasticAbove`
@@ -574,7 +574,7 @@ impl OptopsyServer {
                 // Run backtest on a blocking thread — the engine performs synchronous
                 // Polars I/O (scan_parquet) which conflicts with the tokio runtime.
                 tokio::task::spawn_blocking(move || {
-                    tools::backtest::execute(&df, &backtest_params, underlying_prices)
+                    tools::backtest::execute(&df, &backtest_params, underlying_prices, None)
                 })
                 .await
                 .map_err(|e| format!("Backtest task panicked: {e}"))?
@@ -676,6 +676,7 @@ impl OptopsyServer {
                     cross_ohlcv_paths,
                     start_date,
                     end_date,
+                    interval: params.interval.unwrap_or_default(),
                 };
 
                 tokio::task::spawn_blocking(move || {
@@ -1071,6 +1072,7 @@ impl OptopsyServer {
                     params.start_date.as_deref(),
                     params.end_date.as_deref(),
                     params.limit,
+                    params.interval.unwrap_or_default(),
                 )
                 .await
                 .map_err(|e| format!("Error: {e}"))

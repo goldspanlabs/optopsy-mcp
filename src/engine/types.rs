@@ -18,6 +18,26 @@ use crate::signals::registry::SignalSpec;
 /// it to `from_num_days_from_ce_opt`.
 pub const EPOCH_DAYS_CE_OFFSET: i32 = 719_163;
 
+/// Bar interval for OHLCV resampling (daily, weekly, monthly).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Interval {
+    #[default]
+    Daily,
+    Weekly,
+    Monthly,
+}
+
+impl std::fmt::Display for Interval {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Daily => write!(f, "daily"),
+            Self::Weekly => write!(f, "weekly"),
+            Self::Monthly => write!(f, "monthly"),
+        }
+    }
+}
+
 /// Market direction bias for a strategy (bullish, bearish, neutral, or volatile).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
