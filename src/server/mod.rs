@@ -385,23 +385,40 @@ impl OptopsyServer {
     ///
     /// **Actions**:
     ///   - `catalog` — Browse the full built-in signal catalog grouped by category (40+ signals)
-    ///   - `search` — Fuzzy-search built-in signal catalog using natural language (requires `prompt`)
+    ///   - `search` — Search saved custom signals by name/description/formula (requires `prompt`).
+    ///     Only searches user-saved signals, NOT built-ins (use the quick reference above for those)
     ///   - `create` — Build a signal from a formula, optionally save for later use
     ///   - `validate` — Check formula syntax without saving
     ///   - `list` — Show all saved custom signals
     ///   - `get` — Load a saved signal's spec
     ///   - `delete` — Remove a saved signal
     ///
-    /// **Formula syntax**:
+    /// **Common built-in signals** (use directly as entry_signal/exit_signal JSON — no search needed):
+    ///   - Momentum: `RsiBelow` (RSI < threshold), `RsiAbove` (RSI > threshold),
+    ///     `MacdBullish`, `MacdBearish`, `MacdCrossover`,
+    ///     `StochasticBelow`, `StochasticAbove`
+    ///   - Overlap: `PriceAboveSma`, `PriceBelowSma`, `PriceAboveEma`, `PriceBelowEma`,
+    ///     `SmaCrossover`, `SmaCrossunder`, `EmaCrossover`, `EmaCrossunder`
+    ///   - Trend: `SupertrendBullish`, `SupertrendBearish`, `AroonUptrend`, `AroonDowntrend`
+    ///   - Volatility: `AtrAbove`, `AtrBelow`, `BollingerLowerTouch`, `BollingerUpperTouch`,
+    ///     `IvRankAbove`, `IvRankBelow`
+    ///   - Volume: `MfiBelow`, `MfiAbove`, `ObvRising`, `ObvFalling`
+    ///   - Combinators: `And { left, right }`, `Or { left, right }`, `Not { signal }`
+    ///
+    /// **Quick examples** (no search required for these):
+    ///   - RSI < 30: `{ "type": "RsiBelow", "column": "adjclose", "threshold": 30.0 }`
+    ///   - RSI > 70: `{ "type": "RsiAbove", "column": "adjclose", "threshold": 70.0 }`
+    ///   - Price above SMA(50): `{ "type": "PriceAboveSma", "column": "adjclose", "period": 50 }`
+    ///   - Combine two: `{ "type": "And", "left": <signal1>, "right": <signal2> }`
+    ///   - Saved signal: `{ "type": "Saved", "name": "my_signal" }`
+    ///
+    /// **Formula syntax** (for action='create'):
     ///   - Columns: `close`, `open`, `high`, `low`, `volume`, `adjclose`
     ///   - Lookback: `close[1]` (previous bar), `close[5]` (5 bars ago)
     ///   - Functions: `sma(col, N)`, `ema(col, N)`, `std(col, N)`, `max(col, N)`,
     ///     `min(col, N)`, `abs(expr)`, `change(col, N)`, `pct_change(col, N)`
     ///   - Operators: `+`, `-`, `*`, `/`, `>`, `<`, `>=`, `<=`, `==`, `!=`
     ///   - Logical: `and`, `or`, `not`
-    ///
-    /// **Examples**: `"close > sma(close, 20)"`, `"volume > sma(volume, 20) * 2.0"`,
-    ///   `"close > close[1] * 1.02"`, `"pct_change(close, 1) > 0.03"`
     ///
     /// **Next tool**: `run_options_backtest()` with `entry_signal`/`exit_signal` set to the returned spec,
     ///   or use `{ "type": "Saved", "name": "signal_name" }` to reference saved signals
@@ -1084,7 +1101,9 @@ impl ServerHandler for OptopsyServer {
                 \n\
                 \n### 1. Explore Strategies & Signals\
                 \n  - list_strategies() — browse all 32 option strategies by category\
-                \n  - build_signal(action=\"catalog\") / build_signal(action=\"search\") — discover TA signals (40+)\
+                \n  - For built-in signals (RsiBelow, MacdBullish, etc.): construct JSON directly — see build_signal tool description\
+                \n  - build_signal(action=\"search\") — find saved custom signals by name\
+                \n  - build_signal(action=\"catalog\") — browse all built-in signals by category\
                 \n\
                 \n### 2. Full Simulation\
                 \n  - **Options**: run_options_backtest({ strategy, symbol, ... }) — event-driven options backtest\

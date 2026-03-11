@@ -71,15 +71,20 @@ pub fn fuzzy_search(prompt: &str) -> (Vec<SignalCandidate>, bool) {
         })
         .collect();
 
-    // Sort by score descending, take top-5 with score > 0
+    // Sort by score descending, take top-5
     scored_signals.sort_by_key(|&(_, score)| std::cmp::Reverse(score));
 
-    let has_matches = scored_signals.iter().any(|(_, score)| *score > 0);
+    let top_score = scored_signals.first().map_or(0, |&(_, s)| s);
+    let has_matches = top_score > 0;
+
+    // If the best match has a name-level hit (score >= 2), require at least
+    // score 2 so description-only matches (score 1) don't dilute results.
+    let min_score = if top_score >= 2 { 2 } else { 1 };
 
     let results = if has_matches {
         scored_signals
             .iter()
-            .filter(|(_, score)| *score > 0)
+            .filter(|(_, score)| *score >= min_score)
             .take(5)
             .map(|(idx, _)| *idx)
             .collect::<Vec<_>>()

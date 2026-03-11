@@ -307,21 +307,23 @@ fn execute_get(name: &str) -> BuildSignalResponse {
 }
 
 fn execute_search(prompt: &str) -> BuildSignalResponse {
-    let result = super::construct_signal::execute(prompt);
-
-    // Also search saved custom signals by name/description/formula
+    // Search saved custom signals only — built-in signals are listed in the
+    // tool description so the agent can construct them directly without searching.
     let prompt_lower = prompt.to_lowercase();
+    let tokens: Vec<&str> = prompt_lower.split_whitespace().collect();
+
     let matching_saved: Vec<SavedSignalEntry> = storage::list_saved_signals()
         .unwrap_or_default()
         .into_iter()
         .filter(|s| {
-            s.name.to_lowercase().contains(&prompt_lower)
-                || s.description
-                    .as_deref()
-                    .is_some_and(|d| d.to_lowercase().contains(&prompt_lower))
-                || s.formula
-                    .as_deref()
-                    .is_some_and(|f| f.to_lowercase().contains(&prompt_lower))
+            let name_lower = s.name.to_lowercase();
+            let desc_lower = s.description.as_deref().unwrap_or_default().to_lowercase();
+            let formula_lower = s.formula.as_deref().unwrap_or_default().to_lowercase();
+
+            // Match if all tokens appear in name, description, or formula
+            tokens.iter().all(|tok| {
+                name_lower.contains(tok) || desc_lower.contains(tok) || formula_lower.contains(tok)
+            })
         })
         .map(|s| SavedSignalEntry {
             usage: SavedSignalUsage {
@@ -335,36 +337,43 @@ fn execute_search(prompt: &str) -> BuildSignalResponse {
         .collect();
 
     let has_saved = !matching_saved.is_empty();
-    let success = result.had_real_matches || has_saved;
 
-    let summary = if has_saved && result.had_real_matches {
-        format!(
-            "Found {} built-in signal(s) and {} saved custom signal(s) matching '{prompt}'.",
-            result.candidates.len(),
-            matching_saved.len(),
-        )
-    } else if has_saved {
+    let summary = if has_saved {
         format!(
             "Found {} saved custom signal(s) matching '{prompt}'. \
              Use {{ \"type\": \"Saved\", \"name\": \"<name>\" }} to reference them.",
             matching_saved.len(),
         )
     } else {
-        result.summary
+        format!(
+            "No saved custom signals match '{prompt}'. \
+             For built-in signals (RsiBelow, RsiAbove, MacdBullish, etc.), \
+             construct the JSON directly — see the tool description for examples."
+        )
     };
 
     BuildSignalResponse {
         summary,
-        success,
+        success: has_saved,
         signal_spec: None,
         saved_signals: matching_saved,
         formula_help: None,
-        candidates: result.candidates,
-        schema: Some(result.schema),
-        column_defaults: Some(result.column_defaults),
-        combinator_examples: result.combinator_examples,
+        candidates: vec![],
+        schema: None,
+        column_defaults: None,
+        combinator_examples: vec![],
         catalog: None,
-        suggested_next_steps: result.suggested_next_steps,
+        suggested_next_steps: if has_saved {
+            vec![
+                "Use { \"type\": \"Saved\", \"name\": \"<name>\" } as entry_signal or exit_signal in run_options_backtest or run_stock_backtest".to_string(),
+            ]
+        } else {
+            vec![
+                "Construct built-in signals directly as JSON (e.g. { \"type\": \"RsiBelow\", \"column\": \"adjclose\", \"threshold\": 30.0 })".to_string(),
+                "Use action='catalog' to browse all built-in signals if unsure of the type name".to_string(),
+                "Use action='create' to define a custom signal with a formula".to_string(),
+            ]
+        },
     }
 }
 
@@ -463,10 +472,9 @@ fn formula_help() -> FormulaHelp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
 
-    // Serialize tests that share TEST_SIGNALS_DIR to avoid concurrent temp dir overwrites.
-    static FS_LOCK: Mutex<()> = Mutex::new(());
+    // Use the shared cross-module lock to prevent TEST_SIGNALS_DIR races.
+    use crate::signals::storage::TEST_FS_LOCK as FS_LOCK;
 
     #[test]
     fn search_finds_saved_custom_signals() {
@@ -522,7 +530,7 @@ mod tests {
     }
 
     #[test]
-    fn search_returns_empty_saved_when_no_match() {
+    fn search_returns_empty_when_no_saved_match() {
         let _lock = FS_LOCK.lock().unwrap();
         let _guard = storage::TempSignalsGuard::new();
 
@@ -536,15 +544,29 @@ mod tests {
         let resp = execute(Action::Search {
             prompt: "RSI oversold".to_string(),
         });
-        // Built-in RSI signals should match, but saved signal should not
+        // Search only covers saved signals now — no built-in candidates
         assert!(
             resp.saved_signals.is_empty(),
             "unrelated saved signal should not appear in search results"
         );
         assert!(
-            !resp.candidates.is_empty(),
-            "built-in RSI signals should match"
+            resp.candidates.is_empty(),
+            "search should not return built-in candidates"
         );
+        assert!(!resp.success);
+    }
+
+    #[test]
+    fn search_summary_guides_to_builtins_when_no_match() {
+        let _lock = FS_LOCK.lock().unwrap();
+        let _guard = storage::TempSignalsGuard::new();
+
+        let resp = execute(Action::Search {
+            prompt: "rsi".to_string(),
+        });
+        // No saved signals match "rsi", summary should guide to built-ins
+        assert!(resp.summary.contains("No saved custom signals"));
+        assert!(resp.summary.contains("construct the JSON directly"));
     }
 
     #[test]
@@ -559,11 +581,10 @@ mod tests {
         };
         storage::save_signal("rsi_custom_entry", &spec).unwrap();
 
-        // "rsi" matches both built-in and saved
         let resp = execute(Action::Search {
             prompt: "rsi".to_string(),
         });
         assert!(resp.summary.contains("saved custom signal"));
-        assert!(resp.summary.contains("built-in signal"));
+        assert!(resp.success);
     }
 }

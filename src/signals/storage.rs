@@ -13,6 +13,12 @@ use super::registry::SignalSpec;
 #[cfg(test)]
 pub(crate) static TEST_SIGNALS_DIR: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 
+/// Shared lock for all tests that mutate `TEST_SIGNALS_DIR`.
+/// Every test module that creates a `TempSignalsGuard` MUST hold this lock
+/// to prevent cross-module race conditions.
+#[cfg(test)]
+pub(crate) static TEST_FS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// RAII guard that redirects signal storage to a temp directory for test isolation.
 #[cfg(test)]
 pub(crate) struct TempSignalsGuard {
@@ -308,11 +314,9 @@ pub struct SavedSignalInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
 
-    // Serialize tests that touch the filesystem signals directory.
-    // All filesystem tests MUST hold this lock AND set the temp dir override.
-    static FS_LOCK: Mutex<()> = Mutex::new(());
+    // Use the shared cross-module lock to prevent TEST_SIGNALS_DIR races.
+    use super::TEST_FS_LOCK as FS_LOCK;
 
     /// RAII guard that sets `TEST_SIGNALS_DIR` to a temp directory and restores it on drop.
     struct TempSignalsDir {
