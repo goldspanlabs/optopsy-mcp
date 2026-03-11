@@ -108,8 +108,14 @@ fn compute_equity_metrics(
     // Annualize (assume ~252 trading days)
     let annualization = (252.0_f64).sqrt();
     // Use actual date span from equity curve for CAGR/Calmar.
-    let first_dt = equity_curve.first().unwrap().datetime;
-    let last_dt = equity_curve.last().unwrap().datetime;
+    let first_dt = equity_curve
+        .first()
+        .expect("equity_curve guaranteed non-empty by caller guard")
+        .datetime;
+    let last_dt = equity_curve
+        .last()
+        .expect("equity_curve guaranteed non-empty by caller guard")
+        .datetime;
     let calendar_days = (last_dt - first_dt).num_days().max(0) as f64;
 
     let sharpe = if std_return > 0.0 {
@@ -127,7 +133,10 @@ fn compute_equity_metrics(
     let max_drawdown = calculate_max_drawdown(equity_curve, initial_capital);
     let var_95 = calculate_var(&returns, 0.05);
 
-    let final_equity = equity_curve.last().unwrap().equity;
+    let final_equity = equity_curve
+        .last()
+        .expect("equity_curve guaranteed non-empty by caller guard")
+        .equity;
     let total_return = (final_equity - initial_capital) / initial_capital;
     let total_return_pct = total_return * 100.0;
 

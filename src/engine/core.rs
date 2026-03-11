@@ -22,7 +22,7 @@ fn load_ohlcv(ohlcv_path: &str) -> Result<DataFrame> {
 }
 
 /// Maximum recursion depth when resolving nested/saved signal specs.
-const MAX_SIGNAL_DEPTH: usize = 32;
+const MAX_SIGNAL_DEPTH: usize = 8;
 
 /// Check whether a `SignalSpec` (including nested And/Or) contains any IV-based signal.
 /// Resolves `Saved` specs best-effort via disk load, with depth guard.
