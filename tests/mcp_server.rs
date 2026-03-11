@@ -105,12 +105,11 @@ async fn tool_router_lists_all_tools() {
     let tools = client.list_all_tools().await.unwrap();
     let tool_names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
 
-    assert_eq!(tools.len(), 13, "Expected 13 tools, got: {tool_names:?}");
+    assert_eq!(tools.len(), 12, "Expected 12 tools, got: {tool_names:?}");
     for expected in [
         "list_strategies",
         "list_signals",
         "get_loaded_symbol",
-        "suggest_parameters",
         "run_backtest",
         "compare_strategies",
         "parameter_sweep",
@@ -973,7 +972,7 @@ async fn get_loaded_symbol_with_multiple_symbols() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────
-// Multi-symbol integration tests for run_backtest, compare_strategies, suggest_parameters
+// Multi-symbol integration tests for run_backtest, compare_strategies
 // ─────────────────────────────────────────────────────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1339,158 +1338,6 @@ async fn compare_strategies_fails_unknown_symbol() {
                         "max_positions": 1,
                         "selector": "Nearest"
                     },
-                    "symbol": "UNKNOWN"
-                }))
-                .unwrap(),
-            ),
-            task: None,
-        })
-        .await
-        .unwrap();
-
-    assert!(result.is_error.unwrap_or(false));
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.raw.as_text())
-        .unwrap();
-    assert!(
-        text.text.contains("not loaded") || text.text.contains("auto-load"),
-        "Expected symbol error, got: {}",
-        text.text
-    );
-
-    client.cancel().await.unwrap();
-    server_handle.await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn suggest_parameters_fails_multiple_symbols_no_symbol_param() {
-    let (server, _tmp) = make_test_server();
-
-    let (server_tx, server_rx) = tokio::io::duplex(4096);
-    let (client_tx, client_rx) = tokio::io::duplex(4096);
-
-    // Preload multiple symbols
-    preload_data(&server, "SPY", make_multi_strike_df()).await;
-    preload_data(&server, "QQQ", make_multi_strike_df()).await;
-
-    let server_handle =
-        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
-
-    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
-        ().serve((server_rx, client_tx)).await.unwrap();
-
-    let result = client
-        .peer()
-        .call_tool(CallToolRequestParams {
-            meta: None,
-            name: "suggest_parameters".into(),
-            arguments: Some(
-                serde_json::from_value(json!({
-                    "strategy": "long_call",
-                    "risk_preference": "moderate"
-                }))
-                .unwrap(),
-            ),
-            task: None,
-        })
-        .await
-        .unwrap();
-
-    assert!(result.is_error.unwrap_or(false));
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.raw.as_text())
-        .unwrap();
-    assert!(
-        text.text.contains("Multiple symbols"),
-        "Expected 'Multiple symbols' error, got: {}",
-        text.text
-    );
-
-    client.cancel().await.unwrap();
-    server_handle.await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn suggest_parameters_succeeds_with_explicit_symbol() {
-    let (server, _tmp) = make_test_server();
-
-    let (server_tx, server_rx) = tokio::io::duplex(65536);
-    let (client_tx, client_rx) = tokio::io::duplex(65536);
-
-    // Preload multiple symbols with different data to verify symbol resolution
-    preload_data(&server, "SPY", make_multi_strike_df()).await;
-    preload_data(&server, "QQQ", make_sparse_df()).await;
-
-    let server_handle =
-        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
-
-    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
-        ().serve((server_rx, client_tx)).await.unwrap();
-
-    let result = client
-        .peer()
-        .call_tool(CallToolRequestParams {
-            meta: None,
-            name: "suggest_parameters".into(),
-            arguments: Some(
-                serde_json::from_value(json!({
-                    "strategy": "long_call",
-                    "risk_preference": "moderate",
-                    "symbol": "SPY"
-                }))
-                .unwrap(),
-            ),
-            task: None,
-        })
-        .await
-        .unwrap();
-
-    assert!(!result.is_error.unwrap_or(false));
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.raw.as_text())
-        .unwrap();
-    let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
-    assert!(
-        resp["leg_deltas"].is_array(),
-        "suggest_parameters returned error: {:?}",
-        text.text
-    );
-
-    client.cancel().await.unwrap();
-    server_handle.await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn suggest_parameters_fails_unknown_symbol() {
-    let (server, _tmp) = make_test_server();
-
-    let (server_tx, server_rx) = tokio::io::duplex(4096);
-    let (client_tx, client_rx) = tokio::io::duplex(4096);
-
-    // Preload SPY only
-    preload_data(&server, "SPY", make_multi_strike_df()).await;
-
-    let server_handle =
-        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
-
-    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
-        ().serve((server_rx, client_tx)).await.unwrap();
-
-    let result = client
-        .peer()
-        .call_tool(CallToolRequestParams {
-            meta: None,
-            name: "suggest_parameters".into(),
-            arguments: Some(
-                serde_json::from_value(json!({
-                    "strategy": "long_call",
-                    "risk_preference": "moderate",
                     "symbol": "UNKNOWN"
                 }))
                 .unwrap(),
