@@ -32,7 +32,7 @@ Control runtime behavior and data sources:
 
 ## Architecture
 
-**optopsy-mcp** is an options backtesting engine exposed as an MCP (Model Context Protocol) server via `rmcp 0.17`. It provides 12 tools for running event-driven backtests, comparing strategies, parameter optimization, walk-forward analysis, statistical testing, and returning raw price data for charting.
+**optopsy-mcp** is an options backtesting engine exposed as an MCP (Model Context Protocol) server via `rmcp 0.17`. It provides 10 tools for running event-driven backtests, comparing strategies, parameter optimization, walk-forward analysis, statistical testing, and returning raw price data for charting.
 
 ### Transport (`src/main.rs`)
 - **stdio** (default): for local Claude Desktop integration
@@ -59,7 +59,7 @@ Key submodules: `filters.rs` (DTE/delta filtering, `filter_valid_quotes(df, min_
 `DataStore` trait with `CachedStore` as default — local Parquet cache at `~/.optopsy/cache/{category}/{SYMBOL}.parquet` with S3 fetch-on-miss. `ParquetStore` handles normalization of date columns (`quote_date`/`quote_datetime` as Date, Datetime, or String → unified `Datetime("quote_datetime")`). Path segments validated against traversal attacks.
 
 ### Signals (`src/signals/`)
-TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, trend, volatility, overlap, price, volume, plus combinators. Split across three focused modules: `spec.rs` (the `SignalSpec` enum with 40+ variants), `builders.rs` (`build_signal()` factory and per-category builders), and `registry.rs` (signal catalog metadata, `collect_cross_symbols`, re-exports). Signals are **fully wired** into backtest entry/exit filtering via `entry_signal` and `exit_signal` params in `BacktestParams`. Usage requires OHLCV data loaded via `fetch_to_parquet` tool.
+TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, trend, volatility, overlap, price, volume, plus combinators. Split across three focused modules: `spec.rs` (the `SignalSpec` enum with 40+ variants), `builders.rs` (`build_signal()` factory and per-category builders), and `registry.rs` (signal catalog metadata, `collect_cross_symbols`, re-exports). Signals are **fully wired** into backtest entry/exit filtering via `entry_signal` and `exit_signal` params in `BacktestParams`. OHLCV data is auto-fetched when signals are used.
 
 ## Polars 0.53 Conventions
 
@@ -91,25 +91,9 @@ Check if Parquet cache exists for a symbol and last update time.
 - `last_updated` — Timestamp
 - `row_count` — Number of records (if exists)
 
-#### `fetch_to_parquet`
-Download historical OHLCV data from Yahoo Finance and save as Parquet. Used to populate signal filtering requirements.
-
-**Parameters:**
-```json
-{
-  "symbol": "SPY",           // Required
-  "start_date": "2024-01-01", // Optional
-  "end_date": "2024-12-31"   // Optional
-}
-```
-
-**Response:** `FetchResponse`
-- `summary`, `rows` — OHLCV data summary
-- `file_path` — Local Parquet path
-- `date_range` — Coverage
-
 #### `get_raw_prices`
 Return raw OHLCV price data for a symbol, ready for chart generation by LLMs.
+OHLCV data is auto-fetched from Yahoo Finance and cached on first access.
 
 **Parameters:**
 ```json
@@ -145,14 +129,6 @@ List all 32 built-in strategies with leg definitions and category.
 **Response:** `StrategiesResponse`
 - Array of strategy objects with `name`, `category`, `description`, `legs` (with `side`, `option_type`, `delta` ranges)
 
-#### `list_signals`
-List all ~40 available TA signals across categories (momentum, trend, volatility, overlap, price, volume).
-
-**Parameters:** None
-
-**Response:** `SignalsResponse`
-- Signal catalog with names, parameters, descriptions
-
 #### `build_signal`
 Single entry point for discovering built-in signals and creating/managing custom formula-based signals. Dispatches via `action` field.
 
@@ -160,6 +136,7 @@ Single entry point for discovering built-in signals and creating/managing custom
 
 | `action` | Purpose |
 |----------|---------|
+| `catalog` | Browse the full built-in signal catalog grouped by category (40+ signals) |
 | `search` | NLP search of the built-in signal catalog |
 | `validate` | Check a formula without saving |
 | `create` | Build a custom signal from a price-column formula |
@@ -481,7 +458,7 @@ let lazy = df.clone().lazy()
 ```
 
 ### Signal Entry/Exit
-1. Call `fetch_to_parquet` to populate OHLCV cache
+1. OHLCV data is auto-fetched when signals are used (no manual step needed)
 2. Pass `entry_signal: Some(SignalSpec { ... })` in `BacktestParams`
 3. Event loop evaluates signal on each date via `signal::evaluate(ohlcv_df, spec, date)`
 4. Gates trade entry or forces position exit
