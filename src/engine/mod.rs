@@ -9,6 +9,7 @@ pub mod positions;
 pub mod price_table;
 pub mod pricing;
 pub mod rules;
+pub mod sim_types;
 pub mod suggest;
 pub mod sweep;
 pub mod sweep_analysis;

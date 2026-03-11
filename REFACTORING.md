@@ -17,7 +17,7 @@ The optopsy-mcp codebase has grown to ~27k lines in `src/` with 7 files exceedin
 | `src/signals/registry.rs` | 1,903 | 3 files | ~340 ✅ |
 | `src/engine/sweep.rs` | 1,756 | 2 files | ~440 (+ ~650 tests) ✅ |
 | `src/tools/ai_format.rs` | 1,700 | 2 files | ~640 (+ ~700 tests) ✅ |
-| `src/engine/types.rs` | 1,154 | 2 files | ~660 |
+| `src/engine/types.rs` | 1,154 | 2 files | ~660 ✅ |
 | `src/engine/core.rs` | 1,165 | deferred | — |
 
 ---
@@ -167,7 +167,9 @@ Convert from a single file to a directory module (`src/server/mod.rs`).
 
 ---
 
-### 6. `src/engine/types.rs` (1,154 lines → 2 files)
+### 6. `src/engine/types.rs` (1,154 lines → 2 files) — ✅ COMPLETED
+
+**Status:** Done. Split into `sim_types.rs` (112 lines) containing 12 event simulation types (PriceKey, PriceTable, DateIndex, QuoteSnapshot, Position, PositionLeg, PositionStatus, EntryCandidate, CandidateLeg, AdjustmentAction, AdjustmentTrigger, AdjustmentRule). Main file retains core enums, value types, param/result structs (~660 lines + ~390 tests). All existing import paths preserved via re-exports.
 
 #### `src/engine/sim_types.rs` (~110 lines)
 - Event simulation types: `PriceKey`, `PriceTable`, `DateIndex`, `QuoteSnapshot`
