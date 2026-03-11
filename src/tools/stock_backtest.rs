@@ -17,16 +17,17 @@ pub fn execute(
 ) -> Result<StockBacktestResponse> {
     let start = std::time::Instant::now();
 
-    // Parse OHLCV bars from the cached parquet file
+    // Load OHLCV DataFrame once, then derive bars and signal filters from it
     let ohlcv_path = params
         .ohlcv_path
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("ohlcv_path is required for stock backtest"))?;
 
-    let bars = stock_sim::parse_ohlcv_bars(ohlcv_path, params.start_date, params.end_date)?;
+    let ohlcv_df = stock_sim::load_ohlcv_df(ohlcv_path, params.start_date, params.end_date)?;
+    let bars = stock_sim::bars_from_df(&ohlcv_df)?;
 
-    // Build signal date filters
-    let (entry_dates, exit_dates) = stock_sim::build_stock_signal_filters(params)?;
+    // Build signal date filters from the same DataFrame (no double-read)
+    let (entry_dates, exit_dates) = stock_sim::build_stock_signal_filters(params, &ohlcv_df)?;
 
     // Run the simulation
     let result =

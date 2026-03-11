@@ -54,6 +54,14 @@ struct StockPosition {
     entry_price: f64,
     quantity: i32,
     side: Side,
+    entry_commission: f64,
+}
+
+/// Exit decision from `check_exit`: the exit type and an optional fill price
+/// override. SL/TP exits fill at the trigger price; other exits use bar close.
+struct ExitDecision {
+    exit_type: ExitType,
+    fill_price: Option<f64>,
 }
 
 /// Run a stock backtest simulation on OHLCV data.
@@ -81,16 +89,17 @@ pub fn run_stock_backtest(
         // ── 1. Check exits on open positions ────────────────────────────────
         let mut closed_ids = Vec::new();
         for pos in &positions {
-            if let Some(exit) = check_exit(pos, bar, params, exit_dates) {
-                closed_ids.push((pos.id, exit));
+            if let Some(decision) = check_exit(pos, bar, params, exit_dates) {
+                closed_ids.push((pos.id, decision));
             }
         }
 
         // Process closes
-        for (id, exit_type) in closed_ids {
+        for (id, decision) in closed_ids {
             if let Some(idx) = positions.iter().position(|p| p.id == id) {
                 let pos = positions.remove(idx);
-                let (pnl, record) = close_position(&pos, bar, exit_type, params);
+                let (pnl, record) =
+                    close_position(&pos, bar, decision.exit_type, decision.fill_price, params);
                 equity += pnl;
                 trade_log.push(record);
             }
@@ -104,23 +113,24 @@ pub fn run_stock_backtest(
 
         if can_enter && signal_fires {
             let entry_price = compute_entry_price(bar, params.side, &params.slippage);
-            let cost = entry_price * f64::from(params.quantity);
+            let position_value = entry_price * f64::from(params.quantity);
             let commission_cost = params
                 .commission
                 .as_ref()
                 .map_or(0.0, |c| c.calculate(params.quantity));
 
-            // Check we have enough capital for a long position
-            if params.side == Side::Long && (cost + commission_cost) > equity {
-                // Skip — not enough capital
+            // Capital/margin check: longs need purchase cost, shorts need full collateral
+            let required_capital = position_value + commission_cost;
+            if required_capital > equity {
+                // Skip — not enough capital/margin
             } else {
-                equity -= commission_cost;
                 let pos = StockPosition {
                     id: next_trade_id,
                     entry_date: bar.date,
                     entry_price,
                     quantity: params.quantity,
                     side: params.side,
+                    entry_commission: commission_cost,
                 };
                 next_trade_id += 1;
                 positions.push(pos);
@@ -147,7 +157,8 @@ pub fn run_stock_backtest(
     // ── 4. Force-close remaining positions at last bar ──────────────────
     if let Some(last_bar) = bars.last() {
         for pos in &positions {
-            let (_pnl, record) = close_position(pos, last_bar, ExitType::MaxHold, params);
+            // Force-close P&L is already reflected in equity curve via mark-to-market
+            let (_pnl, record) = close_position(pos, last_bar, ExitType::MaxHold, None, params);
             trade_log.push(record);
         }
     }
@@ -169,12 +180,15 @@ pub fn run_stock_backtest(
 }
 
 /// Check if a position should be exited on this bar.
+///
+/// Returns an `ExitDecision` with the exit type and an optional fill price
+/// override for SL/TP exits (which fill at the trigger level, not bar close).
 fn check_exit(
     pos: &StockPosition,
     bar: &Bar,
     params: &StockBacktestParams,
     exit_dates: Option<&HashSet<NaiveDate>>,
-) -> Option<ExitType> {
+) -> Option<ExitDecision> {
     // Stop loss: check if intraday low (for longs) or high (for shorts) hit stop
     if let Some(sl_pct) = params.stop_loss {
         let sl_price = match pos.side {
@@ -186,7 +200,10 @@ fn check_exit(
             Side::Short => bar.high >= sl_price,
         };
         if triggered {
-            return Some(ExitType::StopLoss);
+            return Some(ExitDecision {
+                exit_type: ExitType::StopLoss,
+                fill_price: Some(sl_price),
+            });
         }
     }
 
@@ -201,7 +218,10 @@ fn check_exit(
             Side::Short => bar.low <= tp_price,
         };
         if triggered {
-            return Some(ExitType::TakeProfit);
+            return Some(ExitDecision {
+                exit_type: ExitType::TakeProfit,
+                fill_price: Some(tp_price),
+            });
         }
     }
 
@@ -209,14 +229,20 @@ fn check_exit(
     if let Some(max_days) = params.max_hold_days {
         let days_held = (bar.date - pos.entry_date).num_days();
         if days_held >= i64::from(max_days) {
-            return Some(ExitType::MaxHold);
+            return Some(ExitDecision {
+                exit_type: ExitType::MaxHold,
+                fill_price: None,
+            });
         }
     }
 
     // Exit signal
     if let Some(dates) = exit_dates {
         if dates.contains(&bar.date) {
-            return Some(ExitType::Signal);
+            return Some(ExitDecision {
+                exit_type: ExitType::Signal,
+                fill_price: None,
+            });
         }
     }
 
@@ -256,13 +282,18 @@ fn compute_exit_price(bar: &Bar, side: Side, slippage: &Slippage) -> f64 {
 }
 
 /// Close a position and produce a `TradeRecord`.
+///
+/// When `trigger_price` is `Some`, the position exits at that exact price
+/// (used for SL/TP fills). Otherwise, exits at bar close with slippage.
 fn close_position(
     pos: &StockPosition,
     bar: &Bar,
     exit_type: ExitType,
+    trigger_price: Option<f64>,
     params: &StockBacktestParams,
 ) -> (f64, TradeRecord) {
-    let exit_price = compute_exit_price(bar, pos.side, &params.slippage);
+    let exit_price =
+        trigger_price.unwrap_or_else(|| compute_exit_price(bar, pos.side, &params.slippage));
     let direction = pos.side.multiplier();
     let qty = f64::from(pos.quantity);
 
@@ -271,7 +302,7 @@ fn close_position(
         .commission
         .as_ref()
         .map_or(0.0, |c| c.calculate(pos.quantity));
-    let pnl = pnl_before_commission - exit_commission;
+    let pnl = pnl_before_commission - pos.entry_commission - exit_commission;
 
     let days_held = (bar.date - pos.entry_date).num_days();
 
@@ -314,53 +345,63 @@ fn empty_result(_capital: f64) -> BacktestResult {
     }
 }
 
-/// Parse OHLCV `DataFrame` into Bar structs, optionally filtering by date range.
-pub fn parse_ohlcv_bars(
+/// Load an OHLCV parquet file into a `DataFrame`, applying date range and
+/// validity filters via Polars lazy predicates for predicate pushdown.
+pub fn load_ohlcv_df(
     ohlcv_path: &str,
     start_date: Option<NaiveDate>,
     end_date: Option<NaiveDate>,
-) -> Result<Vec<Bar>> {
+) -> Result<polars::prelude::DataFrame> {
     use polars::prelude::*;
 
     let args = ScanArgsParquet::default();
-    let df = LazyFrame::scan_parquet(ohlcv_path.into(), args)?
+    let mut lazy = LazyFrame::scan_parquet(ohlcv_path.into(), args)?
+        .filter(col("open").gt(lit(0.0)).and(col("close").gt(lit(0.0))));
+
+    if let Some(start) = start_date {
+        lazy = lazy.filter(col("date").gt_eq(lit(start)));
+    }
+    if let Some(end) = end_date {
+        lazy = lazy.filter(col("date").lt_eq(lit(end)));
+    }
+
+    let df = lazy
         .sort(["date"], SortMultipleOptions::default())
         .collect()?;
+    Ok(df)
+}
 
+/// Convert an already-loaded OHLCV `DataFrame` into `Bar` structs.
+pub fn bars_from_df(df: &polars::prelude::DataFrame) -> Result<Vec<Bar>> {
     let dates = df
         .column("date")
         .map_err(|e| anyhow::anyhow!("Missing 'date' column: {e}"))?
         .date()
-        .map_err(|e| anyhow::anyhow!("'date' column is not Date type: {e}"))?
-        .clone();
+        .map_err(|e| anyhow::anyhow!("'date' column is not Date type: {e}"))?;
 
     let opens = df
         .column("open")
         .map_err(|e| anyhow::anyhow!("Missing 'open' column: {e}"))?
         .f64()
-        .map_err(|e| anyhow::anyhow!("'open' not f64: {e}"))?
-        .clone();
+        .map_err(|e| anyhow::anyhow!("'open' not f64: {e}"))?;
 
     let highs = df
         .column("high")
         .map_err(|e| anyhow::anyhow!("Missing 'high' column: {e}"))?
         .f64()
-        .map_err(|e| anyhow::anyhow!("'high' not f64: {e}"))?
-        .clone();
+        .map_err(|e| anyhow::anyhow!("'high' not f64: {e}"))?;
 
     let lows = df
         .column("low")
         .map_err(|e| anyhow::anyhow!("Missing 'low' column: {e}"))?
         .f64()
-        .map_err(|e| anyhow::anyhow!("'low' not f64: {e}"))?
-        .clone();
+        .map_err(|e| anyhow::anyhow!("'low' not f64: {e}"))?;
 
     let closes = df
         .column("close")
         .map_err(|e| anyhow::anyhow!("Missing 'close' column: {e}"))?
         .f64()
-        .map_err(|e| anyhow::anyhow!("'close' not f64: {e}"))?
-        .clone();
+        .map_err(|e| anyhow::anyhow!("'close' not f64: {e}"))?;
 
     let epoch_offset = super::types::EPOCH_DAYS_CE_OFFSET;
     let mut bars = Vec::with_capacity(df.height());
@@ -373,22 +414,12 @@ pub fn parse_ohlcv_bars(
             continue;
         };
 
-        if let Some(start) = start_date {
-            if date < start {
-                continue;
-            }
-        }
-        if let Some(end) = end_date {
-            if date > end {
-                continue;
-            }
-        }
-
         let open = opens.get(i).unwrap_or(0.0);
         let high = highs.get(i).unwrap_or(0.0);
         let low = lows.get(i).unwrap_or(0.0);
         let close = closes.get(i).unwrap_or(0.0);
 
+        // Validity already filtered at the lazy level, but guard against nulls
         if open <= 0.0 || close <= 0.0 {
             continue;
         }
@@ -405,12 +436,28 @@ pub fn parse_ohlcv_bars(
     Ok(bars)
 }
 
+/// Parse OHLCV parquet into `Bar` structs, optionally filtering by date range.
+///
+/// Convenience wrapper that calls `load_ohlcv_df` + `bars_from_df`.
+pub fn parse_ohlcv_bars(
+    ohlcv_path: &str,
+    start_date: Option<NaiveDate>,
+    end_date: Option<NaiveDate>,
+) -> Result<Vec<Bar>> {
+    let df = load_ohlcv_df(ohlcv_path, start_date, end_date)?;
+    bars_from_df(&df)
+}
+
 /// Optional set of dates on which a signal is active.
 type DateFilter = Option<HashSet<NaiveDate>>;
 
-/// Build signal date filters for stock backtest from OHLCV data.
+/// Build signal date filters for stock backtest from a pre-loaded OHLCV `DataFrame`.
+///
+/// Accepts the primary OHLCV data directly to avoid re-reading the parquet file.
+/// Cross-symbol data is still loaded from `params.cross_ohlcv_paths` on demand.
 pub fn build_stock_signal_filters(
     params: &StockBacktestParams,
+    ohlcv_df: &polars::prelude::DataFrame,
 ) -> Result<(DateFilter, DateFilter)> {
     use crate::signals;
 
@@ -420,15 +467,6 @@ pub fn build_stock_signal_filters(
     if !has_entry && !has_exit {
         return Ok((None, None));
     }
-
-    let ohlcv_path = params.ohlcv_path.as_deref().ok_or_else(|| {
-        anyhow::anyhow!("ohlcv_path is required when entry_signal or exit_signal is set")
-    })?;
-
-    let ohlcv_df = {
-        let args = polars::prelude::ScanArgsParquet::default();
-        polars::prelude::LazyFrame::scan_parquet(ohlcv_path.into(), args)?.collect()?
-    };
 
     // Check for cross-symbol references
     let has_cross = params
@@ -452,12 +490,12 @@ pub fn build_stock_signal_filters(
         let entry_dates = params
             .entry_signal
             .as_ref()
-            .map(|spec| signals::active_dates_multi(spec, &ohlcv_df, &cross_dfs, "date"))
+            .map(|spec| signals::active_dates_multi(spec, ohlcv_df, &cross_dfs, "date"))
             .transpose()?;
         let exit_dates = params
             .exit_signal
             .as_ref()
-            .map(|spec| signals::active_dates_multi(spec, &ohlcv_df, &cross_dfs, "date"))
+            .map(|spec| signals::active_dates_multi(spec, ohlcv_df, &cross_dfs, "date"))
             .transpose()?;
 
         Ok((entry_dates, exit_dates))
@@ -465,12 +503,12 @@ pub fn build_stock_signal_filters(
         let entry_dates = params
             .entry_signal
             .as_ref()
-            .map(|spec| signals::active_dates(spec, &ohlcv_df, "date"))
+            .map(|spec| signals::active_dates(spec, ohlcv_df, "date"))
             .transpose()?;
         let exit_dates = params
             .exit_signal
             .as_ref()
-            .map(|spec| signals::active_dates(spec, &ohlcv_df, "date"))
+            .map(|spec| signals::active_dates(spec, ohlcv_df, "date"))
             .transpose()?;
 
         Ok((entry_dates, exit_dates))
@@ -554,7 +592,6 @@ mod tests {
     fn no_entry_signal_no_trades() {
         let bars = make_bars();
         let params = default_params();
-        // No entry_dates provided → no signal fires → no trades
         let result = run_stock_backtest(&bars, &params, None, None).unwrap();
         assert_eq!(result.trade_count, 0);
     }
@@ -602,7 +639,10 @@ mod tests {
     }
 
     #[test]
-    fn stop_loss_triggers() {
+    fn stop_loss_fills_at_trigger_price() {
+        // Entry at open 100. SL at 5% → trigger price = 95.0
+        // Bar low = 94.0 (triggers SL), close = 90.0
+        // P&L should use SL price 95.0, NOT close 90.0
         let bars = vec![
             Bar {
                 date: NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
@@ -616,21 +656,30 @@ mod tests {
                 open: 100.5,
                 high: 101.0,
                 low: 94.0,
-                close: 95.0,
+                close: 90.0, // Close is much lower than SL price
             },
         ];
         let mut params = default_params();
-        params.stop_loss = Some(0.05); // 5% stop loss
+        params.stop_loss = Some(0.05);
         let mut entry_dates = HashSet::new();
         entry_dates.insert(bars[0].date);
 
         let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
         assert_eq!(result.trade_count, 1);
         assert_eq!(result.trade_log[0].exit_type, ExitType::StopLoss);
+        // P&L = (95.0 - 100.0) * 100 = -500.0 (filled at SL price, not close of 90)
+        assert!(
+            (result.total_pnl - (-500.0)).abs() < 1e-6,
+            "SL should fill at 95.0 not close 90.0, got pnl={}",
+            result.total_pnl
+        );
     }
 
     #[test]
-    fn take_profit_triggers() {
+    fn take_profit_fills_at_trigger_price() {
+        // Entry at open 100. TP at 10% → trigger price = 110.0
+        // Bar high = 112.0 (triggers TP), close = 111.0
+        // P&L should use TP price 110.0, NOT close 111.0
         let bars = vec![
             Bar {
                 date: NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
@@ -648,13 +697,19 @@ mod tests {
             },
         ];
         let mut params = default_params();
-        params.take_profit = Some(0.10); // 10% take profit
+        params.take_profit = Some(0.10);
         let mut entry_dates = HashSet::new();
         entry_dates.insert(bars[0].date);
 
         let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
         assert_eq!(result.trade_count, 1);
         assert_eq!(result.trade_log[0].exit_type, ExitType::TakeProfit);
+        // P&L = (110.0 - 100.0) * 100 = 1000.0 (filled at TP price, not close 111)
+        assert!(
+            (result.total_pnl - 1000.0).abs() < 1e-6,
+            "TP should fill at 110.0 not close 111.0, got pnl={}",
+            result.total_pnl
+        );
     }
 
     #[test]
@@ -686,7 +741,7 @@ mod tests {
     }
 
     #[test]
-    fn commission_reduces_pnl() {
+    fn commission_in_trade_pnl() {
         let bars = make_bars();
         let mut params = default_params();
         params.commission = Some(Commission {
@@ -698,10 +753,14 @@ mod tests {
         entry_dates.insert(bars[0].date);
 
         let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
-        // Exit commission: 1.0 + 0.01*100 = 2.0
-        // Gross PnL: (105-100)*100 = 500, Net: 500 - 2.0 (exit) = 498.0
-        // Entry commission is deducted from equity but not from trade PnL
-        assert!((result.total_pnl - 498.0).abs() < 1e-6);
+        // Commission per side: 1.0 + 0.01*100 = 2.0
+        // Gross PnL: (105-100)*100 = 500
+        // Net: 500 - 2.0 (entry) - 2.0 (exit) = 496.0
+        assert!(
+            (result.total_pnl - 496.0).abs() < 1e-6,
+            "Both entry and exit commission should be in trade P&L, got {}",
+            result.total_pnl
+        );
     }
 
     #[test]
@@ -721,12 +780,42 @@ mod tests {
         let mut params = default_params();
         params.max_positions = 1;
         let mut entry_dates = HashSet::new();
-        // Signal fires on two consecutive days
         entry_dates.insert(bars[0].date);
         entry_dates.insert(bars[1].date);
 
         let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
-        // Only one position should have been opened (force-closed at end)
         assert_eq!(result.trade_count, 1);
+    }
+
+    #[test]
+    fn short_entry_rejected_insufficient_margin() {
+        let bars = make_bars();
+        let mut params = default_params();
+        params.side = Side::Short;
+        params.capital = 5_000.0; // Not enough for 100 shares at ~100
+        let mut entry_dates = HashSet::new();
+        entry_dates.insert(bars[0].date);
+
+        let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+        assert_eq!(
+            result.trade_count, 0,
+            "Short with insufficient margin should not open"
+        );
+    }
+
+    #[test]
+    fn short_entry_accepted_sufficient_margin() {
+        let bars = make_bars();
+        let mut params = default_params();
+        params.side = Side::Short;
+        params.capital = 15_000.0; // Enough for 100 shares at ~100
+        let mut entry_dates = HashSet::new();
+        entry_dates.insert(bars[0].date);
+
+        let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+        assert_eq!(
+            result.trade_count, 1,
+            "Short with sufficient margin should open"
+        );
     }
 }
