@@ -15,7 +15,7 @@ The optopsy-mcp codebase has grown to ~27k lines in `src/` with 7 files exceedin
 | `src/engine/event_sim.rs` | 3,134 | 4 files | ~525 (+ ~1,550 tests) ✅ |
 | `src/server.rs` | 2,109 | 3 files (directory module) | ~1,064 ✅ |
 | `src/signals/registry.rs` | 1,903 | 3 files | ~340 ✅ |
-| `src/engine/sweep.rs` | 1,756 | 2 files | ~530 |
+| `src/engine/sweep.rs` | 1,756 | 2 files | ~440 (+ ~650 tests) ✅ |
 | `src/tools/ai_format.rs` | 1,700 | 2 files | ~600 |
 | `src/engine/types.rs` | 1,154 | 2 files | ~660 |
 | `src/engine/core.rs` | 1,165 | deferred | — |
@@ -131,22 +131,23 @@ Convert from a single file to a directory module (`src/server/mod.rs`).
 
 ---
 
-### 4. `src/engine/sweep.rs` (1,756 lines → 2 files)
+### 4. `src/engine/sweep.rs` (1,756 lines → 2 files) — ✅ COMPLETED
 
-#### `src/engine/sweep_analysis.rs` (~510 lines)
-- Types: `SweepStrategyEntry`, `SweepDimensions`, `SweepParams`, `SweepOutput`, `SensitivityEntry`, etc.
+**Status:** Done. Split into `sweep_analysis.rs` (691 lines) containing all types and helper/analysis functions, and slimmed `sweep.rs` (1,089 lines) retaining `run_sweep()`, `build_backtest_params_for_combo()`, `run_multiple_comparisons()`, all tests (~650 lines), and `pub use` re-exports. All existing import paths preserved.
+
+#### `src/engine/sweep_analysis.rs` (~691 lines)
+- Types: `SweepStrategyEntry`, `SweepDimensions`, `SweepParams`, `DimensionStats`, `OosResult`, `DimensionStability`, `StabilityScore`, `SweepOutput`
 - Cartesian product and range expansion helpers
 - `count_independent_entry_periods`, `violates_delta_ordering`
 - `signal_spec_label`, `build_signal_combos`, `SignalCombo`
 - `compute_sensitivity`, `stability_fingerprint`, `compute_stability`
-- Associated tests
 
-#### `src/engine/sweep.rs` (remains, ~530 lines)
+#### `src/engine/sweep.rs` (remains, ~440 lines + ~650 tests)
 - `run_sweep()` — main sweep execution
 - `build_backtest_params_for_combo()` — convert sweep config to backtest params
 - `run_multiple_comparisons()` — statistical comparison across sweep results
 - Re-exports from `sweep_analysis`
-- Associated tests
+- All tests
 
 ---
 

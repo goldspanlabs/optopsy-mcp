@@ -11,6 +11,7 @@ pub mod pricing;
 pub mod rules;
 pub mod suggest;
 pub mod sweep;
+pub mod sweep_analysis;
 pub mod types;
 pub mod vectorized_sim;
 pub mod walk_forward;
