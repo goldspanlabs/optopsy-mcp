@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::signals::registry::SIGNAL_CATALOG;
 use crate::signals::storage;
 
-/// Convert a PascalCase name to spaced words (e.g. "RsiBelow" → "RSI Below").
+/// Convert a `PascalCase` name to spaced words (e.g. `RsiBelow` → "RSI Below").
 /// Consecutive uppercase letters are kept together as acronyms.
 fn to_display_name(name: &str) -> String {
     let mut result = String::with_capacity(name.len() + 4);
@@ -80,7 +80,7 @@ pub fn execute() -> SignalsResponse {
         }
     }
 
-    let total: usize = categories.values().map(|v| v.len()).sum();
+    let total: usize = categories.values().map(Vec::len).sum();
 
     SignalsResponse {
         summary: format!(

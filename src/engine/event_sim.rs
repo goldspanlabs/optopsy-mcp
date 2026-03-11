@@ -5,255 +5,20 @@ use chrono::NaiveDate;
 use ordered_float::OrderedFloat;
 use polars::prelude::*;
 
+use super::adjustments::check_and_apply_adjustments;
 use super::filters;
-use super::pricing;
+use super::positions::{
+    close_position, compute_position_net_delta, open_position, select_candidate, update_last_known,
+};
 use super::rules;
 #[allow(clippy::wildcard_imports)]
 use super::types::*;
 use crate::data::parquet::QUOTE_DATETIME_COL;
 
-/// Build a price lookup table from the raw options `DataFrame`.
-/// Returns the table and a sorted list of unique trading dates.
-pub fn build_price_table(df: &DataFrame) -> Result<(PriceTable, Vec<NaiveDate>, DateIndex)> {
-    let quote_col = df.column(QUOTE_DATETIME_COL)?;
-    let exp_col = df.column("expiration")?;
-
-    // Try fast path: downcast typed columns once, iterate via phys iterators
-    if let (Ok(quote_ca), Ok(exp_ca)) = (quote_col.datetime(), exp_col.date()) {
-        return build_price_table_fast(df, quote_ca, exp_ca);
-    }
-
-    // Fallback: per-row extract_date_from_column for non-normalized data
-    build_price_table_slow(df, quote_col, exp_col)
-}
-
-/// Build a `DateIndex` from a completed `PriceTable`.
-fn build_date_index(table: &PriceTable) -> DateIndex {
-    let mut index: DateIndex = HashMap::new();
-    for key in table.keys() {
-        index.entry(key.0).or_default().push(*key);
-    }
-    index
-}
-
-/// Convert a raw epoch-offset day count (with a `719_163` CE-epoch bias) to a `NaiveDate`.
-///
-/// `raw` is the integer value already biased by `719_163` (i.e., `raw_stored + 719_163`).
-/// Returns an error if the value overflows `i32` or does not map to a valid calendar date.
-#[inline]
-fn days_to_naive_date(raw: i64, label: &str, row: usize) -> Result<NaiveDate> {
-    let days = i32::try_from(raw)
-        .map_err(|_| anyhow::anyhow!("{label} value {raw} overflows i32 (row {row})"))?;
-    NaiveDate::from_num_days_from_ce_opt(days)
-        .ok_or_else(|| anyhow::anyhow!("Invalid {label} value (row {row})"))
-}
-
-/// Fast path: columns already typed as Datetime/Date after `ParquetStore` normalization.
-/// Uses `cont_slice()` for zero-copy raw value access when possible.
-fn build_price_table_fast(
-    df: &DataFrame,
-    quote_ca: &DatetimeChunked,
-    exp_ca: &DateChunked,
-) -> Result<(PriceTable, Vec<NaiveDate>, DateIndex)> {
-    let strikes = df.column("strike")?.f64()?;
-    let option_types = df.column("option_type")?.str()?;
-    let bids = df.column("bid")?.f64()?;
-    let asks = df.column("ask")?.f64()?;
-    let deltas = df.column("delta")?.f64()?;
-
-    let micros_per_day: i64 = match quote_ca.time_unit() {
-        TimeUnit::Microseconds => 86_400_000_000,
-        TimeUnit::Milliseconds => 86_400_000,
-        TimeUnit::Nanoseconds => 86_400_000_000_000,
-    };
-
-    let n = df.height();
-    let mut table = PriceTable::with_capacity_and_hasher(n, rustc_hash::FxBuildHasher);
-    let mut dates_vec: Vec<NaiveDate> = Vec::with_capacity(n);
-
-    // Try contiguous slice access (zero-copy, no Option wrapping, no chunk navigation).
-    // This works when columns have no nulls and are stored in a single chunk.
-    if let (Ok(q_vals), Ok(e_vals), Ok(s_vals), Ok(b_vals), Ok(a_vals), Ok(d_vals)) = (
-        quote_ca.phys.cont_slice(),
-        exp_ca.phys.cont_slice(),
-        strikes.cont_slice(),
-        bids.cont_slice(),
-        asks.cont_slice(),
-        deltas.cont_slice(),
-    ) {
-        for i in 0..n {
-            let ot = match option_types.get(i) {
-                Some("call") => OptionType::Call,
-                Some("put") => OptionType::Put,
-                _ => continue,
-            };
-            let quote_days = q_vals[i].div_euclid(micros_per_day) + i64::from(EPOCH_DAYS_CE_OFFSET);
-            let quote_date = days_to_naive_date(quote_days, "quote_datetime", i)?;
-            let exp_days = i64::from(e_vals[i]) + i64::from(EPOCH_DAYS_CE_OFFSET);
-            let exp_date = days_to_naive_date(exp_days, "expiration", i)?;
-
-            table.insert(
-                (quote_date, exp_date, OrderedFloat(s_vals[i]), ot),
-                QuoteSnapshot {
-                    bid: b_vals[i],
-                    ask: a_vals[i],
-                    delta: d_vals[i],
-                },
-            );
-            dates_vec.push(quote_date);
-        }
-    } else {
-        // Chunked iterator fallback (handles nulls / multi-chunk arrays)
-        for (row_idx, (((((quote_raw, exp_raw), strike), opt_str), bid), (ask, delta))) in quote_ca
-            .phys
-            .iter()
-            .zip(exp_ca.phys.iter())
-            .zip(strikes.iter())
-            .zip(option_types.iter())
-            .zip(bids.iter())
-            .zip(asks.iter().zip(deltas.iter()))
-            .enumerate()
-        {
-            let (
-                Some(qv),
-                Some(ev),
-                Some(strike_val),
-                Some(ot_str),
-                Some(bid_val),
-                Some(ask_val),
-                Some(delta_val),
-            ) = (quote_raw, exp_raw, strike, opt_str, bid, ask, delta)
-            else {
-                continue;
-            };
-            let opt_type = match ot_str {
-                "call" => OptionType::Call,
-                "put" => OptionType::Put,
-                _ => continue,
-            };
-            let qv_days = qv.div_euclid(micros_per_day) + i64::from(EPOCH_DAYS_CE_OFFSET);
-            let quote_date = days_to_naive_date(qv_days, "quote_datetime", row_idx)?;
-            let ev_days = i64::from(ev) + i64::from(EPOCH_DAYS_CE_OFFSET);
-            let exp_date = days_to_naive_date(ev_days, "expiration", row_idx)?;
-
-            table.insert(
-                (quote_date, exp_date, OrderedFloat(strike_val), opt_type),
-                QuoteSnapshot {
-                    bid: bid_val,
-                    ask: ask_val,
-                    delta: delta_val,
-                },
-            );
-            dates_vec.push(quote_date);
-        }
-    }
-
-    dates_vec.sort_unstable();
-    dates_vec.dedup();
-    let date_index = build_date_index(&table);
-    Ok((table, dates_vec, date_index))
-}
-
-/// Slow fallback: per-row type dispatch via `extract_date_from_column`.
-fn build_price_table_slow(
-    df: &DataFrame,
-    quote_col: &Column,
-    exp_col: &Column,
-) -> Result<(PriceTable, Vec<NaiveDate>, DateIndex)> {
-    let strikes = df.column("strike")?.f64()?;
-    let option_types = df.column("option_type")?.str()?;
-    let bids = df.column("bid")?.f64()?;
-    let asks = df.column("ask")?.f64()?;
-    let deltas = df.column("delta")?.f64()?;
-
-    let mut table = PriceTable::with_capacity_and_hasher(df.height(), rustc_hash::FxBuildHasher);
-    let mut dates_set = std::collections::BTreeSet::new();
-
-    for i in 0..df.height() {
-        let quote_date = extract_date_from_column(quote_col, i)?;
-        let exp_date = extract_date_from_column(exp_col, i)?;
-        let Some(strike) = strikes.get(i) else {
-            continue;
-        };
-        let Some(opt_type_str) = option_types.get(i) else {
-            continue;
-        };
-        let opt_type = match opt_type_str {
-            "call" => OptionType::Call,
-            "put" => OptionType::Put,
-            _ => continue,
-        };
-        let Some(bid) = bids.get(i) else { continue };
-        let Some(ask) = asks.get(i) else { continue };
-        let Some(delta) = deltas.get(i) else { continue };
-
-        let key = (quote_date, exp_date, OrderedFloat(strike), opt_type);
-        table.insert(key, QuoteSnapshot { bid, ask, delta });
-        dates_set.insert(quote_date);
-    }
-
-    let trading_days: Vec<NaiveDate> = dates_set.into_iter().collect();
-    let date_index = build_date_index(&table);
-    Ok((table, trading_days, date_index))
-}
-
-/// Extract a `NaiveDate` from a column value at a given index.
-/// Handles Date, Datetime, and String column types.
-pub(crate) fn extract_date_from_column(col: &Column, idx: usize) -> Result<NaiveDate> {
-    match col.dtype() {
-        DataType::Date => {
-            let days = col.date()?.phys.get(idx);
-            match days {
-                Some(d) => {
-                    let date = chrono::NaiveDate::from_num_days_from_ce_opt(
-                        d + EPOCH_DAYS_CE_OFFSET, // epoch offset: days from CE to 1970-01-01
-                    )
-                    .ok_or_else(|| anyhow::anyhow!("Invalid date at index {idx}"))?;
-                    Ok(date)
-                }
-                None => bail!("Null date at index {idx}"),
-            }
-        }
-        DataType::Datetime(tu, _) => {
-            let val = col.datetime()?.phys.get(idx);
-            match val {
-                Some(v) => {
-                    let ndt = match tu {
-                        TimeUnit::Milliseconds => {
-                            chrono::DateTime::from_timestamp_millis(v).map(|dt| dt.naive_utc())
-                        }
-                        TimeUnit::Microseconds => {
-                            chrono::DateTime::from_timestamp_micros(v).map(|dt| dt.naive_utc())
-                        }
-                        TimeUnit::Nanoseconds => {
-                            let secs = v.div_euclid(1_000_000_000);
-                            let nsecs = v.rem_euclid(1_000_000_000) as u32;
-                            chrono::DateTime::from_timestamp(secs, nsecs).map(|dt| dt.naive_utc())
-                        }
-                    };
-                    match ndt {
-                        Some(dt) => Ok(dt.date()),
-                        None => bail!("Invalid datetime value at index {idx}"),
-                    }
-                }
-                None => bail!("Null datetime at index {idx}"),
-            }
-        }
-        DataType::String => {
-            let str_val = col.str()?.get(idx);
-            match str_val {
-                Some(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                    .or_else(|_| {
-                        chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
-                            .map(|dt| dt.date())
-                    })
-                    .map_err(|e| anyhow::anyhow!("Cannot parse date '{s}': {e}")),
-                None => bail!("Null string date at index {idx}"),
-            }
-        }
-        other => bail!("Unsupported column type for date extraction: {other:?}"),
-    }
-}
+// Re-export public API from extracted modules
+pub use super::positions::mark_to_market;
+pub use super::price_table::build_price_table;
+pub(crate) use super::price_table::extract_date_from_column;
 
 /// Find entry candidates from the options data, grouped by date.
 /// Reuses existing Polars filter pipeline but does NOT call `match_entry_exit`.
@@ -758,625 +523,10 @@ fn check_exit_triggers(
     None
 }
 
-/// Compute the current signed net position delta from live option quotes.
-/// Returns sum of (delta × `side_multiplier` × qty) for all open legs.
-/// Falls back to the last-known quote when no live price exists.
-fn compute_position_net_delta(
-    position: &Position,
-    today: NaiveDate,
-    price_table: &PriceTable,
-    last_known: &HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
-) -> f64 {
-    let mut net_delta = 0.0;
-    for leg in &position.legs {
-        if leg.closed {
-            continue;
-        }
-        let key = (
-            today,
-            leg.expiration,
-            OrderedFloat(leg.strike),
-            leg.option_type,
-        );
-        let snap = price_table.get(&key).or_else(|| {
-            last_known.get(&(leg.expiration, OrderedFloat(leg.strike), leg.option_type))
-        });
-        if let Some(s) = snap {
-            net_delta += s.delta * leg.side.multiplier() * f64::from(leg.qty);
-        }
-    }
-    net_delta
-}
-
-/// Calculate unrealized P&L for a position at current market prices.
-#[allow(clippy::implicit_hasher)]
-pub fn mark_to_market(
-    position: &Position,
-    date: NaiveDate,
-    price_table: &PriceTable,
-    last_known: &HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
-    slippage: &Slippage,
-    multiplier: i32,
-) -> f64 {
-    let mut mtm = 0.0;
-
-    for leg in &position.legs {
-        if leg.closed {
-            // Use actual close price for closed legs
-            if let Some(close_price) = leg.close_price {
-                let exit_side = match leg.side {
-                    Side::Long => Side::Short,
-                    Side::Short => Side::Long,
-                };
-                let direction = leg.side.multiplier();
-                mtm += (close_price - leg.entry_price)
-                    * direction
-                    * f64::from(leg.qty)
-                    * f64::from(multiplier);
-                let _ = exit_side; // side used for fill price was already applied
-            }
-            continue;
-        }
-
-        let key = (
-            date,
-            leg.expiration,
-            OrderedFloat(leg.strike),
-            leg.option_type,
-        );
-
-        let snapshot = price_table.get(&key).or_else(|| {
-            last_known.get(&(leg.expiration, OrderedFloat(leg.strike), leg.option_type))
-        });
-
-        if let Some(snap) = snapshot {
-            // To close: long sells (use Short fill), short buys (use Long fill)
-            let exit_side = match leg.side {
-                Side::Long => Side::Short,
-                Side::Short => Side::Long,
-            };
-            let current_price = pricing::fill_price(snap.bid, snap.ask, exit_side, slippage);
-            let direction = leg.side.multiplier();
-            mtm += (current_price - leg.entry_price)
-                * direction
-                * f64::from(leg.qty)
-                * f64::from(multiplier);
-        }
-        // If no price found, MTM contribution is 0 (conservative)
-    }
-
-    mtm
-}
-
-/// Close a position, setting leg close prices from current market.
-/// Returns realized P&L for the position.
-fn close_position(
-    position: &mut Position,
-    date: NaiveDate,
-    price_table: &PriceTable,
-    last_known: &HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
-    slippage: &Slippage,
-    commission: &Commission,
-    exit_type: ExitType,
-) -> f64 {
-    let mut pnl = 0.0;
-    let mut total_contracts = 0i32;
-
-    for leg in &mut position.legs {
-        // Count all contracts for commission (including previously closed adjustment legs)
-        total_contracts += leg.qty.abs();
-
-        if leg.closed {
-            continue;
-        }
-
-        let key = (
-            date,
-            leg.expiration,
-            OrderedFloat(leg.strike),
-            leg.option_type,
-        );
-
-        let snapshot = price_table.get(&key).or_else(|| {
-            last_known.get(&(leg.expiration, OrderedFloat(leg.strike), leg.option_type))
-        });
-
-        let exit_side = match leg.side {
-            Side::Long => Side::Short,
-            Side::Short => Side::Long,
-        };
-
-        let close_price = if let Some(snap) = snapshot {
-            pricing::fill_price(snap.bid, snap.ask, exit_side, slippage)
-        } else {
-            // No price available — assume worthless at expiration
-            0.0
-        };
-
-        let direction = leg.side.multiplier();
-        pnl += (close_price - leg.entry_price)
-            * direction
-            * f64::from(leg.qty)
-            * f64::from(position.multiplier);
-
-        leg.closed = true;
-        leg.close_price = Some(close_price);
-        leg.close_date = Some(date);
-    }
-
-    // Apply commission (entry + exit) on all legs including adjustment-closed ones
-    pnl -= commission.calculate(total_contracts) * 2.0;
-
-    position.status = PositionStatus::Closed(exit_type);
-    pnl
-}
-
-/// Create a new position from an entry candidate.
-fn open_position(
-    candidate: &EntryCandidate,
-    date: NaiveDate,
-    strategy_def: &StrategyDef,
-    params: &BacktestParams,
-    id: usize,
-) -> Position {
-    let mut legs = Vec::new();
-    let mut entry_cost = 0.0;
-
-    for (i, (cand_leg, leg_def)) in candidate
-        .legs
-        .iter()
-        .zip(strategy_def.legs.iter())
-        .enumerate()
-    {
-        let entry_price =
-            pricing::fill_price(cand_leg.bid, cand_leg.ask, leg_def.side, &params.slippage);
-
-        let contracts = leg_def.qty * params.quantity;
-        entry_cost += entry_price
-            * f64::from(contracts)
-            * f64::from(params.multiplier)
-            * leg_def.side.multiplier();
-
-        legs.push(PositionLeg {
-            leg_index: i,
-            side: leg_def.side,
-            option_type: leg_def.option_type,
-            strike: cand_leg.strike,
-            expiration: cand_leg.expiration,
-            entry_price,
-            qty: contracts,
-            closed: false,
-            close_price: None,
-            close_date: None,
-        });
-    }
-
-    Position {
-        id,
-        entry_date: date,
-        expiration: candidate.expiration,
-        secondary_expiration: candidate.secondary_expiration,
-        legs,
-        entry_cost,
-        quantity: params.quantity,
-        multiplier: params.multiplier,
-        status: PositionStatus::Open,
-    }
-}
-
-/// Select the best candidate based on `TradeSelector`.
-fn select_candidate<'a>(
-    candidates: &[&'a EntryCandidate],
-    selector: &TradeSelector,
-    target_dte: i32,
-) -> Option<&'a EntryCandidate> {
-    if candidates.is_empty() {
-        return None;
-    }
-
-    match selector {
-        TradeSelector::Nearest => candidates
-            .iter()
-            .min_by_key(|c| {
-                let dte = (c.expiration - c.entry_date).num_days() as i32;
-                (dte - target_dte).abs()
-            })
-            .copied(),
-        TradeSelector::First => candidates.first().copied(),
-        TradeSelector::HighestPremium => candidates
-            .iter()
-            .max_by(|a, b| {
-                a.net_premium
-                    .abs()
-                    .partial_cmp(&b.net_premium.abs())
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .copied(),
-        TradeSelector::LowestPremium => candidates
-            .iter()
-            .min_by(|a, b| {
-                a.net_premium
-                    .abs()
-                    .partial_cmp(&b.net_premium.abs())
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .copied(),
-    }
-}
-
-/// Look up the fill price for a leg from the price table or last-known cache.
-#[allow(clippy::too_many_arguments)]
-fn lookup_fill_price(
-    leg_exp: NaiveDate,
-    leg_strike: f64,
-    leg_opt_type: OptionType,
-    fill_side: Side,
-    today: NaiveDate,
-    price_table: &PriceTable,
-    last_known: &HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
-    slippage: &Slippage,
-) -> f64 {
-    let key = (today, leg_exp, OrderedFloat(leg_strike), leg_opt_type);
-    let snap = price_table
-        .get(&key)
-        .or_else(|| last_known.get(&(leg_exp, OrderedFloat(leg_strike), leg_opt_type)));
-    snap.map_or(0.0, |s| {
-        pricing::fill_price(s.bid, s.ask, fill_side, slippage)
-    })
-}
-
-/// Close a single leg of a position by setting its close price/date.
-fn close_leg(leg: &mut PositionLeg, today: NaiveDate, close_price: f64) {
-    leg.closed = true;
-    leg.close_price = Some(close_price);
-    leg.close_date = Some(today);
-}
-
-/// Check whether an adjustment trigger fires for a position.
-fn trigger_fires(
-    trigger: &AdjustmentTrigger,
-    pos: &Position,
-    today: NaiveDate,
-    price_table: &PriceTable,
-    last_known: &HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
-    slippage: &Slippage,
-    multiplier: i32,
-) -> bool {
-    match trigger {
-        AdjustmentTrigger::DefensiveRoll { loss_threshold } => {
-            let mtm = mark_to_market(pos, today, price_table, last_known, slippage, multiplier);
-            mtm < -(loss_threshold * pos.entry_cost.abs())
-        }
-        AdjustmentTrigger::CalendarRoll { dte_trigger, .. } => {
-            (pos.expiration - today).num_days() <= i64::from(*dte_trigger)
-        }
-        AdjustmentTrigger::DeltaDrift {
-            leg_index,
-            max_delta,
-        } => pos.legs.get(*leg_index).is_some_and(|leg| {
-            if leg.closed {
-                return false;
-            }
-            let key = (
-                today,
-                leg.expiration,
-                OrderedFloat(leg.strike),
-                leg.option_type,
-            );
-            let snap = price_table.get(&key).or_else(|| {
-                last_known.get(&(leg.expiration, OrderedFloat(leg.strike), leg.option_type))
-            });
-            snap.is_some_and(|s| s.delta.abs() > *max_delta)
-        }),
-    }
-}
-
-/// Returns the `position_id` encoded in an `AdjustmentAction`.
-/// A value of `0` is treated as a wildcard (matches any position).
-fn action_position_id(action: &AdjustmentAction) -> usize {
-    match action {
-        AdjustmentAction::Close { position_id, .. }
-        | AdjustmentAction::Roll { position_id, .. }
-        | AdjustmentAction::Add { position_id, .. } => *position_id,
-    }
-}
-
-/// Execute an adjustment action on a position.
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-fn execute_adjustment(
-    action: &AdjustmentAction,
-    pos: &mut Position,
-    today: NaiveDate,
-    price_table: &PriceTable,
-    last_known: &HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
-    params: &BacktestParams,
-    trade_log: &mut Vec<TradeRecord>,
-    trade_id: &mut usize,
-    realized_equity: &mut f64,
-) {
-    match action {
-        AdjustmentAction::Close { leg_index, .. } => {
-            if let Some(leg) = pos.legs.get_mut(*leg_index) {
-                if !leg.closed {
-                    let exit_side = leg.side.flip();
-                    let cp = lookup_fill_price(
-                        leg.expiration,
-                        leg.strike,
-                        leg.option_type,
-                        exit_side,
-                        today,
-                        price_table,
-                        last_known,
-                        &params.slippage,
-                    );
-                    // Update entry_cost to reflect the closed leg's cashflow
-                    pos.entry_cost -= leg.entry_price
-                        * leg.side.multiplier()
-                        * f64::from(leg.qty)
-                        * f64::from(pos.multiplier);
-                    close_leg(leg, today, cp);
-                }
-            }
-            finalize_if_all_closed(
-                pos,
-                today,
-                price_table,
-                last_known,
-                params,
-                trade_log,
-                trade_id,
-                realized_equity,
-            );
-        }
-        AdjustmentAction::Roll {
-            leg_index,
-            new_strike,
-            new_expiration,
-            ..
-        } => {
-            let new_leg_info = if let Some(leg) = pos.legs.get_mut(*leg_index) {
-                if leg.closed {
-                    None
-                } else {
-                    let exit_side = leg.side.flip();
-                    let cp = lookup_fill_price(
-                        leg.expiration,
-                        leg.strike,
-                        leg.option_type,
-                        exit_side,
-                        today,
-                        price_table,
-                        last_known,
-                        &params.slippage,
-                    );
-                    let old_entry_price = leg.entry_price;
-                    let info = (leg.side, leg.option_type, leg.qty, leg.expiration);
-                    // Remove old leg's cost basis from entry_cost
-                    pos.entry_cost -= old_entry_price
-                        * leg.side.multiplier()
-                        * f64::from(leg.qty)
-                        * f64::from(pos.multiplier);
-                    close_leg(leg, today, cp);
-                    Some(info)
-                }
-            } else {
-                None
-            };
-
-            if let Some((leg_side, leg_opt_type, leg_qty, old_exp)) = new_leg_info {
-                let ep = lookup_fill_price(
-                    *new_expiration,
-                    *new_strike,
-                    leg_opt_type,
-                    leg_side,
-                    today,
-                    price_table,
-                    last_known,
-                    &params.slippage,
-                );
-                // Update entry_cost: add the new leg's cost basis
-                pos.entry_cost +=
-                    ep * leg_side.multiplier() * f64::from(leg_qty) * f64::from(pos.multiplier);
-                let new_leg = PositionLeg {
-                    leg_index: *leg_index,
-                    side: leg_side,
-                    option_type: leg_opt_type,
-                    strike: *new_strike,
-                    expiration: *new_expiration,
-                    entry_price: ep,
-                    qty: leg_qty,
-                    closed: false,
-                    close_price: None,
-                    close_date: None,
-                };
-                // Replace in-place so DeltaDrift and other index-based triggers
-                // continue to operate on the rolled leg.
-                if let Some(slot) = pos.legs.get_mut(*leg_index) {
-                    *slot = new_leg;
-                } else {
-                    pos.legs.push(new_leg);
-                }
-                // Keep position-level expiration fields in sync so that DTE-exit
-                // and expiration-exit logic sees the updated expiration after a roll.
-                // Note: for multi-leg positions where legs may carry different expirations,
-                // only the primary and secondary expiration fields are updated here.
-                // If old_exp matches neither field the rolled leg's expiration is tracked
-                // solely through the leg itself, which is correct for single-expiration
-                // strategies and standard calendar/diagonal rolls.
-                if pos.expiration == old_exp {
-                    pos.expiration = *new_expiration;
-                } else if pos.secondary_expiration == Some(old_exp) {
-                    pos.secondary_expiration = Some(*new_expiration);
-                }
-            }
-        }
-        AdjustmentAction::Add {
-            leg: cand_leg,
-            side,
-            qty,
-            ..
-        } => {
-            let ep = lookup_fill_price(
-                cand_leg.expiration,
-                cand_leg.strike,
-                cand_leg.option_type,
-                *side,
-                today,
-                price_table,
-                last_known,
-                &params.slippage,
-            );
-            pos.legs.push(PositionLeg {
-                leg_index: pos.legs.len(),
-                side: *side,
-                option_type: cand_leg.option_type,
-                strike: cand_leg.strike,
-                expiration: cand_leg.expiration,
-                entry_price: ep,
-                qty: *qty,
-                closed: false,
-                close_price: None,
-                close_date: None,
-            });
-            // Update entry_cost so SL/TP thresholds reflect the new cost basis
-            pos.entry_cost += ep * side.multiplier() * f64::from(*qty) * f64::from(pos.multiplier);
-        }
-    }
-}
-
-/// If all legs of a position are closed, mark the position as closed with Adjustment exit.
-#[allow(clippy::too_many_arguments)]
-fn finalize_if_all_closed(
-    pos: &mut Position,
-    today: NaiveDate,
-    price_table: &PriceTable,
-    last_known: &HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
-    params: &BacktestParams,
-    trade_log: &mut Vec<TradeRecord>,
-    trade_id: &mut usize,
-    realized_equity: &mut f64,
-) {
-    if !pos.legs.iter().all(|l| l.closed) {
-        return;
-    }
-    let mut pnl = mark_to_market(
-        pos,
-        today,
-        price_table,
-        last_known,
-        &params.slippage,
-        pos.multiplier,
-    );
-    // Apply commission consistently with normal exits
-    let total_contracts: i32 = pos.legs.iter().map(|l| l.qty.abs()).sum();
-    let commission = params.commission.clone().unwrap_or_default();
-    pnl -= commission.calculate(total_contracts) * 2.0;
-
-    *realized_equity += pnl;
-    pos.status = PositionStatus::Closed(ExitType::Adjustment);
-
-    *trade_id += 1;
-    let leg_details: Vec<LegDetail> = pos
-        .legs
-        .iter()
-        .map(|l| LegDetail {
-            side: l.side,
-            option_type: l.option_type,
-            strike: l.strike,
-            expiration: l.expiration.to_string(),
-            entry_price: l.entry_price,
-            exit_price: l.close_price,
-            qty: l.qty,
-        })
-        .collect();
-    trade_log.push(TradeRecord::new(
-        *trade_id,
-        pos.entry_date
-            .and_hms_opt(0, 0, 0)
-            .expect("and_hms_opt(0,0,0) should never fail"),
-        today
-            .and_hms_opt(0, 0, 0)
-            .expect("and_hms_opt(0,0,0) should never fail"),
-        pos.entry_cost,
-        pos.entry_cost + pnl,
-        pnl,
-        (today - pos.entry_date).num_days(),
-        ExitType::Adjustment,
-        leg_details,
-    ));
-}
-
-/// Check adjustment rules against open positions and apply the first matching rule per position.
-/// Runs between exit checks and new entries.
-#[allow(clippy::too_many_arguments)]
-fn check_and_apply_adjustments(
-    positions: &mut [Position],
-    today: NaiveDate,
-    price_table: &PriceTable,
-    last_known: &HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
-    params: &BacktestParams,
-    trade_log: &mut Vec<TradeRecord>,
-    trade_id: &mut usize,
-    realized_equity: &mut f64,
-) {
-    for pos in positions.iter_mut() {
-        if !matches!(pos.status, PositionStatus::Open) {
-            continue;
-        }
-        for rule in &params.adjustment_rules {
-            // Skip this rule if it targets a specific position that isn't the current one.
-            // position_id == 0 is the wildcard (matches all positions).
-            let target_id = action_position_id(&rule.action);
-            if target_id != 0 && target_id != pos.id {
-                continue;
-            }
-            if !trigger_fires(
-                &rule.trigger,
-                pos,
-                today,
-                price_table,
-                last_known,
-                &params.slippage,
-                params.multiplier,
-            ) {
-                continue;
-            }
-            execute_adjustment(
-                &rule.action,
-                pos,
-                today,
-                price_table,
-                last_known,
-                params,
-                trade_log,
-                trade_id,
-                realized_equity,
-            );
-            break; // First matching rule wins per position
-        }
-    }
-}
-
-/// Update the last-known price cache for carry-forward on gaps.
-fn update_last_known(
-    price_table: &PriceTable,
-    date_index: &DateIndex,
-    today: NaiveDate,
-    last_known: &mut HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
-) {
-    if let Some(keys) = date_index.get(&today) {
-        for key in keys {
-            if let Some(snap) = price_table.get(key) {
-                let carry_key = (key.1, key.2, key.3);
-                last_known.insert(carry_key, snap.clone());
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::price_table::build_date_index;
 
     fn make_price_table_simple() -> (PriceTable, Vec<NaiveDate>, DateIndex) {
         let mut table = PriceTable::with_hasher(rustc_hash::FxBuildHasher);
@@ -1386,7 +536,6 @@ mod tests {
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
         let strike = 100.0;
 
-        // Day 1: entry day
         table.insert(
             (d1, exp, OrderedFloat(strike), OptionType::Call),
             QuoteSnapshot {
@@ -1395,7 +544,6 @@ mod tests {
                 delta: 0.50,
             },
         );
-        // Day 2: mid-trade
         table.insert(
             (d2, exp, OrderedFloat(strike), OptionType::Call),
             QuoteSnapshot {
@@ -1404,7 +552,6 @@ mod tests {
                 delta: 0.35,
             },
         );
-        // Day 3: near exit
         table.insert(
             (d3, exp, OrderedFloat(strike), OptionType::Call),
             QuoteSnapshot {
@@ -1419,158 +566,34 @@ mod tests {
         (table, days, date_index)
     }
 
-    #[test]
-    fn build_price_table_basic() {
-        let df = make_daily_df();
-        let (table, days, _) = build_price_table(&df).unwrap();
-        assert!(!table.is_empty());
-        assert!(!days.is_empty());
-        // Verify a specific key lookup
-        let d1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
-        let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
-        let key = (d1, exp, OrderedFloat(100.0), OptionType::Call);
-        assert!(table.contains_key(&key));
-        let snap = table.get(&key).unwrap();
-        assert!((snap.bid - 5.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn mark_to_market_long_call() {
-        let (table, _, _) = make_price_table_simple();
-        let d2 = NaiveDate::from_ymd_opt(2024, 1, 22).unwrap();
-        let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
-        let last_known = HashMap::new();
-
-        let position = Position {
-            id: 1,
-            entry_date: NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
-            expiration: exp,
-            secondary_expiration: None,
-            legs: vec![PositionLeg {
-                leg_index: 0,
-                side: Side::Long,
-                option_type: OptionType::Call,
-                strike: 100.0,
-                expiration: exp,
-                entry_price: 5.25, // mid of 5.0/5.50
-                qty: 1,
-                closed: false,
-                close_price: None,
-                close_date: None,
-            }],
-            entry_cost: 525.0, // 5.25 * 1 * 100
-            quantity: 1,
-            multiplier: 100,
-            status: PositionStatus::Open,
-        };
-
-        let mtm = mark_to_market(&position, d2, &table, &last_known, &Slippage::Mid, 100);
-        // Long call: entered at 5.25, current mid = 3.25
-        // MTM = (3.25 - 5.25) * 1.0 * 1 * 100 = -200.0
-        assert!((mtm - (-200.0)).abs() < 1e-10, "MTM was {mtm}");
-    }
-
-    #[test]
-    fn mark_to_market_short_put() {
-        let mut table = PriceTable::with_hasher(rustc_hash::FxBuildHasher);
+    /// Helper: build a synthetic daily options `DataFrame` for testing.
+    fn make_daily_df() -> DataFrame {
         let d1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
         let d2 = NaiveDate::from_ymd_opt(2024, 1, 22).unwrap();
-        let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
-
-        table.insert(
-            (d1, exp, OrderedFloat(100.0), OptionType::Put),
-            QuoteSnapshot {
-                bid: 4.0,
-                ask: 4.50,
-                delta: -0.40,
-            },
-        );
-        table.insert(
-            (d2, exp, OrderedFloat(100.0), OptionType::Put),
-            QuoteSnapshot {
-                bid: 3.0,
-                ask: 3.50,
-                delta: -0.30,
-            },
-        );
-
-        let last_known = HashMap::new();
-        let position = Position {
-            id: 1,
-            entry_date: d1,
-            expiration: exp,
-            secondary_expiration: None,
-            legs: vec![PositionLeg {
-                leg_index: 0,
-                side: Side::Short,
-                option_type: OptionType::Put,
-                strike: 100.0,
-                expiration: exp,
-                entry_price: 4.25, // mid of 4.0/4.50
-                qty: 1,
-                closed: false,
-                close_price: None,
-                close_date: None,
-            }],
-            entry_cost: -425.0, // short receives premium
-            quantity: 1,
-            multiplier: 100,
-            status: PositionStatus::Open,
-        };
-
-        let mtm = mark_to_market(&position, d2, &table, &last_known, &Slippage::Mid, 100);
-        // Short put: sold at 4.25, current mid = 3.25 (to buy back)
-        // MTM = (3.25 - 4.25) * (-1.0) * 1 * 100 = +100.0
-        assert!((mtm - 100.0).abs() < 1e-10, "MTM was {mtm}");
-    }
-
-    #[test]
-    fn close_position_records_fills() {
-        let (table, _, _) = make_price_table_simple();
         let d3 = NaiveDate::from_ymd_opt(2024, 1, 29).unwrap();
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
-        let last_known = HashMap::new();
-        let commission = Commission::default();
 
-        let mut position = Position {
-            id: 1,
-            entry_date: NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
-            expiration: exp,
-            secondary_expiration: None,
-            legs: vec![PositionLeg {
-                leg_index: 0,
-                side: Side::Long,
-                option_type: OptionType::Call,
-                strike: 100.0,
-                expiration: exp,
-                entry_price: 5.25,
-                qty: 1,
-                closed: false,
-                close_price: None,
-                close_date: None,
-            }],
-            entry_cost: 525.0,
-            quantity: 1,
-            multiplier: 100,
-            status: PositionStatus::Open,
-        };
+        let quote_dates = vec![
+            d1.and_hms_opt(0, 0, 0).unwrap(),
+            d2.and_hms_opt(0, 0, 0).unwrap(),
+            d3.and_hms_opt(0, 0, 0).unwrap(),
+        ];
+        let expirations = [exp, exp, exp];
 
-        let pnl = close_position(
-            &mut position,
-            d3,
-            &table,
-            &last_known,
-            &Slippage::Mid,
-            &commission,
-            ExitType::DteExit,
-        );
-
-        assert!(position.legs[0].closed);
-        assert!(position.legs[0].close_price.is_some());
-        assert_eq!(position.legs[0].close_date, Some(d3));
-        // Close at mid of 2.0/2.50 = 2.25
-        // PnL = (2.25 - 5.25) * 1.0 * 1 * 100 = -300
-        assert!((pnl - (-300.0)).abs() < 1e-10, "PnL was {pnl}");
+        let mut df = df! {
+            QUOTE_DATETIME_COL => &quote_dates,
+            "option_type" => &["call", "call", "call"],
+            "strike" => &[100.0f64, 100.0, 100.0],
+            "bid" => &[5.0f64, 3.0, 2.0],
+            "ask" => &[5.50f64, 3.50, 2.50],
+            "delta" => &[0.50f64, 0.35, 0.25],
+        }
+        .unwrap();
+        df.with_column(
+            DateChunked::from_naive_date(PlSmallStr::from("expiration"), expirations).into_column(),
+        )
+        .unwrap();
+        df
     }
 
     #[test]
@@ -1613,7 +636,7 @@ mod tests {
                 min: 10,
                 max: 60,
             },
-            exit_dte: 15, // DTE exit at 15 days
+            exit_dte: 15,
             slippage: Slippage::Mid,
             commission: None,
             min_bid_ask: 0.0,
@@ -1649,10 +672,6 @@ mod tests {
             &date_idx,
         );
 
-        // Should have 1 trade, closed by DTE exit on day 3 (DTE = 18, which is > 15, so no DTE exit)
-        // Actually DTE on Jan 29 = Feb 16 - Jan 29 = 18 days, exit_dte=15, so 18 > 15 → no DTE exit
-        // Trade stays open through all 3 days
-        // The trade will only close if DTE <= exit_dte, which doesn't happen in our 3-day window
         assert_eq!(equity_curve.len(), 3, "Should have 3 equity points");
     }
 
@@ -1665,7 +684,6 @@ mod tests {
         let d3 = NaiveDate::from_ymd_opt(2024, 1, 17).unwrap();
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
 
-        // Entry day: price = 5.0/5.50
         table.insert(
             (d1, exp, OrderedFloat(100.0), OptionType::Call),
             QuoteSnapshot {
@@ -1674,7 +692,6 @@ mod tests {
                 delta: 0.50,
             },
         );
-        // Day 2: small drop
         table.insert(
             (d2, exp, OrderedFloat(100.0), OptionType::Call),
             QuoteSnapshot {
@@ -1683,7 +700,6 @@ mod tests {
                 delta: 0.45,
             },
         );
-        // Day 3: big drop → stop loss should fire
         table.insert(
             (d3, exp, OrderedFloat(100.0), OptionType::Call),
             QuoteSnapshot {
@@ -1733,7 +749,7 @@ mod tests {
             slippage: Slippage::Mid,
             commission: None,
             min_bid_ask: 0.0,
-            stop_loss: Some(0.50), // 50% stop loss
+            stop_loss: Some(0.50),
             take_profit: None,
             max_hold_days: None,
             capital: 10000.0,
@@ -1765,9 +781,6 @@ mod tests {
             &date_idx,
         );
 
-        // Stop loss: entry_cost = 5.25 * 100 = 525, threshold = 525 * 0.5 = 262.5
-        // Day 2 MTM: (4.25 - 5.25) * 100 = -100 → no trigger
-        // Day 3 MTM: (1.25 - 5.25) * 100 = -400 → exceeds -262.5 → stop loss fires
         assert_eq!(trade_log.len(), 1);
         assert!(
             matches!(trade_log[0].exit_type, ExitType::StopLoss),
@@ -1801,7 +814,6 @@ mod tests {
                 delta: 0.55,
             },
         );
-        // Big jump → take profit
         table.insert(
             (d3, exp, OrderedFloat(100.0), OptionType::Call),
             QuoteSnapshot {
@@ -1852,7 +864,7 @@ mod tests {
             commission: None,
             min_bid_ask: 0.0,
             stop_loss: None,
-            take_profit: Some(0.50), // 50% take profit
+            take_profit: Some(0.50),
             max_hold_days: None,
             capital: 10000.0,
             quantity: 1,
@@ -1883,9 +895,6 @@ mod tests {
             &date_idx,
         );
 
-        // Take profit: entry_cost = 525, threshold = 525 * 0.5 = 262.5
-        // Day 2 MTM: (6.25 - 5.25) * 100 = 100 → no trigger
-        // Day 3 MTM: (10.25 - 5.25) * 100 = 500 → exceeds 262.5 → take profit
         assert_eq!(trade_log.len(), 1);
         assert!(
             matches!(trade_log[0].exit_type, ExitType::TakeProfit),
@@ -1923,7 +932,6 @@ mod tests {
         let days = vec![d1, d2];
         let date_idx = build_date_index(&table);
 
-        // Candidates on both days
         let make_cand = |date: NaiveDate, strike: f64, bid: f64, ask: f64| -> EntryCandidate {
             EntryCandidate {
                 entry_date: date,
@@ -1970,7 +978,7 @@ mod tests {
             capital: 10000.0,
             quantity: 1,
             multiplier: 100,
-            max_positions: 1, // Only 1 position allowed
+            max_positions: 1,
             selector: TradeSelector::First,
             adjustment_rules: vec![],
             entry_signal: None,
@@ -1996,7 +1004,6 @@ mod tests {
             &date_idx,
         );
 
-        // Max positions = 1, first position stays open, second rejected
         assert_eq!(trade_log.len(), 0, "No trades should close in 2 days");
     }
 
@@ -2076,66 +1083,29 @@ mod tests {
             &date_idx,
         );
 
-        // Should have one equity point per trading day
         assert_eq!(
             equity_curve.len(),
             days.len(),
             "One equity point per trading day"
         );
 
-        // Day 1: just entered, MTM = 0 (entry price = current price)
-        // Actually on entry day, position is opened after MTM phase, so MTM includes the position
-        // Entry at mid 5.25. Current price on d1 is also mid 5.25. MTM = 0.
         assert!(
             (equity_curve[0].equity - 10000.0).abs() < 1e-10,
             "Day 1 equity should be 10000, got {}",
             equity_curve[0].equity
         );
 
-        // Day 2: mid = 3.25, MTM = (3.25 - 5.25) * 100 = -200
         assert!(
             (equity_curve[1].equity - 9800.0).abs() < 1e-10,
             "Day 2 equity should be 9800, got {}",
             equity_curve[1].equity
         );
 
-        // Day 3: mid = 2.25, MTM = (2.25 - 5.25) * 100 = -300
         assert!(
             (equity_curve[2].equity - 9700.0).abs() < 1e-10,
             "Day 3 equity should be 9700, got {}",
             equity_curve[2].equity
         );
-    }
-
-    /// Helper: build a synthetic daily options `DataFrame` for testing `build_price_table`
-    /// and `find_entry_candidates`.
-    fn make_daily_df() -> DataFrame {
-        let d1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
-        let d2 = NaiveDate::from_ymd_opt(2024, 1, 22).unwrap();
-        let d3 = NaiveDate::from_ymd_opt(2024, 1, 29).unwrap();
-        let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
-
-        let quote_dates = vec![
-            d1.and_hms_opt(0, 0, 0).unwrap(),
-            d2.and_hms_opt(0, 0, 0).unwrap(),
-            d3.and_hms_opt(0, 0, 0).unwrap(),
-        ];
-        let expirations = [exp, exp, exp];
-
-        let mut df = df! {
-            QUOTE_DATETIME_COL => &quote_dates,
-            "option_type" => &["call", "call", "call"],
-            "strike" => &[100.0f64, 100.0, 100.0],
-            "bid" => &[5.0f64, 3.0, 2.0],
-            "ask" => &[5.50f64, 3.50, 2.50],
-            "delta" => &[0.50f64, 0.35, 0.25],
-        }
-        .unwrap();
-        df.with_column(
-            DateChunked::from_naive_date(PlSmallStr::from("expiration"), expirations).into_column(),
-        )
-        .unwrap();
-        df
     }
 
     #[test]
@@ -2187,7 +1157,6 @@ mod tests {
             "Should find at least one date with candidates"
         );
 
-        // Each date group should have exactly 1 candidate (1 strike per date)
         for cands in candidates.values() {
             assert_eq!(cands[0].legs.len(), 1);
         }
@@ -2195,15 +1164,12 @@ mod tests {
 
     #[test]
     fn find_entry_candidates_three_legs_no_duplicate_columns() {
-        // Regression test: joining 3+ legs used to produce duplicate
-        // `option_type_right` columns causing a polars error.
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
         let d1 = NaiveDate::from_ymd_opt(2024, 1, 15)
             .unwrap()
             .and_hms_opt(0, 0, 0)
             .unwrap();
 
-        // 3 call strikes for a butterfly (100/105/110)
         let mut df = df! {
             QUOTE_DATETIME_COL => &[d1, d1, d1],
             "option_type" => &["call", "call", "call"],
@@ -2282,15 +1248,12 @@ mod tests {
 
     #[test]
     fn find_entry_candidates_skips_rows_with_null_strike() {
-        // A row whose strike is null must be skipped even when all other fields are valid.
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
         let d1 = NaiveDate::from_ymd_opt(2024, 1, 15)
             .unwrap()
             .and_hms_opt(0, 0, 0)
             .unwrap();
 
-        // Build a column with a null strike so it survives the bid/ask and delta
-        // filters but is caught by the null check in the candidate-building loop.
         let null_strike: Vec<Option<f64>> = vec![None];
         let strike_col = Series::new("strike".into(), null_strike).into_column();
 
@@ -2373,7 +1336,6 @@ mod tests {
             );
         }
 
-        // Provide candidates on every day
         let mut candidates = BTreeMap::new();
         let date_idx = build_date_index(&table);
         for &d in &days {
@@ -2420,7 +1382,7 @@ mod tests {
             capital: 10000.0,
             quantity: 1,
             multiplier: 100,
-            max_positions: 5, // allow up to 5 concurrent positions
+            max_positions: 5,
             selector: TradeSelector::First,
             adjustment_rules: vec![],
             entry_signal: None,
@@ -2431,7 +1393,7 @@ mod tests {
             max_net_premium: None,
             min_net_delta: None,
             max_net_delta: None,
-            min_days_between_entries: Some(3), // require 3-day gap between entries
+            min_days_between_entries: Some(3),
             expiration_filter: ExpirationFilter::Any,
             exit_net_delta: None,
         };
@@ -2446,13 +1408,7 @@ mod tests {
             &date_idx,
         );
 
-        // 5 days, with 3-day minimum gap: entries on day 0 and day 3 (days[0] and days[3])
-        // means at most 2 positions opened over 5 days
         assert_eq!(equity_curve.len(), 5);
-        // The stagger of 3 means day-0 entry allowed, next entry only from day-3 onward
-        // Use a fresh run and count positions by checking the equity curve delta
-        // Here we just verify the run completes without error and has 5 equity points
-        // More rigorous stagger testing is done in vectorized_sim via filter_overlapping_trades
     }
 
     #[test]
@@ -2467,7 +1423,7 @@ mod tests {
             QUOTE_DATETIME_COL => &[d1],
             "option_type" => &["call"],
             "strike" => &[100.0f64],
-            "bid" => &[0.30f64], // low bid → mid = 0.35
+            "bid" => &[0.30f64],
             "ask" => &[0.40f64],
             "delta" => &[0.50f64],
         }
@@ -2507,7 +1463,7 @@ mod tests {
             exit_signal: None,
             ohlcv_path: None,
             cross_ohlcv_paths: HashMap::new(),
-            min_net_premium: Some(1.0), // require at least $1 premium — 0.35 should be excluded
+            min_net_premium: Some(1.0),
             max_net_premium: None,
             min_net_delta: None,
             max_net_delta: None,
@@ -2517,7 +1473,6 @@ mod tests {
         };
 
         let candidates = find_entry_candidates(&df, &strategy_def, &params).unwrap();
-        // Net premium = 0.35 which is < 1.0 → filtered out → no candidates
         assert!(
             candidates.is_empty(),
             "Candidates with premium < min_net_premium should be excluded"
@@ -2527,9 +1482,8 @@ mod tests {
     #[test]
     #[allow(clippy::too_many_lines)]
     fn stagger_days_asserts_trade_count() {
-        // 10 trading days with candidates every day, stagger = 3 → entries on day 0, 3, 6, 9
         let mut table = PriceTable::with_hasher(rustc_hash::FxBuildHasher);
-        let exp = NaiveDate::from_ymd_opt(2024, 1, 19).unwrap(); // expires within sim window
+        let exp = NaiveDate::from_ymd_opt(2024, 1, 19).unwrap();
         let days: Vec<NaiveDate> = (0..10)
             .map(|i| NaiveDate::from_ymd_opt(2024, 1, 10 + i).unwrap())
             .collect();
@@ -2570,7 +1524,6 @@ mod tests {
 
         let strategy_def = crate::strategies::find_strategy("long_call").unwrap();
 
-        // Without stagger: should open many positions
         let params_no_stagger = BacktestParams {
             strategy: "long_call".to_string(),
             leg_deltas: vec![TargetRange {
@@ -2618,7 +1571,6 @@ mod tests {
             &date_idx,
         );
 
-        // With stagger=3: entries on day 0, 3, 6, 9 → 4 trades max
         let params_stagger = BacktestParams {
             min_days_between_entries: Some(3),
             ..params_no_stagger.clone()
@@ -2699,7 +1651,7 @@ mod tests {
             ohlcv_path: None,
             cross_ohlcv_paths: HashMap::new(),
             min_net_premium: None,
-            max_net_premium: Some(1.0), // max $1 premium — mid of 5.25 should be excluded
+            max_net_premium: Some(1.0),
             min_net_delta: None,
             max_net_delta: None,
             min_days_between_entries: None,
@@ -2728,7 +1680,7 @@ mod tests {
             "strike" => &[100.0f64],
             "bid" => &[5.0f64],
             "ask" => &[5.50f64],
-            "delta" => &[0.70f64], // high delta
+            "delta" => &[0.70f64],
         }
         .unwrap();
         df.with_column(
@@ -2738,8 +1690,6 @@ mod tests {
 
         let strategy_def = crate::strategies::find_strategy("long_call").unwrap();
 
-        // max_net_delta = 0.50 should exclude this 0.70 delta candidate
-        // long_call: net_delta = delta * side(Long=1) * qty(1) = 0.70
         let params = BacktestParams {
             strategy: "long_call".to_string(),
             leg_deltas: vec![TargetRange {
@@ -2772,7 +1722,7 @@ mod tests {
             min_net_premium: None,
             max_net_premium: None,
             min_net_delta: None,
-            max_net_delta: Some(0.50), // exclude anything above 0.50
+            max_net_delta: Some(0.50),
             min_days_between_entries: None,
             expiration_filter: ExpirationFilter::Any,
             exit_net_delta: None,
@@ -2917,7 +1867,6 @@ mod tests {
         let candidates = find_entry_candidates(&df, &strategy_def, &params).unwrap();
         assert!(!candidates.is_empty());
         let cand = &candidates.values().next().unwrap()[0];
-        // long_call: net_delta = delta(0.45) × side(Long=1) × qty(1) = 0.45
         assert!(
             (cand.net_delta - 0.45).abs() < 1e-10,
             "Expected net_delta=0.45, got {}",
@@ -2933,7 +1882,6 @@ mod tests {
             .map(|i| NaiveDate::from_ymd_opt(2024, 1, 15 + i).unwrap())
             .collect();
 
-        // Day 0-1: delta=0.30 (within threshold), Day 2+: delta=0.80 (exceeds 0.50 threshold)
         for (i, &d) in days.iter().enumerate() {
             let delta = if i < 2 { 0.30 } else { 0.80 };
             table.insert(
@@ -3003,7 +1951,7 @@ mod tests {
             max_net_delta: None,
             min_days_between_entries: None,
             expiration_filter: ExpirationFilter::Any,
-            exit_net_delta: Some(0.50), // exit when |net_delta| > 0.50
+            exit_net_delta: Some(0.50),
         };
 
         let (trade_log, _, _) = run_event_loop(
@@ -3023,7 +1971,6 @@ mod tests {
             "Trade should exit via DeltaExit, got {:?}",
             trade_log[0].exit_type,
         );
-        // Entry on day 0, delta exceeds threshold on day 2 → 2 days held
         assert_eq!(
             trade_log[0].days_held, 2,
             "Should exit on day 2 (delta spikes)"
@@ -3033,13 +1980,11 @@ mod tests {
     #[test]
     fn delta_exit_does_not_trigger_within_threshold() {
         let mut table = PriceTable::with_hasher(rustc_hash::FxBuildHasher);
-        // Expiration within sim window so the position closes and we get a trade record
         let exp = NaiveDate::from_ymd_opt(2024, 1, 18).unwrap();
         let days: Vec<NaiveDate> = (0..5)
             .map(|i| NaiveDate::from_ymd_opt(2024, 1, 15 + i).unwrap())
             .collect();
 
-        // Delta stays at 0.30 the whole time — never exceeds threshold
         for &d in &days {
             table.insert(
                 (d, exp, OrderedFloat(100.0), OptionType::Call),
@@ -3108,7 +2053,7 @@ mod tests {
             max_net_delta: None,
             min_days_between_entries: None,
             expiration_filter: ExpirationFilter::Any,
-            exit_net_delta: Some(0.50), // threshold 0.50, delta stays at 0.30
+            exit_net_delta: Some(0.50),
         };
 
         let (trade_log, _, _) = run_event_loop(
@@ -3121,7 +2066,6 @@ mod tests {
             &date_idx,
         );
 
-        // Position should close via Expiration, NOT DeltaExit
         assert!(!trade_log.is_empty(), "Should have at least 1 closed trade");
         for trade in &trade_log {
             assert_ne!(

@@ -12,8 +12,8 @@ The optopsy-mcp codebase has grown to ~27k lines in `src/` with 7 files exceedin
 
 | File | Current Lines | Split Into | Lines After (main file) |
 |------|--------------|------------|------------------------|
-| `src/engine/event_sim.rs` | 3,134 | 4 files | ~420 |
-| `src/server.rs` | 2,109 | 3 files (directory module) | ~1,100 |
+| `src/engine/event_sim.rs` | 3,134 | 4 files | ~525 (+ ~1,550 tests) ✅ |
+| `src/server.rs` | 2,109 | 3 files (directory module) | ~1,064 ✅ |
 | `src/signals/registry.rs` | 1,903 | 3 files | ~340 |
 | `src/engine/sweep.rs` | 1,756 | 2 files | ~530 |
 | `src/tools/ai_format.rs` | 1,700 | 2 files | ~600 |
@@ -24,7 +24,9 @@ The optopsy-mcp codebase has grown to ~27k lines in `src/` with 7 files exceedin
 
 ## Detailed Plan
 
-### 1. `src/engine/event_sim.rs` (3,134 lines → 4 files) — Highest Priority
+### 1. `src/engine/event_sim.rs` (3,134 lines → 4 files) — ✅ COMPLETED
+
+**Status:** Done (branch `claude/refactor-largest-file-mVnhz`, commit `aef47d8`). Split into `price_table.rs` (304 lines), `positions.rs` (485 lines), `adjustments.rs` (333 lines). Main file retains `find_entry_candidates`, `run_event_loop`, `check_exit_triggers` (~525 lines of logic + ~1,550 lines of inline tests).
 
 The largest file in the project. Contains price table construction, entry candidate discovery, the main event loop, position lifecycle management, and a full adjustment system — all in one file.
 
@@ -70,7 +72,9 @@ The largest file in the project. Contains price table construction, entry candid
 
 ---
 
-### 2. `src/server.rs` (2,109 lines → 3 files)
+### 2. `src/server.rs` (2,109 lines → 3 files) — ✅ COMPLETED
+
+**Status:** Done. Converted to directory module: `mod.rs` (1,064 lines), `params.rs` (665 lines), `sanitize.rs` (395 lines). All external imports unchanged via re-exports.
 
 Convert from a single file to a directory module (`src/server/mod.rs`).
 
