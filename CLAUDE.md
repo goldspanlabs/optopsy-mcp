@@ -61,7 +61,7 @@ Key submodules: `filters.rs` (DTE/delta filtering, `filter_valid_quotes(df, min_
 `DataStore` trait with `CachedStore` as default — local Parquet cache at `~/.optopsy/cache/{category}/{SYMBOL}.parquet` with S3 fetch-on-miss. `ParquetStore` handles normalization of date columns (`quote_date`/`quote_datetime` as Date, Datetime, or String → unified `Datetime("quote_datetime")`). Path segments validated against traversal attacks.
 
 ### Signals (`src/signals/`)
-TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, trend, volatility, overlap, price, volume, plus combinators. Signal registry in `registry.rs` contains ~40 indicators. Signals are **fully wired** into backtest entry/exit filtering via `entry_signal` and `exit_signal` params in `BacktestParams`. Usage requires OHLCV data loaded via `fetch_to_parquet` tool.
+TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, trend, volatility, overlap, price, volume, plus combinators. Split across three focused modules: `spec.rs` (the `SignalSpec` enum with 40+ variants), `builders.rs` (`build_signal()` factory and per-category builders), and `registry.rs` (signal catalog metadata, `collect_cross_symbols`, re-exports). Signals are **fully wired** into backtest entry/exit filtering via `entry_signal` and `exit_signal` params in `BacktestParams`. Usage requires OHLCV data loaded via `fetch_to_parquet` tool.
 
 ## Polars 0.53 Conventions
 
