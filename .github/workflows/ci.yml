@@ -31,7 +31,6 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --all-targets
-      - run: cargo clippy --all-targets --features postgres
 
   test:
     name: Test
@@ -75,4 +74,3 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build
-      - run: cargo build --features postgres

@@ -5,17 +5,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Development Commands
 
 ```bash
-cargo build                          # build (default features)
-cargo build --features postgres      # build with PostgreSQL backend
+cargo build                          # build
 cargo test                           # run all tests
 cargo test <test_name>               # run a single test by name
 cargo test --test strategy_coverage  # run a specific integration test file
 cargo fmt --check                    # check formatting
-cargo clippy --all-targets           # lint (default features)
-cargo clippy --all-targets --features postgres  # lint with postgres feature
+cargo clippy --all-targets           # lint
 ```
 
-CI and the pre-push hook enforce `RUSTFLAGS="-Dwarnings"` — all warnings are errors. Both default and `--features postgres` clippy must pass.
+CI and the pre-push hook enforce `RUSTFLAGS="-Dwarnings"` — all warnings are errors.
 
 ## Environment Variables
 

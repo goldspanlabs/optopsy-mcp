@@ -1,7 +1,5 @@
 pub mod cache;
 pub mod parquet;
-#[cfg(feature = "postgres")]
-pub mod postgres;
 
 use anyhow::Result;
 use chrono::NaiveDate;

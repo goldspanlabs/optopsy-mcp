@@ -57,7 +57,7 @@ fn two_strategies() -> Vec<CompareEntry> {
     ]
 }
 
-/// Each CompareResult must contain a non-empty trade_log when trades are produced.
+/// Each `CompareResult` must contain a non-empty `trade_log` when trades are produced.
 #[test]
 fn compare_results_include_trade_logs() {
     let df = make_multi_strike_df();
@@ -84,7 +84,7 @@ fn compare_results_include_trade_logs() {
     }
 }
 
-/// Trade log entries have valid structure: sequential IDs, positive days_held,
+/// Trade log entries have valid structure: sequential IDs, positive `days_held`,
 /// entry before exit, and non-empty legs.
 #[test]
 fn compare_trade_log_entries_have_valid_structure() {
@@ -126,7 +126,7 @@ fn compare_trade_log_entries_have_valid_structure() {
     }
 }
 
-/// Trade log P&L is internally consistent: pnl = exit_proceeds - entry_cost.
+/// Trade log P&L is internally consistent: pnl = `exit_proceeds` - `entry_cost`.
 #[test]
 fn compare_trade_log_pnl_consistency() {
     let df = make_multi_strike_df();
@@ -161,7 +161,7 @@ fn compare_trade_log_pnl_consistency() {
     }
 }
 
-/// Trade logs match what run_backtest produces independently for the same strategy.
+/// Trade logs match what `run_backtest` produces independently for the same strategy.
 #[test]
 fn compare_trade_log_matches_standalone_backtest() {
     let df = make_multi_strike_df();
