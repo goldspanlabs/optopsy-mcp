@@ -1,3 +1,5 @@
+//! Run a full event-driven backtest and return an AI-enriched response.
+
 use anyhow::Result;
 use polars::prelude::*;
 
@@ -6,6 +8,7 @@ use crate::engine::types::BacktestParams;
 use super::ai_format;
 use super::response_types::{BacktestResponse, UnderlyingPrice};
 
+/// Execute the backtest engine and format the result with metrics, trade log, and assessment.
 pub fn execute(
     df: &DataFrame,
     params: &BacktestParams,

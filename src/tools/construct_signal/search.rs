@@ -1,3 +1,5 @@
+//! Fuzzy search over the signal catalog using token-based scoring.
+
 use crate::signals::registry::SIGNAL_CATALOG;
 use crate::tools::response_types::SignalCandidate;
 

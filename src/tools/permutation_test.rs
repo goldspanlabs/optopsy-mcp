@@ -1,3 +1,5 @@
+//! Run a permutation test to assess statistical significance of backtest results.
+
 use std::collections::HashSet;
 use std::hash::BuildHasher;
 
@@ -11,6 +13,7 @@ use crate::engine::types::BacktestParams;
 use super::ai_format;
 use super::response_types::PermutationTestResponse;
 
+/// Execute the permutation test and format results with p-values and significance assessment.
 pub fn execute<S1: BuildHasher, S2: BuildHasher>(
     df: &DataFrame,
     params: &BacktestParams,

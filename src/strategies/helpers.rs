@@ -1,3 +1,8 @@
+//! Helper functions for building strategy definitions.
+//!
+//! Provides convenience constructors for legs, delta defaults, and strategy
+//! builders with automatic direction inference.
+
 pub use crate::engine::types::{
     Direction, ExpirationCycle, LegDef, OptionType, Side, StrategyDef, TargetRange,
 };
@@ -49,6 +54,7 @@ pub fn default_itm_delta() -> TargetRange {
     }
 }
 
+/// Build a primary-expiration leg definition with the given side, option type, quantity, and delta.
 pub fn leg(side: Side, option_type: OptionType, qty: i32, delta: TargetRange) -> LegDef {
     LegDef {
         side,
@@ -69,22 +75,27 @@ fn leg_secondary(side: Side, option_type: OptionType, qty: i32, delta: TargetRan
     }
 }
 
+/// Build a call leg on the primary expiration.
 pub fn call_leg(side: Side, qty: i32, delta: TargetRange) -> LegDef {
     leg(side, OptionType::Call, qty, delta)
 }
 
+/// Build a put leg on the primary expiration.
 pub fn put_leg(side: Side, qty: i32, delta: TargetRange) -> LegDef {
     leg(side, OptionType::Put, qty, delta)
 }
 
+/// Build a call leg on the secondary expiration (for calendar/diagonal spreads).
 pub fn call_leg_secondary(side: Side, qty: i32, delta: TargetRange) -> LegDef {
     leg_secondary(side, OptionType::Call, qty, delta)
 }
 
+/// Build a put leg on the secondary expiration (for calendar/diagonal spreads).
 pub fn put_leg_secondary(side: Side, qty: i32, delta: TargetRange) -> LegDef {
     leg_secondary(side, OptionType::Put, qty, delta)
 }
 
+/// Build a strategy definition with strict strike ordering (adjacent legs must have different strikes).
 pub fn strategy(name: &str, category: &str, description: &str, legs: Vec<LegDef>) -> StrategyDef {
     let direction = infer_direction(name, &legs);
     StrategyDef {

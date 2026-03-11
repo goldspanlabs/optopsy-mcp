@@ -1,3 +1,8 @@
+//! Polars-based filter pipeline for options chain data.
+//!
+//! Provides composable filters for DTE range, option type, delta targeting,
+//! bid/ask validity, expiration type, and leg-join preparation.
+
 use anyhow::Result;
 use chrono::Datelike;
 use polars::prelude::*;

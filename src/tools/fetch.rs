@@ -1,3 +1,7 @@
+//! Fetch OHLCV price data from Yahoo Finance and cache as Parquet.
+//!
+//! Provides the data prerequisite for signal-based entry/exit filtering in backtests.
+
 use anyhow::{Context, Result};
 use chrono::NaiveDate;
 use polars::prelude::*;
@@ -15,7 +19,7 @@ pub trait QuoteProvider: Send + Sync {
     async fn fetch_quotes(&self, symbol: &str, period: &str) -> Result<Vec<yahoo::Quote>>;
 }
 
-/// Real implementation using Yahoo Finance API.
+/// Production implementation that fetches quotes from Yahoo Finance.
 pub struct YahooQuoteProvider;
 
 #[async_trait::async_trait]
@@ -35,6 +39,7 @@ impl QuoteProvider for YahooQuoteProvider {
 /// OHLCV category — all fetched price data lives under `prices/`.
 const OHLCV_CATEGORY: &str = "prices";
 
+/// Fetch OHLCV data using the default Yahoo Finance provider and save to cache.
 pub async fn execute(
     cache: &Arc<CachedStore>,
     symbol: &str,
@@ -44,6 +49,7 @@ pub async fn execute(
     execute_with_provider(cache, symbol, period, &provider).await
 }
 
+/// Fetch OHLCV data using a custom provider, build a `DataFrame`, and write to Parquet cache.
 pub async fn execute_with_provider(
     cache: &Arc<CachedStore>,
     symbol: &str,

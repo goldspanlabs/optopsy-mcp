@@ -1,3 +1,6 @@
+//! Build the `PriceTable` hash map from a raw options `DataFrame` for O(1)
+//! quote lookups during event-driven simulation.
+
 use std::collections::HashMap;
 
 use anyhow::{bail, Result};

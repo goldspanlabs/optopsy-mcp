@@ -1,3 +1,8 @@
+//! Signal specification enum defining all supported signal types.
+//!
+//! Each variant maps 1:1 to a `SignalFn` implementation and is serializable
+//! for JSON Schema generation, storage, and MCP transport.
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -6,24 +11,17 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type")]
 pub enum SignalSpec {
-    // -- Momentum --
-    RsiBelow {
-        column: String,
-        threshold: f64,
-    },
-    RsiAbove {
-        column: String,
-        threshold: f64,
-    },
-    MacdBullish {
-        column: String,
-    },
-    MacdBearish {
-        column: String,
-    },
-    MacdCrossover {
-        column: String,
-    },
+    /// Fire when RSI is below the threshold (oversold).
+    RsiBelow { column: String, threshold: f64 },
+    /// Fire when RSI is above the threshold (overbought).
+    RsiAbove { column: String, threshold: f64 },
+    /// Fire when MACD histogram is positive (bullish momentum).
+    MacdBullish { column: String },
+    /// Fire when MACD histogram is negative (bearish momentum).
+    MacdBearish { column: String },
+    /// Fire when MACD line crosses above the signal line.
+    MacdCrossover { column: String },
+    /// Fire when Stochastic %K is below the threshold (oversold).
     StochasticBelow {
         close_col: String,
         high_col: String,
@@ -31,6 +29,7 @@ pub enum SignalSpec {
         period: usize,
         threshold: f64,
     },
+    /// Fire when Stochastic %K is above the threshold (overbought).
     StochasticAbove {
         close_col: String,
         high_col: String,
@@ -39,60 +38,58 @@ pub enum SignalSpec {
         threshold: f64,
     },
 
-    // -- Overlap --
-    PriceAboveSma {
-        column: String,
-        period: usize,
-    },
-    PriceBelowSma {
-        column: String,
-        period: usize,
-    },
-    PriceAboveEma {
-        column: String,
-        period: usize,
-    },
-    PriceBelowEma {
-        column: String,
-        period: usize,
-    },
+    /// Fire when price is above the simple moving average.
+    PriceAboveSma { column: String, period: usize },
+    /// Fire when price is below the simple moving average.
+    PriceBelowSma { column: String, period: usize },
+    /// Fire when price is above the exponential moving average.
+    PriceAboveEma { column: String, period: usize },
+    /// Fire when price is below the exponential moving average.
+    PriceBelowEma { column: String, period: usize },
+    /// Fire when the fast SMA crosses above the slow SMA (bullish crossover).
     SmaCrossover {
         column: String,
         fast_period: usize,
         slow_period: usize,
     },
+    /// Fire when the fast SMA crosses below the slow SMA (bearish crossunder).
     SmaCrossunder {
         column: String,
         fast_period: usize,
         slow_period: usize,
     },
+    /// Fire when the fast EMA crosses above the slow EMA (bullish crossover).
     EmaCrossover {
         column: String,
         fast_period: usize,
         slow_period: usize,
     },
+    /// Fire when the fast EMA crosses below the slow EMA (bearish crossunder).
     EmaCrossunder {
         column: String,
         fast_period: usize,
         slow_period: usize,
     },
 
-    // -- Trend --
+    /// Fire when Aroon Up exceeds Aroon Down (uptrend).
     AroonUptrend {
         high_col: String,
         low_col: String,
         period: usize,
     },
+    /// Fire when Aroon Down exceeds Aroon Up (downtrend).
     AroonDowntrend {
         high_col: String,
         low_col: String,
         period: usize,
     },
+    /// Fire when Aroon Up exceeds the threshold.
     AroonUpAbove {
         high_col: String,
         period: usize,
         threshold: f64,
     },
+    /// Fire when price is above the Supertrend indicator (bullish).
     SupertrendBullish {
         close_col: String,
         high_col: String,
@@ -100,6 +97,7 @@ pub enum SignalSpec {
         period: usize,
         multiplier: f64,
     },
+    /// Fire when price is below the Supertrend indicator (bearish).
     SupertrendBearish {
         close_col: String,
         high_col: String,
@@ -108,7 +106,7 @@ pub enum SignalSpec {
         multiplier: f64,
     },
 
-    // -- Volatility --
+    /// Fire when Average True Range exceeds the threshold (high volatility).
     AtrAbove {
         close_col: String,
         high_col: String,
@@ -116,6 +114,7 @@ pub enum SignalSpec {
         period: usize,
         threshold: f64,
     },
+    /// Fire when Average True Range is below the threshold (low volatility).
     AtrBelow {
         close_col: String,
         high_col: String,
@@ -123,14 +122,11 @@ pub enum SignalSpec {
         period: usize,
         threshold: f64,
     },
-    BollingerLowerTouch {
-        column: String,
-        period: usize,
-    },
-    BollingerUpperTouch {
-        column: String,
-        period: usize,
-    },
+    /// Fire when price touches or crosses below the lower Bollinger Band.
+    BollingerLowerTouch { column: String, period: usize },
+    /// Fire when price touches or crosses above the upper Bollinger Band.
+    BollingerUpperTouch { column: String, period: usize },
+    /// Fire when price breaks below the lower Keltner Channel.
     KeltnerLowerBreak {
         close_col: String,
         high_col: String,
@@ -138,6 +134,7 @@ pub enum SignalSpec {
         period: usize,
         multiplier: f64,
     },
+    /// Fire when price breaks above the upper Keltner Channel.
     KeltnerUpperBreak {
         close_col: String,
         high_col: String,
@@ -156,52 +153,42 @@ pub enum SignalSpec {
         threshold: f64,
     },
     /// IV Rank below threshold.
-    IvRankBelow {
-        lookback: usize,
-        threshold: f64,
-    },
+    IvRankBelow { lookback: usize, threshold: f64 },
     /// IV Percentile above threshold. IV Percentile = % of lookback days with IV below current × 100.
-    IvPercentileAbove {
-        lookback: usize,
-        threshold: f64,
-    },
+    IvPercentileAbove { lookback: usize, threshold: f64 },
     /// IV Percentile below threshold.
-    IvPercentileBelow {
-        lookback: usize,
-        threshold: f64,
-    },
+    IvPercentileBelow { lookback: usize, threshold: f64 },
 
-    // -- Price --
+    /// Fire when today's open gaps up from the previous close by at least the threshold.
     GapUp {
         open_col: String,
         close_col: String,
         threshold: f64,
     },
+    /// Fire when today's open gaps down from the previous close by at least the threshold.
     GapDown {
         open_col: String,
         close_col: String,
         threshold: f64,
     },
+    /// Fire when drawdown from the rolling high exceeds the threshold.
     DrawdownBelow {
         column: String,
         window: usize,
         threshold: f64,
     },
-    ConsecutiveUp {
-        column: String,
-        count: usize,
-    },
-    ConsecutiveDown {
-        column: String,
-        count: usize,
-    },
+    /// Fire after N consecutive bars of rising prices.
+    ConsecutiveUp { column: String, count: usize },
+    /// Fire after N consecutive bars of falling prices.
+    ConsecutiveDown { column: String, count: usize },
+    /// Fire when the rate of change over the period exceeds the threshold.
     RateOfChange {
         column: String,
         period: usize,
         threshold: f64,
     },
 
-    // -- Volume --
+    /// Fire when Money Flow Index is below the threshold (oversold).
     MfiBelow {
         high_col: String,
         low_col: String,
@@ -210,6 +197,7 @@ pub enum SignalSpec {
         period: usize,
         threshold: f64,
     },
+    /// Fire when Money Flow Index is above the threshold (overbought).
     MfiAbove {
         high_col: String,
         low_col: String,
@@ -218,14 +206,17 @@ pub enum SignalSpec {
         period: usize,
         threshold: f64,
     },
+    /// Fire when On-Balance Volume is rising (accumulation).
     ObvRising {
         price_col: String,
         volume_col: String,
     },
+    /// Fire when On-Balance Volume is falling (distribution).
     ObvFalling {
         price_col: String,
         volume_col: String,
     },
+    /// Fire when Chaikin Money Flow is positive (buying pressure).
     CmfPositive {
         close_col: String,
         high_col: String,
@@ -233,6 +224,7 @@ pub enum SignalSpec {
         volume_col: String,
         period: usize,
     },
+    /// Fire when Chaikin Money Flow is negative (selling pressure).
     CmfNegative {
         close_col: String,
         high_col: String,
@@ -274,11 +266,12 @@ pub enum SignalSpec {
         signal: Box<SignalSpec>,
     },
 
-    // -- Combinators --
+    /// Logical AND: fire only when both left and right signals are active.
     And {
         left: Box<SignalSpec>,
         right: Box<SignalSpec>,
     },
+    /// Logical OR: fire when either left or right signal is active.
     Or {
         left: Box<SignalSpec>,
         right: Box<SignalSpec>,

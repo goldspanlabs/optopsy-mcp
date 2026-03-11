@@ -1,3 +1,9 @@
+//! Strike ordering rules for multi-leg strategies.
+//!
+//! Enforces ascending (strict or relaxed) strike constraints across legs,
+//! with special handling for multi-expiration strategies where ordering is
+//! applied independently within each expiration cycle.
+
 use anyhow::Result;
 use polars::prelude::*;
 

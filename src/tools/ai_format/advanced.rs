@@ -1,3 +1,5 @@
+//! Format advanced analysis results (sweep, walk-forward, permutation test) into AI-enriched responses.
+
 use crate::engine::permutation::PermutationOutput;
 use crate::engine::sweep::SweepOutput;
 use crate::engine::types::BacktestParams;
@@ -11,6 +13,7 @@ use crate::tools::response_types::{
     WalkForwardAggregate, WalkForwardResponse, WalkForwardWindowResult,
 };
 
+/// Format parameter sweep output into a ranked response with stability and OOS validation.
 #[allow(clippy::too_many_lines)]
 pub fn format_sweep(output: SweepOutput) -> SweepResponse {
     let best = output.ranked_results.first().cloned();
@@ -159,6 +162,7 @@ pub fn format_sweep(output: SweepOutput) -> SweepResponse {
     }
 }
 
+/// Format walk-forward analysis results with per-window details and aggregate statistics.
 pub fn format_walk_forward(
     result: &WalkForwardResult,
     params: &BacktestParams,
@@ -251,6 +255,7 @@ pub fn format_walk_forward(
     }
 }
 
+/// Format permutation test output with significance assessment and per-metric p-values.
 pub fn format_permutation_test(
     output: PermutationOutput,
     params: &BacktestParams,

@@ -1,3 +1,8 @@
+//! Top-level orchestration for backtests and strategy comparisons.
+//!
+//! Resolves strategy definitions, builds signal filters, and dispatches to
+//! either the vectorized or event-driven simulation path.
+
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{bail, Result};

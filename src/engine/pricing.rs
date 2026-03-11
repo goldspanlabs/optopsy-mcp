@@ -1,3 +1,5 @@
+//! Fill price and per-leg P&L calculations under various slippage models.
+
 use super::types::{Side, Slippage};
 
 /// Calculate fill price based on slippage model

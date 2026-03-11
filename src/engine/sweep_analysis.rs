@@ -1,3 +1,6 @@
+//! Sweep analysis types and helper functions: combination building, sensitivity
+//! analysis, parameter stability scoring, signal labeling, and data splitting.
+
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{bail, Result};
@@ -12,28 +15,39 @@ use crate::strategies;
 // Public types
 // ---------------------------------------------------------------------------
 
-/// Per-strategy delta sweep spec
+/// Per-strategy delta sweep spec: which delta targets to sweep for each leg.
 #[derive(Debug, Clone)]
 pub struct SweepStrategyEntry {
+    /// Strategy name (e.g. `"iron_condor"`).
     pub name: String,
+    /// Per-leg arrays of delta targets to enumerate.
     pub leg_delta_targets: Vec<Vec<f64>>,
 }
 
-/// Shared sweep dimensions
+/// Shared sweep dimensions: the grid of DTE, exit DTE, and slippage values to enumerate.
 #[derive(Debug, Clone)]
 pub struct SweepDimensions {
+    /// Entry DTE target values to sweep.
     pub entry_dte_targets: Vec<i32>,
+    /// Exit DTE values to sweep.
     pub exit_dtes: Vec<i32>,
+    /// Slippage models to include in the sweep.
     pub slippage_models: Vec<Slippage>,
 }
 
-/// Full sweep input
+/// Full sweep input combining strategy entries, dimension grid, simulation
+/// parameters, and optional out-of-sample / permutation settings.
 #[derive(Debug, Clone)]
 pub struct SweepParams {
+    /// Strategy entries with per-leg delta targets.
     pub strategies: Vec<SweepStrategyEntry>,
+    /// Grid dimensions (DTE, exit DTE, slippage) to enumerate.
     pub sweep: SweepDimensions,
+    /// Shared simulation parameters (capital, quantity, etc.).
     pub sim_params: super::types::SimParams,
+    /// Fraction of data reserved for out-of-sample validation (0 = disabled).
     pub out_of_sample_pct: f64,
+    /// Optional directional filter for strategy selection.
     pub direction: Option<super::types::Direction>,
     /// Entry signal variants to sweep. Empty = use `sim_params.entry_signal` as-is.
     pub entry_signals: Vec<SignalSpec>,
@@ -46,47 +60,66 @@ pub struct SweepParams {
     pub permutation_seed: Option<u64>,
 }
 
-/// Per-dimension-value averages
+/// Per-dimension-value averages used for sensitivity analysis.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct DimensionStats {
+    /// Average Sharpe ratio across results sharing this dimension value.
     pub avg_sharpe: f64,
+    /// Average P&L across results sharing this dimension value.
     pub avg_pnl: f64,
+    /// Number of results contributing to these averages.
     pub count: usize,
 }
 
-/// OOS validation row
+/// Out-of-sample validation result comparing in-sample vs hold-out performance.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct OosResult {
+    /// Combination label identifying this result.
     pub label: String,
+    /// Sharpe ratio on the training (in-sample) set.
     pub train_sharpe: f64,
+    /// Sharpe ratio on the test (out-of-sample) set.
     pub test_sharpe: f64,
+    /// P&L on the training set.
     pub train_pnl: f64,
+    /// P&L on the test set.
     pub test_pnl: f64,
 }
 
-/// Per-dimension stability for a single top result
+/// Per-dimension stability for a single top result, measuring sensitivity to neighbor changes.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct DimensionStability {
+    /// Name of the dimension (e.g. `"leg_1_delta"`, `"entry_dte"`).
     pub dimension: String,
+    /// Stability score in [0, 1] where 1 = perfectly stable.
     pub score: f64,
+    /// Largest relative Sharpe change among grid neighbors.
     pub max_sharpe_change: f64,
+    /// Number of neighboring results found for this dimension.
     pub neighbor_count: usize,
 }
 
-/// Stability score for a single top result
+/// Overall stability assessment for a top sweep result across all dimensions.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct StabilityScore {
+    /// Combination label.
     pub label: String,
+    /// Average stability score across all dimensions in [0, 1].
     pub overall_score: f64,
+    /// True if `overall_score >= 0.7`.
     pub is_stable: bool,
+    /// Human-readable warning when performance is fragile.
     pub warning: Option<String>,
+    /// Stability breakdown for each swept dimension.
     pub per_dimension: Vec<DimensionStability>,
 }
 
-/// Full sweep output
+/// Complete output of a parameter sweep: ranked results, sensitivity, stability, and OOS data.
 #[derive(Debug, Clone)]
 pub struct SweepOutput {
+    /// Total combinations enumerated (including skipped and failed).
     pub combinations_total: usize,
+    /// Combinations that were actually backtested.
     pub combinations_run: usize,
     /// Pre-filter skips (delta ordering, deduplication)
     pub combinations_skipped: usize,
@@ -94,9 +127,13 @@ pub struct SweepOutput {
     pub combinations_failed: usize,
     /// Number of signal combinations swept (entry × exit), if > 1
     pub signal_combinations: Option<usize>,
+    /// Results sorted by Sharpe ratio (descending).
     pub ranked_results: Vec<SweepResult>,
+    /// Sensitivity analysis: dimension name -> value -> aggregate stats.
     pub dimension_sensitivity: HashMap<String, HashMap<String, DimensionStats>>,
+    /// Out-of-sample validation results for top combinations.
     pub oos_results: Vec<OosResult>,
+    /// Parameter stability scores for top combinations.
     pub stability_scores: Vec<StabilityScore>,
     /// Multiple comparisons correction results, populated when `num_permutations` is set.
     /// Tuple of (Bonferroni, Benjamini-Hochberg) corrections applied to Sharpe p-values.

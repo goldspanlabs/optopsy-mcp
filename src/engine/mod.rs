@@ -1,3 +1,6 @@
+//! Options backtesting engine: strategy evaluation, event-driven simulation,
+//! pricing, metrics, parameter sweeps, and supporting utilities.
+
 pub mod adjustments;
 pub mod core;
 pub mod event_sim;

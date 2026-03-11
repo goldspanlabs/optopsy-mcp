@@ -1,3 +1,5 @@
+//! Format backtest and strategy comparison results into AI-enriched responses.
+
 use crate::engine::types::{
     to_display_name, BacktestParams, BacktestResult, CompareEntry, CompareResult,
 };
@@ -9,6 +11,7 @@ use crate::tools::response_types::{
     BacktestResponse, CompareResponse, CompareStrategyEntry, UnderlyingPrice,
 };
 
+/// Format a backtest result into an AI-enriched response with summary, assessment, and next steps.
 #[allow(clippy::too_many_lines)]
 pub fn format_backtest(
     result: BacktestResult,
@@ -103,6 +106,7 @@ pub fn format_backtest(
     }
 }
 
+/// Format strategy comparison results with rankings by Sharpe and P&L.
 pub fn format_compare(
     results: Vec<CompareResult>,
     labeled_entries: &[CompareEntry],

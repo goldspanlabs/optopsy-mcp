@@ -4,7 +4,7 @@ use super::helpers::{column_to_f64, SignalFn};
 use polars::prelude::*;
 
 /// Signal: gap up — open is significantly higher than the previous close.
-/// Detects when (open[i] - close[i-1]) / |close[i-1]| > threshold.
+/// Detects when `(open[i] - close[i-1]) / |close[i-1]| > threshold`.
 pub struct GapUp {
     pub open_col: String,
     pub close_col: String,
@@ -36,7 +36,7 @@ impl SignalFn for GapUp {
 }
 
 /// Signal: gap down — open is significantly lower than the previous close.
-/// Detects when (close[i-1] - open[i]) / |close[i-1]| > threshold.
+/// Detects when `(close[i-1] - open[i]) / |close[i-1]| > threshold`.
 pub struct GapDown {
     pub open_col: String,
     pub close_col: String,

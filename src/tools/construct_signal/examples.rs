@@ -1,3 +1,5 @@
+//! Concrete JSON examples for each signal type, used in `build_signal` search results.
+
 use serde_json::{json, Value};
 
 use super::{DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW, DEFAULT_OPEN, DEFAULT_VOLUME};

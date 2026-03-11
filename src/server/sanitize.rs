@@ -1,12 +1,9 @@
-// ---------------------------------------------------------------------------
-// SanitizedJson — drop-in replacement for rmcp::Json that replaces NaN/Infinity
-// with 0.0 so that `serde_json::to_value` never fails on non-finite floats.
-//
-// `serde_json::to_value` rejects NaN/Infinity *during* serialization, so we
-// cannot sanitize after the fact. Instead we wrap the inner `Serialize` impl
-// with `FiniteF64` which intercepts `serialize_f64` and maps non-finite values
-// to `0.0` before they reach serde_json.
-// ---------------------------------------------------------------------------
+//! Sanitized JSON serialization that replaces NaN/Infinity with `0.0`.
+//!
+//! `serde_json::to_value` rejects NaN/Infinity *during* serialization, so we
+//! cannot sanitize after the fact. Instead we wrap the inner `Serialize` impl
+//! with `FiniteF64` which intercepts `serialize_f64` and maps non-finite values
+//! to `0.0` before they reach `serde_json`.
 
 /// Wrapper whose `Serialize` impl delegates to `T` but replaces any
 /// non-finite `f64` values (NaN, ±Infinity) with `0.0` during serialization.

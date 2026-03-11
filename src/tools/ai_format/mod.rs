@@ -1,3 +1,8 @@
+//! AI response formatting layer.
+//!
+//! Transforms raw engine results into enriched response structs with natural-language
+//! summaries, key findings, and suggested next steps for LLM consumption.
+
 mod advanced;
 mod backtest;
 mod data;

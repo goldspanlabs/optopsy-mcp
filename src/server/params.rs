@@ -1,3 +1,8 @@
+//! MCP tool parameter structs with validation.
+//!
+//! Each struct corresponds to a tool's input schema, deriving `JsonSchema` for
+//! MCP schema generation and `garde::Validate` for runtime validation.
+
 use garde::Validate;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -45,6 +50,7 @@ pub(crate) fn resolve_leg_deltas(
     }
 }
 
+/// Return the default entry DTE range (target: 45, min: 30, max: 60).
 pub(crate) fn default_entry_dte() -> DteRange {
     DteRange {
         target: 45,
@@ -53,18 +59,22 @@ pub(crate) fn default_entry_dte() -> DteRange {
     }
 }
 
+/// Return the default exit DTE (0, hold to expiration).
 pub(crate) fn default_exit_dte() -> i32 {
     0
 }
 
+/// Return the default max concurrent positions (1).
 pub(crate) fn default_max_positions() -> i32 {
     1
 }
 
+/// Return the default contracts per trade (1).
 pub(crate) fn default_quantity() -> i32 {
     1
 }
 
+/// Return the default starting capital (10000).
 pub(crate) fn default_capital() -> f64 {
     10000.0
 }
@@ -176,6 +186,7 @@ pub struct BacktestBaseParams {
     pub exit_net_delta: Option<f64>,
 }
 
+/// Parameters for the `run_backtest` tool.
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct RunBacktestParams {
     #[serde(flatten)]
@@ -195,6 +206,7 @@ fn default_num_permutations() -> usize {
     100
 }
 
+/// Parameters for the `walk_forward` rolling validation tool.
 #[derive(Debug, Clone, Deserialize, JsonSchema, Validate)]
 pub struct WalkForwardParams {
     #[serde(flatten)]
@@ -216,6 +228,7 @@ pub struct WalkForwardParams {
     pub step_days: Option<i32>,
 }
 
+/// Parameters for the `permutation_test` statistical significance tool.
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct PermutationTestParams {
     #[serde(flatten)]
@@ -232,6 +245,7 @@ pub struct PermutationTestParams {
     pub seed: Option<u64>,
 }
 
+/// A single strategy entry within a `compare_strategies` request.
 #[derive(Debug, Clone, Deserialize, JsonSchema, Validate)]
 pub struct ServerCompareEntry {
     /// Strategy name (e.g. `short_put`, `iron_condor`)
@@ -259,6 +273,7 @@ pub struct ServerCompareEntry {
     pub commission: Option<Commission>,
 }
 
+/// Parameters for the `compare_strategies` side-by-side comparison tool.
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct CompareStrategiesParams {
     /// List of strategies with their parameters
@@ -283,6 +298,7 @@ pub struct CompareStrategiesParams {
     pub symbol: Option<String>,
 }
 
+/// Validate that a cache category is one of the allowed read categories ("options" or "prices").
 pub(crate) fn validate_category_read(category: &str) -> Result<&str, String> {
     match category {
         "options" | "prices" => Ok(category),
@@ -292,6 +308,7 @@ pub(crate) fn validate_category_read(category: &str) -> Result<&str, String> {
     }
 }
 
+/// Parameters for the `check_cache_status` tool.
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct CheckCacheParams {
     /// Ticker symbol (e.g. "SPY")
@@ -302,6 +319,7 @@ pub struct CheckCacheParams {
     pub category: String,
 }
 
+/// Parameters for the `build_signal` tool, supporting multiple actions (search, create, etc.).
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct BuildSignalParams {
     /// Action to perform: "catalog", "search", "create", "list", "delete", "validate", or "get"
@@ -340,6 +358,7 @@ fn default_price_limit() -> Option<usize> {
     Some(500)
 }
 
+/// Parameters for the `get_raw_prices` tool.
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct GetRawPricesParams {
     /// Ticker symbol (e.g. "SPY")
@@ -363,6 +382,7 @@ fn default_sweep_max_positions() -> i32 {
     3
 }
 
+/// Return the default out-of-sample percentage (30%).
 pub(crate) fn default_oos_pct() -> f64 {
     30.0
 }
@@ -395,6 +415,7 @@ fn validate_leg_delta_targets(value: &Option<Vec<Vec<f64>>>, _ctx: &()) -> garde
     Ok(())
 }
 
+/// A strategy entry for the `parameter_sweep` tool, with optional per-leg delta grids.
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct SweepStrategyInput {
     /// Strategy name (e.g. `short_put`, `iron_condor`)
@@ -408,6 +429,7 @@ pub struct SweepStrategyInput {
     pub leg_delta_targets: Option<Vec<Vec<f64>>>,
 }
 
+/// Sweep dimensions for `parameter_sweep`: DTE targets, exit DTEs, and slippage models.
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct SweepDimensionsInput {
     /// Entry DTE targets to sweep (e.g. [30, 45, 60])
@@ -426,6 +448,7 @@ fn default_sweep_slippage() -> Vec<Slippage> {
     vec![Slippage::Spread]
 }
 
+/// Parameters for the `parameter_sweep` optimization tool.
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct ParameterSweepParams {
     /// Strategies to sweep (optional if `direction` is provided)

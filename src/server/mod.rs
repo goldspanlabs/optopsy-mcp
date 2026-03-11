@@ -1,3 +1,8 @@
+//! MCP server implementation for optopsy.
+//!
+//! Holds shared state (loaded `DataFrames`, data cache, tool router) and exposes
+//! all MCP tool handlers via `rmcp`'s `#[tool_router]` and `#[tool_handler]` macros.
+
 mod params;
 mod sanitize;
 
@@ -35,14 +40,18 @@ use sanitize::{SanitizedJson, SanitizedResult};
 /// Loaded data: `HashMap<Symbol, DataFrame>` for multi-symbol support.
 type LoadedData = HashMap<String, DataFrame>;
 
+/// MCP server for options backtesting, holding loaded data and the tool router.
 #[derive(Clone)]
 pub struct OptopsyServer {
+    /// Multi-symbol in-memory data storage, keyed by uppercase ticker.
     pub data: Arc<RwLock<LoadedData>>,
+    /// Shared data layer for local Parquet cache and optional S3 backend.
     pub cache: Arc<CachedStore>,
     tool_router: ToolRouter<Self>,
 }
 
 impl OptopsyServer {
+    /// Create a new server instance with the given data cache.
     pub fn new(cache: Arc<CachedStore>) -> Self {
         Self {
             data: Arc::new(RwLock::new(HashMap::new())),

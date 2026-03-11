@@ -1,3 +1,5 @@
+//! Run walk-forward analysis to detect overfitting by testing on rolling out-of-sample windows.
+
 use anyhow::Result;
 use polars::prelude::*;
 
@@ -7,6 +9,7 @@ use crate::engine::walk_forward;
 use super::ai_format;
 use super::response_types::WalkForwardResponse;
 
+/// Execute walk-forward analysis and format per-window and aggregate results.
 pub fn execute(
     df: &DataFrame,
     params: &BacktestParams,

@@ -1,9 +1,12 @@
+//! Format data-loading and strategy-listing results into AI-enriched responses.
+
 use std::collections::HashMap;
 
 use crate::tools::response_types::{
     DateRange, LoadDataResponse, PriceBar, RawPricesResponse, StrategiesResponse, StrategyInfo,
 };
 
+/// Format a data load result into a response with row count, date range, and next steps.
 pub fn format_load_data(
     symbol: &str,
     rows: usize,
@@ -35,6 +38,7 @@ pub fn format_load_data(
     }
 }
 
+/// Format the full strategy list into a categorized summary response.
 pub fn format_strategies(strategies: Vec<StrategyInfo>) -> StrategiesResponse {
     let total = strategies.len();
     let mut categories: HashMap<String, usize> = HashMap::new();
@@ -74,6 +78,7 @@ pub fn format_strategies(strategies: Vec<StrategyInfo>) -> StrategiesResponse {
     }
 }
 
+/// Format raw OHLCV price bars into a response suitable for chart generation.
 pub fn format_raw_prices(
     symbol: &str,
     total_rows: usize,

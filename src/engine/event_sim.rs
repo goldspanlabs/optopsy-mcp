@@ -1,3 +1,9 @@
+//! Event-driven simulation loop and entry candidate discovery.
+//!
+//! Builds entry candidates from the Polars filter pipeline, then runs a
+//! day-by-day event loop that opens, manages, and closes positions according
+//! to the configured exit rules, adjustment rules, and signal filters.
+
 use std::collections::{BTreeMap, HashMap};
 
 use anyhow::{bail, Result};

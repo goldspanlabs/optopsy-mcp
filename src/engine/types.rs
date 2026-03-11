@@ -1,3 +1,9 @@
+//! Core type definitions shared across the backtesting engine.
+//!
+//! Contains strategy definitions, parameter structs (with `garde` validation),
+//! simulation result types, trade records, and enum variants for sides,
+//! option types, slippage models, exit types, and trade selectors.
+
 use chrono::NaiveDateTime;
 use garde::Validate;
 use schemars::JsonSchema;
@@ -12,6 +18,7 @@ use crate::signals::registry::SignalSpec;
 /// it to `from_num_days_from_ce_opt`.
 pub const EPOCH_DAYS_CE_OFFSET: i32 = 719_163;
 
+/// Market direction bias for a strategy (bullish, bearish, neutral, or volatile).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Direction {
@@ -21,6 +28,7 @@ pub enum Direction {
     Volatile,
 }
 
+/// Look up the market direction bias for a named strategy, defaulting to `Neutral` if unknown.
 pub fn strategy_direction(name: &str) -> Direction {
     if let Some(def) = crate::strategies::find_strategy(name) {
         return def.direction;
@@ -32,6 +40,7 @@ pub fn strategy_direction(name: &str) -> Direction {
     Direction::Neutral
 }
 
+/// Position direction: long (+1) or short (-1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Side {
     Long = 1,
@@ -39,6 +48,7 @@ pub enum Side {
 }
 
 impl Side {
+    /// Return the numeric multiplier: `1.0` for Long, `-1.0` for Short.
     pub fn multiplier(self) -> f64 {
         match self {
             Side::Long => 1.0,
@@ -46,6 +56,7 @@ impl Side {
         }
     }
 
+    /// Return the opposite side (Long becomes Short and vice versa).
     #[must_use]
     pub fn flip(self) -> Self {
         match self {
@@ -55,6 +66,7 @@ impl Side {
     }
 }
 
+/// Option contract type: call or put.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
 )]
@@ -64,6 +76,7 @@ pub enum OptionType {
 }
 
 impl OptionType {
+    /// Return the lowercase string representation (`"call"` or `"put"`).
     pub fn as_str(&self) -> &'static str {
         match self {
             OptionType::Call => "call",
@@ -72,6 +85,7 @@ impl OptionType {
     }
 }
 
+/// Expiration cycle tag for multi-expiration strategies (calendar/diagonal).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ExpirationCycle {
     #[default]
@@ -79,12 +93,16 @@ pub enum ExpirationCycle {
     Secondary, // Far-term (calendar/diagonal only)
 }
 
+/// Target delta with acceptable min/max range for leg filtering.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct TargetRange {
+    /// Preferred delta value to match.
     #[garde(range(min = 0.0, max = 1.0))]
     pub target: f64,
+    /// Minimum acceptable delta (absolute).
     #[garde(range(min = 0.0, max = 1.0))]
     pub min: f64,
+    /// Maximum acceptable delta (absolute).
     #[garde(range(min = 0.0, max = 1.0), custom(validate_max_gte_min(&self.min)))]
     pub max: f64,
 }
@@ -151,12 +169,16 @@ fn validate_dte_max_gte_min(min: &i32) -> impl FnOnce(&i32, &()) -> garde::Resul
     }
 }
 
+/// Commission schedule applied per trade: `max(base_fee + per_contract * qty, min_fee)`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct Commission {
+    /// Fee charged per contract.
     #[garde(range(min = 0.0))]
     pub per_contract: f64,
+    /// Flat base fee added to every trade.
     #[garde(range(min = 0.0))]
     pub base_fee: f64,
+    /// Minimum total fee floor.
     #[garde(range(min = 0.0))]
     pub min_fee: f64,
 }
@@ -172,12 +194,14 @@ impl Default for Commission {
 }
 
 impl Commission {
+    /// Compute the total commission for the given number of contracts.
     pub fn calculate(&self, num_contracts: i32) -> f64 {
         let fee = self.base_fee + self.per_contract * f64::from(num_contracts.abs());
         fee.max(self.min_fee)
     }
 }
 
+/// Slippage model controlling how fill prices are derived from bid/ask quotes.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 #[serde(tag = "type")]
 #[derive(Default)]
@@ -215,6 +239,7 @@ pub enum ExpirationFilter {
     Monthly,
 }
 
+/// Strategy for choosing among multiple entry candidates on the same date.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub enum TradeSelector {
     #[default]
@@ -224,6 +249,7 @@ pub enum TradeSelector {
     First,
 }
 
+/// Reason a position was closed during simulation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum ExitType {
     Expiration,
@@ -237,13 +263,19 @@ pub enum ExitType {
     DeltaExit,
 }
 
+/// Definition of a single leg within a strategy template.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct LegDef {
+    /// Long or short direction for this leg.
     pub side: Side,
+    /// Call or put.
     pub option_type: OptionType,
+    /// Target delta range for leg filtering.
     pub delta: TargetRange,
+    /// Number of contracts per unit of the strategy.
     pub qty: i32,
+    /// Expiration cycle assignment (Primary or Secondary for calendar strategies).
     pub expiration_cycle: ExpirationCycle,
 }
 
@@ -264,11 +296,16 @@ pub fn to_display_name(name: &str) -> String {
         .join(" ")
 }
 
+/// Complete definition of a named options strategy with its leg templates.
 #[derive(Debug, Clone)]
 pub struct StrategyDef {
+    /// Internal `snake_case` identifier (e.g. `"iron_condor"`).
     pub name: String,
+    /// Strategy category (e.g. `"spreads"`, `"condors"`).
     pub category: String,
+    /// Human-readable description of the strategy.
     pub description: String,
+    /// Ordered leg definitions for this strategy.
     pub legs: Vec<LegDef>,
     /// When `false`, adjacent legs may share the same strike (e.g. straddles,
     /// iron butterflies). When `true` (default), strikes must be strictly ascending.
@@ -305,42 +342,59 @@ pub(crate) fn validate_exit_dte_lt_entry_min(
     }
 }
 
+/// Full parameter set for running an event-driven backtest simulation.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct BacktestParams {
+    /// Strategy name (must match a registered strategy, e.g. `"iron_condor"`).
     #[garde(length(min = 1))]
     pub strategy: String,
+    /// Per-leg delta targets; length must equal the strategy's leg count.
     #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
+    /// Entry DTE range (target, min, max).
     #[garde(dive)]
     pub entry_dte: DteRange,
+    /// Close positions when DTE falls to this value; must be < `entry_dte.min`.
     #[garde(range(min = 0), custom(validate_exit_dte_lt_entry_min(&self.entry_dte)))]
     pub exit_dte: i32,
+    /// Slippage model for fill price calculation.
     #[garde(dive)]
     pub slippage: Slippage,
+    /// Optional commission schedule applied at entry and exit.
     #[serde(default)]
     #[garde(dive)]
     pub commission: Option<Commission>,
+    /// Minimum bid/ask threshold; quotes below this are filtered out.
     #[serde(default = "default_min_bid_ask")]
     #[garde(range(min = 0.0))]
     pub min_bid_ask: f64,
+    /// Stop-loss threshold as a fraction of entry cost (e.g. `0.50` = 50% loss).
     #[garde(inner(range(min = 0.0)))]
     pub stop_loss: Option<f64>,
+    /// Take-profit threshold as a fraction of entry cost (e.g. `0.80` = 80% gain).
     #[garde(inner(range(min = 0.0)))]
     pub take_profit: Option<f64>,
+    /// Force-close positions after this many calendar days.
     #[garde(inner(range(min = 1)))]
     pub max_hold_days: Option<i32>,
+    /// Starting equity for the simulation.
     #[garde(range(min = 0.01))]
     pub capital: f64,
+    /// Number of contracts per trade entry.
     #[garde(range(min = 1))]
     pub quantity: i32,
+    /// Contract multiplier (typically 100 for equity options).
     #[serde(default = "default_multiplier")]
     #[garde(range(min = 1))]
     pub multiplier: i32,
+    /// Maximum number of simultaneously open positions.
     #[garde(range(min = 1))]
     pub max_positions: i32,
+    /// Strategy for choosing among multiple candidates on the same date.
     #[serde(default)]
     #[garde(skip)]
     pub selector: TradeSelector,
+    /// Adjustment rules evaluated each day on open positions.
     #[serde(default)]
     #[garde(skip)]
     pub adjustment_rules: Vec<AdjustmentRule>,
@@ -409,49 +463,68 @@ pub(crate) fn default_min_bid_ask() -> f64 {
     0.05
 }
 
+/// Parameters for comparing multiple strategies side by side.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct CompareParams {
+    /// At least two strategy entries to compare.
     #[garde(length(min = 2), dive)]
     pub strategies: Vec<CompareEntry>,
+    /// Shared simulation parameters (capital, quantity, etc.).
     #[garde(dive)]
     pub sim_params: SimParams,
 }
 
+/// A single strategy entry within a comparison request.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct CompareEntry {
+    /// Strategy name (must match a registered strategy).
     #[garde(length(min = 1))]
     pub name: String,
+    /// Per-leg delta targets.
     #[garde(length(min = 1), dive)]
     pub leg_deltas: Vec<TargetRange>,
+    /// Entry DTE range.
     #[garde(dive)]
     pub entry_dte: DteRange,
+    /// Exit DTE threshold.
     #[garde(range(min = 0), custom(validate_exit_dte_lt_entry_min(&self.entry_dte)))]
     pub exit_dte: i32,
+    /// Slippage model.
     #[garde(dive)]
     pub slippage: Slippage,
+    /// Optional commission schedule.
     #[serde(default)]
     #[garde(dive)]
     pub commission: Option<Commission>,
 }
 
+/// Shared simulation parameters used across strategy comparison and parameter sweeps.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct SimParams {
+    /// Starting equity.
     #[garde(range(min = 0.01))]
     pub capital: f64,
+    /// Contracts per trade entry.
     #[garde(range(min = 1))]
     pub quantity: i32,
+    /// Contract multiplier (typically 100).
     #[serde(default = "default_multiplier")]
     #[garde(range(min = 1))]
     pub multiplier: i32,
+    /// Maximum concurrent open positions.
     #[garde(range(min = 1))]
     pub max_positions: i32,
+    /// Strategy for choosing among multiple candidates on the same date.
     #[serde(default)]
     #[garde(skip)]
     pub selector: TradeSelector,
+    /// Stop-loss threshold as fraction of entry cost.
     #[garde(inner(range(min = 0.0)))]
     pub stop_loss: Option<f64>,
+    /// Take-profit threshold as fraction of entry cost.
     #[garde(inner(range(min = 0.0)))]
     pub take_profit: Option<f64>,
+    /// Force-close after this many calendar days.
     #[garde(inner(range(min = 1)))]
     pub max_hold_days: Option<i32>,
     /// Entry signal — only open trades on dates where this TA signal fires.
@@ -482,87 +555,144 @@ pub struct SimParams {
     pub exit_net_delta: Option<f64>,
 }
 
-/// Internal quality stats collected during backtest simulation
+/// Internal quality stats collected during backtest simulation.
 #[derive(Debug, Clone, Default)]
 pub struct BacktestQualityStats {
+    /// Total trading days spanned by the simulation.
     pub trading_days_total: usize,
+    /// Trading days that had at least one price observation.
     pub trading_days_with_data: usize,
+    /// Total entry candidates evaluated across all days.
     pub total_candidates: usize,
+    /// Number of positions actually opened.
     pub positions_opened: usize,
+    /// Sampled bid-ask spread percentages for data quality reporting.
     pub entry_spread_pcts: Vec<f64>,
 }
 
+/// Output of a single backtest run: trades, metrics, equity curve, and quality stats.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BacktestResult {
+    /// Total number of completed trades.
     pub trade_count: usize,
+    /// Cumulative realized P&L across all trades.
     pub total_pnl: f64,
+    /// Aggregate performance metrics (Sharpe, Sortino, drawdown, etc.).
     pub metrics: PerformanceMetrics,
+    /// Daily equity snapshots for charting.
     pub equity_curve: Vec<EquityPoint>,
+    /// Detailed record of each trade executed.
     pub trade_log: Vec<TradeRecord>,
+    /// Internal quality diagnostics (not serialized).
     #[serde(skip)]
     pub quality: BacktestQualityStats,
 }
 
+/// Aggregate performance metrics derived from the equity curve and trade log.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PerformanceMetrics {
+    /// Annualized Sharpe ratio (excess return / volatility).
     pub sharpe: f64,
+    /// Annualized Sortino ratio (excess return / downside deviation).
     pub sortino: f64,
+    /// Maximum peak-to-trough drawdown as a fraction.
     pub max_drawdown: f64,
+    /// Fraction of trades that were profitable.
     pub win_rate: f64,
+    /// Gross profit divided by gross loss.
     pub profit_factor: f64,
+    /// Calmar ratio (CAGR / max drawdown).
     pub calmar: f64,
+    /// Value at Risk at the 95% confidence level.
     pub var_95: f64,
+    /// Total return as a percentage of initial capital.
     pub total_return_pct: f64,
+    /// Compound annual growth rate.
     pub cagr: f64,
+    /// Average P&L per trade.
     pub avg_trade_pnl: f64,
+    /// Average P&L of winning trades.
     pub avg_winner: f64,
+    /// Average P&L of losing trades (negative).
     pub avg_loser: f64,
+    /// Average number of calendar days positions were held.
     pub avg_days_held: f64,
+    /// Longest streak of consecutive losing trades.
     pub max_consecutive_losses: usize,
+    /// Expected value per trade: `win_rate * avg_winner + loss_rate * avg_loser`.
     pub expectancy: f64,
 }
 
+/// Single point on the equity curve representing portfolio value at a moment in time.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EquityPoint {
+    /// Timestamp of the observation.
     pub datetime: NaiveDateTime,
+    /// Portfolio equity value at this timestamp.
     pub equity: f64,
 }
 
+/// Label indicating whether a cashflow is a credit (received) or debit (paid).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub enum CashflowLabel {
+    /// Credit: cash received.
     CR,
+    /// Debit: cash paid.
     DR,
 }
 
+/// Snapshot of a single leg within a completed trade record.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LegDetail {
+    /// Long or short direction.
     pub side: Side,
+    /// Call or put.
     pub option_type: OptionType,
+    /// Strike price.
     pub strike: f64,
+    /// Expiration date as ISO string.
     pub expiration: String,
+    /// Fill price at entry.
     pub entry_price: f64,
+    /// Fill price at exit (None if position expired worthless).
     pub exit_price: Option<f64>,
+    /// Number of contracts for this leg.
     pub qty: i32,
 }
 
+/// Complete record of a single round-trip trade (entry through exit).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TradeRecord {
+    /// Sequential trade identifier.
     pub trade_id: usize,
+    /// Timestamp when the position was opened.
     pub entry_datetime: NaiveDateTime,
+    /// Timestamp when the position was closed.
     pub exit_datetime: NaiveDateTime,
+    /// Signed entry cost (negative for credits, positive for debits).
     pub entry_cost: f64,
+    /// Signed exit proceeds (positive for credits, negative for debits).
     pub exit_proceeds: f64,
+    /// Absolute entry cashflow amount.
     pub entry_amount: f64,
+    /// Whether the entry was a credit or debit.
     pub entry_label: CashflowLabel,
+    /// Absolute exit cashflow amount.
     pub exit_amount: f64,
+    /// Whether the exit was a credit or debit.
     pub exit_label: CashflowLabel,
+    /// Realized profit or loss for this trade.
     pub pnl: f64,
+    /// Calendar days the position was held.
     pub days_held: i64,
+    /// Reason the position was closed.
     pub exit_type: ExitType,
+    /// Per-leg details (strikes, fills, quantities).
     pub legs: Vec<LegDetail>,
 }
 
 impl TradeRecord {
+    /// Construct a new trade record, automatically deriving cashflow labels from cost signs.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         trade_id: usize,
@@ -601,19 +731,32 @@ impl TradeRecord {
     }
 }
 
+/// Summary metrics for one strategy in a multi-strategy comparison.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CompareResult {
+    /// Strategy name (`snake_case`).
     pub strategy: String,
+    /// Title Case display name.
     pub display_name: String,
+    /// Number of completed trades.
     pub trades: usize,
+    /// Cumulative P&L.
     pub pnl: f64,
+    /// Annualized Sharpe ratio.
     pub sharpe: f64,
+    /// Annualized Sortino ratio.
     pub sortino: f64,
+    /// Maximum drawdown as a fraction.
     pub max_dd: f64,
+    /// Fraction of trades that were profitable.
     pub win_rate: f64,
+    /// Gross profit / gross loss.
     pub profit_factor: f64,
+    /// Calmar ratio (CAGR / max drawdown).
     pub calmar: f64,
+    /// Total return as a percentage.
     pub total_return_pct: f64,
+    /// Full trade log for equity curve overlays.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trade_log: Vec<TradeRecord>,
     /// If the backtest failed, contains the error message.
@@ -621,25 +764,42 @@ pub struct CompareResult {
     pub error: Option<String>,
 }
 
-/// Result of a single parameter sweep combination
+/// Result of a single parameter sweep combination.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SweepResult {
+    /// Human-readable label for this combination.
     pub label: String,
+    /// Strategy name (`snake_case`).
     pub strategy: String,
+    /// Title Case display name.
     pub display_name: String,
+    /// Per-leg delta targets used.
     pub leg_deltas: Vec<TargetRange>,
+    /// Entry DTE range used.
     pub entry_dte: DteRange,
+    /// Exit DTE used.
     pub exit_dte: i32,
+    /// Slippage model used.
     pub slippage: Slippage,
+    /// Number of completed trades.
     pub trades: usize,
+    /// Cumulative P&L.
     pub pnl: f64,
+    /// Annualized Sharpe ratio.
     pub sharpe: f64,
+    /// Annualized Sortino ratio.
     pub sortino: f64,
+    /// Maximum drawdown as a fraction.
     pub max_dd: f64,
+    /// Fraction of trades that were profitable.
     pub win_rate: f64,
+    /// Gross profit / gross loss.
     pub profit_factor: f64,
+    /// Calmar ratio (CAGR / max drawdown).
     pub calmar: f64,
+    /// Total return as a percentage.
     pub total_return_pct: f64,
+    /// Count of distinct entry dates (for statistical independence).
     pub independent_entry_periods: usize,
     /// Entry signal used for this combo, if any (from signal sweep)
     #[serde(skip_serializing_if = "Option::is_none")]

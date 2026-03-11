@@ -1,3 +1,6 @@
+//! Position lifecycle management: opening, closing, mark-to-market,
+//! candidate selection, delta computation, and last-known price caching.
+
 use std::collections::HashMap;
 
 use chrono::NaiveDate;

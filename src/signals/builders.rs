@@ -1,3 +1,8 @@
+//! Factory module that converts `SignalSpec` enums into concrete `SignalFn` implementations.
+//!
+//! Dispatches each variant to the appropriate per-category builder function,
+//! handling recursion for combinators and saved signal references with depth limiting.
+
 use super::combinators::{AndSignal, OrSignal};
 use super::custom::FormulaSignal;
 use super::helpers::SignalFn;

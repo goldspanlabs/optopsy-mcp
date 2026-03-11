@@ -1,3 +1,8 @@
+//! Position adjustment logic: trigger evaluation and action execution.
+//!
+//! Supports defensive rolls, calendar rolls, delta drift adjustments,
+//! leg closes, and adding new legs to open positions.
+
 use std::collections::HashMap;
 
 use chrono::NaiveDate;

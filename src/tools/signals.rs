@@ -1,3 +1,5 @@
+//! List all available TA signals grouped by category, including user-saved custom signals.
+
 use std::collections::HashMap;
 
 use schemars::JsonSchema;
@@ -26,6 +28,7 @@ fn to_display_name(name: &str) -> String {
     result
 }
 
+/// A single entry in the signal catalog with display name, description, and parameter info.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SignalCatalogEntry {
     pub name: String,
@@ -34,6 +37,7 @@ pub struct SignalCatalogEntry {
     pub params: String,
 }
 
+/// Response for `list_signals`, containing all signals grouped by category with combinator hints.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SignalsResponse {
     pub summary: String,
@@ -44,6 +48,7 @@ pub struct SignalsResponse {
     pub suggested_next_steps: Vec<String>,
 }
 
+/// Build and return the full signal catalog, including any user-saved custom signals.
 pub fn execute() -> SignalsResponse {
     let mut categories: HashMap<String, Vec<SignalCatalogEntry>> = HashMap::new();
 

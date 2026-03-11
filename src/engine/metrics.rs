@@ -1,3 +1,8 @@
+//! Performance metric calculations from equity curves and trade logs.
+//!
+//! Computes Sharpe, Sortino, CAGR, Calmar, `VaR`, max drawdown, win rate,
+//! profit factor, expectancy, and other risk/return statistics.
+
 use anyhow::Result;
 
 use super::types::{EquityPoint, PerformanceMetrics, TradeRecord};

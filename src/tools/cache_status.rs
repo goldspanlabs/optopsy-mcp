@@ -1,3 +1,5 @@
+//! Check whether a Parquet cache file exists for a symbol and report its status.
+
 use anyhow::Result;
 use std::sync::Arc;
 
@@ -5,6 +7,7 @@ use crate::data::cache::CachedStore;
 
 use super::response_types::CheckCacheResponse;
 
+/// Return cache existence, last-updated timestamp, and file path for the given symbol.
 pub fn execute(
     cache: &Arc<CachedStore>,
     symbol: &str,

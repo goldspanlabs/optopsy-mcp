@@ -1,3 +1,8 @@
+//! Tool modules for the MCP server.
+//!
+//! Each submodule implements a single MCP tool, delegating to the engine layer for
+//! computation and returning AI-enriched response types for LLM consumption.
+
 pub mod ai_format;
 pub mod ai_helpers;
 pub mod backtest;

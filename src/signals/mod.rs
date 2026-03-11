@@ -1,3 +1,8 @@
+//! Technical analysis signal system for filtering backtest entry and exit dates.
+//!
+//! Provides 40+ built-in signals across momentum, trend, volatility, overlap,
+//! price, and volume categories, plus custom formula-based signals and combinators.
+
 pub mod builders;
 pub mod combinators;
 pub mod custom;

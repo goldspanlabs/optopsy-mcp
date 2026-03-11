@@ -1,3 +1,8 @@
+//! Response types returned by MCP tool handlers.
+//!
+//! Every struct here derives `Serialize`, `Deserialize`, and `JsonSchema` so it can be
+//! serialized to JSON for the MCP wire format and introspected by schema-aware clients.
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -104,6 +109,7 @@ pub struct StatusResponse {
     pub suggested_next_steps: Vec<String>,
 }
 
+/// Aggregate statistics for all trades in a backtest.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TradeSummary {
     pub total: usize,
@@ -118,6 +124,7 @@ pub struct TradeSummary {
     pub worst_trade: Option<TradeStat>,
 }
 
+/// P&L and date for a single notable trade (best or worst).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TradeStat {
     pub pnl: f64,
@@ -162,6 +169,7 @@ pub struct LoadDataResponse {
     pub suggested_next_steps: Vec<String>,
 }
 
+/// Start and end date strings for a data range.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DateRange {
     pub start: Option<String>,
@@ -178,6 +186,7 @@ pub struct StrategiesResponse {
     pub suggested_next_steps: Vec<String>,
 }
 
+/// Metadata for a single strategy, including leg count and default deltas.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StrategyInfo {
     pub name: String,

@@ -1,3 +1,8 @@
+//! Parameter sweep orchestrator: enumerates strategy/delta/DTE/slippage/signal
+//! combinations, runs backtests, ranks results, computes sensitivity and
+//! stability scores, and optionally performs out-of-sample validation and
+//! permutation-based multiple comparisons correction.
+
 use std::collections::HashSet;
 
 use anyhow::{bail, Result};
@@ -26,6 +31,10 @@ pub use super::sweep_analysis::{
 // Main orchestrator
 // ---------------------------------------------------------------------------
 
+/// Execute a parameter sweep over all strategy/delta/DTE/slippage/signal combinations.
+///
+/// Returns ranked results with sensitivity analysis, stability scores, and
+/// optional out-of-sample validation and multiple comparisons correction.
 #[allow(clippy::too_many_lines)]
 pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
     // 1. Build all combinations

@@ -1,3 +1,9 @@
+//! Built-in options strategy definitions.
+//!
+//! Contains 32 strategies across singles, spreads, butterflies, condors, iron,
+//! and calendar categories. Each strategy defines its legs, delta targets, and
+//! strike ordering rules.
+
 pub mod butterflies;
 pub mod calendar;
 pub mod condors;
@@ -27,6 +33,7 @@ pub fn all_strategies() -> &'static [StrategyDef] {
     })
 }
 
+/// Find a strategy by name (case-sensitive). Returns `None` if not found.
 pub fn find_strategy(name: &str) -> Option<StrategyDef> {
     all_strategies().iter().find(|s| s.name == name).cloned()
 }

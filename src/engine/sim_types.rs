@@ -1,3 +1,6 @@
+//! Types for the event-driven simulation layer: price tables, positions,
+//! entry candidates, adjustment actions, and related primitives.
+
 use chrono::NaiveDate;
 use ordered_float::OrderedFloat;
 use rustc_hash::FxBuildHasher;
@@ -16,67 +19,109 @@ pub type PriceTable = HashMap<PriceKey, QuoteSnapshot, FxBuildHasher>;
 /// Secondary index: maps each trading date to its price table keys for O(1) daily lookups.
 pub type DateIndex = HashMap<NaiveDate, Vec<PriceKey>>;
 
+/// Bid/ask/delta snapshot for a single option contract at a point in time.
 #[derive(Debug, Clone)]
 pub struct QuoteSnapshot {
+    /// Best bid price.
     pub bid: f64,
+    /// Best ask price.
     pub ask: f64,
+    /// Option delta (sensitivity to underlying price).
     pub delta: f64,
 }
 
+/// An open or closed multi-leg options position tracked during simulation.
 #[derive(Debug, Clone)]
 pub struct Position {
+    /// Unique position identifier within the simulation.
     pub id: usize,
+    /// Date the position was opened.
     pub entry_date: NaiveDate,
+    /// Primary expiration date.
     pub expiration: NaiveDate,
+    /// Secondary expiration for calendar/diagonal strategies.
     pub secondary_expiration: Option<NaiveDate>,
+    /// Individual legs comprising this position.
     pub legs: Vec<PositionLeg>,
+    /// Net signed cost at entry (negative = credit received).
     pub entry_cost: f64,
+    /// Contracts per unit of the strategy.
     pub quantity: i32,
+    /// Points per contract (typically 100).
     pub multiplier: i32,
+    /// Whether the position is open or closed (with exit reason).
     pub status: PositionStatus,
 }
 
+/// A single leg of an open position, tracking its fill and close state.
 #[derive(Debug, Clone)]
 pub struct PositionLeg {
+    /// Index into the strategy's leg definition array.
     pub leg_index: usize,
+    /// Long or short direction.
     pub side: Side,
+    /// Call or put.
     pub option_type: OptionType,
+    /// Strike price of this contract.
     pub strike: f64,
+    /// Expiration date.
     pub expiration: NaiveDate,
+    /// Fill price at entry.
     pub entry_price: f64,
+    /// Number of contracts.
     pub qty: i32,
+    /// Whether this leg has been closed.
     pub closed: bool,
+    /// Fill price at close (set when the leg is closed).
     pub close_price: Option<f64>,
+    /// Date the leg was closed.
     pub close_date: Option<NaiveDate>,
 }
 
+/// Current lifecycle state of a position.
 #[derive(Debug, Clone)]
 pub enum PositionStatus {
+    /// Position is still open.
     Open,
+    /// Position has been closed with the given exit reason.
     Closed(ExitType),
 }
 
+/// A potential trade entry assembled from matched option legs on a given date.
 #[derive(Debug, Clone)]
 pub struct EntryCandidate {
+    /// Quote date for this candidate.
     pub entry_date: NaiveDate,
+    /// Primary expiration date.
     pub expiration: NaiveDate,
+    /// Secondary expiration for calendar/diagonal strategies.
     pub secondary_expiration: Option<NaiveDate>,
+    /// Per-leg market data for each strategy leg.
     pub legs: Vec<CandidateLeg>,
+    /// Net premium of the position (positive = debit, negative = credit).
     pub net_premium: f64,
     /// Signed net position delta: sum of (delta × `side_multiplier` × qty) for each leg.
     pub net_delta: f64,
 }
 
+/// Market data for a single leg of an entry candidate.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CandidateLeg {
+    /// Call or put.
     pub option_type: OptionType,
+    /// Strike price.
     pub strike: f64,
+    /// Expiration date.
     pub expiration: NaiveDate,
+    /// Best bid price.
     pub bid: f64,
+    /// Best ask price.
     pub ask: f64,
+    /// Option delta.
     pub delta: f64,
 }
 
+/// Action to execute when an adjustment rule triggers on an open position.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum AdjustmentAction {
     Close {
@@ -97,6 +142,7 @@ pub enum AdjustmentAction {
     },
 }
 
+/// Condition that must be met for an adjustment rule to fire.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum AdjustmentTrigger {
     DefensiveRoll { loss_threshold: f64 },
@@ -104,8 +150,11 @@ pub enum AdjustmentTrigger {
     DeltaDrift { leg_index: usize, max_delta: f64 },
 }
 
+/// Pairing of a trigger condition with the action to take when it fires.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AdjustmentRule {
+    /// Condition that activates this rule.
     pub trigger: AdjustmentTrigger,
+    /// Action to execute when the trigger fires.
     pub action: AdjustmentAction,
 }

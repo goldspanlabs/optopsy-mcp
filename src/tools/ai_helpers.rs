@@ -1,3 +1,8 @@
+//! Shared helper functions and threshold constants for AI-enriched tool responses.
+//!
+//! Centralises assessment logic (Sharpe tiers, p-value interpretation, data quality
+//! warnings) so that all formatting modules use consistent language and thresholds.
+
 use std::collections::HashMap;
 
 use crate::engine::types::{
@@ -50,6 +55,7 @@ pub(crate) const WF_PROFITABLE_WINDOWS_BAD: f64 = 50.0;
 pub(crate) const SWEEP_SCORE_WEAK: f64 = 0.5;
 pub(crate) const SWEEP_SCORE_MODERATE: f64 = 0.7;
 
+/// Build a serialisable parameter summary from backtest params for inclusion in responses.
 pub(crate) fn build_params_summary(params: &BacktestParams) -> BacktestParamsSummary {
     BacktestParamsSummary {
         display_name: to_display_name(&params.strategy),
@@ -89,6 +95,7 @@ pub(crate) fn build_params_summary(params: &BacktestParams) -> BacktestParamsSum
     }
 }
 
+/// Return a human-readable label for a Sharpe ratio value (e.g. "excellent", "poor").
 pub(crate) fn assess_sharpe(sharpe: f64) -> &'static str {
     if sharpe >= SHARPE_EXCELLENT {
         "excellent"
@@ -103,6 +110,7 @@ pub(crate) fn assess_sharpe(sharpe: f64) -> &'static str {
     }
 }
 
+/// Format a P&L value as a signed dollar string (e.g. "+$150.00" or "-$42.50").
 pub(crate) fn format_pnl(value: f64) -> String {
     if value >= 0.0 {
         format!("+${value:.2}")
@@ -111,6 +119,7 @@ pub(crate) fn format_pnl(value: f64) -> String {
     }
 }
 
+/// Map an `ExitType` enum variant to its display name string.
 pub(crate) fn exit_type_name(exit_type: &ExitType) -> &'static str {
     match exit_type {
         ExitType::Expiration => "Expiration",
@@ -124,6 +133,7 @@ pub(crate) fn exit_type_name(exit_type: &ExitType) -> &'static str {
     }
 }
 
+/// Compute presentation-layer trade summary (winners/losers, exit breakdown, best/worst).
 pub(crate) fn compute_trade_summary(
     trade_log: &[TradeRecord],
     metrics: &crate::engine::types::PerformanceMetrics,
@@ -179,6 +189,7 @@ pub(crate) fn compute_trade_summary(
     }
 }
 
+/// Return the name of the most frequently occurring exit type in the trade log.
 pub(crate) fn most_common_exit(trade_log: &[TradeRecord]) -> String {
     let mut counts: HashMap<&str, usize> = HashMap::new();
     for t in trade_log {
@@ -190,6 +201,7 @@ pub(crate) fn most_common_exit(trade_log: &[TradeRecord]) -> String {
         .map_or_else(|| "N/A".to_string(), |(name, _)| name.to_string())
 }
 
+/// Convert engine-level quality stats into a client-facing data quality report with warnings.
 pub(crate) fn build_backtest_quality(quality: &BacktestQualityStats) -> BacktestDataQuality {
     let price_data_coverage_pct = if quality.trading_days_total > 0 {
         (quality.trading_days_with_data as f64 / quality.trading_days_total as f64) * 100.0
@@ -241,6 +253,7 @@ pub(crate) fn build_backtest_quality(quality: &BacktestQualityStats) -> Backtest
     }
 }
 
+/// Generate human-readable key findings from backtest metrics and trade log.
 pub(crate) fn backtest_key_findings(
     m: &crate::engine::types::PerformanceMetrics,
     trade_log: &[TradeRecord],
@@ -311,6 +324,7 @@ pub(crate) fn backtest_key_findings(
     findings
 }
 
+/// Generate key findings from walk-forward aggregate statistics.
 pub(crate) fn walk_forward_findings(
     agg: &crate::engine::walk_forward::WalkForwardAggregate,
 ) -> Vec<String> {
@@ -357,6 +371,7 @@ pub(crate) fn walk_forward_findings(
     findings
 }
 
+/// Return a significance label for a p-value (e.g. "highly significant", "not significant").
 pub(crate) fn interpret_p_value(p: f64) -> &'static str {
     if p < P_HIGHLY_SIGNIFICANT {
         "highly significant"

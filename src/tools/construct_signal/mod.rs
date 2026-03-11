@@ -1,3 +1,8 @@
+//! Search the signal catalog by natural-language prompt and return matching signal specs.
+//!
+//! Performs fuzzy matching against `SIGNAL_CATALOG`, generates live JSON Schema for
+//! `SignalSpec`, and builds concrete parameter examples for each candidate.
+
 mod examples;
 mod search;
 
@@ -13,6 +18,7 @@ const DEFAULT_HIGH: &str = "high";
 const DEFAULT_LOW: &str = "low";
 const DEFAULT_VOLUME: &str = "volume";
 
+/// Search the signal catalog for matches to `prompt` and return candidates with JSON examples.
 pub fn execute(prompt: &str) -> ConstructSignalResponse {
     // Fuzzy search SIGNAL_CATALOG for matches
     let (candidates, had_real_matches) = search::fuzzy_search(prompt);

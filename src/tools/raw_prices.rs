@@ -1,3 +1,5 @@
+//! Return raw OHLCV price bars for a symbol, with optional date filtering and sampling.
+
 use anyhow::{Context, Result};
 use polars::prelude::*;
 use std::sync::Arc;
@@ -9,6 +11,7 @@ use super::response_types::{DateRange, PriceBar, RawPricesResponse};
 
 use crate::engine::types::EPOCH_DAYS_CE_OFFSET;
 
+/// Extract price bars from an in-memory `DataFrame` with optional date range and row limit.
 pub fn execute(
     df: &DataFrame,
     symbol: &str,

@@ -1,3 +1,8 @@
+//! Entry point for the optopsy-mcp server.
+//!
+//! Supports two transport modes: stdio (default, for Claude Desktop) and HTTP
+//! (when `PORT` env var is set, for cloud deployment).
+
 // float_cmp: only in tests where assert_eq! on f64 is intentional.
 #![cfg_attr(test, allow(clippy::float_cmp))]
 
