@@ -1,196 +1,13 @@
-use super::response_types::{ConstructSignalResponse, SignalCandidate};
-use crate::signals::registry::{SignalSpec, SIGNAL_CATALOG};
-use schemars::schema_for;
 use serde_json::{json, Value};
 
-// OHLCV column name conventions from Yahoo Finance
-const DEFAULT_CLOSE: &str = "adjclose";
-const DEFAULT_OPEN: &str = "open";
-const DEFAULT_HIGH: &str = "high";
-const DEFAULT_LOW: &str = "low";
-const DEFAULT_VOLUME: &str = "volume";
-
-pub fn execute(prompt: &str) -> ConstructSignalResponse {
-    // Fuzzy search SIGNAL_CATALOG for matches
-    let (candidates, had_real_matches) = fuzzy_search(prompt);
-
-    // Generate live JSON Schema for SignalSpec
-    let schema = schema_for!(SignalSpec);
-    let schema_value = match serde_json::to_value(&schema) {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!("Failed to serialize SignalSpec schema: {e}");
-            Value::Null
-        }
-    };
-
-    // Build column defaults
-    let column_defaults = json!({
-        "close": DEFAULT_CLOSE,
-        "open": DEFAULT_OPEN,
-        "high": DEFAULT_HIGH,
-        "low": DEFAULT_LOW,
-        "volume": DEFAULT_VOLUME,
-    });
-
-    // Build combinator examples from top 2 candidates
-    let combinator_examples = if candidates.len() >= 2 {
-        let left = candidates[0].example.clone();
-        let right = candidates[1].example.clone();
-        vec![
-            json!({
-                "type": "And",
-                "left": left.clone(),
-                "right": right.clone(),
-            }),
-            json!({
-                "type": "Or",
-                "left": left,
-                "right": right,
-            }),
-        ]
-    } else {
-        vec![]
-    };
-
-    let summary = if had_real_matches {
-        format!(
-            "Found {} signal(s) matching '{}'.",
-            candidates.len(),
-            prompt
-        )
-    } else {
-        format!(
-            "No signals matched '{}'. Showing all {} available signals.",
-            prompt,
-            SIGNAL_CATALOG.len()
-        )
-    };
-
-    let has_range_candidates =
-        had_real_matches && candidates.iter().any(|c| c.name.ends_with("Range"));
-    let mut suggested_next_steps = vec![
-        "Pick a candidate from above or use the schema to construct a custom SignalSpec".to_string(),
-        "Pass the JSON example as entry_signal or exit_signal in run_backtest — OHLCV data is auto-fetched when signals are used".to_string(),
-    ];
-    if has_range_candidates {
-        suggested_next_steps.push("Range signals use the And combinator pattern. Adjust the lower/upper thresholds (left/right) in the example to define your range.".to_string());
-    }
-
-    ConstructSignalResponse {
-        summary,
-        had_real_matches,
-        candidates,
-        schema: schema_value,
-        column_defaults,
-        combinator_examples,
-        suggested_next_steps,
-    }
-}
-
-/// Split a CamelCase string into lowercase words.
-/// E.g., `RsiBelow` → `["rsi", "below"]`
-fn split_camel_case(s: &str) -> Vec<String> {
-    let mut words = Vec::new();
-    let mut current = String::new();
-
-    for ch in s.chars() {
-        if ch.is_uppercase() && !current.is_empty() {
-            words.push(current.to_lowercase());
-            current = ch.to_string();
-        } else {
-            current.push(ch);
-        }
-    }
-
-    if !current.is_empty() {
-        words.push(current.to_lowercase());
-    }
-
-    words
-}
-
-/// Fuzzy search `SIGNAL_CATALOG` for signals matching the prompt.
-/// Returns `(candidates, had_real_matches)` where `had_real_matches` indicates
-/// whether matches were found (vs. fallback to all signals).
-/// Scoring:
-/// - +3 if any token exactly matches a word in signal name
-/// - +2 if any token is substring of signal name
-/// - +1 if any token appears in description
-fn fuzzy_search(prompt: &str) -> (Vec<SignalCandidate>, bool) {
-    let prompt_lower = prompt.to_lowercase();
-    let tokens: Vec<&str> = prompt_lower.split_whitespace().collect();
-
-    let mut scored_signals: Vec<(usize, usize)> = SIGNAL_CATALOG
-        .iter()
-        .enumerate()
-        .map(|(idx, info)| {
-            let name_lower = info.name.to_lowercase();
-            let name_words_str = split_camel_case(info.name);
-            let desc_lower = info.description.to_lowercase();
-
-            let mut score = 0;
-
-            for token in &tokens {
-                // +3 for exact word match (split on CamelCase boundaries)
-                if name_words_str.iter().any(|w| w == token) {
-                    score += 3;
-                }
-                // +2 for substring in name
-                else if name_lower.contains(token) {
-                    score += 2;
-                }
-                // +1 for substring in description only
-                else if desc_lower.contains(token) {
-                    score += 1;
-                }
-            }
-
-            (idx, score)
-        })
-        .collect();
-
-    // Sort by score descending, take top-5 with score > 0
-    scored_signals.sort_by_key(|&(_, score)| std::cmp::Reverse(score));
-
-    let has_matches = scored_signals.iter().any(|(_, score)| *score > 0);
-
-    let results = if has_matches {
-        scored_signals
-            .iter()
-            .filter(|(_, score)| *score > 0)
-            .take(5)
-            .map(|(idx, _)| *idx)
-            .collect::<Vec<_>>()
-    } else {
-        // Fallback: return all signals if no matches
-        (0..SIGNAL_CATALOG.len()).collect()
-    };
-
-    let candidates = results
-        .iter()
-        .map(|&idx| {
-            let info = &SIGNAL_CATALOG[idx];
-            let example = build_example(info.name);
-            SignalCandidate {
-                name: info.name.to_string(),
-                category: info.category.to_string(),
-                description: info.description.to_string(),
-                params: info.params.to_string(),
-                example,
-            }
-        })
-        .collect();
-
-    (candidates, has_matches)
-}
+use super::{DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW, DEFAULT_OPEN, DEFAULT_VOLUME};
 
 /// Build a concrete JSON example for a signal given its name.
 /// Note: New signals added to `SIGNAL_CATALOG` must also be added to this function
 /// to generate concrete examples. This is a necessary manual step to provide Claude
 /// with sensible default parameter values for each signal type.
 #[allow(clippy::too_many_lines)]
-fn build_example(signal_name: &str) -> Value {
+pub fn build_example(signal_name: &str) -> Value {
     match signal_name {
         // Momentum
         "RsiBelow" => json!({
@@ -487,72 +304,13 @@ fn build_example(signal_name: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn fuzzy_search_rsi_below() {
-        let (result, had_matches) = fuzzy_search("rsi below");
-        let names: Vec<&str> = result.iter().map(|c| c.name.as_str()).collect();
-        assert!(had_matches);
-        assert!(names.contains(&"RsiBelow"));
-    }
-
-    #[test]
-    fn fuzzy_search_macd() {
-        let (result, had_matches) = fuzzy_search("macd");
-        let names: Vec<&str> = result.iter().map(|c| c.name.as_str()).collect();
-        assert!(had_matches);
-        assert!(
-            names.contains(&"MacdBullish")
-                || names.contains(&"MacdBearish")
-                || names.contains(&"MacdCrossover")
-        );
-    }
-
-    #[test]
-    fn fuzzy_search_golden_cross() {
-        let (result, had_matches) = fuzzy_search("golden cross");
-        let names: Vec<&str> = result.iter().map(|c| c.name.as_str()).collect();
-        assert!(had_matches);
-        assert!(names.contains(&"SmaCrossover"));
-    }
-
-    #[test]
-    fn fuzzy_search_bollinger_upper() {
-        let (result, had_matches) = fuzzy_search("bollinger upper");
-        let names: Vec<&str> = result.iter().map(|c| c.name.as_str()).collect();
-        assert!(had_matches);
-        assert!(names.contains(&"BollingerUpperTouch"));
-    }
-
-    #[test]
-    fn fuzzy_search_no_match_fallback() {
-        let (result, had_matches) = fuzzy_search("xyzabc");
-        // Should fallback to all signals (had_matches = false)
-        assert!(!had_matches);
-        assert_eq!(result.len(), SIGNAL_CATALOG.len());
-    }
-
-    #[test]
-    fn execute_basic() {
-        let response = execute("RSI below");
-        assert!(!response.candidates.is_empty());
-        assert!(response.schema != serde_json::Value::Null);
-        assert_eq!(response.column_defaults["close"], "adjclose");
-    }
+    use crate::signals::registry::SignalSpec;
 
     #[test]
     fn build_example_rsi() {
         let example = build_example("RsiBelow");
         assert_eq!(example["type"], "RsiBelow");
         assert_eq!(example["threshold"], 30.0);
-    }
-
-    #[test]
-    fn fuzzy_search_rsi_range() {
-        let (result, had_matches) = fuzzy_search("rsi range");
-        let names: Vec<&str> = result.iter().map(|c| c.name.as_str()).collect();
-        assert!(had_matches);
-        assert!(names.contains(&"RsiRange"));
     }
 
     #[test]
@@ -575,25 +333,5 @@ mod tests {
         } else {
             panic!("expected And combinator");
         }
-    }
-
-    #[test]
-    fn execute_rsi_range_shows_range_hint() {
-        let response = execute("RSI range");
-        let has_range = response.candidates.iter().any(|c| c.name == "RsiRange");
-        assert!(has_range);
-        assert!(response
-            .suggested_next_steps
-            .iter()
-            .any(|s| s.contains("Range signals use the And combinator")));
-    }
-
-    #[test]
-    fn execute_no_match_suppresses_range_hint() {
-        let response = execute("xyzabc");
-        assert!(!response
-            .suggested_next_steps
-            .iter()
-            .any(|s| s.contains("Range signals")));
     }
 }
