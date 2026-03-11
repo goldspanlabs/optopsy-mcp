@@ -16,7 +16,7 @@ The optopsy-mcp codebase has grown to ~27k lines in `src/` with 7 files exceedin
 | `src/server.rs` | 2,109 | 3 files (directory module) | ~1,064 ✅ |
 | `src/signals/registry.rs` | 1,903 | 3 files | ~340 ✅ |
 | `src/engine/sweep.rs` | 1,756 | 2 files | ~440 (+ ~650 tests) ✅ |
-| `src/tools/ai_format.rs` | 1,700 | 2 files | ~600 |
+| `src/tools/ai_format.rs` | 1,700 | 2 files | ~640 (+ ~700 tests) ✅ |
 | `src/engine/types.rs` | 1,154 | 2 files | ~660 |
 | `src/engine/core.rs` | 1,165 | deferred | — |
 
@@ -151,17 +151,19 @@ Convert from a single file to a directory module (`src/server/mod.rs`).
 
 ---
 
-### 5. `src/tools/ai_format.rs` (1,700 lines → 2 files)
+### 5. `src/tools/ai_format.rs` (1,700 lines → 2 files) — ✅ COMPLETED
 
-#### `src/tools/ai_helpers.rs` (~320 lines)
-- Assessment threshold constants (`GOOD_SHARPE`, `GOOD_WIN_RATE`, etc.)
-- All helper functions: P&L formatting, date formatting, assessment text generation, summary builders
-- Associated tests
+**Status:** Done. Split into `ai_helpers.rs` (370 lines) containing 21 assessment constants and 10 helper functions (`build_params_summary`, `assess_sharpe`, `format_pnl`, `exit_type_name`, `compute_trade_summary`, `most_common_exit`, `build_backtest_quality`, `backtest_key_findings`, `walk_forward_findings`, `interpret_p_value`). Main file retains 8 public format functions (~640 lines of logic + ~700 lines of tests). All existing import paths preserved.
 
-#### `src/tools/ai_format.rs` (remains, ~600 lines)
+#### `src/tools/ai_helpers.rs` (370 lines)
+- 21 assessment threshold constants (Sharpe, profit factor, Calmar, VaR, walk-forward, sweep)
+- 10 `pub(crate)` helper functions: P&L formatting, Sharpe assessment, exit type naming, trade summary computation, backtest quality analysis, key findings generation
+
+#### `src/tools/ai_format.rs` (remains, ~640 lines + ~700 tests)
 - 8 main formatter functions:
   - `format_backtest`, `format_compare`, `format_load_data`, `format_strategies`
   - `format_raw_prices`, `format_sweep`, `format_walk_forward`, `format_permutation_test`
+- All tests
 
 ---
 

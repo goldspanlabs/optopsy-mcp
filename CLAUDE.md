@@ -44,7 +44,7 @@ Control runtime behavior and data sources:
 Holds shared state: `Arc<RwLock<HashMap<String, DataFrame>>>` for multi-symbol data storage, `Arc<CachedStore>` for the data layer, and `ToolRouter<Self>` for rmcp routing. Tool handlers delegate to `src/tools/` modules which call into `src/engine/`. Supports loading multiple symbols simultaneously without losing previous data.
 
 ### Tool Layer (`src/tools/`)
-Each tool has its own module. `ai_format.rs` enriches every response with `summary`, `key_findings`, and `suggested_next_steps`. Response types live in `response_types.rs` and derive both `Serialize` and `JsonSchema`.
+Each tool has its own module. `ai_format.rs` enriches every response with `summary`, `key_findings`, and `suggested_next_steps`; shared constants and helper functions live in `ai_helpers.rs`. Response types live in `response_types.rs` and derive both `Serialize` and `JsonSchema`.
 
 ### Engine (`src/engine/`)
 Two main execution paths in `core.rs`:
