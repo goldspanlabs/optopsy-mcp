@@ -100,8 +100,13 @@ pub fn run_stock_backtest(
         for (id, decision) in closed_ids {
             if let Some(idx) = positions.iter().position(|p| p.id == id) {
                 let pos = positions.remove(idx);
-                let (pnl, record) =
+                let equity_before_close = equity;
+                let (pnl, mut record) =
                     close_position(&pos, bar, decision.exit_type, decision.fill_price, params);
+                if params.sizing.is_some() {
+                    record.computed_quantity = Some(pos.quantity);
+                    record.entry_equity = Some(equity_before_close);
+                }
                 equity += pnl;
                 trade_log.push(record);
             }
@@ -122,18 +127,11 @@ pub fn run_stock_backtest(
                 if ml <= 0.0 {
                     return params.quantity;
                 }
-                // Collect closes up to today for volatility computation
-                let vol = {
-                    let lookback = match &cfg.method {
-                        super::types::PositionSizing::VolatilityTarget {
-                            lookback_days, ..
-                        } => *lookback_days as usize,
-                        _ => 20,
-                    };
+                let vol = super::sizing::vol_lookback(cfg).and_then(|lookback| {
                     let idx = bars.iter().position(|b| b.date == bar.date).unwrap_or(0);
                     let closes: Vec<f64> = bars[..=idx].iter().map(|b| b.close).collect();
                     super::sizing::compute_realized_vol(&closes, lookback)
-                };
+                });
                 super::sizing::compute_quantity(
                     cfg,
                     equity,

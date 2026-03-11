@@ -246,13 +246,33 @@ pub struct SizingConstraints {
     #[serde(default = "default_min_qty")]
     #[garde(range(min = 1))]
     pub min_quantity: i32,
-    /// Optional maximum contracts/shares per trade.
-    #[garde(skip)]
+    /// Optional maximum contracts/shares per trade (must be >= `min_quantity`).
+    #[garde(custom(validate_max_quantity(&self.min_quantity)))]
     pub max_quantity: Option<i32>,
 }
 
 fn default_min_qty() -> i32 {
     1
+}
+
+/// Validate that `max_quantity` (when present) is >= `min_quantity` and >= 1.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn validate_max_quantity(
+    min_quantity: &i32,
+) -> impl FnOnce(&Option<i32>, &()) -> garde::Result + '_ {
+    move |max_quantity: &Option<i32>, (): &()| {
+        if let Some(max) = max_quantity {
+            if *max < 1 {
+                return Err(garde::Error::new("max_quantity must be >= 1".to_string()));
+            }
+            if *max < *min_quantity {
+                return Err(garde::Error::new(format!(
+                    "max_quantity ({max}) must be >= min_quantity ({min_quantity})"
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Default for SizingConstraints {

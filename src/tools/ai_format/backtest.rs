@@ -138,12 +138,39 @@ fn build_sizing_summary(
     let avg = f64::from(quantities.iter().copied().sum::<i32>()) / quantities.len() as f64;
     let min = quantities.iter().copied().min().unwrap_or(0);
     let max = quantities.iter().copied().max().unwrap_or(0);
+    let total_pnl: f64 = trade_log.iter().map(|t| t.pnl).sum();
     Some(SizingSummary {
         method: crate::engine::sizing::sizing_method_label(cfg),
         avg_quantity: (avg * 100.0).round() / 100.0,
         min_quantity: min,
         max_quantity: max,
-        final_equity: params.capital, // Will be overridden by caller if equity tracking is available
+        final_equity: params.capital + total_pnl,
+    })
+}
+
+/// Build a sizing summary from the trade log for stock backtests.
+fn build_stock_sizing_summary(
+    trade_log: &[crate::engine::types::TradeRecord],
+    params: &StockBacktestParams,
+) -> Option<SizingSummary> {
+    let cfg = params.sizing.as_ref()?;
+    let quantities: Vec<i32> = trade_log
+        .iter()
+        .filter_map(|t| t.computed_quantity)
+        .collect();
+    if quantities.is_empty() {
+        return None;
+    }
+    let avg = f64::from(quantities.iter().copied().sum::<i32>()) / quantities.len() as f64;
+    let min = quantities.iter().copied().min().unwrap_or(0);
+    let max = quantities.iter().copied().max().unwrap_or(0);
+    let total_pnl: f64 = trade_log.iter().map(|t| t.pnl).sum();
+    Some(SizingSummary {
+        method: crate::engine::sizing::sizing_method_label(cfg),
+        avg_quantity: (avg * 100.0).round() / 100.0,
+        min_quantity: min,
+        max_quantity: max,
+        final_equity: params.capital + total_pnl,
     })
 }
 
@@ -352,6 +379,8 @@ pub fn format_stock_backtest(
             .to_string(),
     );
 
+    let sizing_summary = build_stock_sizing_summary(&result.trade_log, params);
+
     StockBacktestResponse {
         summary,
         assessment: assessment.to_string(),
@@ -360,7 +389,7 @@ pub fn format_stock_backtest(
         metrics: result.metrics,
         trade_summary,
         trade_log: result.trade_log,
-        sizing_summary: None, // TODO: build from trade log when stock sizing is wired
+        sizing_summary,
         underlying_prices,
         suggested_next_steps,
     }

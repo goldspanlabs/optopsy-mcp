@@ -400,6 +400,8 @@ pub fn run_event_loop(
             });
 
             if let Some(exit_type) = exit_type {
+                // Capture equity before this trade's P&L for accurate sizing audit
+                let equity_before_close = realized_equity;
                 let pnl = close_position(
                     &mut positions[i],
                     today,
@@ -419,7 +421,7 @@ pub fn run_event_loop(
                     pnl,
                     exit_type,
                     params.sizing.is_some(),
-                    realized_equity,
+                    equity_before_close,
                 ));
             }
 
@@ -486,14 +488,8 @@ pub fn run_event_loop(
                         if ml <= 0.0 {
                             return None;
                         }
-                        let vol = ohlcv_closes.and_then(|closes| {
-                            let lookback = match &cfg.method {
-                                super::types::PositionSizing::VolatilityTarget {
-                                    lookback_days,
-                                    ..
-                                } => *lookback_days as usize,
-                                _ => 20,
-                            };
+                        let vol = super::sizing::vol_lookback(cfg).and_then(|lookback| {
+                            let closes = ohlcv_closes?;
                             let vals: Vec<f64> = closes.range(..=today).map(|(_, &v)| v).collect();
                             super::sizing::compute_realized_vol(&vals, lookback)
                         });

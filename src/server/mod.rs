@@ -517,17 +517,19 @@ impl OptopsyServer {
                 let (symbol, df, backtest_params) =
                     self.resolve_backtest_params(params.base).await?;
 
-                // Naked strategy + sizing requires stop_loss for max-loss calculation
+                // Strategies with undefined max loss + sizing require stop_loss
                 if backtest_params.sizing.is_some() && backtest_params.stop_loss.is_none() {
                     if let Some(strategy_def) =
                         crate::strategies::find_strategy(&backtest_params.strategy)
                     {
-                        let is_naked = strategy_def.legs.len() == 1
-                            && strategy_def.legs[0].side == crate::engine::types::Side::Short;
-                        if is_naked {
+                        let all_short = strategy_def
+                            .legs
+                            .iter()
+                            .all(|l| l.side == crate::engine::types::Side::Short);
+                        if all_short {
                             return Err(
-                                "Dynamic sizing with a naked short strategy requires `stop_loss` \
-                                 to compute max loss per contract. Add a stop_loss value."
+                                "Dynamic sizing with an all-short strategy (naked, straddle, strangle) \
+                                 requires `stop_loss` to compute max loss per contract. Add a stop_loss value."
                                     .to_string(),
                             );
                         }

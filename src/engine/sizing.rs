@@ -43,7 +43,7 @@ pub fn max_loss_per_contract(
             multiplier,
             params.stop_loss,
         ),
-        3 => max_loss_butterfly(legs, &candidate.legs, multiplier),
+        3 => max_loss_butterfly(&candidate.legs, multiplier),
         4 => max_loss_four_legs(legs, &candidate.legs, multiplier),
         _ => None,
     }
@@ -106,7 +106,6 @@ fn max_loss_two_legs(
 
 /// Three-leg butterfly: max loss = width between outer strikes × multiplier.
 fn max_loss_butterfly(
-    _legs: &[LegDef],
     cand_legs: &[crate::engine::sim_types::CandidateLeg],
     multiplier: f64,
 ) -> Option<f64> {
@@ -241,12 +240,12 @@ pub fn compute_quantity(
                 f64::from(multiplier)
             };
 
-            let annualized_vol = vol * (252.0_f64).sqrt();
-            if annualized_vol <= 0.0 || per_contract_value <= 0.0 {
+            // `vol` is already annualized (from compute_realized_vol)
+            if per_contract_value <= 0.0 {
                 return fallback_qty;
             }
 
-            (equity * target_vol / (annualized_vol * per_contract_value)).floor() as i32
+            (equity * target_vol / (vol * per_contract_value)).floor() as i32
         }
     };
 
@@ -304,6 +303,15 @@ fn apply_constraints(raw: i32, constraints: &super::types::SizingConstraints) ->
     let min = constraints.min_quantity;
     let max = constraints.max_quantity.unwrap_or(i32::MAX);
     raw.max(min).min(max)
+}
+
+/// Extract the volatility lookback period from a sizing config.
+/// Returns `Some(lookback)` only for `VolatilityTarget`; `None` for other methods.
+pub fn vol_lookback(config: &SizingConfig) -> Option<usize> {
+    match &config.method {
+        PositionSizing::VolatilityTarget { lookback_days, .. } => Some(*lookback_days as usize),
+        _ => None,
+    }
 }
 
 /// Return a human-readable label for a sizing method.
@@ -530,15 +538,7 @@ mod tests {
         };
         // vol=0.20 (annualized), max_loss=500
         // qty = floor(10000 * 0.10 / (0.20 * 500)) = floor(10)
-        let qty = compute_quantity(
-            &cfg,
-            10000.0,
-            500.0,
-            &[],
-            Some(0.20 / (252.0_f64).sqrt()),
-            100,
-            1,
-        );
+        let qty = compute_quantity(&cfg, 10000.0, 500.0, &[], Some(0.20), 100, 1);
         assert_eq!(qty, 10);
     }
 
