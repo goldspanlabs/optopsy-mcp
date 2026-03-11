@@ -183,12 +183,6 @@ fn backtest_covered_call() {
     assert_backtest("covered_call", vec![delta(0.50)], 300.0);
 }
 
-#[test]
-fn backtest_cash_secured_put() {
-    // S Put@100: same as short_put = +150
-    assert_backtest("cash_secured_put", vec![delta(0.40)], 150.0);
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // FULL FIELD VERIFICATION — representative subset with entry_cost checks
 // ═══════════════════════════════════════════════════════════════════════════════

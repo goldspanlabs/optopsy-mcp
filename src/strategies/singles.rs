@@ -45,15 +45,6 @@ pub fn covered_call() -> StrategyDef {
     )
 }
 
-pub fn cash_secured_put() -> StrategyDef {
-    strategy(
-        "cash_secured_put",
-        "Singles",
-        "Sell a put with cash collateral (identical to short_put; alias for intent)",
-        vec![put_leg(Side::Short, 1, default_otm_delta())],
-    )
-}
-
 pub fn all() -> Vec<StrategyDef> {
     vec![
         long_call(),
@@ -61,6 +52,5 @@ pub fn all() -> Vec<StrategyDef> {
         long_put(),
         short_put(),
         covered_call(),
-        cash_secured_put(),
     ]
 }

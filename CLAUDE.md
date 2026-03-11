@@ -54,7 +54,7 @@ Three main execution paths:
 Key submodules: `filters.rs` (DTE/delta filtering, `filter_valid_quotes(df, min_bid_ask)`), `evaluation.rs` (entry-exit matching), `event_sim.rs` (options backtest event loop), `stock_sim.rs` (stock backtest event loop), `pricing.rs` (4 slippage models: Mid/Spread/Liquidity/PerLeg), `rules.rs` (strike ordering), `metrics.rs` (performance calculations), `output.rs` (DTE×delta bucketing with right-closed `(a, b]` intervals), `sizing.rs` (dynamic position sizing: 5 methods with max-loss computation per strategy type).
 
 ### Strategies (`src/strategies/`)
-32 strategies across singles, spreads, butterflies, condors, iron, and calendar categories. Built using helpers (`call_leg`, `put_leg`, `strategy`) in `helpers.rs`. `all_strategies()` returns the full list; `find_strategy(name)` does linear scan. Multi-expiration strategies (calendar/diagonal) use `ExpirationCycle::Primary`/`Secondary` tags on legs.
+31 strategies across singles, spreads, butterflies, condors, iron, and calendar categories. Built using helpers (`call_leg`, `put_leg`, `strategy`) in `helpers.rs`. `all_strategies()` returns the full list; `find_strategy(name)` does linear scan. Multi-expiration strategies (calendar/diagonal) use `ExpirationCycle::Primary`/`Secondary` tags on legs.
 
 ### Data Layer (`src/data/`)
 `DataStore` trait with `CachedStore` as default — local Parquet cache at `~/.optopsy/cache/{category}/{SYMBOL}.parquet` with S3 fetch-on-miss. `ParquetStore` handles normalization of date columns (`quote_date`/`quote_datetime` as Date, Datetime, or String → unified `Datetime("quote_datetime")`). Path segments validated against traversal attacks.

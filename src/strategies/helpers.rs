@@ -130,13 +130,13 @@ pub fn strategy_relaxed(
 /// Infer market direction from the strategy name and leg composition.
 ///
 /// Rules:
-/// 1. Name contains "bull" or is a long call / short put / covered call / cash-secured put → Bullish
+/// 1. Name contains "bull" or is a long call / short put / covered call → Bullish
 /// 2. Name contains "bear" or is a long put / short call → Bearish
 /// 3. Mixed calls and puts with net long exposure, or name starts with "reverse_" → Volatile (buying vol)
 /// 4. Everything else (net-zero or net-short symmetric structures) → Neutral
 fn infer_direction(name: &str, legs: &[LegDef]) -> Direction {
     // Explicit directional names
-    if name.contains("bull") || name == "covered_call" || name == "cash_secured_put" {
+    if name.contains("bull") || name == "covered_call" {
         return Direction::Bullish;
     }
     if name.contains("bear") {

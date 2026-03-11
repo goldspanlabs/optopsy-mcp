@@ -134,7 +134,7 @@ async fn tool_router_lists_all_tools() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn list_strategies_returns_all_32() {
+async fn list_strategies_returns_all_31() {
     let (server, _tmp) = make_test_server();
 
     let (server_tx, server_rx) = tokio::io::duplex(4096);
@@ -164,7 +164,7 @@ async fn list_strategies_returns_all_32() {
         .unwrap();
     let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
 
-    assert_eq!(resp["total"], 32);
+    assert_eq!(resp["total"], 31);
     let categories = resp["categories"].as_object().unwrap();
     assert!(categories.len() >= 6, "Expected at least 6 categories");
     assert!(!resp["suggested_next_steps"].as_array().unwrap().is_empty());
@@ -953,7 +953,7 @@ async fn mcp_roundtrip_list_strategies() {
         .and_then(|c| c.raw.as_text())
         .unwrap();
     let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
-    assert_eq!(resp["total"], 32);
+    assert_eq!(resp["total"], 31);
 
     client.cancel().await.unwrap();
     server_handle.await.unwrap();

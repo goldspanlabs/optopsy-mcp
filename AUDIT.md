@@ -53,9 +53,9 @@ Both legs use `default_otm_delta()`. A diagonal spread requires different strike
 
 Defined as just `call_leg(Side::Short, 1, default_otm_delta())` — identical to `short_call`. The description says "Sell a call against long stock" but the backtest won't model the long stock.
 
-### 10. `short_put` and `cash_secured_put` are identical (strategies/singles.rs)
+### 10. ~~`short_put` and `cash_secured_put` are identical~~ (RESOLVED)
 
-Both create the exact same leg: `put_leg(Side::Short, 1, default_otm_delta())`. Only the name differs.
+Removed `cash_secured_put` — it was identical to `short_put`.
 
 ### 11. DTE exit uses only primary expiration for multi-exp strategies (engine/event_sim.rs:632-634)
 

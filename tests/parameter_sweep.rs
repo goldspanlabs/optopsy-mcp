@@ -432,9 +432,9 @@ fn sweep_multiple_slippage_models() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn strategy_direction_covers_all_32() {
+fn strategy_direction_covers_all_31() {
     let all = optopsy_mcp::strategies::all_strategies();
-    assert_eq!(all.len(), 32, "Expected 32 strategies");
+    assert_eq!(all.len(), 31, "Expected 31 strategies");
 
     let mut bullish = 0;
     let mut bearish = 0;
@@ -450,7 +450,7 @@ fn strategy_direction_covers_all_32() {
         }
     }
 
-    assert_eq!(bullish, 6, "Expected 6 bullish strategies");
+    assert_eq!(bullish, 5, "Expected 5 bullish strategies");
     assert_eq!(bearish, 4, "Expected 4 bearish strategies");
     assert_eq!(volatile, 4, "Expected 4 volatile strategies");
     assert_eq!(neutral, 18, "Expected 18 neutral strategies");

@@ -1,6 +1,6 @@
 //! Built-in options strategy definitions.
 //!
-//! Contains 32 strategies across singles, spreads, butterflies, condors, iron,
+//! Contains 31 strategies across singles, spreads, butterflies, condors, iron,
 //! and calendar categories. Each strategy defines its legs, delta targets, and
 //! strike ordering rules.
 
@@ -44,8 +44,8 @@ mod tests {
     use crate::engine::types::Side;
 
     #[test]
-    fn all_strategies_returns_32() {
-        assert_eq!(all_strategies().len(), 32);
+    fn all_strategies_returns_31() {
+        assert_eq!(all_strategies().len(), 31);
     }
 
     #[test]

@@ -1186,7 +1186,6 @@ mod tests {
         assert_eq!(strategy_direction("covered_call"), Direction::Bullish);
         assert_eq!(strategy_direction("bull_call_spread"), Direction::Bullish);
         assert_eq!(strategy_direction("bull_put_spread"), Direction::Bullish);
-        assert_eq!(strategy_direction("cash_secured_put"), Direction::Bullish);
     }
 
     #[test]
