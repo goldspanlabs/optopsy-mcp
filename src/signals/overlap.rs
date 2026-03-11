@@ -4,254 +4,91 @@ use super::helpers::{column_to_f64, pad_series, SignalFn};
 use polars::prelude::*;
 use rust_ti::standard_indicators::bulk as sti;
 
-/// Signal: price is above its Simple Moving Average.
-pub struct PriceAboveSma {
-    pub column: String,
-    pub period: usize,
-}
-
-impl SignalFn for PriceAboveSma {
-    fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
-        let prices = column_to_f64(df, &self.column)?;
-        let n = prices.len();
-        if n < self.period {
-            return Ok(BooleanChunked::new("price_above_sma".into(), vec![false; n]).into_series());
+/// Generate a price-vs-moving-average signal struct and `SignalFn` impl.
+/// `$cmp` is the comparison operator (e.g. `>` for "above", `<` for "below").
+macro_rules! price_vs_ma_signal {
+    ($name:ident, $signal_name:expr, $ma_fn:path, $cmp:tt) => {
+        pub struct $name {
+            pub column: String,
+            pub period: usize,
         }
-        let sma = sti::simple_moving_average(&prices, self.period);
-        let sma_padded = pad_series(&sma, n);
-        let bools: Vec<bool> = prices
-            .iter()
-            .zip(sma_padded.iter())
-            .map(|(&p, &s)| !s.is_nan() && p > s)
-            .collect();
-        Ok(BooleanChunked::new("price_above_sma".into(), &bools).into_series())
-    }
-    fn name(&self) -> &'static str {
-        "price_above_sma"
-    }
-}
 
-/// Signal: price is below its Simple Moving Average.
-pub struct PriceBelowSma {
-    pub column: String,
-    pub period: usize,
-}
-
-impl SignalFn for PriceBelowSma {
-    fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
-        let prices = column_to_f64(df, &self.column)?;
-        let n = prices.len();
-        if n < self.period {
-            return Ok(BooleanChunked::new("price_below_sma".into(), vec![false; n]).into_series());
-        }
-        let sma = sti::simple_moving_average(&prices, self.period);
-        let sma_padded = pad_series(&sma, n);
-        let bools: Vec<bool> = prices
-            .iter()
-            .zip(sma_padded.iter())
-            .map(|(&p, &s)| !s.is_nan() && p < s)
-            .collect();
-        Ok(BooleanChunked::new("price_below_sma".into(), &bools).into_series())
-    }
-    fn name(&self) -> &'static str {
-        "price_below_sma"
-    }
-}
-
-/// Signal: price is above its Exponential Moving Average.
-pub struct PriceAboveEma {
-    pub column: String,
-    pub period: usize,
-}
-
-impl SignalFn for PriceAboveEma {
-    fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
-        let prices = column_to_f64(df, &self.column)?;
-        let n = prices.len();
-        if n < self.period {
-            return Ok(BooleanChunked::new("price_above_ema".into(), vec![false; n]).into_series());
-        }
-        let ema = sti::exponential_moving_average(&prices, self.period);
-        let ema_padded = pad_series(&ema, n);
-        let bools: Vec<bool> = prices
-            .iter()
-            .zip(ema_padded.iter())
-            .map(|(&p, &e)| !e.is_nan() && p > e)
-            .collect();
-        Ok(BooleanChunked::new("price_above_ema".into(), &bools).into_series())
-    }
-    fn name(&self) -> &'static str {
-        "price_above_ema"
-    }
-}
-
-/// Signal: price is below its Exponential Moving Average.
-pub struct PriceBelowEma {
-    pub column: String,
-    pub period: usize,
-}
-
-impl SignalFn for PriceBelowEma {
-    fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
-        let prices = column_to_f64(df, &self.column)?;
-        let n = prices.len();
-        if n < self.period {
-            return Ok(BooleanChunked::new("price_below_ema".into(), vec![false; n]).into_series());
-        }
-        let ema = sti::exponential_moving_average(&prices, self.period);
-        let ema_padded = pad_series(&ema, n);
-        let bools: Vec<bool> = prices
-            .iter()
-            .zip(ema_padded.iter())
-            .map(|(&p, &e)| !e.is_nan() && p < e)
-            .collect();
-        Ok(BooleanChunked::new("price_below_ema".into(), &bools).into_series())
-    }
-    fn name(&self) -> &'static str {
-        "price_below_ema"
-    }
-}
-
-/// Signal: fast SMA crosses above slow SMA (golden cross).
-/// True on rows where fast > slow AND the previous row had fast <= slow.
-pub struct SmaCrossover {
-    pub column: String,
-    pub fast_period: usize,
-    pub slow_period: usize,
-}
-
-impl SignalFn for SmaCrossover {
-    fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
-        let prices = column_to_f64(df, &self.column)?;
-        let n = prices.len();
-        let min_period = self.fast_period.max(self.slow_period);
-        if n < min_period {
-            return Ok(BooleanChunked::new("sma_crossover".into(), vec![false; n]).into_series());
-        }
-        let fast = pad_series(&sti::simple_moving_average(&prices, self.fast_period), n);
-        let slow = pad_series(&sti::simple_moving_average(&prices, self.slow_period), n);
-        let mut bools = vec![false; n];
-        for i in 1..n {
-            let prev_valid = !fast[i - 1].is_nan() && !slow[i - 1].is_nan();
-            let curr_valid = !fast[i].is_nan() && !slow[i].is_nan();
-            if prev_valid && curr_valid {
-                bools[i] = fast[i] > slow[i] && fast[i - 1] <= slow[i - 1];
+        impl SignalFn for $name {
+            fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
+                let prices = column_to_f64(df, &self.column)?;
+                let n = prices.len();
+                if n < self.period {
+                    return Ok(
+                        BooleanChunked::new($signal_name.into(), vec![false; n]).into_series()
+                    );
+                }
+                let ma = $ma_fn(&prices, self.period);
+                let ma_padded = pad_series(&ma, n);
+                let bools: Vec<bool> = prices
+                    .iter()
+                    .zip(ma_padded.iter())
+                    .map(|(&p, &m)| !m.is_nan() && p $cmp m)
+                    .collect();
+                Ok(BooleanChunked::new($signal_name.into(), &bools).into_series())
+            }
+            fn name(&self) -> &'static str {
+                $signal_name
             }
         }
-        Ok(BooleanChunked::new("sma_crossover".into(), &bools).into_series())
-    }
-    fn name(&self) -> &'static str {
-        "sma_crossover"
-    }
+    };
 }
 
-/// Signal: fast SMA crosses below slow SMA (death cross).
-pub struct SmaCrossunder {
-    pub column: String,
-    pub fast_period: usize,
-    pub slow_period: usize,
-}
-
-impl SignalFn for SmaCrossunder {
-    fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
-        let prices = column_to_f64(df, &self.column)?;
-        let n = prices.len();
-        let min_period = self.fast_period.max(self.slow_period);
-        if n < min_period {
-            return Ok(BooleanChunked::new("sma_crossunder".into(), vec![false; n]).into_series());
+/// Generate a moving-average crossover signal struct and `SignalFn` impl.
+/// `$curr_cmp` is the current-bar comparison, `$prev_cmp` is the previous-bar comparison.
+macro_rules! ma_crossover_signal {
+    ($name:ident, $signal_name:expr, $ma_fn:path, $curr_cmp:tt, $prev_cmp:tt) => {
+        pub struct $name {
+            pub column: String,
+            pub fast_period: usize,
+            pub slow_period: usize,
         }
-        let fast = pad_series(&sti::simple_moving_average(&prices, self.fast_period), n);
-        let slow = pad_series(&sti::simple_moving_average(&prices, self.slow_period), n);
-        let mut bools = vec![false; n];
-        for i in 1..n {
-            let prev_valid = !fast[i - 1].is_nan() && !slow[i - 1].is_nan();
-            let curr_valid = !fast[i].is_nan() && !slow[i].is_nan();
-            if prev_valid && curr_valid {
-                bools[i] = fast[i] < slow[i] && fast[i - 1] >= slow[i - 1];
+
+        impl SignalFn for $name {
+            fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
+                let prices = column_to_f64(df, &self.column)?;
+                let n = prices.len();
+                let min_period = self.fast_period.max(self.slow_period);
+                if n < min_period {
+                    return Ok(
+                        BooleanChunked::new($signal_name.into(), vec![false; n]).into_series()
+                    );
+                }
+                let fast = pad_series(&$ma_fn(&prices, self.fast_period), n);
+                let slow = pad_series(&$ma_fn(&prices, self.slow_period), n);
+                let mut bools = vec![false; n];
+                for i in 1..n {
+                    let prev_valid = !fast[i - 1].is_nan() && !slow[i - 1].is_nan();
+                    let curr_valid = !fast[i].is_nan() && !slow[i].is_nan();
+                    if prev_valid && curr_valid {
+                        bools[i] = fast[i] $curr_cmp slow[i]
+                            && fast[i - 1] $prev_cmp slow[i - 1];
+                    }
+                }
+                Ok(BooleanChunked::new($signal_name.into(), &bools).into_series())
+            }
+            fn name(&self) -> &'static str {
+                $signal_name
             }
         }
-        Ok(BooleanChunked::new("sma_crossunder".into(), &bools).into_series())
-    }
-    fn name(&self) -> &'static str {
-        "sma_crossunder"
-    }
+    };
 }
 
-/// Signal: fast EMA crosses above slow EMA.
-pub struct EmaCrossover {
-    pub column: String,
-    pub fast_period: usize,
-    pub slow_period: usize,
-}
+// Price-vs-moving-average signals
+price_vs_ma_signal!(PriceAboveSma, "price_above_sma", sti::simple_moving_average, >);
+price_vs_ma_signal!(PriceBelowSma, "price_below_sma", sti::simple_moving_average, <);
+price_vs_ma_signal!(PriceAboveEma, "price_above_ema", sti::exponential_moving_average, >);
+price_vs_ma_signal!(PriceBelowEma, "price_below_ema", sti::exponential_moving_average, <);
 
-impl SignalFn for EmaCrossover {
-    fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
-        let prices = column_to_f64(df, &self.column)?;
-        let n = prices.len();
-        let min_period = self.fast_period.max(self.slow_period);
-        if n < min_period {
-            return Ok(BooleanChunked::new("ema_crossover".into(), vec![false; n]).into_series());
-        }
-        let fast = pad_series(
-            &sti::exponential_moving_average(&prices, self.fast_period),
-            n,
-        );
-        let slow = pad_series(
-            &sti::exponential_moving_average(&prices, self.slow_period),
-            n,
-        );
-        let mut bools = vec![false; n];
-        for i in 1..n {
-            let prev_valid = !fast[i - 1].is_nan() && !slow[i - 1].is_nan();
-            let curr_valid = !fast[i].is_nan() && !slow[i].is_nan();
-            if prev_valid && curr_valid {
-                bools[i] = fast[i] > slow[i] && fast[i - 1] <= slow[i - 1];
-            }
-        }
-        Ok(BooleanChunked::new("ema_crossover".into(), &bools).into_series())
-    }
-    fn name(&self) -> &'static str {
-        "ema_crossover"
-    }
-}
-
-/// Signal: fast EMA crosses below slow EMA.
-pub struct EmaCrossunder {
-    pub column: String,
-    pub fast_period: usize,
-    pub slow_period: usize,
-}
-
-impl SignalFn for EmaCrossunder {
-    fn evaluate(&self, df: &DataFrame) -> Result<Series, PolarsError> {
-        let prices = column_to_f64(df, &self.column)?;
-        let n = prices.len();
-        let min_period = self.fast_period.max(self.slow_period);
-        if n < min_period {
-            return Ok(BooleanChunked::new("ema_crossunder".into(), vec![false; n]).into_series());
-        }
-        let fast = pad_series(
-            &sti::exponential_moving_average(&prices, self.fast_period),
-            n,
-        );
-        let slow = pad_series(
-            &sti::exponential_moving_average(&prices, self.slow_period),
-            n,
-        );
-        let mut bools = vec![false; n];
-        for i in 1..n {
-            let prev_valid = !fast[i - 1].is_nan() && !slow[i - 1].is_nan();
-            let curr_valid = !fast[i].is_nan() && !slow[i].is_nan();
-            if prev_valid && curr_valid {
-                bools[i] = fast[i] < slow[i] && fast[i - 1] >= slow[i - 1];
-            }
-        }
-        Ok(BooleanChunked::new("ema_crossunder".into(), &bools).into_series())
-    }
-    fn name(&self) -> &'static str {
-        "ema_crossunder"
-    }
-}
+// Moving-average crossover signals
+ma_crossover_signal!(SmaCrossover, "sma_crossover", sti::simple_moving_average, >, <=);
+ma_crossover_signal!(SmaCrossunder, "sma_crossunder", sti::simple_moving_average, <, >=);
+ma_crossover_signal!(EmaCrossover, "ema_crossover", sti::exponential_moving_average, >, <=);
+ma_crossover_signal!(EmaCrossunder, "ema_crossunder", sti::exponential_moving_average, <, >=);
 
 #[cfg(test)]
 mod tests {
