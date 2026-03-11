@@ -40,7 +40,7 @@ pub fn execute(
 
     let suggested_next_steps = if exists {
         vec![
-            format!("[NEXT] Call run_backtest({{ strategy, symbol: \"{upper}\" }}) — data is auto-loaded from cache"),
+            format!("[NEXT] Call run_options_backtest({{ strategy, symbol: \"{upper}\" }}) — data is auto-loaded from cache"),
             "[TIP] Check last_updated to decide if data should be refreshed".to_string(),
         ]
     } else {

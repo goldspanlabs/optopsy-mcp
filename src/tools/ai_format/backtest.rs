@@ -4,6 +4,7 @@
 //! responses with natural-language summaries, key findings, trade statistics,
 //! and actionable next-step suggestions.
 
+use crate::engine::stock_sim::StockBacktestParams;
 use crate::engine::types::{
     to_display_name, BacktestParams, BacktestResult, CompareEntry, CompareResult,
 };
@@ -12,7 +13,8 @@ use crate::tools::ai_helpers::{
     compute_trade_summary, format_pnl, DRAWDOWN_HIGH, SHARPE_NEEDS_IMPROVEMENT,
 };
 use crate::tools::response_types::{
-    BacktestResponse, CompareResponse, CompareStrategyEntry, UnderlyingPrice,
+    BacktestResponse, CompareResponse, CompareStrategyEntry, StockBacktestParamsSummary,
+    StockBacktestResponse, UnderlyingPrice,
 };
 
 /// Format a backtest result into an AI-enriched response with summary, assessment, and next steps.
@@ -203,6 +205,125 @@ pub fn format_compare(
         ranking_by_pnl,
         best_overall,
         results,
+        suggested_next_steps,
+    }
+}
+
+/// Format a stock backtest result into an AI-enriched response.
+#[allow(clippy::too_many_lines)]
+pub fn format_stock_backtest(
+    result: BacktestResult,
+    params: &StockBacktestParams,
+    underlying_prices: Vec<UnderlyingPrice>,
+) -> StockBacktestResponse {
+    let m = &result.metrics;
+    let trade_summary = compute_trade_summary(&result.trade_log, m);
+    let side_label = match params.side {
+        crate::engine::types::Side::Long => "Long",
+        crate::engine::types::Side::Short => "Short",
+    };
+
+    let params_summary = StockBacktestParamsSummary {
+        symbol: params.symbol.clone(),
+        side: params.side,
+        capital: params.capital,
+        quantity: params.quantity,
+        max_positions: params.max_positions,
+        slippage: params.slippage.clone(),
+        commission: params.commission.clone(),
+        stop_loss: params.stop_loss,
+        take_profit: params.take_profit,
+        max_hold_days: params.max_hold_days,
+        entry_signal: params
+            .entry_signal
+            .as_ref()
+            .map(|s| serde_json::to_value(s).unwrap_or(serde_json::Value::Null)),
+        exit_signal: params
+            .exit_signal
+            .as_ref()
+            .map(|s| serde_json::to_value(s).unwrap_or(serde_json::Value::Null)),
+        start_date: params.start_date.map(|d| d.format("%Y-%m-%d").to_string()),
+        end_date: params.end_date.map(|d| d.format("%Y-%m-%d").to_string()),
+    };
+
+    if result.trade_log.is_empty() {
+        return StockBacktestResponse {
+            summary: format!(
+                "Stock backtest of {} {}: no trades were executed. \
+                 Check that the entry signal fires within the date range.",
+                side_label, params.symbol,
+            ),
+            assessment: "N/A".to_string(),
+            key_findings: vec![
+                "No trades matched the entry criteria.".to_string(),
+                "Verify the entry signal fires on at least some dates in the data range."
+                    .to_string(),
+            ],
+            parameters: params_summary,
+            metrics: result.metrics,
+            trade_summary,
+            trade_log: vec![],
+            underlying_prices,
+            suggested_next_steps: vec![
+                "Try a different entry signal or widen the date range".to_string(),
+                "Use build_signal(action=\"search\") to find suitable signals".to_string(),
+            ],
+        };
+    }
+
+    let assessment = assess_sharpe(m.sharpe);
+    let pnl_str = format_pnl(result.total_pnl);
+
+    let summary = format!(
+        "Stock backtest of {} {} ({} shares): {assessment} performance (Sharpe {:.2}). \
+         {} trades, {} total P&L, {:.1}% win rate, {:.1}% max drawdown.",
+        side_label,
+        params.symbol,
+        params.quantity,
+        m.sharpe,
+        result.trade_count,
+        pnl_str,
+        m.win_rate * 100.0,
+        m.max_drawdown * 100.0,
+    );
+
+    let key_findings = backtest_key_findings(m, &result.trade_log);
+
+    let mut suggested_next_steps = Vec::new();
+    if m.sharpe < SHARPE_NEEDS_IMPROVEMENT {
+        suggested_next_steps
+            .push("[ITERATE] Try different entry/exit signals to improve Sharpe".to_string());
+    }
+    if m.max_drawdown > DRAWDOWN_HIGH {
+        suggested_next_steps.push(
+            "[RISK] High drawdown detected — consider adding stop_loss or reducing position size"
+                .to_string(),
+        );
+        if params.stop_loss.is_none() {
+            suggested_next_steps.push(
+                "[RISK] No stop_loss set — try adding one (e.g., stop_loss: 0.05) to cap individual trade risk"
+                    .to_string(),
+            );
+        }
+    }
+    suggested_next_steps.push(format!(
+        "[NEXT] Try different signal combinations for {} {}",
+        side_label, params.symbol
+    ));
+    suggested_next_steps.push(
+        "[COMPARE] Run multiple stock backtests with different signals to compare performance"
+            .to_string(),
+    );
+
+    StockBacktestResponse {
+        summary,
+        assessment: assessment.to_string(),
+        key_findings,
+        parameters: params_summary,
+        metrics: result.metrics,
+        trade_summary,
+        trade_log: result.trade_log,
+        underlying_prices,
         suggested_next_steps,
     }
 }

@@ -17,6 +17,7 @@ pub mod raw_prices;
 pub mod response_types;
 pub mod signals;
 pub mod status;
+pub mod stock_backtest;
 pub mod strategies;
 pub mod sweep;
 pub mod walk_forward;

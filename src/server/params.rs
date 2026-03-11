@@ -3,7 +3,7 @@
 //! Each struct corresponds to a tool's input schema, deriving `JsonSchema` for
 //! MCP schema generation and `garde::Validate` for runtime validation. Common
 //! base parameters are shared via `BacktestBaseParams` to eliminate field
-//! duplication across `run_backtest`, `walk_forward`, and `permutation_test`.
+//! duplication across `run_options_backtest`, `walk_forward`, and `permutation_test`.
 
 use garde::Validate;
 use schemars::JsonSchema;
@@ -81,7 +81,7 @@ pub(crate) fn default_capital() -> f64 {
     10000.0
 }
 
-/// Shared base parameters for all backtest-related tools (`run_backtest`, `walk_forward`,
+/// Shared base parameters for all backtest-related tools (`run_options_backtest`, `walk_forward`,
 /// `permutation_test`). Extracted to eliminate field duplication across parameter structs.
 #[derive(Debug, Clone, Deserialize, JsonSchema, Validate)]
 pub struct BacktestBaseParams {
@@ -188,12 +188,78 @@ pub struct BacktestBaseParams {
     pub exit_net_delta: Option<f64>,
 }
 
-/// Parameters for the `run_backtest` tool.
+/// Parameters for the `run_options_backtest` tool.
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct RunBacktestParams {
     #[serde(flatten)]
     #[garde(dive)]
     pub base: BacktestBaseParams,
+}
+
+/// Default shares per trade for stock backtests.
+fn default_stock_quantity() -> i32 {
+    100
+}
+
+/// Parameters for the `run_stock_backtest` tool.
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+pub struct RunStockBacktestParams {
+    /// Ticker symbol (e.g. "SPY", "AAPL")
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
+    pub symbol: String,
+    /// Position direction: Long or Short (default: Long)
+    #[serde(default)]
+    #[garde(skip)]
+    pub side: Option<crate::engine::types::Side>,
+    /// Starting capital (default: 10000)
+    #[serde(default = "default_capital")]
+    #[garde(range(min = 0.01))]
+    pub capital: f64,
+    /// Number of shares per trade (default: 100)
+    #[serde(default = "default_stock_quantity")]
+    #[garde(range(min = 1))]
+    pub quantity: i32,
+    /// Maximum concurrent positions (default: 1)
+    #[serde(default = "default_max_positions")]
+    #[garde(range(min = 1))]
+    pub max_positions: i32,
+    /// Slippage model (default: Mid for stocks)
+    #[serde(default = "default_stock_slippage")]
+    #[garde(dive)]
+    pub slippage: Slippage,
+    /// Commission structure
+    #[serde(default)]
+    #[garde(dive)]
+    pub commission: Option<Commission>,
+    /// Stop loss as fraction of entry price (e.g., 0.05 = 5%)
+    #[garde(inner(range(min = 0.0)))]
+    pub stop_loss: Option<f64>,
+    /// Take profit as fraction of entry price (e.g., 0.10 = 10%)
+    #[garde(inner(range(min = 0.0)))]
+    pub take_profit: Option<f64>,
+    /// Maximum days to hold a position
+    #[garde(inner(range(min = 1)))]
+    pub max_hold_days: Option<i32>,
+    /// Entry signal — REQUIRED. Opens positions when this signal fires.
+    /// Use `build_signal(action="search")` to find suitable signals.
+    #[garde(skip)]
+    pub entry_signal: SignalSpec,
+    /// Exit signal — optional. Closes positions when this signal fires.
+    #[serde(default)]
+    #[garde(skip)]
+    pub exit_signal: Option<SignalSpec>,
+    /// Start date filter (YYYY-MM-DD)
+    #[serde(default)]
+    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))]
+    pub start_date: Option<String>,
+    /// End date filter (YYYY-MM-DD)
+    #[serde(default)]
+    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")), custom(validate_end_date_after_start(&self.start_date)))]
+    pub end_date: Option<String>,
+}
+
+fn default_stock_slippage() -> Slippage {
+    Slippage::Mid
 }
 
 fn default_train_days() -> i32 {

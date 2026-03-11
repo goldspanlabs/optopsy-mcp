@@ -26,14 +26,14 @@ use crate::signals::registry::{collect_cross_symbols, SignalSpec};
 use crate::tools;
 use crate::tools::response_types::{
     BacktestResponse, BuildSignalResponse, CheckCacheResponse, CompareResponse,
-    PermutationTestResponse, RawPricesResponse, StatusResponse, StrategiesResponse, SweepResponse,
-    WalkForwardResponse,
+    PermutationTestResponse, RawPricesResponse, StatusResponse, StockBacktestResponse,
+    StrategiesResponse, SweepResponse, WalkForwardResponse,
 };
 use params::{
     resolve_leg_deltas, resolve_sweep_strategies, validate_category_read, validation_err,
     BacktestBaseParams, BuildSignalParams, CheckCacheParams, CompareStrategiesParams,
     GetRawPricesParams, ParameterSweepParams, PermutationTestParams, RunBacktestParams,
-    WalkForwardParams,
+    RunStockBacktestParams, WalkForwardParams,
 };
 use sanitize::{SanitizedJson, SanitizedResult};
 
@@ -348,7 +348,7 @@ impl OptopsyServer {
     /// **When to use**: To choose a strategy for analysis
     /// **Prerequisites**: None (informational, no data required)
     /// **Categories**: singles, spreads, straddles, strangles, butterflies, condors, iron, calendars, diagonals
-    /// **Next tools**: `suggest_parameters()` or `run_backtest()` (once you pick a strategy)
+    /// **Next tools**: `suggest_parameters()` or `run_options_backtest()` (once you pick a strategy)
     #[tool(name = "list_strategies", annotations(read_only_hint = true))]
     async fn list_strategies(&self) -> SanitizedJson<StrategiesResponse> {
         SanitizedJson(tools::strategies::execute())
@@ -359,7 +359,7 @@ impl OptopsyServer {
     /// **When to use**: Check what symbol is currently loaded, row count, available columns
     /// **Prerequisites**: None (works with or without loaded data)
     /// **How it works**: Returns details about the in-memory `DataFrame` (symbol, rows, columns)
-    /// **Next tool**: Proceed with `suggest_parameters()` or `run_backtest()`
+    /// **Next tool**: Proceed with `suggest_parameters()` or `run_options_backtest()`
     /// **Example usage**: After loading SPY, call this to confirm it's loaded and see column names
     #[tool(name = "get_loaded_symbol", annotations(read_only_hint = true))]
     async fn get_loaded_symbol(&self) -> SanitizedJson<StatusResponse> {
@@ -393,7 +393,7 @@ impl OptopsyServer {
     /// **Examples**: `"close > sma(close, 20)"`, `"volume > sma(volume, 20) * 2.0"`,
     ///   `"close > close[1] * 1.02"`, `"pct_change(close, 1) > 0.03"`
     ///
-    /// **Next tool**: `run_backtest()` with `entry_signal`/`exit_signal` set to the returned spec,
+    /// **Next tool**: `run_options_backtest()` with `entry_signal`/`exit_signal` set to the returned spec,
     ///   or use `{ "type": "Saved", "name": "signal_name" }` to reference saved signals
     #[tool(
         name = "build_signal",
@@ -483,8 +483,8 @@ impl OptopsyServer {
     ///   - Performance metrics (Sharpe, Sortino, Calmar, `VaR`, max drawdown, win rate, etc.)
     ///   - AI-enriched assessment and suggested next steps
     /// **Time to run**: 5-30 seconds depending on data size
-    #[tool(name = "run_backtest", annotations(read_only_hint = true))]
-    async fn run_backtest(
+    #[tool(name = "run_options_backtest", annotations(read_only_hint = true))]
+    async fn run_options_backtest(
         &self,
         Parameters(params): Parameters<RunBacktestParams>,
     ) -> SanitizedResult<BacktestResponse, String> {
@@ -492,7 +492,7 @@ impl OptopsyServer {
             async {
                 params
                     .validate()
-                    .map_err(|e| validation_err("run_backtest", e))?;
+                    .map_err(|e| validation_err("run_options_backtest", e))?;
 
                 tracing::info!(
                     strategy = params.base.strategy.as_str(),
@@ -532,6 +532,106 @@ impl OptopsyServer {
                 })
                 .await
                 .map_err(|e| format!("Backtest task panicked: {e}"))?
+                .map_err(|e| format!("Error: {e}"))
+            }
+            .await,
+        )
+    }
+
+    /// Signal-driven stock/equity backtest on OHLCV data.
+    ///
+    /// **When to use**: Backtest a stock trading strategy driven by entry/exit signals
+    ///   (e.g. "buy when RSI < 30, sell when RSI > 70")
+    /// **Prerequisites**: None — OHLCV data is auto-fetched from Yahoo Finance and cached
+    ///
+    /// **Key difference from `run_options_backtest`**: This operates on stock prices (OHLCV bars),
+    /// not options chains. No strategy/delta/DTE needed — signals drive everything.
+    ///
+    /// **What it simulates**:
+    ///   - Day-by-day position opens when `entry_signal` fires
+    ///   - Position management (stop loss, take profit, max hold days, exit signal)
+    ///   - Realistic fills with slippage and commissions
+    ///   - Long or short positions
+    ///
+    /// **Output**: Same format as options backtest — trade log, equity curve, performance metrics
+    #[tool(name = "run_stock_backtest", annotations(read_only_hint = true))]
+    async fn run_stock_backtest(
+        &self,
+        Parameters(params): Parameters<RunStockBacktestParams>,
+    ) -> SanitizedResult<StockBacktestResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("run_stock_backtest", e))?;
+
+                let symbol = params.symbol.to_uppercase();
+                validate_path_segment(&symbol).map_err(|e| format!("Invalid symbol: {e}"))?;
+
+                tracing::info!(
+                    symbol = %symbol,
+                    side = ?params.side.unwrap_or(crate::engine::types::Side::Long),
+                    "Stock backtest request received"
+                );
+
+                // Ensure OHLCV data is available
+                let ohlcv_path = self.ensure_ohlcv(&symbol).await?;
+
+                // Resolve cross-symbol OHLCV paths for signals
+                let cross_ohlcv_paths = self
+                    .resolve_cross_ohlcv_paths(
+                        Some(&params.entry_signal),
+                        params.exit_signal.as_ref(),
+                        &[],
+                        &[],
+                    )
+                    .await?;
+
+                // Load underlying prices for chart overlay
+                let underlying_prices = match self.cache.ensure_local_for(&symbol, "prices").await {
+                    Ok(path) => {
+                        let prices =
+                            tokio::task::spawn_blocking(move || load_underlying_closes(&path))
+                                .await
+                                .unwrap_or_default();
+                        prices
+                    }
+                    Err(_) => vec![],
+                };
+
+                let start_date = params
+                    .start_date
+                    .as_deref()
+                    .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+                let end_date = params
+                    .end_date
+                    .as_deref()
+                    .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+
+                let stock_params = crate::engine::stock_sim::StockBacktestParams {
+                    symbol,
+                    side: params.side.unwrap_or(crate::engine::types::Side::Long),
+                    capital: params.capital,
+                    quantity: params.quantity,
+                    max_positions: params.max_positions,
+                    slippage: params.slippage,
+                    commission: params.commission,
+                    stop_loss: params.stop_loss,
+                    take_profit: params.take_profit,
+                    max_hold_days: params.max_hold_days,
+                    entry_signal: Some(params.entry_signal),
+                    exit_signal: params.exit_signal,
+                    ohlcv_path: Some(ohlcv_path),
+                    cross_ohlcv_paths,
+                    start_date,
+                    end_date,
+                };
+
+                tokio::task::spawn_blocking(move || {
+                    tools::stock_backtest::execute(&stock_params, underlying_prices)
+                })
+                .await
+                .map_err(|e| format!("Stock backtest task panicked: {e}"))?
                 .map_err(|e| format!("Error: {e}"))
             }
             .await,
@@ -707,7 +807,7 @@ impl OptopsyServer {
 
     /// Rolling walk-forward validation: train on window 1, test on window 2, slide forward, repeat.
     ///
-    /// **When to use**: After finding promising parameters via `run_backtest` or `parameter_sweep`,
+    /// **When to use**: After finding promising parameters via `run_options_backtest` or `parameter_sweep`,
     ///   validate that the strategy performs consistently across multiple time periods
     /// **Prerequisites**: None — data is auto-loaded from cache when you pass a symbol
     ///
@@ -769,7 +869,7 @@ impl OptopsyServer {
 
     /// Run multiple strategies in parallel and rank by performance metrics.
     ///
-    /// **When to use**: After validating one strategy via `run_backtest()`, to test
+    /// **When to use**: After validating one strategy via `run_options_backtest()`, to test
     ///   parameter variations and find the best-performing approach
     /// **Prerequisites**: None — data is auto-loaded from cache when you pass a symbol
     /// **Why use this**: Compare different delta targets, DTE parameters, or strategies
@@ -925,26 +1025,28 @@ impl ServerHandler for OptopsyServer {
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             server_info: Implementation {
                 name: "optopsy-mcp".into(),
-                title: Some("Optopsy Options Backtesting Engine".into()),
+                title: Some("Optopsy Backtesting Engine".into()),
                 version: env!("CARGO_PKG_VERSION").into(),
-                description: Some("Event-driven options backtesting engine with 32 strategies, realistic position management, and AI-compatible analysis tools".into()),
+                description: Some("Event-driven backtesting engine for options (32 strategies) and stocks (signal-driven), with realistic position management and AI-compatible analysis tools".into()),
                 icons: None,
                 website_url: None,
             },
             instructions: Some(
-                "Options backtesting engine. Data is auto-loaded when you call any analysis tool — \
+                "Backtesting engine for options and stocks. Data is auto-loaded when you call any analysis tool — \
                 just pass the symbol parameter.\
                 \n\n## WORKFLOW\
                 \n\
-                \n### 1. Explore Strategies\
-                \n  - list_strategies() — browse all 32 strategies by category\
-                \n  - build_signal(action=\"catalog\") / build_signal(action=\"search\") — optional: TA signal filters\
+                \n### 1. Explore Strategies & Signals\
+                \n  - list_strategies() — browse all 32 option strategies by category\
+                \n  - build_signal(action=\"catalog\") / build_signal(action=\"search\") — discover TA signals (40+)\
                 \n\
                 \n### 2. Full Simulation\
-                \n  - run_backtest({ strategy, symbol, ... }) — event-driven backtest with trade log and metrics\
-                \n  - OHLCV data is auto-fetched when signals are used\
+                \n  - **Options**: run_options_backtest({ strategy, symbol, ... }) — event-driven options backtest\
+                \n  - **Stocks**: run_stock_backtest({ symbol, entry_signal, ... }) — signal-driven stock backtest\
+                \n    No strategy/delta/DTE needed — entry_signal is REQUIRED, exit uses stop-loss/take-profit/exit_signal\
+                \n  - OHLCV data is auto-fetched from Yahoo Finance when needed\
                 \n\
-                \n### 3. Compare & Optimize (optional)\
+                \n### 3. Compare & Optimize (optional, options only)\
                 \n  - parameter_sweep — PREFERRED for optimization. Generates cartesian product of delta/DTE/slippage combos automatically.\
                 \n    Use `direction` to auto-select strategies by market outlook (bullish/bearish/neutral/volatile),\
                 \n    or provide explicit `strategies` list with `leg_delta_targets` grids.\
@@ -953,9 +1055,9 @@ impl ServerHandler for OptopsyServer {
                 \n    you've already chosen. NOT for grid search (use parameter_sweep instead).\
                 \n\
                 \n## RULES\
-                \n- strategy is ALWAYS REQUIRED for backtest — signals do NOT replace strategies\
-                \n- Signals only filter WHEN to trade; the strategy defines WHAT option legs to trade\
-                \n- NEVER pass strategy: null — pick one like short_put, iron_condor, etc.\
+                \n- For OPTIONS: strategy is ALWAYS REQUIRED — signals only filter WHEN to trade\
+                \n- For STOCKS: entry_signal is ALWAYS REQUIRED — it drives when to buy/sell\
+                \n- NEVER pass strategy: null for options — pick one like short_put, iron_condor, etc.\
                 \n- For optimization, prefer parameter_sweep over manually enumerating compare_strategies entries\
                 \n- Each tool response includes suggested_next_steps — follow them"
                     .into(),

@@ -17,7 +17,8 @@ pub async fn execute(data: &Arc<RwLock<HashMap<String, DataFrame>>>) -> StatusRe
             date_range: None,
             columns: vec![],
             suggested_next_steps: vec![
-                "[NEXT] Call run_backtest({ strategy, symbol }) — data is auto-loaded".to_string(),
+                "[NEXT] Call run_options_backtest({ strategy, symbol }) — data is auto-loaded"
+                    .to_string(),
                 "[TIP] Call check_cache_status to verify data is cached".to_string(),
             ],
         }
@@ -54,7 +55,8 @@ pub async fn execute(data: &Arc<RwLock<HashMap<String, DataFrame>>>) -> StatusRe
         let suggested_next_steps = if symbols.len() == 1 {
             vec![
                 "[NEXT] Call list_strategies() to browse available strategies".to_string(),
-                "[THEN] Call run_backtest({ strategy, symbol }) for full simulation".to_string(),
+                "[THEN] Call run_options_backtest({ strategy, symbol }) for full simulation"
+                    .to_string(),
             ]
         } else {
             vec![
@@ -63,7 +65,7 @@ pub async fn execute(data: &Arc<RwLock<HashMap<String, DataFrame>>>) -> StatusRe
                     symbols[0]
                 ),
                 format!(
-                    "[THEN] Call run_backtest({{ strategy, symbol: \"{}\" }})",
+                    "[THEN] Call run_options_backtest({{ strategy, symbol: \"{}\" }})",
                     symbols[0]
                 ),
             ]

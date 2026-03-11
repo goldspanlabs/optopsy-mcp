@@ -37,7 +37,7 @@ pub fn format_load_data(
         columns,
         suggested_next_steps: vec![
             "[NEXT] Call list_strategies() to browse available strategies and choose one to analyze".to_string(),
-            "[THEN] Call run_backtest({ strategy, symbol }) for full simulation".to_string(),
+            "[THEN] Call run_options_backtest({ strategy, symbol }) for full simulation".to_string(),
         ],
     }
 }
@@ -76,7 +76,7 @@ pub fn format_strategies(strategies: Vec<StrategyInfo>) -> StrategiesResponse {
         categories,
         strategies,
         suggested_next_steps: vec![
-            "[NEXT] Call run_backtest({ strategy: \"<chosen_strategy>\", symbol }) for full simulation".to_string(),
+            "[NEXT] Call run_options_backtest({ strategy: \"<chosen_strategy>\", symbol }) for full simulation".to_string(),
             "[THEN] Call parameter_sweep to optimize across deltas and DTEs".to_string(),
         ],
     }

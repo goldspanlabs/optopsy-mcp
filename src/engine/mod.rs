@@ -18,6 +18,7 @@ pub mod price_table;
 pub mod pricing;
 pub mod rules;
 pub mod sim_types;
+pub mod stock_sim;
 pub mod sweep;
 pub mod sweep_analysis;
 pub mod types;

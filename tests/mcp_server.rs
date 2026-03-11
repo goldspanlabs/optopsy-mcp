@@ -84,7 +84,7 @@ fn server_info_has_correct_metadata() {
     assert!(info.capabilities.tools.is_some());
     assert!(info.instructions.is_some());
     let instructions = info.instructions.unwrap();
-    assert!(instructions.contains("run_backtest"));
+    assert!(instructions.contains("run_options_backtest"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -105,11 +105,12 @@ async fn tool_router_lists_all_tools() {
     let tools = client.list_all_tools().await.unwrap();
     let tool_names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
 
-    assert_eq!(tools.len(), 10, "Expected 10 tools, got: {tool_names:?}");
+    assert_eq!(tools.len(), 11, "Expected 11 tools, got: {tool_names:?}");
     for expected in [
         "list_strategies",
         "get_loaded_symbol",
-        "run_backtest",
+        "run_options_backtest",
+        "run_stock_backtest",
         "compare_strategies",
         "parameter_sweep",
         "walk_forward",
@@ -323,7 +324,7 @@ async fn backtest_rejects_zero_capital() {
         .peer()
         .call_tool(CallToolRequestParams {
             meta: None,
-            name: "run_backtest".into(),
+            name: "run_options_backtest".into(),
             arguments: Some(
                 serde_json::from_value(json!({
                     "strategy": "short_put",
@@ -432,7 +433,7 @@ async fn backtest_fails_without_loaded_data() {
         .peer()
         .call_tool(CallToolRequestParams {
             meta: None,
-            name: "run_backtest".into(),
+            name: "run_options_backtest".into(),
             arguments: Some(
                 serde_json::from_value(json!({
                     "strategy": "short_put",
@@ -578,7 +579,7 @@ fn write_test_parquet_creates_valid_file() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn run_backtest_returns_trades_and_metrics() {
+async fn run_options_backtest_returns_trades_and_metrics() {
     let (server, _tmp) = make_test_server();
     preload_data(&server, "TEST", make_multi_strike_df()).await;
 
@@ -595,7 +596,7 @@ async fn run_backtest_returns_trades_and_metrics() {
         .peer()
         .call_tool(CallToolRequestParams {
             meta: None,
-            name: "run_backtest".into(),
+            name: "run_options_backtest".into(),
             arguments: Some(
                 serde_json::from_value(json!({
                     "strategy": "short_put",
@@ -616,7 +617,7 @@ async fn run_backtest_returns_trades_and_metrics() {
 
     assert!(
         !result.is_error.unwrap_or(false),
-        "run_backtest returned error: {:?}",
+        "run_options_backtest returned error: {:?}",
         result.content
     );
     let text = result
@@ -756,7 +757,7 @@ async fn backtest_golden_path_output_shape() {
         .peer()
         .call_tool(CallToolRequestParams {
             meta: None,
-            name: "run_backtest".into(),
+            name: "run_options_backtest".into(),
             arguments: Some(
                 serde_json::from_value(json!({
                     "strategy": "short_put",
@@ -1009,11 +1010,11 @@ async fn get_loaded_symbol_with_multiple_symbols() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────
-// Multi-symbol integration tests for run_backtest, compare_strategies
+// Multi-symbol integration tests for run_options_backtest, compare_strategies
 // ─────────────────────────────────────────────────────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn run_backtest_fails_multiple_symbols_no_symbol_param() {
+async fn run_options_backtest_fails_multiple_symbols_no_symbol_param() {
     let (server, _tmp) = make_test_server();
 
     let (server_tx, server_rx) = tokio::io::duplex(4096);
@@ -1033,7 +1034,7 @@ async fn run_backtest_fails_multiple_symbols_no_symbol_param() {
         .peer()
         .call_tool(CallToolRequestParams {
             meta: None,
-            name: "run_backtest".into(),
+            name: "run_options_backtest".into(),
             arguments: Some(
                 serde_json::from_value(json!({
                     "strategy": "long_call",
@@ -1070,7 +1071,7 @@ async fn run_backtest_fails_multiple_symbols_no_symbol_param() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn run_backtest_succeeds_with_explicit_symbol() {
+async fn run_options_backtest_succeeds_with_explicit_symbol() {
     let (server, _tmp) = make_test_server();
 
     let (server_tx, server_rx) = tokio::io::duplex(65536);
@@ -1090,7 +1091,7 @@ async fn run_backtest_succeeds_with_explicit_symbol() {
         .peer()
         .call_tool(CallToolRequestParams {
             meta: None,
-            name: "run_backtest".into(),
+            name: "run_options_backtest".into(),
             arguments: Some(
                 serde_json::from_value(json!({
                     "strategy": "long_call",
@@ -1120,7 +1121,7 @@ async fn run_backtest_succeeds_with_explicit_symbol() {
     let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
     assert!(
         resp["metrics"].is_object(),
-        "run_backtest returned error: {:?}",
+        "run_options_backtest returned error: {:?}",
         text.text
     );
 
@@ -1129,7 +1130,7 @@ async fn run_backtest_succeeds_with_explicit_symbol() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn run_backtest_fails_unknown_symbol() {
+async fn run_options_backtest_fails_unknown_symbol() {
     let (server, _tmp) = make_test_server();
 
     let (server_tx, server_rx) = tokio::io::duplex(4096);
@@ -1148,7 +1149,7 @@ async fn run_backtest_fails_unknown_symbol() {
         .peer()
         .call_tool(CallToolRequestParams {
             meta: None,
-            name: "run_backtest".into(),
+            name: "run_options_backtest".into(),
             arguments: Some(
                 serde_json::from_value(json!({
                     "strategy": "long_call",

@@ -11,7 +11,7 @@ use crate::engine::multiple_comparisons::MultipleComparisonsResult;
 use crate::engine::permutation::MetricPermutationResult;
 use crate::engine::sweep::{DimensionStats, OosResult, StabilityScore};
 use crate::engine::types::{
-    Commission, CompareResult, DteRange, ExpirationFilter, PerformanceMetrics, Slippage,
+    Commission, CompareResult, DteRange, ExpirationFilter, PerformanceMetrics, Side, Slippage,
     SweepResult, TargetRange, TradeRecord, TradeSelector,
 };
 use crate::signals::registry::SignalSpec;
@@ -37,7 +37,7 @@ pub struct UnderlyingPrice {
     pub close: f64,
 }
 
-/// AI-enriched response for `run_backtest`
+/// AI-enriched response for `run_options_backtest`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BacktestResponse {
     pub summary: String,
@@ -83,6 +83,41 @@ pub struct BacktestParamsSummary {
     pub min_days_between_entries: Option<i32>,
     pub expiration_filter: ExpirationFilter,
     pub exit_net_delta: Option<f64>,
+}
+
+/// Summary of stock backtest parameters echoed in responses.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct StockBacktestParamsSummary {
+    pub symbol: String,
+    pub side: Side,
+    pub capital: f64,
+    pub quantity: i32,
+    pub max_positions: i32,
+    pub slippage: Slippage,
+    pub commission: Option<Commission>,
+    pub stop_loss: Option<f64>,
+    pub take_profit: Option<f64>,
+    pub max_hold_days: Option<i32>,
+    pub entry_signal: Option<serde_json::Value>,
+    pub exit_signal: Option<serde_json::Value>,
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+}
+
+/// AI-enriched response for `run_stock_backtest`, matching options backtest output shape.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct StockBacktestResponse {
+    pub summary: String,
+    pub assessment: String,
+    pub key_findings: Vec<String>,
+    pub parameters: StockBacktestParamsSummary,
+    pub metrics: PerformanceMetrics,
+    pub trade_summary: TradeSummary,
+    pub trade_log: Vec<TradeRecord>,
+    /// Underlying close prices for charting
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub underlying_prices: Vec<UnderlyingPrice>,
+    pub suggested_next_steps: Vec<String>,
 }
 
 /// Status of currently loaded data

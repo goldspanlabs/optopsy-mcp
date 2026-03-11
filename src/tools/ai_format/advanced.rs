@@ -82,7 +82,7 @@ pub fn format_sweep(output: SweepOutput) -> SweepResponse {
     let mut suggested_next_steps = Vec::new();
     if let Some(ref b) = best {
         suggested_next_steps.push(format!(
-            "[NEXT] Use run_backtest(strategy=\"{}\") on best combo \"{}\" for detailed trade-level analysis",
+            "[NEXT] Use run_options_backtest(strategy=\"{}\") on best combo \"{}\" for detailed trade-level analysis",
             b.strategy, b.label,
         ));
         suggested_next_steps.push(
@@ -449,7 +449,7 @@ mod tests {
         assert!(response
             .suggested_next_steps
             .iter()
-            .any(|s| s.contains("run_backtest")));
+            .any(|s| s.contains("run_options_backtest")));
     }
 
     #[test]

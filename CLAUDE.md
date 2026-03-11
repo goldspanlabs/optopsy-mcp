@@ -32,7 +32,7 @@ Control runtime behavior and data sources:
 
 ## Architecture
 
-**optopsy-mcp** is an options backtesting engine exposed as an MCP (Model Context Protocol) server via `rmcp 0.17`. It provides 10 tools for running event-driven backtests, comparing strategies, parameter optimization, walk-forward analysis, statistical testing, and returning raw price data for charting.
+**optopsy-mcp** is an options and stock backtesting engine exposed as an MCP (Model Context Protocol) server via `rmcp 0.17`. It provides 11 tools for running event-driven backtests (options and equities), comparing strategies, parameter optimization, walk-forward analysis, statistical testing, and returning raw price data for charting.
 
 ### Transport (`src/main.rs`)
 - **stdio** (default): for local Claude Desktop integration
@@ -45,12 +45,13 @@ Holds shared state: `Arc<RwLock<HashMap<String, DataFrame>>>` for multi-symbol d
 Each tool has its own module. `ai_format/` (directory module with `backtest.rs`, `data.rs`, `advanced.rs`) enriches every response with `summary`, `key_findings`, and `suggested_next_steps`; shared constants and helper functions live in `ai_helpers.rs`. `construct_signal/` (directory module with `search.rs`, `examples.rs`) handles signal discovery and example generation. Response types live in `response_types.rs` and derive both `Serialize` and `JsonSchema`.
 
 ### Engine (`src/engine/`)
-Two main execution paths in `core.rs`:
+Three main execution paths:
 
-- **evaluate_strategy()** — Statistical analysis. Filters options per leg (option type → DTE → valid quotes → closest delta), matches entry/exit rows, joins legs, applies strike ordering, computes per-leg P&L, then bins by DTE × delta buckets with aggregate stats.
-- **run_backtest()** — Event-driven simulation. Builds a `HashMap<(date, exp, strike, OptionType), QuoteSnapshot>` price table for O(1) lookups, finds entry candidates, then runs a day-by-day event loop managing position opens (with `max_positions` constraint) and closes (DTE exit, stop loss, take profit, max hold, expiration). Produces trade log, equity curve, and performance metrics (Sharpe, Sortino, CAGR, VaR, etc.).
+- **evaluate_strategy()** (`core.rs`) — Statistical analysis. Filters options per leg (option type → DTE → valid quotes → closest delta), matches entry/exit rows, joins legs, applies strike ordering, computes per-leg P&L, then bins by DTE × delta buckets with aggregate stats.
+- **run_backtest()** (`core.rs`) — Options event-driven simulation. Builds a `HashMap<(date, exp, strike, OptionType), QuoteSnapshot>` price table for O(1) lookups, finds entry candidates, then runs a day-by-day event loop managing position opens (with `max_positions` constraint) and closes (DTE exit, stop loss, take profit, max hold, expiration). Produces trade log, equity curve, and performance metrics (Sharpe, Sortino, CAGR, VaR, etc.).
+- **run_stock_backtest()** (`stock_sim.rs`) — Stock/equity event-driven simulation on OHLCV bars. Signal-driven entries (required) with optional exit signals. Manages long/short positions with stop-loss, take-profit, max-hold exits. Uses synthetic bid-ask spread (10% of daily range) for slippage models. Reuses `PerformanceMetrics`, `TradeRecord`, and `BacktestResult`.
 
-Key submodules: `filters.rs` (DTE/delta filtering, `filter_valid_quotes(df, min_bid_ask)`), `evaluation.rs` (entry-exit matching), `event_sim.rs` (backtest event loop), `pricing.rs` (4 slippage models: Mid/Spread/Liquidity/PerLeg), `rules.rs` (strike ordering), `metrics.rs` (performance calculations), `output.rs` (DTE×delta bucketing with right-closed `(a, b]` intervals).
+Key submodules: `filters.rs` (DTE/delta filtering, `filter_valid_quotes(df, min_bid_ask)`), `evaluation.rs` (entry-exit matching), `event_sim.rs` (options backtest event loop), `stock_sim.rs` (stock backtest event loop), `pricing.rs` (4 slippage models: Mid/Spread/Liquidity/PerLeg), `rules.rs` (strike ordering), `metrics.rs` (performance calculations), `output.rs` (DTE×delta bucketing with right-closed `(a, b]` intervals).
 
 ### Strategies (`src/strategies/`)
 32 strategies across singles, spreads, butterflies, condors, iron, and calendar categories. Built using helpers (`call_leg`, `put_leg`, `strategy`) in `helpers.rs`. `all_strategies()` returns the full list; `find_strategy(name)` does linear scan. Multi-expiration strategies (calendar/diagonal) use `ExpirationCycle::Primary`/`Secondary` tags on legs.
@@ -59,7 +60,7 @@ Key submodules: `filters.rs` (DTE/delta filtering, `filter_valid_quotes(df, min_
 `DataStore` trait with `CachedStore` as default — local Parquet cache at `~/.optopsy/cache/{category}/{SYMBOL}.parquet` with S3 fetch-on-miss. `ParquetStore` handles normalization of date columns (`quote_date`/`quote_datetime` as Date, Datetime, or String → unified `Datetime("quote_datetime")`). Path segments validated against traversal attacks.
 
 ### Signals (`src/signals/`)
-TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, trend, volatility, overlap, price, volume, plus combinators. Split across three focused modules: `spec.rs` (the `SignalSpec` enum with 40+ variants), `builders.rs` (`build_signal()` factory and per-category builders), and `registry.rs` (signal catalog metadata, `collect_cross_symbols`, re-exports). Signals are **fully wired** into backtest entry/exit filtering via `entry_signal` and `exit_signal` params in `BacktestParams`. OHLCV data is auto-fetched when signals are used.
+TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, trend, volatility, overlap, price, volume, plus combinators. Split across three focused modules: `spec.rs` (the `SignalSpec` enum with 40+ variants), `builders.rs` (`build_signal()` factory and per-category builders), and `registry.rs` (signal catalog metadata, `collect_cross_symbols`, re-exports). Signals are **fully wired** into both options and stock backtests via `entry_signal` and `exit_signal` params. For options (`BacktestParams`), signals are optional entry/exit filters. For stocks (`StockBacktestParams`), `entry_signal` is required — it drives when trades open. OHLCV data is auto-fetched when signals are used.
 
 ## Polars 0.53 Conventions
 
@@ -184,8 +185,8 @@ Single entry point for discovering built-in signals and creating/managing custom
 
 ### Analysis Tools
 
-#### `run_backtest`
-Full event-driven day-by-day simulation with trade log and metrics. Options data is auto-loaded from cache when `symbol` is passed.
+#### `run_options_backtest`
+Full event-driven day-by-day options simulation with trade log and metrics. Options data is auto-loaded from cache when `symbol` is passed.
 
 **Parameters:**
 ```json
@@ -224,6 +225,38 @@ Full event-driven day-by-day simulation with trade log and metrics. Options data
 - `trade_summary` — Total, winners, losers, avg P&L, best/worst trades
 - `equity_curve` — ≤50 sampled points from full curve
 - `trade_log` — All trades with entry/exit dates, P&L, days_held, exit_reason
+- `suggested_next_steps` — Follow-up actions
+
+#### `run_stock_backtest`
+Signal-driven stock/equity backtest on OHLCV data. Entry signal is required. OHLCV data is auto-fetched from Yahoo Finance.
+
+**Parameters:**
+```json
+{
+  "symbol": "SPY",               // Required
+  "side": "Long",                // Long or Short
+  "entry_signal": { ... },       // Required: SignalSpec for entry
+  "exit_signal": null,           // Optional: SignalSpec for exit
+  "capital": 10000.0,            // Starting equity (default: 10000)
+  "quantity": 100,               // Shares per trade (default: 100)
+  "max_positions": 1,            // Max concurrent positions (default: 1)
+  "slippage": {"type": "Mid"},   // Slippage model (default: Mid)
+  "commission": null,            // Optional: Commission config
+  "stop_loss": 0.05,             // Optional: % loss from entry to trigger exit
+  "take_profit": 0.10,           // Optional: % gain from entry to trigger exit
+  "max_hold_days": 30,           // Optional: force close after N days
+  "start_date": "2024-01-01",   // Optional: YYYY-MM-DD
+  "end_date": "2024-12-31"      // Optional: YYYY-MM-DD
+}
+```
+
+**Response:** `StockBacktestResponse`
+- `summary`, `assessment`, `key_findings` — AI-enriched analysis
+- `parameters` — Echo of input config (side, quantity, capital, slippage, signals)
+- `metrics` — Same as options: Sharpe, Sortino, CAGR, VaR, max_drawdown, etc.
+- `trade_summary` — Total, winners, losers, avg P&L, best/worst trades
+- `trade_log` — All trades with entry/exit dates, P&L, days_held, exit_reason
+- `underlying_prices` — OHLCV price overlay data
 - `suggested_next_steps` — Follow-up actions
 
 #### `compare_strategies`
