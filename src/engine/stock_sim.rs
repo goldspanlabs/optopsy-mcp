@@ -188,7 +188,11 @@ pub fn run_stock_backtest(
     if let Some(last_bar) = bars.last() {
         for pos in &positions {
             // Force-close P&L is already reflected in equity curve via mark-to-market
-            let (_pnl, record) = close_position(pos, last_bar, ExitType::MaxHold, None, params);
+            let (_pnl, mut record) = close_position(pos, last_bar, ExitType::MaxHold, None, params);
+            if params.sizing.is_some() {
+                record.computed_quantity = Some(pos.quantity);
+                record.entry_equity = Some(equity);
+            }
             trade_log.push(record);
         }
     }
