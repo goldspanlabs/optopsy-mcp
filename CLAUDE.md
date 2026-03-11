@@ -32,17 +32,17 @@ Control runtime behavior and data sources:
 
 ## Architecture
 
-**optopsy-mcp** is an options backtesting engine exposed as an MCP (Model Context Protocol) server via `rmcp 0.17`. It provides 13 tools for loading options chain data, evaluating strategies statistically, running event-driven backtests, comparing strategies, and returning raw price data for charting.
+**optopsy-mcp** is an options backtesting engine exposed as an MCP (Model Context Protocol) server via `rmcp 0.17`. It provides 12 tools for running event-driven backtests, comparing strategies, parameter optimization, walk-forward analysis, statistical testing, and returning raw price data for charting.
 
 ### Transport (`src/main.rs`)
 - **stdio** (default): for local Claude Desktop integration
 - **HTTP**: when `PORT` env var is set, runs axum + `StreamableHttpService` on `/mcp` with `/health` endpoint
 
-### MCP Server (`src/server.rs`)
-Holds shared state: `Arc<RwLock<HashMap<String, DataFrame>>>` for multi-symbol data storage, `Arc<CachedStore>` for the data layer, and `ToolRouter<Self>` for rmcp routing. Tool handlers delegate to `src/tools/` modules which call into `src/engine/`. Supports loading multiple symbols simultaneously without losing previous data.
+### MCP Server (`src/server/mod.rs`)
+Holds shared state: `Arc<RwLock<HashMap<String, DataFrame>>>` for multi-symbol data storage, `Arc<CachedStore>` for the data layer, and `ToolRouter<Self>` for rmcp routing. Tool handlers delegate to `src/tools/` modules which call into `src/engine/`. Data is auto-loaded from cache when a symbol is passed to any analysis tool.
 
 ### Tool Layer (`src/tools/`)
-Each tool has its own module. `ai_format.rs` enriches every response with `summary`, `key_findings`, and `suggested_next_steps`; shared constants and helper functions live in `ai_helpers.rs`. Response types live in `response_types.rs` and derive both `Serialize` and `JsonSchema`.
+Each tool has its own module. `ai_format/` (directory module with `backtest.rs`, `data.rs`, `advanced.rs`) enriches every response with `summary`, `key_findings`, and `suggested_next_steps`; shared constants and helper functions live in `ai_helpers.rs`. `construct_signal/` (directory module with `search.rs`, `examples.rs`) handles signal discovery and example generation. Response types live in `response_types.rs` and derive both `Serialize` and `JsonSchema`.
 
 ### Engine (`src/engine/`)
 Two main execution paths in `core.rs`:
@@ -72,42 +72,7 @@ TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, tr
 
 ## MCP Tools: Detailed Reference
 
-### Data Management Tools
-
-#### `load_data`
-Load options chain data by symbol with optional date filtering. Tries cache first, auto-downloads from EODHD if configured.
-
-**Parameters:**
-```json
-{
-  "symbol": "SPY",           // Required. Uppercase. No path separators, ".."
-  "start_date": "2024-01-01", // Optional. YYYY-MM-DD format
-  "end_date": "2024-12-31"   // Optional. YYYY-MM-DD format
-}
-```
-
-**Response:** `LoadDataResponse`
-- `summary` — Natural language overview
-- `rows`, `symbols` — Data shape
-- `date_range` — Min/max dates
-- `columns` — Available DataFrame columns (e.g., `quote_datetime`, `expiration`, `option_type`, `strike`, `bid`, `ask`, etc.)
-- `suggested_next_steps` — Recommended next actions
-
-#### `download_options_data`
-Bulk download options data from EODHD API and cache locally. Resumable (re-run to fetch only new data).
-
-**Parameters:**
-```json
-{
-  "symbol": "SPY"  // Required. Will download ~2 years of data if available
-}
-```
-
-**Response:** `DownloadResponse`
-- `summary`, `new_rows`, `total_rows` — Download summary
-- `was_resumed` — True if extended existing cache
-- `api_requests` — Number of API calls made
-- `date_range` — Data coverage
+### Data Tools
 
 #### `check_cache_status`
 Check if Parquet cache exists for a symbol and last update time.
@@ -162,7 +127,15 @@ Return raw OHLCV price data for a symbol, ready for chart generation by LLMs.
 - `prices` — Array of `{ date, open, high, low, close, adjclose, volume }` bars
 - `suggested_next_steps` — Recommended next actions
 
-### Strategy Tools
+#### `get_loaded_symbol`
+Check what symbol is currently loaded in memory, row count, available columns.
+
+**Parameters:** None
+
+**Response:** `StatusResponse`
+- Details about the in-memory DataFrame (symbol, rows, columns)
+
+### Strategy & Signal Tools
 
 #### `list_strategies`
 List all 32 built-in strategies with leg definitions and category.
@@ -234,39 +207,8 @@ Single entry point for discovering built-in signals and creating/managing custom
 
 ### Analysis Tools
 
-#### `evaluate_strategy`
-Fast statistical analysis grouped by DTE × delta buckets. Does NOT run backtest.
-
-**Parameters:**
-```json
-{
-  "strategy": "Iron Condor",
-  "leg_deltas": [
-    {"target": 0.30, "min": 0.20, "max": 0.40},  // Call spread
-    {"target": 0.70, "min": 0.60, "max": 0.80}   // Put spread
-  ],
-  "entry_dte": {"target": 45, "min": 30, "max": 60},  // Entry DTE range
-  "exit_dte": 7,             // Close positions at this DTE
-  "dte_interval": 7,         // Bucket width (default: 7)
-  "delta_interval": 0.05,    // Delta bucket width (default: 0.05)
-  "slippage": {"type": "Spread"},  // Or: Mid, Liquidity, PerLeg
-  "commission": {            // Optional
-    "per_contract": 0.65,
-    "base_fee": 0.0,
-    "min_fee": 0.0
-  },
-  "min_bid_ask": 0.05,        // Optional. Min bid/ask threshold (default: 0.05)
-  "symbol": "SPY"            // Optional. Required if multiple symbols loaded; auto-selected if only one loaded
-}
-```
-
-**Response:** `EvaluateResponse`
-- `best_bucket`, `worst_bucket`, `highest_win_rate_bucket` — Top performers
-- `groups` — Full list of DTE × delta buckets with stats (mean, std, q25, median, q75, win_rate, profit_factor)
-- `suggested_next_steps` — Recommendations for backtest params
-
 #### `run_backtest`
-Full event-driven day-by-day simulation with trade log and metrics.
+Full event-driven day-by-day simulation with trade log and metrics. Options data is auto-loaded from cache when `symbol` is passed.
 
 **Parameters:**
 ```json
@@ -295,7 +237,7 @@ Full event-driven day-by-day simulation with trade log and metrics.
   "entry_signal": null,        // Optional: SignalSpec for entry filtering
   "exit_signal": null,         // Optional: SignalSpec for early exit
 
-  "symbol": "SPY"              // Optional. Required if multiple symbols loaded; auto-selected if only one loaded
+  "symbol": "SPY"              // Required. Auto-loads data from cache.
 }
 ```
 
@@ -339,7 +281,7 @@ Side-by-side comparison of multiple strategies using shared sim params.
     "take_profit": 0.80,
     "max_hold_days": 30
   },
-  "symbol": "SPY"              // Optional. Required if multiple symbols loaded; auto-selected if only one loaded
+  "symbol": "SPY"              // Required. Auto-loads data from cache.
 }
 ```
 
@@ -347,6 +289,85 @@ Side-by-side comparison of multiple strategies using shared sim params.
 - `ranking_by_sharpe`, `ranking_by_pnl` — Strategy rankings
 - `best_overall` — Recommended strategy
 - `results` — Full metrics for each strategy
+
+#### `parameter_sweep`
+Grid search across delta/DTE/slippage combos with out-of-sample validation and dimension sensitivity analysis. Preferred over `compare_strategies` for optimization.
+
+**Parameters:**
+```json
+{
+  "strategies": [
+    {
+      "name": "short_put",
+      "leg_delta_targets": [[0.15, 0.20, 0.30]]
+    }
+  ],
+  "sweep": {
+    "entry_dte_targets": [30, 45],
+    "exit_dtes": [0, 5],
+    "slippage_models": [{"type": "Mid"}, {"type": "Spread"}]
+  },
+  "sim_params": { "capital": 10000.0, "quantity": 1, "multiplier": 100, "max_positions": 3 },
+  "out_of_sample_pct": 0.3,     // Optional. 0.0 to disable OOS validation
+  "direction": "bullish",        // Optional. Auto-selects strategies by market outlook
+  "entry_signals": [],           // Optional. Signal variants to sweep
+  "exit_signals": [],            // Optional. Signal variants to sweep
+  "num_permutations": 100,       // Optional. Enable permutation-based p-values
+  "permutation_seed": 42,        // Optional. Seed for reproducible permutations
+  "symbol": "SPY"
+}
+```
+
+**Response:** `SweepResponse`
+- `ranked_results` — All combos ranked by Sharpe, with trades, PnL, p-values
+- `oos_results` — Out-of-sample validation for top combos
+- `dimension_sensitivity` — Per-dimension (strategy, delta, DTE, slippage) stats
+- `multiple_comparisons` — Bonferroni and BH-FDR corrections (when permutations enabled)
+
+#### `walk_forward`
+Rolling walk-forward analysis with train/test windows to validate strategy robustness over time.
+
+**Parameters:**
+```json
+{
+  "strategy": "short_put",
+  "leg_deltas": [{"target": 0.30, "min": 0.20, "max": 0.40}],
+  "entry_dte": {"target": 45, "min": 30, "max": 60},
+  "exit_dte": 5,
+  "slippage": {"type": "Mid"},
+  "sim_params": { "capital": 10000.0, "quantity": 1, "multiplier": 100, "max_positions": 3 },
+  "num_windows": 4,             // Number of rolling windows
+  "train_pct": 0.7,             // Train/test split ratio
+  "symbol": "SPY"
+}
+```
+
+**Response:** `WalkForwardResponse`
+- `windows` — Per-window train/test metrics
+- `summary` — Aggregate consistency metrics
+
+#### `permutation_test`
+Statistical significance test for a backtest result. Shuffles trade entry dates to build a null distribution and compute a p-value.
+
+**Parameters:**
+```json
+{
+  "strategy": "short_put",
+  "leg_deltas": [{"target": 0.30, "min": 0.20, "max": 0.40}],
+  "entry_dte": {"target": 45, "min": 30, "max": 60},
+  "exit_dte": 5,
+  "slippage": {"type": "Mid"},
+  "sim_params": { "capital": 10000.0, "quantity": 1, "multiplier": 100, "max_positions": 3 },
+  "num_permutations": 1000,
+  "seed": 42,                    // Optional. For reproducibility
+  "symbol": "SPY"
+}
+```
+
+**Response:** `PermutationTestResponse`
+- `observed_sharpe` — Original backtest Sharpe
+- `p_value` — Fraction of permutations with Sharpe ≥ observed
+- `null_distribution` — Sampled Sharpe values from permuted backtests
 
 ## Type System
 
@@ -364,7 +385,7 @@ Side-by-side comparison of multiple strategies using shared sim params.
 - `LowestPremium` — Lowest entry cost
 - `First` — First matching entry
 
-**`ExitType`**: `Expiration`, `StopLoss`, `TakeProfit`, `MaxHold`, `DteExit`, `Adjustment`, `Signal`
+**`ExitType`**: `Expiration`, `StopLoss`, `TakeProfit`, `MaxHold`, `DteExit`, `Adjustment`, `Signal`, `DeltaExit`
 
 **`Slippage`**:
 - `Mid` — Mid-price entry/exit
@@ -439,7 +460,7 @@ Validation happens in tool handlers via `params.validate().map_err(...)?`. Inval
 ### Adding a New Tool
 1. Create `src/tools/my_tool.rs` with `pub async fn execute(...) -> Result<MyResponse>`
 2. Define parameter struct in `src/engine/types.rs` or `src/tools/response_types.rs`, derive `Serialize + Deserialize + JsonSchema + Validate`
-3. Add `#[tool_handler]` method in `src/server.rs` that calls `tools::my_tool::execute()`
+3. Add `#[tool(...)]` method in `src/server/mod.rs` that calls `tools::my_tool::execute()`
 4. Return AI-formatted response via `ai_format::format_my_response(...)`
 
 ### DataFrame Filtering Chains
