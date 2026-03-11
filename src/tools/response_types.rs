@@ -144,6 +144,10 @@ pub struct StockBacktestResponse {
     /// Underlying close prices for charting
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub underlying_prices: Vec<UnderlyingPrice>,
+    /// Diagnostic warnings (e.g. entries skipped due to insufficient capital).
+    /// When non-empty, the LLM should address these before interpreting results.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
     pub suggested_next_steps: Vec<String>,
 }
 

@@ -217,11 +217,14 @@ pub struct RunStockBacktestParams {
     #[serde(default)]
     #[garde(skip)]
     pub side: Option<crate::engine::types::Side>,
-    /// Starting capital (default: 10000)
+    /// Starting capital in dollars (default: 10000).
+    /// Must be enough to cover (quantity × `share_price`). For SPY at ~$600, 100 shares needs ~$60,000.
     #[serde(default = "default_capital")]
     #[garde(range(min = 0.01))]
     pub capital: f64,
-    /// Number of shares per trade (default: 100)
+    /// Number of shares per trade (default: 100 — i.e. one standard lot).
+    /// For covered-call-style strategies, use 100 (= 1 round lot matching 1 option contract).
+    /// Do NOT pass large values like 10000 — that means 10,000 shares, not dollars.
     #[serde(default = "default_stock_quantity")]
     #[garde(range(min = 1))]
     pub quantity: i32,

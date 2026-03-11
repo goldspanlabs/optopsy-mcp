@@ -86,6 +86,10 @@ pub fn run_stock_backtest(
     let mut trade_log: Vec<TradeRecord> = Vec::new();
     let mut equity_curve: Vec<EquityPoint> = Vec::new();
     let mut next_trade_id: usize = 1;
+    let mut skipped_capital: usize = 0;
+    let mut first_skip_required: Option<f64> = None;
+
+    let signal_fire_count = entry_dates.as_ref().map_or(0, |dates| dates.len());
 
     for bar in bars {
         // ── 1. Check exits on open positions ────────────────────────────────
@@ -152,7 +156,10 @@ pub fn run_stock_backtest(
             // Capital/margin check: longs need purchase cost, shorts need full collateral
             let required_capital = position_value + commission_cost;
             if required_capital > equity {
-                // Skip — not enough capital/margin
+                skipped_capital += 1;
+                if first_skip_required.is_none() {
+                    first_skip_required = Some(required_capital);
+                }
             } else {
                 let pos = StockPosition {
                     id: next_trade_id,
@@ -203,6 +210,20 @@ pub fn run_stock_backtest(
     let perf_metrics = metrics::calculate_metrics(&equity_curve, &trade_log, params.capital)
         .unwrap_or(metrics::DEFAULT_METRICS);
 
+    // Build warnings for diagnostic feedback
+    let mut warnings = Vec::new();
+    if skipped_capital > 0 {
+        let needed = first_skip_required.unwrap_or(0.0);
+        warnings.push(format!(
+            "INSUFFICIENT_CAPITAL: {skipped_capital} of {signal_fire_count} entry signals were \
+             skipped because the position cost (${needed:.0} for {qty} shares) exceeds \
+             available equity (${capital:.0}). Increase `capital` to at least ${needed:.0} \
+             or reduce `quantity`.",
+            qty = params.quantity,
+            capital = params.capital,
+        ));
+    }
+
     Ok(BacktestResult {
         trade_count,
         total_pnl,
@@ -210,6 +231,7 @@ pub fn run_stock_backtest(
         equity_curve,
         trade_log,
         quality: crate::engine::types::BacktestQualityStats::default(),
+        warnings,
     })
 }
 
@@ -376,6 +398,7 @@ fn empty_result(_capital: f64) -> BacktestResult {
         equity_curve: vec![],
         trade_log: vec![],
         quality: crate::engine::types::BacktestQualityStats::default(),
+        warnings: vec![],
     }
 }
 

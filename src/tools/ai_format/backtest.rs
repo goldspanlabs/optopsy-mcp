@@ -335,28 +335,56 @@ pub fn format_stock_backtest(
     };
 
     if result.trade_log.is_empty() {
+        let has_capital_warning = result
+            .warnings
+            .iter()
+            .any(|w| w.starts_with("INSUFFICIENT_CAPITAL"));
+
+        let mut key_findings: Vec<String> = result.warnings.clone();
+        let mut suggested_next_steps = Vec::new();
+
+        if has_capital_warning {
+            key_findings.push(
+                "All entry signals were skipped because the position cost exceeds available capital."
+                    .to_string(),
+            );
+            suggested_next_steps.push(
+                "[FIX] Increase `capital` so it covers at least (quantity × share_price), \
+                 or reduce `quantity` to fit the current capital"
+                    .to_string(),
+            );
+            suggested_next_steps.push(
+                "[TIP] Use dynamic sizing (e.g. sizing: {method: \"fixed_fractional\", risk_pct: 0.02}) \
+                 to auto-scale quantity to available equity"
+                    .to_string(),
+            );
+        } else {
+            key_findings.push("No trades matched the entry criteria.".to_string());
+            key_findings.push(
+                "Verify the entry signal fires on at least some dates in the data range."
+                    .to_string(),
+            );
+            suggested_next_steps
+                .push("Try a different entry signal or widen the date range".to_string());
+            suggested_next_steps
+                .push("Use build_signal(action=\"search\") to find suitable signals".to_string());
+        }
+
         return StockBacktestResponse {
             summary: format!(
-                "Stock backtest of {} {}: no trades were executed. \
-                 Check that the entry signal fires within the date range.",
+                "Stock backtest of {} {}: no trades were executed.",
                 side_label, params.symbol,
             ),
             assessment: "N/A".to_string(),
-            key_findings: vec![
-                "No trades matched the entry criteria.".to_string(),
-                "Verify the entry signal fires on at least some dates in the data range."
-                    .to_string(),
-            ],
+            key_findings,
             parameters: params_summary,
             metrics: result.metrics,
             trade_summary,
             trade_log: vec![],
             sizing_summary: None,
             underlying_prices,
-            suggested_next_steps: vec![
-                "Try a different entry signal or widen the date range".to_string(),
-                "Use build_signal(action=\"search\") to find suitable signals".to_string(),
-            ],
+            warnings: result.warnings,
+            suggested_next_steps,
         };
     }
 
@@ -376,7 +404,7 @@ pub fn format_stock_backtest(
         m.max_drawdown * 100.0,
     );
 
-    let key_findings = backtest_key_findings(m, &result.trade_log);
+    let mut key_findings = backtest_key_findings(m, &result.trade_log);
 
     let mut suggested_next_steps = Vec::new();
     if m.sharpe < SHARPE_NEEDS_IMPROVEMENT {
@@ -406,6 +434,13 @@ pub fn format_stock_backtest(
 
     let sizing_summary = build_stock_sizing_summary(&result.trade_log, params);
 
+    // Surface any engine warnings as key findings too
+    if !result.warnings.is_empty() {
+        for w in &result.warnings {
+            key_findings.insert(0, w.clone());
+        }
+    }
+
     StockBacktestResponse {
         summary,
         assessment: assessment.to_string(),
@@ -416,6 +451,7 @@ pub fn format_stock_backtest(
         trade_log: result.trade_log,
         sizing_summary,
         underlying_prices,
+        warnings: result.warnings,
         suggested_next_steps,
     }
 }
@@ -569,6 +605,7 @@ mod tests {
             equity_curve: equity,
             trade_log: trades,
             quality: crate::engine::types::BacktestQualityStats::default(),
+            warnings: vec![],
         }
     }
 

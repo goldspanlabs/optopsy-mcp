@@ -582,6 +582,10 @@ impl OptopsyServer {
     ///   - Realistic fills with slippage and commissions
     ///   - Long or short positions
     ///
+    /// **Defaults**: quantity=100 shares (1 standard lot), capital=$10,000.
+    /// Ensure capital covers (quantity × `share_price`) or trades will be skipped.
+    /// For high-priced stocks like SPY (~$600), use capital ≥ 60000 with quantity=100.
+    ///
     /// **Output**: Same format as options backtest — trade log, equity curve, performance metrics
     #[tool(name = "run_stock_backtest", annotations(read_only_hint = true))]
     async fn run_stock_backtest(
@@ -1100,6 +1104,8 @@ impl ServerHandler for OptopsyServer {
                 \n- For OPTIONS: strategy is ALWAYS REQUIRED — signals only filter WHEN to trade\
                 \n- For STOCKS: entry_signal is ALWAYS REQUIRED — it drives when to buy/sell\
                 \n- NEVER pass strategy: null for options — pick one like short_put, iron_condor, etc.\
+                \n- For STOCKS: quantity means NUMBER OF SHARES (default: 100 = 1 standard lot). Do NOT pass large values like 10000.\
+                \n  Ensure capital ≥ quantity × share_price, or all entries will be skipped. If `warnings` are returned, address them.\
                 \n- For optimization, prefer parameter_sweep over manually enumerating compare_strategies entries\
                 \n- Each tool response includes suggested_next_steps — follow them"
                     .into(),

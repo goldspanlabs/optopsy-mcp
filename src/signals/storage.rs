@@ -11,7 +11,29 @@ use super::registry::SignalSpec;
 
 /// Test-only override for signals directory, allowing isolation via temp dirs.
 #[cfg(test)]
-static TEST_SIGNALS_DIR: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+pub(crate) static TEST_SIGNALS_DIR: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+/// RAII guard that redirects signal storage to a temp directory for test isolation.
+#[cfg(test)]
+pub(crate) struct TempSignalsGuard {
+    _tmp: tempfile::TempDir,
+}
+
+#[cfg(test)]
+impl TempSignalsGuard {
+    pub(crate) fn new() -> Self {
+        let tmp = tempfile::TempDir::new().unwrap();
+        *TEST_SIGNALS_DIR.lock().unwrap() = Some(tmp.path().to_path_buf());
+        Self { _tmp: tmp }
+    }
+}
+
+#[cfg(test)]
+impl Drop for TempSignalsGuard {
+    fn drop(&mut self) {
+        *TEST_SIGNALS_DIR.lock().unwrap() = None;
+    }
+}
 
 /// Returns `true` if `path` is a filesystem root (normalised via `components()`).
 ///

@@ -667,6 +667,9 @@ pub struct BacktestResult {
     /// Internal quality diagnostics collected during simulation (not serialized to clients).
     #[serde(skip)]
     pub quality: BacktestQualityStats,
+    /// Diagnostic warnings surfaced to callers (e.g. entries skipped due to insufficient capital).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 /// Aggregate performance metrics derived from the equity curve and trade log.

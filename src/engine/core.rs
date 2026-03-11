@@ -307,6 +307,7 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
         equity_curve,
         trade_log,
         quality,
+        warnings: vec![],
     })
 }
 
