@@ -17,7 +17,6 @@ pub type PriceTable = HashMap<PriceKey, QuoteSnapshot, FxBuildHasher>;
 pub type DateIndex = HashMap<NaiveDate, Vec<PriceKey>>;
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct QuoteSnapshot {
     pub bid: f64,
     pub ask: f64,
@@ -25,7 +24,6 @@ pub struct QuoteSnapshot {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct Position {
     pub id: usize,
     pub entry_date: NaiveDate,
@@ -39,7 +37,6 @@ pub struct Position {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct PositionLeg {
     pub leg_index: usize,
     pub side: Side,
@@ -54,14 +51,12 @@ pub struct PositionLeg {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum PositionStatus {
     Open,
     Closed(ExitType),
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct EntryCandidate {
     pub entry_date: NaiveDate,
     pub expiration: NaiveDate,
