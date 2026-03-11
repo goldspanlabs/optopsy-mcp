@@ -105,10 +105,9 @@ async fn tool_router_lists_all_tools() {
     let tools = client.list_all_tools().await.unwrap();
     let tool_names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
 
-    assert_eq!(tools.len(), 12, "Expected 12 tools, got: {tool_names:?}");
+    assert_eq!(tools.len(), 10, "Expected 10 tools, got: {tool_names:?}");
     for expected in [
         "list_strategies",
-        "list_signals",
         "get_loaded_symbol",
         "run_backtest",
         "compare_strategies",
@@ -116,7 +115,6 @@ async fn tool_router_lists_all_tools() {
         "walk_forward",
         "permutation_test",
         "check_cache_status",
-        "fetch_to_parquet",
         "get_raw_prices",
         "build_signal",
     ] {
@@ -175,7 +173,7 @@ async fn list_strategies_returns_all_32() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn list_signals_returns_catalog() {
+async fn build_signal_catalog_returns_catalog() {
     let (server, _tmp) = make_test_server();
 
     let (server_tx, server_rx) = tokio::io::duplex(4096);
@@ -191,8 +189,13 @@ async fn list_signals_returns_catalog() {
         .peer()
         .call_tool(CallToolRequestParams {
             meta: None,
-            name: "list_signals".into(),
-            arguments: None,
+            name: "build_signal".into(),
+            arguments: Some(
+                serde_json::from_value(json!({
+                    "action": "catalog"
+                }))
+                .unwrap(),
+            ),
             task: None,
         })
         .await
@@ -205,13 +208,10 @@ async fn list_signals_returns_catalog() {
         .unwrap();
     let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
 
-    assert!(resp["total"].as_u64().unwrap() > 0);
-    assert!(!resp["categories"].as_object().unwrap().is_empty());
-    assert!(resp["ohlcv_columns"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|v| v == "close"));
+    assert!(resp["success"].as_bool().unwrap());
+    let catalog = &resp["catalog"];
+    assert!(catalog["total"].as_u64().unwrap() > 0);
+    assert!(!catalog["categories"].as_object().unwrap().is_empty());
 
     client.cancel().await.unwrap();
     server_handle.await.unwrap();
@@ -1442,50 +1442,9 @@ fn make_ohlcv_df() -> DataFrame {
     .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn get_raw_prices_fails_when_cache_missing() {
-    let (server, _tmp) = make_test_server();
-
-    let (server_tx, server_rx) = tokio::io::duplex(4096);
-    let (client_tx, client_rx) = tokio::io::duplex(4096);
-
-    let server_handle =
-        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
-
-    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
-        ().serve((server_rx, client_tx)).await.unwrap();
-
-    let result = client
-        .peer()
-        .call_tool(CallToolRequestParams {
-            meta: None,
-            name: "get_raw_prices".into(),
-            arguments: Some(
-                serde_json::from_value(json!({
-                    "symbol": "SPY"
-                }))
-                .unwrap(),
-            ),
-            task: None,
-        })
-        .await
-        .unwrap();
-
-    assert!(result.is_error.unwrap_or(false));
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.raw.as_text())
-        .unwrap();
-    assert!(
-        text.text.contains("No OHLCV price data cached") && text.text.contains("fetch_to_parquet"),
-        "Expected cache-miss error with fetch_to_parquet hint, got: {}",
-        text.text
-    );
-
-    client.cancel().await.unwrap();
-    server_handle.await.unwrap();
-}
+// get_raw_prices auto-fetches from Yahoo Finance when cache is missing,
+// so no "fails when cache missing" test is needed. The auto-fetch behavior
+// is covered by the Yahoo Finance integration in the fetch module.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_raw_prices_returns_bars() {

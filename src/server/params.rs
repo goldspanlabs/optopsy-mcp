@@ -130,11 +130,11 @@ pub struct BacktestBaseParams {
     #[garde(skip)]
     pub selector: Option<TradeSelector>,
     /// Entry signal — only open trades on dates where this TA signal fires.
-    /// Requires OHLCV data (call `fetch_to_parquet` first).
+    /// Requires OHLCV data (auto-fetched when needed).
     #[garde(skip)]
     pub entry_signal: Option<SignalSpec>,
     /// Exit signal — close open positions on dates where this TA signal fires.
-    /// Requires OHLCV data (call `fetch_to_parquet` first).
+    /// Requires OHLCV data (auto-fetched when needed).
     #[garde(skip)]
     pub exit_signal: Option<SignalSpec>,
     /// Symbol to backtest (required if multiple symbols are loaded; optional if only one is loaded)
@@ -268,12 +268,12 @@ pub struct CompareStrategiesParams {
     #[garde(dive)]
     pub sim_params: SimParams,
     /// Entry signal — only open trades on dates where this TA signal fires.
-    /// Requires OHLCV data (call `fetch_to_parquet` first).
+    /// Requires OHLCV data (auto-fetched when needed).
     #[serde(default)]
     #[garde(skip)]
     pub entry_signal: Option<SignalSpec>,
     /// Exit signal — close open positions on dates where this TA signal fires.
-    /// Requires OHLCV data (call `fetch_to_parquet` first).
+    /// Requires OHLCV data (auto-fetched when needed).
     #[serde(default)]
     #[garde(skip)]
     pub exit_signal: Option<SignalSpec>,
@@ -304,7 +304,7 @@ pub struct CheckCacheParams {
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct BuildSignalParams {
-    /// Action to perform: "create", "list", "delete", "validate", "get", or "search"
+    /// Action to perform: "catalog", "search", "create", "list", "delete", "validate", or "get"
     #[garde(length(min = 1))]
     pub action: String,
     /// Natural language description for action="search" (e.g. "RSI oversold", "MACD bullish")
@@ -333,16 +333,6 @@ pub struct BuildSignalParams {
 
 fn default_save() -> bool {
     true
-}
-
-#[derive(Debug, Deserialize, JsonSchema, Validate)]
-pub struct FetchToParquetParams {
-    /// Ticker symbol (e.g. "SPY")
-    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
-    pub symbol: String,
-    /// Time period to fetch (e.g. "6mo", "1y", "5y", "max"). Defaults to "5y".
-    #[garde(inner(length(min = 1)))]
-    pub period: Option<String>,
 }
 
 #[allow(clippy::unnecessary_wraps)]
@@ -509,12 +499,12 @@ pub struct SweepSimParams {
     #[garde(inner(range(min = 1)))]
     pub max_hold_days: Option<i32>,
     /// Entry signal — only open trades on dates where this TA signal fires.
-    /// Requires OHLCV data (call `fetch_to_parquet` first).
+    /// Requires OHLCV data (auto-fetched when needed).
     #[serde(default)]
     #[garde(skip)]
     pub entry_signal: Option<SignalSpec>,
     /// Exit signal — close open positions on dates where this TA signal fires.
-    /// Requires OHLCV data (call `fetch_to_parquet` first).
+    /// Requires OHLCV data (auto-fetched when needed).
     #[serde(default)]
     #[garde(skip)]
     pub exit_signal: Option<SignalSpec>,

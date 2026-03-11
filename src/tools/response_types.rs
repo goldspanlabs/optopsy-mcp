@@ -299,6 +299,9 @@ pub struct BuildSignalResponse {
     /// Example And/Or combinator structures (action="search" only)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub combinator_examples: Vec<serde_json::Value>,
+    /// Full signal catalog grouped by category (action="catalog" only)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog: Option<crate::tools::signals::SignalsResponse>,
     pub suggested_next_steps: Vec<String>,
 }
 

@@ -26,6 +26,8 @@ pub enum Action {
     Get { name: String },
     /// Search the built-in signal catalog using natural language
     Search { prompt: String },
+    /// Browse the full built-in signal catalog grouped by category
+    Catalog,
 }
 
 pub fn execute(action: Action) -> BuildSignalResponse {
@@ -41,6 +43,7 @@ pub fn execute(action: Action) -> BuildSignalResponse {
         Action::Validate { formula } => execute_validate(&formula),
         Action::Get { name } => execute_get(&name),
         Action::Search { prompt } => execute_search(&prompt),
+        Action::Catalog => execute_catalog(),
     }
 }
 
@@ -63,6 +66,7 @@ fn base_response(
         schema: None,
         column_defaults: None,
         combinator_examples: vec![],
+        catalog: None,
         suggested_next_steps,
     }
 }
@@ -314,7 +318,31 @@ fn execute_search(prompt: &str) -> BuildSignalResponse {
         schema: Some(result.schema),
         column_defaults: Some(result.column_defaults),
         combinator_examples: result.combinator_examples,
+        catalog: None,
         suggested_next_steps: result.suggested_next_steps,
+    }
+}
+
+fn execute_catalog() -> BuildSignalResponse {
+    let catalog = super::signals::execute();
+    let num_categories = catalog.categories.len();
+    let total = catalog.total;
+    BuildSignalResponse {
+        summary: catalog.summary.clone(),
+        success: true,
+        signal_spec: None,
+        saved_signals: vec![],
+        formula_help: None,
+        candidates: vec![],
+        schema: None,
+        column_defaults: None,
+        combinator_examples: vec![],
+        catalog: Some(catalog),
+        suggested_next_steps: vec![
+            "[NEXT] Call build_signal({ action: \"search\", prompt: \"<signal_name>\" }) to get the JSON spec for a signal".to_string(),
+            "[THEN] Pass the signal JSON as entry_signal or exit_signal in run_backtest — OHLCV data is auto-fetched".to_string(),
+            format!("[INFO] {total} signals across {num_categories} categories: momentum, trend, volatility, overlap, price, volume"),
+        ],
     }
 }
 

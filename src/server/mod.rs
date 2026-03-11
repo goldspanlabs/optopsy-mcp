@@ -20,17 +20,15 @@ use crate::engine::types::{
 use crate::signals::registry::{collect_cross_symbols, SignalSpec};
 use crate::tools;
 use crate::tools::response_types::{
-    BacktestResponse, BuildSignalResponse, CheckCacheResponse, CompareResponse, FetchResponse,
+    BacktestResponse, BuildSignalResponse, CheckCacheResponse, CompareResponse,
     PermutationTestResponse, RawPricesResponse, StatusResponse, StrategiesResponse, SweepResponse,
     WalkForwardResponse,
 };
-use crate::tools::signals::SignalsResponse;
-
 use params::{
     resolve_leg_deltas, resolve_sweep_strategies, validate_category_read, validation_err,
     BacktestBaseParams, BuildSignalParams, CheckCacheParams, CompareStrategiesParams,
-    FetchToParquetParams, GetRawPricesParams, ParameterSweepParams, PermutationTestParams,
-    RunBacktestParams, WalkForwardParams,
+    GetRawPricesParams, ParameterSweepParams, PermutationTestParams, RunBacktestParams,
+    WalkForwardParams,
 };
 use sanitize::{SanitizedJson, SanitizedResult};
 
@@ -347,19 +345,6 @@ impl OptopsyServer {
         SanitizedJson(tools::strategies::execute())
     }
 
-    /// Browse all 40+ available technical analysis (TA) signals for entry/exit filtering.
-    ///
-    /// **When to use**: To understand available signal options for entry/exit filtering
-    /// **Prerequisites**: None (informational, no data required)
-    /// **Categories**: momentum (RSI, MACD, Stoch), trend (SMA, EMA, ADX),
-    ///   volatility (`BBands`, `ATR`), overlap, price, volume
-    /// **Next tool**: `build_signal(action="search")` (if you want to use signals in backtest)
-    /// **Note**: Signals are optional — only needed if you want signal-filtered entry/exit
-    #[tool(name = "list_signals", annotations(read_only_hint = true))]
-    async fn list_signals(&self) -> SanitizedJson<SignalsResponse> {
-        SanitizedJson(tools::signals::execute())
-    }
-
     /// Get status of currently loaded data.
     ///
     /// **When to use**: Check what symbol is currently loaded, row count, available columns
@@ -380,6 +365,7 @@ impl OptopsyServer {
     /// **Prerequisites**: None (formulas are validated at parse time, data needed only at backtest)
     ///
     /// **Actions**:
+    ///   - `catalog` — Browse the full built-in signal catalog grouped by category (40+ signals)
     ///   - `search` — Fuzzy-search built-in signal catalog using natural language (requires `prompt`)
     ///   - `create` — Build a signal from a formula, optionally save for later use
     ///   - `validate` — Check formula syntax without saving
@@ -455,9 +441,10 @@ impl OptopsyServer {
                     let name = params.name.ok_or("'name' is required for action='get'")?;
                     tools::build_signal::Action::Get { name }
                 }
+                "catalog" => tools::build_signal::Action::Catalog,
                 other => {
                     return Err(format!(
-                        "Invalid action: \"{other}\". Must be \"search\", \"create\", \"list\", \"delete\", \"validate\", or \"get\"."
+                        "Invalid action: \"{other}\". Must be \"catalog\", \"search\", \"create\", \"list\", \"delete\", \"validate\", or \"get\"."
                     ));
                 }
             };
@@ -880,45 +867,12 @@ impl OptopsyServer {
         )
     }
 
-    /// Download OHLCV price data from Yahoo Finance and cache locally as Parquet.
-    ///
-    /// **When to use**: To pre-download OHLCV data, or when you need price data
-    ///   independently of backtesting (e.g., for charting)
-    /// **Prerequisites**: None
-    /// **Note**: OHLCV data is auto-fetched when signals are used in `run_backtest`,
-    ///   so this tool is only needed for explicit pre-caching or standalone use.
-    /// **Periods**: "5y" (default), "6mo", "1y", "max"
-    #[tool(
-        name = "fetch_to_parquet",
-        annotations(
-            destructive_hint = true,
-            idempotent_hint = false,
-            open_world_hint = true
-        )
-    )]
-    async fn fetch_to_parquet(
-        &self,
-        Parameters(params): Parameters<FetchToParquetParams>,
-    ) -> SanitizedResult<FetchResponse, String> {
-        SanitizedResult(
-            async {
-                params
-                    .validate()
-                    .map_err(|e| validation_err("fetch_to_parquet", e))?;
-                let period = params.period.as_deref().unwrap_or("5y");
-                tools::fetch::execute(&self.cache, &params.symbol, period)
-                    .await
-                    .map_err(|e| format!("Error: {e}"))
-            }
-            .await,
-        )
-    }
-
     /// Return raw OHLCV price data for a symbol, ready for chart generation.
+    /// Data is auto-fetched from Yahoo Finance on first access and cached locally.
     ///
     /// **When to use**: When an LLM or user needs raw price data to generate charts
     ///   (candlestick, line, area) or perform custom analysis
-    /// **Prerequisites**: `fetch_to_parquet()` must have been called first to cache OHLCV data
+    /// **Prerequisites**: None — OHLCV data is auto-fetched and cached on first call
     ///
     /// **Returns**: Array of `{ date, open, high, low, close, adjclose, volume }` bars.
     /// Data is evenly sampled down to `limit` points (default 500 if omitted) to avoid
@@ -975,7 +929,7 @@ impl ServerHandler for OptopsyServer {
                 \n\
                 \n### 1. Explore Strategies\
                 \n  - list_strategies() — browse all 32 strategies by category\
-                \n  - list_signals() / build_signal(action=\"search\") — optional: TA signal filters\
+                \n  - build_signal(action=\"catalog\") / build_signal(action=\"search\") — optional: TA signal filters\
                 \n\
                 \n### 2. Full Simulation\
                 \n  - run_backtest({ strategy, symbol, ... }) — event-driven backtest with trade log and metrics\

@@ -119,6 +119,7 @@ pub fn execute(
 }
 
 /// Load OHLCV parquet from cache and return raw prices.
+/// Auto-fetches from Yahoo Finance on cache miss.
 pub async fn load_and_execute(
     cache: &Arc<CachedStore>,
     symbol: &str,
@@ -127,15 +128,20 @@ pub async fn load_and_execute(
     limit: Option<usize>,
 ) -> Result<RawPricesResponse> {
     let upper = symbol.to_uppercase();
-    let path = cache
-        .ensure_local_for(&upper, "prices")
-        .await
-        .map_err(|_| {
-            anyhow::anyhow!(
-                "No OHLCV price data cached for {upper}. \
-             Call fetch_to_parquet({{ symbol: \"{upper}\" }}) first."
-            )
-        })?;
+
+    // Try cache first; auto-fetch from Yahoo Finance on miss
+    let path = if let Ok(p) = cache.ensure_local_for(&upper, "prices").await {
+        p
+    } else {
+        tracing::info!(symbol = %upper, "Auto-fetching OHLCV data from Yahoo Finance");
+        super::fetch::execute(cache, &upper, "5y")
+            .await
+            .with_context(|| format!("Failed to auto-fetch OHLCV data for {upper}"))?;
+        cache
+            .ensure_local_for(&upper, "prices")
+            .await
+            .with_context(|| format!("OHLCV data fetched but cache file not found for {upper}"))?
+    };
 
     // Read parquet into DataFrame
     let df = tokio::task::spawn_blocking(move || -> Result<DataFrame> {
