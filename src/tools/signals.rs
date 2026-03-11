@@ -6,9 +6,30 @@ use serde::{Deserialize, Serialize};
 use crate::signals::registry::SIGNAL_CATALOG;
 use crate::signals::storage;
 
+/// Convert a PascalCase name to spaced words (e.g. "RsiBelow" → "RSI Below").
+/// Consecutive uppercase letters are kept together as acronyms.
+fn to_display_name(name: &str) -> String {
+    let mut result = String::with_capacity(name.len() + 4);
+    let chars: Vec<char> = name.chars().collect();
+    for (i, &c) in chars.iter().enumerate() {
+        if i > 0 && c.is_uppercase() {
+            // Insert space before uppercase that follows a lowercase,
+            // or before the last char of an uppercase run followed by lowercase
+            let prev_lower = chars[i - 1].is_lowercase();
+            let next_lower = chars.get(i + 1).is_some_and(|n| n.is_lowercase());
+            if prev_lower || (next_lower && chars[i - 1].is_uppercase()) {
+                result.push(' ');
+            }
+        }
+        result.push(c);
+    }
+    result
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SignalCatalogEntry {
     pub name: String,
+    pub display_name: String,
     pub description: String,
     pub params: String,
 }
@@ -31,6 +52,7 @@ pub fn execute() -> SignalsResponse {
             .entry(info.category.to_string())
             .or_default()
             .push(SignalCatalogEntry {
+                display_name: to_display_name(info.name),
                 name: info.name.to_string(),
                 description: info.description.to_string(),
                 params: info.params.to_string(),
@@ -43,6 +65,7 @@ pub fn execute() -> SignalsResponse {
             let custom: Vec<SignalCatalogEntry> = saved
                 .into_iter()
                 .map(|s| SignalCatalogEntry {
+                    display_name: to_display_name(&s.name),
                     name: s.name,
                     description: s
                         .description
