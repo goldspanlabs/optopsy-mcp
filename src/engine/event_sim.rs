@@ -228,6 +228,96 @@ pub fn find_entry_candidates(
     Ok(candidates)
 }
 
+/// Build a `TradeRecord` from a closed position.
+fn build_trade_record(
+    position: &Position,
+    today: NaiveDate,
+    trade_id: usize,
+    pnl: f64,
+    exit_type: ExitType,
+) -> TradeRecord {
+    let entry_dt = position
+        .entry_date
+        .and_hms_opt(0, 0, 0)
+        .expect("and_hms_opt(0,0,0) should never fail");
+    let exit_dt = today
+        .and_hms_opt(0, 0, 0)
+        .expect("and_hms_opt(0,0,0) should never fail");
+    let days_held = (today - position.entry_date).num_days();
+
+    let leg_details: Vec<LegDetail> = position
+        .legs
+        .iter()
+        .map(|l| LegDetail {
+            side: l.side,
+            option_type: l.option_type,
+            strike: l.strike,
+            expiration: l.expiration.to_string(),
+            entry_price: l.entry_price,
+            exit_price: l.close_price,
+            qty: l.qty,
+        })
+        .collect();
+
+    TradeRecord::new(
+        trade_id,
+        entry_dt,
+        exit_dt,
+        position.entry_cost,
+        position.entry_cost + pnl,
+        pnl,
+        days_held,
+        exit_type,
+        leg_details,
+    )
+}
+
+/// Reservoir-sample entry spread percentages, capped at `max_samples`.
+///
+/// Uses a simple LCG hash for deterministic reservoir sampling so that
+/// memory usage is bounded regardless of the number of trades.
+fn sample_entry_spreads(
+    candidate: &EntryCandidate,
+    spread_pcts: &mut Vec<f64>,
+    sample_count: &mut u64,
+    max_samples: usize,
+) {
+    for leg in &candidate.legs {
+        if leg.bid > 0.0 && leg.ask > 0.0 {
+            let mid = f64::midpoint(leg.bid, leg.ask);
+            let spread_pct = (leg.ask - leg.bid) / mid * 100.0;
+            *sample_count += 1;
+            if spread_pcts.len() < max_samples {
+                spread_pcts.push(spread_pct);
+            } else {
+                let hash = (*sample_count)
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                let j = (hash % *sample_count) as usize;
+                if j < max_samples {
+                    spread_pcts[j] = spread_pct;
+                }
+            }
+        }
+    }
+}
+
+/// Compute unrealized P&L for all open positions via mark-to-market.
+fn compute_unrealized_pnl(
+    positions: &[Position],
+    today: NaiveDate,
+    price_table: &PriceTable,
+    last_known: &HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
+    slippage: &Slippage,
+    multiplier: i32,
+) -> f64 {
+    positions
+        .iter()
+        .filter(|p| matches!(p.status, PositionStatus::Open))
+        .map(|p| mark_to_market(p, today, price_table, last_known, slippage, multiplier))
+        .sum()
+}
+
 /// Run the event-driven simulation loop.
 #[allow(clippy::implicit_hasher, clippy::too_many_lines)]
 pub fn run_event_loop(
@@ -302,38 +392,12 @@ pub fn run_event_loop(
                 realized_equity += pnl;
 
                 trade_id += 1;
-                let entry_dt = positions[i]
-                    .entry_date
-                    .and_hms_opt(0, 0, 0)
-                    .expect("and_hms_opt(0,0,0) should never fail");
-                let exit_dt = today
-                    .and_hms_opt(0, 0, 0)
-                    .expect("and_hms_opt(0,0,0) should never fail");
-                let days_held = (today - positions[i].entry_date).num_days();
-
-                let leg_details: Vec<LegDetail> = positions[i]
-                    .legs
-                    .iter()
-                    .map(|l| LegDetail {
-                        side: l.side,
-                        option_type: l.option_type,
-                        strike: l.strike,
-                        expiration: l.expiration.to_string(),
-                        entry_price: l.entry_price,
-                        exit_price: l.close_price,
-                        qty: l.qty,
-                    })
-                    .collect();
-                trade_log.push(TradeRecord::new(
+                trade_log.push(build_trade_record(
+                    &positions[i],
+                    today,
                     trade_id,
-                    entry_dt,
-                    exit_dt,
-                    positions[i].entry_cost,
-                    positions[i].entry_cost + pnl,
                     pnl,
-                    days_held,
                     exit_type,
-                    leg_details,
                 ));
             }
 
@@ -386,30 +450,12 @@ pub fn run_event_loop(
                 if let Some(candidate) =
                     select_candidate(&available, &params.selector, params.entry_dte.target)
                 {
-                    // Collect entry spread percentages (reservoir sampled to cap memory)
-                    for leg in &candidate.legs {
-                        if leg.bid > 0.0 && leg.ask > 0.0 {
-                            let mid = f64::midpoint(leg.bid, leg.ask);
-                            let spread_pct = (leg.ask - leg.bid) / mid * 100.0;
-                            spread_sample_count += 1;
-                            if entry_spread_pcts.len() < MAX_SPREAD_SAMPLES {
-                                entry_spread_pcts.push(spread_pct);
-                            } else {
-                                // Reservoir sampling: pick j uniformly in [0, spread_sample_count).
-                                // Replace entry_spread_pcts[j] only when j < MAX_SPREAD_SAMPLES,
-                                // giving each sample a MAX_SPREAD_SAMPLES/spread_sample_count
-                                // probability of replacement. A single LCG step produces `hash`,
-                                // from which j = hash % spread_sample_count is derived.
-                                let hash = spread_sample_count
-                                    .wrapping_mul(6_364_136_223_846_793_005)
-                                    .wrapping_add(1_442_695_040_888_963_407);
-                                let j = (hash % spread_sample_count) as usize;
-                                if j < MAX_SPREAD_SAMPLES {
-                                    entry_spread_pcts[j] = spread_pct;
-                                }
-                            }
-                        }
-                    }
+                    sample_entry_spreads(
+                        candidate,
+                        &mut entry_spread_pcts,
+                        &mut spread_sample_count,
+                        MAX_SPREAD_SAMPLES,
+                    );
 
                     let position = open_position(candidate, today, strategy_def, params, next_id);
                     next_id += 1;
@@ -424,20 +470,14 @@ pub fn run_event_loop(
         update_last_known(price_table, date_index, today, &mut last_known);
 
         // Phase 3: Daily mark-to-market
-        let unrealized: f64 = positions
-            .iter()
-            .filter(|p| matches!(p.status, PositionStatus::Open))
-            .map(|p| {
-                mark_to_market(
-                    p,
-                    today,
-                    price_table,
-                    &last_known,
-                    &params.slippage,
-                    params.multiplier,
-                )
-            })
-            .sum();
+        let unrealized = compute_unrealized_pnl(
+            &positions,
+            today,
+            price_table,
+            &last_known,
+            &params.slippage,
+            params.multiplier,
+        );
 
         equity_curve.push(EquityPoint {
             datetime: today

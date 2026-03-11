@@ -225,7 +225,7 @@ async fn concurrent_write_then_read_consistent() {
 
 // ── Max position capacity management ─────────────────────────────────────────
 
-/// Build synthetic data with many distinct entry dates to test max_positions.
+/// Build synthetic data with many distinct entry dates to test `max_positions`.
 /// 5 trading dates, each with a distinct near-term expiration so the engine
 /// can open separate positions per date (duplicate expirations are deduplicated).
 fn make_many_entry_dates_df() -> DataFrame {
