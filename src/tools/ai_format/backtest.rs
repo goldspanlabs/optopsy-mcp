@@ -13,8 +13,8 @@ use crate::tools::ai_helpers::{
     compute_trade_summary, format_pnl, DRAWDOWN_HIGH, SHARPE_NEEDS_IMPROVEMENT,
 };
 use crate::tools::response_types::{
-    BacktestResponse, CompareResponse, CompareStrategyEntry, StockBacktestParamsSummary,
-    StockBacktestResponse, UnderlyingPrice,
+    BacktestResponse, CompareResponse, CompareStrategyEntry, SizingSummary,
+    StockBacktestParamsSummary, StockBacktestResponse, UnderlyingPrice,
 };
 
 /// Format a backtest result into an AI-enriched response with summary, assessment, and next steps.
@@ -47,6 +47,7 @@ pub fn format_backtest(
             trade_summary,
             trade_log: vec![],
             data_quality,
+            sizing_summary: None,
             underlying_prices,
             suggested_next_steps: vec![
                 "Widen entry_dte or leg_deltas ranges and re-run".to_string(),
@@ -69,7 +70,7 @@ pub fn format_backtest(
         m.max_drawdown * 100.0,
     );
 
-    let key_findings = backtest_key_findings(m, &result.trade_log);
+    let mut key_findings = backtest_key_findings(m, &result.trade_log);
 
     let mut suggested_next_steps = Vec::new();
     if m.sharpe < SHARPE_NEEDS_IMPROVEMENT {
@@ -98,6 +99,14 @@ pub fn format_backtest(
         params.strategy
     ));
 
+    let sizing_summary = build_sizing_summary(&result.trade_log, params);
+    if let Some(ref ss) = sizing_summary {
+        key_findings.push(format!(
+            "Dynamic sizing ({}): position sizes ranged from {} to {} contracts (avg {:.1})",
+            ss.method, ss.min_quantity, ss.max_quantity, ss.avg_quantity
+        ));
+    }
+
     BacktestResponse {
         summary,
         assessment: assessment.to_string(),
@@ -107,9 +116,35 @@ pub fn format_backtest(
         trade_summary,
         trade_log: result.trade_log,
         data_quality,
+        sizing_summary,
         underlying_prices,
         suggested_next_steps,
     }
+}
+
+/// Build a sizing summary from the trade log when dynamic sizing is active.
+fn build_sizing_summary(
+    trade_log: &[crate::engine::types::TradeRecord],
+    params: &BacktestParams,
+) -> Option<SizingSummary> {
+    let cfg = params.sizing.as_ref()?;
+    let quantities: Vec<i32> = trade_log
+        .iter()
+        .filter_map(|t| t.computed_quantity)
+        .collect();
+    if quantities.is_empty() {
+        return None;
+    }
+    let avg = f64::from(quantities.iter().copied().sum::<i32>()) / quantities.len() as f64;
+    let min = quantities.iter().copied().min().unwrap_or(0);
+    let max = quantities.iter().copied().max().unwrap_or(0);
+    Some(SizingSummary {
+        method: crate::engine::sizing::sizing_method_label(cfg),
+        avg_quantity: (avg * 100.0).round() / 100.0,
+        min_quantity: min,
+        max_quantity: max,
+        final_equity: params.capital, // Will be overridden by caller if equity tracking is available
+    })
 }
 
 /// Format strategy comparison results with rankings by Sharpe and P&L.
@@ -244,6 +279,7 @@ pub fn format_stock_backtest(
             .map(|s| serde_json::to_value(s).unwrap_or(serde_json::Value::Null)),
         start_date: params.start_date.map(|d| d.format("%Y-%m-%d").to_string()),
         end_date: params.end_date.map(|d| d.format("%Y-%m-%d").to_string()),
+        sizing: params.sizing.clone(),
     };
 
     if result.trade_log.is_empty() {
@@ -263,6 +299,7 @@ pub fn format_stock_backtest(
             metrics: result.metrics,
             trade_summary,
             trade_log: vec![],
+            sizing_summary: None,
             underlying_prices,
             suggested_next_steps: vec![
                 "Try a different entry signal or widen the date range".to_string(),
@@ -323,6 +360,7 @@ pub fn format_stock_backtest(
         metrics: result.metrics,
         trade_summary,
         trade_log: result.trade_log,
+        sizing_summary: None, // TODO: build from trade log when stock sizing is wired
         underlying_prices,
         suggested_next_steps,
     }
@@ -370,6 +408,7 @@ mod tests {
             max_hold_days: None,
             capital,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 1,
             selector: crate::engine::types::TradeSelector::default(),

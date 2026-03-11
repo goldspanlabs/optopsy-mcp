@@ -22,6 +22,8 @@ pub struct StockBacktestParams {
     pub side: Side,
     pub capital: f64,
     pub quantity: i32,
+    /// Dynamic position sizing configuration.
+    pub sizing: Option<super::types::SizingConfig>,
     pub max_positions: i32,
     pub slippage: Slippage,
     pub commission: Option<Commission>,
@@ -68,7 +70,7 @@ struct ExitDecision {
 ///
 /// Returns the same `BacktestResult` used by options backtests, ensuring
 /// identical output format (metrics, trade log, equity curve).
-#[allow(clippy::implicit_hasher)]
+#[allow(clippy::implicit_hasher, clippy::too_many_lines)]
 pub fn run_stock_backtest(
     bars: &[Bar],
     params: &StockBacktestParams,
@@ -113,11 +115,41 @@ pub fn run_stock_backtest(
 
         if can_enter && signal_fires {
             let entry_price = compute_entry_price(bar, params.side, &params.slippage);
-            let position_value = entry_price * f64::from(params.quantity);
+
+            // Dynamic position sizing
+            let effective_qty = params.sizing.as_ref().map_or(params.quantity, |cfg| {
+                let ml = super::sizing::max_loss_per_share(entry_price, params.stop_loss);
+                if ml <= 0.0 {
+                    return params.quantity;
+                }
+                // Collect closes up to today for volatility computation
+                let vol = {
+                    let lookback = match &cfg.method {
+                        super::types::PositionSizing::VolatilityTarget {
+                            lookback_days, ..
+                        } => *lookback_days as usize,
+                        _ => 20,
+                    };
+                    let idx = bars.iter().position(|b| b.date == bar.date).unwrap_or(0);
+                    let closes: Vec<f64> = bars[..=idx].iter().map(|b| b.close).collect();
+                    super::sizing::compute_realized_vol(&closes, lookback)
+                };
+                super::sizing::compute_quantity(
+                    cfg,
+                    equity,
+                    ml,
+                    &trade_log,
+                    vol,
+                    1, // multiplier=1 for stocks
+                    params.quantity,
+                )
+            });
+
+            let position_value = entry_price * f64::from(effective_qty);
             let commission_cost = params
                 .commission
                 .as_ref()
-                .map_or(0.0, |c| c.calculate(params.quantity));
+                .map_or(0.0, |c| c.calculate(effective_qty));
 
             // Capital/margin check: longs need purchase cost, shorts need full collateral
             let required_capital = position_value + commission_cost;
@@ -128,7 +160,7 @@ pub fn run_stock_backtest(
                     id: next_trade_id,
                     entry_date: bar.date,
                     entry_price,
-                    quantity: params.quantity,
+                    quantity: effective_qty,
                     side: params.side,
                     entry_commission: commission_cost,
                 };
@@ -565,6 +597,7 @@ mod tests {
             side: Side::Long,
             capital: 100_000.0,
             quantity: 100,
+            sizing: None,
             max_positions: 1,
             slippage: Slippage::Mid,
             commission: None,

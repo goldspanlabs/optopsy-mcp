@@ -92,6 +92,7 @@ pub(crate) fn build_params_summary(params: &BacktestParams) -> BacktestParamsSum
         min_days_between_entries: params.min_days_between_entries,
         expiration_filter: params.expiration_filter.clone(),
         exit_net_delta: params.exit_net_delta,
+        sizing: params.sizing.clone(),
     }
 }
 

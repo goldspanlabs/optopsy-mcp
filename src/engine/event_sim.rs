@@ -241,6 +241,8 @@ fn build_trade_record(
     trade_id: usize,
     pnl: f64,
     exit_type: ExitType,
+    sizing_active: bool,
+    entry_equity: f64,
 ) -> TradeRecord {
     let entry_dt = position
         .entry_date
@@ -265,7 +267,7 @@ fn build_trade_record(
         })
         .collect();
 
-    TradeRecord::new(
+    let mut record = TradeRecord::new(
         trade_id,
         entry_dt,
         exit_dt,
@@ -275,7 +277,14 @@ fn build_trade_record(
         days_held,
         exit_type,
         leg_details,
-    )
+    );
+
+    if sizing_active {
+        record.computed_quantity = Some(position.quantity);
+        record.entry_equity = Some(entry_equity);
+    }
+
+    record
 }
 
 /// Reservoir-sample entry spread percentages, capped at `max_samples`.
@@ -325,7 +334,11 @@ fn compute_unrealized_pnl(
 }
 
 /// Run the event-driven simulation loop.
-#[allow(clippy::implicit_hasher, clippy::too_many_lines)]
+#[allow(
+    clippy::implicit_hasher,
+    clippy::too_many_lines,
+    clippy::too_many_arguments
+)]
 pub fn run_event_loop(
     price_table: &PriceTable,
     candidates: &BTreeMap<NaiveDate, Vec<EntryCandidate>>,
@@ -334,6 +347,7 @@ pub fn run_event_loop(
     strategy_def: &StrategyDef,
     exit_dates: Option<&std::collections::HashSet<NaiveDate>>,
     date_index: &DateIndex,
+    ohlcv_closes: Option<&BTreeMap<NaiveDate, f64>>,
 ) -> (Vec<TradeRecord>, Vec<EquityPoint>, BacktestQualityStats) {
     // Capped reservoir sample for spread percentages to bound memory.
     // 10 000 samples is enough for an accurate median estimate.
@@ -404,6 +418,8 @@ pub fn run_event_loop(
                     trade_id,
                     pnl,
                     exit_type,
+                    params.sizing.is_some(),
+                    realized_equity,
                 ));
             }
 
@@ -463,7 +479,43 @@ pub fn run_event_loop(
                         MAX_SPREAD_SAMPLES,
                     );
 
-                    let position = open_position(candidate, today, strategy_def, params, next_id);
+                    // Dynamic position sizing
+                    let effective_qty = params.sizing.as_ref().and_then(|cfg| {
+                        let ml =
+                            super::sizing::max_loss_per_contract(strategy_def, candidate, params)?;
+                        if ml <= 0.0 {
+                            return None;
+                        }
+                        let vol = ohlcv_closes.and_then(|closes| {
+                            let lookback = match &cfg.method {
+                                super::types::PositionSizing::VolatilityTarget {
+                                    lookback_days,
+                                    ..
+                                } => *lookback_days as usize,
+                                _ => 20,
+                            };
+                            let vals: Vec<f64> = closes.range(..=today).map(|(_, &v)| v).collect();
+                            super::sizing::compute_realized_vol(&vals, lookback)
+                        });
+                        Some(super::sizing::compute_quantity(
+                            cfg,
+                            realized_equity,
+                            ml,
+                            &trade_log,
+                            vol,
+                            params.multiplier,
+                            params.quantity,
+                        ))
+                    });
+
+                    let position = open_position(
+                        candidate,
+                        today,
+                        strategy_def,
+                        params,
+                        next_id,
+                        effective_qty,
+                    );
                     next_id += 1;
                     positions.push(position);
                     positions_opened += 1;
@@ -691,6 +743,7 @@ mod tests {
             max_hold_days: None,
             capital: 10000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 5,
             selector: TradeSelector::First,
@@ -716,6 +769,7 @@ mod tests {
             &strategy_def,
             None,
             &date_idx,
+            None,
         );
 
         assert_eq!(equity_curve.len(), 3, "Should have 3 equity points");
@@ -800,6 +854,7 @@ mod tests {
             max_hold_days: None,
             capital: 10000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 5,
             selector: TradeSelector::First,
@@ -825,6 +880,7 @@ mod tests {
             &strategy_def,
             None,
             &date_idx,
+            None,
         );
 
         assert_eq!(trade_log.len(), 1);
@@ -914,6 +970,7 @@ mod tests {
             max_hold_days: None,
             capital: 10000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 5,
             selector: TradeSelector::First,
@@ -939,6 +996,7 @@ mod tests {
             &strategy_def,
             None,
             &date_idx,
+            None,
         );
 
         assert_eq!(trade_log.len(), 1);
@@ -1023,6 +1081,7 @@ mod tests {
             max_hold_days: None,
             capital: 10000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 1,
             selector: TradeSelector::First,
@@ -1048,6 +1107,7 @@ mod tests {
             &strategy_def,
             None,
             &date_idx,
+            None,
         );
 
         assert_eq!(trade_log.len(), 0, "No trades should close in 2 days");
@@ -1102,6 +1162,7 @@ mod tests {
             max_hold_days: None,
             capital: 10000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 5,
             selector: TradeSelector::First,
@@ -1127,6 +1188,7 @@ mod tests {
             &strategy_def,
             None,
             &date_idx,
+            None,
         );
 
         assert_eq!(
@@ -1180,6 +1242,7 @@ mod tests {
             max_hold_days: None,
             capital: 10000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 5,
             selector: TradeSelector::First,
@@ -1265,6 +1328,7 @@ mod tests {
             max_hold_days: None,
             capital: 10000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 5,
             selector: TradeSelector::First,
@@ -1339,6 +1403,7 @@ mod tests {
             max_hold_days: None,
             capital: 10000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 5,
             selector: TradeSelector::First,
@@ -1427,6 +1492,7 @@ mod tests {
             max_hold_days: None,
             capital: 10000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 5,
             selector: TradeSelector::First,
@@ -1452,6 +1518,7 @@ mod tests {
             &strategy_def,
             None,
             &date_idx,
+            None,
         );
 
         assert_eq!(equity_curve.len(), 5);
@@ -1501,6 +1568,7 @@ mod tests {
             max_hold_days: None,
             capital: 10000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 5,
             selector: TradeSelector::First,
@@ -1591,6 +1659,7 @@ mod tests {
             max_hold_days: None,
             capital: 100_000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 10,
             selector: TradeSelector::First,
@@ -1615,6 +1684,7 @@ mod tests {
             &strategy_def,
             None,
             &date_idx,
+            None,
         );
 
         let params_stagger = BacktestParams {
@@ -1629,6 +1699,7 @@ mod tests {
             &strategy_def,
             None,
             &date_idx,
+            None,
         );
 
         assert!(
@@ -1688,6 +1759,7 @@ mod tests {
             max_hold_days: None,
             capital: 10000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 5,
             selector: TradeSelector::First,
@@ -1757,6 +1829,7 @@ mod tests {
             max_hold_days: None,
             capital: 10000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 5,
             selector: TradeSelector::First,
@@ -1825,6 +1898,7 @@ mod tests {
             max_hold_days: None,
             capital: 10000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 5,
             selector: TradeSelector::First,
@@ -1893,6 +1967,7 @@ mod tests {
             max_hold_days: None,
             capital: 10000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 5,
             selector: TradeSelector::First,
@@ -1983,6 +2058,7 @@ mod tests {
             max_hold_days: None,
             capital: 100_000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 5,
             selector: TradeSelector::First,
@@ -2008,6 +2084,7 @@ mod tests {
             &strategy_def,
             None,
             &date_idx,
+            None,
         );
 
         assert_eq!(trade_log.len(), 1, "Should have exactly 1 trade");
@@ -2085,6 +2162,7 @@ mod tests {
             max_hold_days: None,
             capital: 100_000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 5,
             selector: TradeSelector::First,
@@ -2110,6 +2188,7 @@ mod tests {
             &strategy_def,
             None,
             &date_idx,
+            None,
         );
 
         assert!(!trade_log.is_empty(), "Should have at least 1 closed trade");

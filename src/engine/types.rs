@@ -201,6 +201,81 @@ impl Commission {
     }
 }
 
+/// Position sizing method controlling how many contracts/shares to trade per entry.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(tag = "method")]
+pub enum PositionSizing {
+    /// Use the fixed `quantity` from params (default behavior).
+    #[serde(rename = "fixed")]
+    Fixed,
+    /// Risk a fixed fraction of current equity per trade.
+    #[serde(rename = "fixed_fractional")]
+    FixedFractional {
+        #[garde(range(min = 0.001, max = 1.0))]
+        risk_pct: f64,
+    },
+    /// Kelly criterion with a fractional multiplier and optional lookback window.
+    /// Falls back to fixed `quantity` for the first 20 trades (cold start).
+    #[serde(rename = "kelly")]
+    Kelly {
+        #[garde(range(min = 0.01, max = 1.0))]
+        fraction: f64,
+        #[garde(skip)]
+        lookback: Option<usize>,
+    },
+    /// Risk a fixed dollar amount per trade.
+    #[serde(rename = "risk_per_trade")]
+    RiskPerTrade {
+        #[garde(range(min = 1.0))]
+        risk_amount: f64,
+    },
+    /// Target a specific portfolio volatility level.
+    #[serde(rename = "volatility_target")]
+    VolatilityTarget {
+        #[garde(range(min = 0.01, max = 2.0))]
+        target_vol: f64,
+        #[garde(range(min = 5, max = 252))]
+        lookback_days: i32,
+    },
+}
+
+/// Constraints on computed position sizes.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+pub struct SizingConstraints {
+    /// Minimum contracts/shares per trade.
+    #[serde(default = "default_min_qty")]
+    #[garde(range(min = 1))]
+    pub min_quantity: i32,
+    /// Optional maximum contracts/shares per trade.
+    #[garde(skip)]
+    pub max_quantity: Option<i32>,
+}
+
+fn default_min_qty() -> i32 {
+    1
+}
+
+impl Default for SizingConstraints {
+    fn default() -> Self {
+        Self {
+            min_quantity: 1,
+            max_quantity: None,
+        }
+    }
+}
+
+/// Dynamic position sizing configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+pub struct SizingConfig {
+    /// The sizing method to use.
+    #[garde(dive)]
+    pub method: PositionSizing,
+    /// Min/max constraints on computed quantity.
+    #[serde(default)]
+    #[garde(dive)]
+    pub constraints: SizingConstraints,
+}
+
 /// Slippage model controlling how fill prices are derived from bid/ask quotes.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 #[serde(tag = "type")]
@@ -378,6 +453,11 @@ pub struct BacktestParams {
     /// Number of contracts per trade entry.
     #[garde(range(min = 1))]
     pub quantity: i32,
+    /// Dynamic position sizing configuration. When set, overrides fixed `quantity`
+    /// with a computed value based on equity, risk, or volatility.
+    #[serde(default)]
+    #[garde(dive)]
+    pub sizing: Option<SizingConfig>,
     /// Contract multiplier (typically 100 for equity options).
     #[serde(default = "default_multiplier")]
     #[garde(range(min = 1))]
@@ -492,6 +572,10 @@ pub struct SimParams {
     pub capital: f64,
     #[garde(range(min = 1))]
     pub quantity: i32,
+    /// Dynamic position sizing configuration.
+    #[serde(default)]
+    #[garde(dive)]
+    pub sizing: Option<SizingConfig>,
     /// Contract multiplier (typically 100 for equity options).
     #[serde(default = "default_multiplier")]
     #[garde(range(min = 1))]
@@ -631,6 +715,12 @@ pub struct TradeRecord {
     pub days_held: i64,
     pub exit_type: ExitType,
     pub legs: Vec<LegDetail>,
+    /// Dynamically computed quantity (set when position sizing is active).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub computed_quantity: Option<i32>,
+    /// Portfolio equity at the time of entry (set when position sizing is active).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entry_equity: Option<f64>,
 }
 
 impl TradeRecord {
@@ -669,6 +759,8 @@ impl TradeRecord {
             days_held,
             exit_type,
             legs,
+            computed_quantity: None,
+            entry_equity: None,
         }
     }
 }
@@ -728,6 +820,9 @@ pub struct SweepResult {
     /// Use the `multiple_comparisons` field in the sweep response for corrected values.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub p_value: Option<f64>,
+    /// Sizing method name for identification in sweep results.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sizing: Option<String>,
 }
 
 // --- Event-driven simulation types (re-exported from sim_types) ---
@@ -883,6 +978,7 @@ mod tests {
             max_hold_days: None,
             capital: -1000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 1,
             selector: TradeSelector::default(),
@@ -925,6 +1021,7 @@ mod tests {
             max_hold_days: None,
             capital: 10_000.0,
             quantity: 0,
+            sizing: None,
             multiplier: 100,
             max_positions: 1,
             selector: TradeSelector::default(),
@@ -967,6 +1064,7 @@ mod tests {
             max_hold_days: None,
             capital: 10_000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 1,
             selector: TradeSelector::default(),
@@ -991,6 +1089,7 @@ mod tests {
         let p = SimParams {
             capital: 10_000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 0,
             selector: TradeSelector::default(),
@@ -1030,6 +1129,7 @@ mod tests {
             max_hold_days: None,
             capital: 10_000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 1,
             selector: TradeSelector::default(),

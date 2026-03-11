@@ -283,6 +283,7 @@ mod tests {
             max_hold_days: None,
             capital: 10_000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 1,
             selector: TradeSelector::default(),

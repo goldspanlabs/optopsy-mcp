@@ -224,6 +224,7 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
                     exit_signal: combo.exit_signal.clone(),
                     signal_dim_keys: combo.signal_dim_keys.clone(),
                     p_value: None,
+                    sizing: None,
                 });
             }
             Err(e) => {
@@ -344,6 +345,7 @@ fn build_backtest_params_for_combo(
         max_hold_days: sim_params.max_hold_days,
         capital: sim_params.capital,
         quantity: sim_params.quantity,
+        sizing: sim_params.sizing.clone(),
         multiplier: sim_params.multiplier,
         max_positions: sim_params.max_positions,
         selector: sim_params.selector.clone(),
@@ -627,6 +629,7 @@ mod tests {
         let sim_params = SimParams {
             capital: 10000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 3,
             selector: TradeSelector::default(),
@@ -696,6 +699,7 @@ mod tests {
         let sim_params = SimParams {
             capital: 10000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 3,
             selector: TradeSelector::default(),
@@ -855,6 +859,7 @@ mod tests {
         let sim_params = SimParams {
             capital: 10000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 3,
             selector: TradeSelector::default(),
@@ -974,6 +979,7 @@ mod tests {
             exit_signal: None,
             signal_dim_keys: vec![],
             p_value: None,
+            sizing: None,
         }
     }
 
@@ -996,6 +1002,7 @@ mod tests {
             sim_params: SimParams {
                 capital: 10000.0,
                 quantity: 1,
+                sizing: None,
                 multiplier: 100,
                 max_positions: 5,
                 selector: TradeSelector::Nearest,

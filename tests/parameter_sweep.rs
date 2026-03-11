@@ -18,6 +18,7 @@ fn default_sim_params() -> SimParams {
     SimParams {
         capital: 100_000.0,
         quantity: 1,
+        sizing: None,
         multiplier: 100,
         max_positions: 3,
         selector: TradeSelector::First,

@@ -26,6 +26,7 @@ fn default_params() -> StockBacktestParams {
         side: Side::Long,
         capital: 100_000.0,
         quantity: 100,
+        sizing: None,
         max_positions: 1,
         slippage: Slippage::Mid,
         commission: None,

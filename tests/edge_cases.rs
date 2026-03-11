@@ -306,6 +306,7 @@ fn capacity_params(max_positions: i32) -> BacktestParams {
         max_hold_days: None,
         capital: 100_000.0,
         quantity: 1,
+        sizing: None,
         multiplier: 100,
         max_positions,
         selector: TradeSelector::First,
@@ -458,6 +459,7 @@ fn sweep_empty_strategies_returns_empty() {
         sim_params: SimParams {
             capital: 100_000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 3,
             selector: TradeSelector::First,
@@ -503,6 +505,7 @@ fn sweep_empty_delta_grid_returns_empty() {
         sim_params: SimParams {
             capital: 100_000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 3,
             selector: TradeSelector::First,
@@ -548,6 +551,7 @@ fn sweep_empty_dte_targets_returns_empty() {
         sim_params: SimParams {
             capital: 100_000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 3,
             selector: TradeSelector::First,
@@ -593,6 +597,7 @@ fn sweep_nonexistent_strategy_produces_error_in_results() {
         sim_params: SimParams {
             capital: 100_000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 3,
             selector: TradeSelector::First,

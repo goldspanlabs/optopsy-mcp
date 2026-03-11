@@ -386,6 +386,7 @@ mod tests {
                 exit_signal: None,
                 signal_dim_keys: vec![],
                 p_value: None,
+                sizing: None,
             },
             SweepResult {
                 label: "long_call(Δ0.35, DTE 45, Exit 0)".to_string(),
@@ -417,6 +418,7 @@ mod tests {
                 exit_signal: None,
                 signal_dim_keys: vec![],
                 p_value: None,
+                sizing: None,
             },
         ];
 
@@ -516,6 +518,7 @@ mod tests {
                 exit_signal: None,
                 signal_dim_keys: vec![],
                 p_value: None,
+                sizing: None,
             }],
             dimension_sensitivity: HashMap::new(),
             oos_results: vec![OosResult {

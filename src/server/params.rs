@@ -11,7 +11,7 @@ use serde::Deserialize;
 
 use crate::engine::types::{
     default_min_bid_ask, default_multiplier, validate_exit_dte_lt_entry_min, Commission, Direction,
-    DteRange, ExpirationFilter, SimParams, Slippage, TargetRange, TradeSelector,
+    DteRange, ExpirationFilter, SimParams, SizingConfig, Slippage, TargetRange, TradeSelector,
 };
 use crate::signals::registry::SignalSpec;
 
@@ -130,6 +130,12 @@ pub struct BacktestBaseParams {
     #[serde(default = "default_quantity")]
     #[garde(range(min = 1))]
     pub quantity: i32,
+    /// Dynamic position sizing configuration. When provided, overrides fixed `quantity`
+    /// with a per-trade computed size based on equity, risk, or volatility.
+    /// Methods: `fixed`, `fixed_fractional`, `risk_per_trade`, `kelly`, `volatility_target`.
+    #[serde(default)]
+    #[garde(dive)]
+    pub sizing: Option<SizingConfig>,
     /// Contract multiplier (default: 100)
     #[serde(default = "default_multiplier")]
     #[garde(range(min = 1))]
@@ -219,6 +225,11 @@ pub struct RunStockBacktestParams {
     #[serde(default = "default_stock_quantity")]
     #[garde(range(min = 1))]
     pub quantity: i32,
+    /// Dynamic position sizing configuration. When provided, overrides fixed `quantity`
+    /// with a per-trade computed size based on equity, risk, or volatility.
+    #[serde(default)]
+    #[garde(dive)]
+    pub sizing: Option<SizingConfig>,
     /// Maximum concurrent positions (default: 1)
     #[serde(default = "default_max_positions")]
     #[garde(range(min = 1))]
@@ -568,6 +579,10 @@ pub struct SweepSimParams {
     #[serde(default = "default_quantity")]
     #[garde(range(min = 1))]
     pub quantity: i32,
+    /// Dynamic position sizing configuration for the sweep.
+    #[serde(default)]
+    #[garde(dive)]
+    pub sizing: Option<SizingConfig>,
     /// Contract multiplier (default: 100)
     #[serde(default = "default_multiplier")]
     #[garde(range(min = 1))]

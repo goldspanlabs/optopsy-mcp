@@ -177,6 +177,7 @@ pub fn backtest_params(strategy: &str, leg_deltas: Vec<TargetRange>) -> Backtest
         max_hold_days: None,
         capital: 100_000.0,
         quantity: 1,
+        sizing: None,
         multiplier: 100,
         max_positions: 5,
         selector: TradeSelector::First,

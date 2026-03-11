@@ -20,6 +20,45 @@ use crate::strategies;
 
 type DateFilter = Option<HashSet<NaiveDate>>;
 
+/// Load OHLCV close prices into a `BTreeMap<NaiveDate, f64>` for sizing volatility computation.
+///
+/// Only loads when the backtest has dynamic sizing configured and an OHLCV path is available.
+/// Returns `None` if sizing is not active or OHLCV data cannot be loaded.
+fn load_ohlcv_closes_for_sizing(
+    params: &BacktestParams,
+) -> Option<std::collections::BTreeMap<NaiveDate, f64>> {
+    // Only load when sizing is active (any method may benefit from vol data)
+    params.sizing.as_ref()?;
+
+    let ohlcv_path = params.ohlcv_path.as_ref()?;
+    let df = load_ohlcv(ohlcv_path).ok()?;
+
+    let dates = df.column("date").ok()?.date().ok()?;
+    let closes = df.column("close").ok()?.f64().ok()?;
+
+    let mut closes_map = std::collections::BTreeMap::new();
+    for i in 0..df.height() {
+        let Some(days) = dates.phys.get(i) else {
+            continue;
+        };
+        let Some(date) = NaiveDate::from_num_days_from_ce_opt(days + EPOCH_DAYS_CE_OFFSET) else {
+            continue;
+        };
+        let Some(close) = closes.get(i) else {
+            continue;
+        };
+        if close > 0.0 {
+            closes_map.insert(date, close);
+        }
+    }
+
+    if closes_map.is_empty() {
+        None
+    } else {
+        Some(closes_map)
+    }
+}
+
 /// Load OHLCV parquet into a `DataFrame`.
 fn load_ohlcv(ohlcv_path: &str) -> Result<DataFrame> {
     let args = ScanArgsParquet::default();
@@ -229,7 +268,8 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
         );
     }
 
-    let use_vectorized = params.adjustment_rules.is_empty();
+    // Dynamic sizing requires sequential equity tracking — force event loop
+    let use_vectorized = params.adjustment_rules.is_empty() && params.sizing.is_none();
     tracing::info!(
         path = if use_vectorized {
             "vectorized"
@@ -243,7 +283,7 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
         // Vectorized path — much faster for strategies without adjustments
         vectorized_sim::run_vectorized_backtest(df, params, &entry_dates, exit_dates.as_ref())?
     } else {
-        // Adjustment rules require sequential state — fall back to event loop
+        // Adjustment rules or dynamic sizing require sequential state — fall back to event loop
         run_event_loop_path(df, params, &strategy_def, &entry_dates, &exit_dates)?
     };
 
@@ -282,6 +322,9 @@ fn run_event_loop_path(
         candidates.retain(|date, _| allowed_dates.contains(date));
     }
 
+    // Load OHLCV closes when dynamic sizing needs volatility data
+    let ohlcv_closes = load_ohlcv_closes_for_sizing(params);
+
     let (trade_log, equity_curve, quality) = event_sim::run_event_loop(
         &price_table,
         &candidates,
@@ -290,6 +333,7 @@ fn run_event_loop_path(
         strategy_def,
         exit_dates.as_ref(),
         &date_index,
+        ohlcv_closes.as_ref(),
     );
 
     Ok((trade_log, equity_curve, quality))
@@ -335,6 +379,7 @@ pub fn compare_strategies(
             max_hold_days: params.sim_params.max_hold_days,
             capital: params.sim_params.capital,
             quantity: params.sim_params.quantity,
+            sizing: params.sim_params.sizing.clone(),
             multiplier: params.sim_params.multiplier,
             max_positions: params.sim_params.max_positions,
             selector: params.sim_params.selector.clone(),
@@ -692,6 +737,7 @@ mod tests {
             max_hold_days: None,
             capital: 10000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 5,
             selector: TradeSelector::First,
@@ -1024,6 +1070,7 @@ mod tests {
             max_hold_days: None,
             capital: 10000.0,
             quantity: 1,
+            sizing: None,
             multiplier: 100,
             max_positions: 5,
             selector: TradeSelector::First,

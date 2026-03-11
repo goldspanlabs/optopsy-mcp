@@ -11,13 +11,17 @@ use super::pricing;
 use super::types::*;
 
 /// Create a new position from an entry candidate.
+///
+/// `effective_quantity` overrides `params.quantity` when dynamic sizing is active.
 pub(crate) fn open_position(
     candidate: &EntryCandidate,
     date: NaiveDate,
     strategy_def: &StrategyDef,
     params: &BacktestParams,
     id: usize,
+    effective_quantity: Option<i32>,
 ) -> Position {
+    let qty = effective_quantity.unwrap_or(params.quantity);
     let mut legs = Vec::new();
     let mut entry_cost = 0.0;
 
@@ -30,7 +34,7 @@ pub(crate) fn open_position(
         let entry_price =
             pricing::fill_price(cand_leg.bid, cand_leg.ask, leg_def.side, &params.slippage);
 
-        let contracts = leg_def.qty * params.quantity;
+        let contracts = leg_def.qty * qty;
         entry_cost += entry_price
             * f64::from(contracts)
             * f64::from(params.multiplier)
@@ -57,7 +61,7 @@ pub(crate) fn open_position(
         secondary_expiration: candidate.secondary_expiration,
         legs,
         entry_cost,
-        quantity: params.quantity,
+        quantity: qty,
         multiplier: params.multiplier,
         status: PositionStatus::Open,
     }

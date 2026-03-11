@@ -51,7 +51,7 @@ Three main execution paths:
 - **run_backtest()** (`core.rs`) — Options event-driven simulation. Builds a `HashMap<(date, exp, strike, OptionType), QuoteSnapshot>` price table for O(1) lookups, finds entry candidates, then runs a day-by-day event loop managing position opens (with `max_positions` constraint) and closes (DTE exit, stop loss, take profit, max hold, expiration). Produces trade log, equity curve, and performance metrics (Sharpe, Sortino, CAGR, VaR, etc.).
 - **run_stock_backtest()** (`stock_sim.rs`) — Stock/equity event-driven simulation on OHLCV bars. Signal-driven entries (required) with optional exit signals. Manages long/short positions with stop-loss, take-profit, max-hold exits. Uses synthetic bid-ask spread (10% of daily range) for slippage models. Reuses `PerformanceMetrics`, `TradeRecord`, and `BacktestResult`.
 
-Key submodules: `filters.rs` (DTE/delta filtering, `filter_valid_quotes(df, min_bid_ask)`), `evaluation.rs` (entry-exit matching), `event_sim.rs` (options backtest event loop), `stock_sim.rs` (stock backtest event loop), `pricing.rs` (4 slippage models: Mid/Spread/Liquidity/PerLeg), `rules.rs` (strike ordering), `metrics.rs` (performance calculations), `output.rs` (DTE×delta bucketing with right-closed `(a, b]` intervals).
+Key submodules: `filters.rs` (DTE/delta filtering, `filter_valid_quotes(df, min_bid_ask)`), `evaluation.rs` (entry-exit matching), `event_sim.rs` (options backtest event loop), `stock_sim.rs` (stock backtest event loop), `pricing.rs` (4 slippage models: Mid/Spread/Liquidity/PerLeg), `rules.rs` (strike ordering), `metrics.rs` (performance calculations), `output.rs` (DTE×delta bucketing with right-closed `(a, b]` intervals), `sizing.rs` (dynamic position sizing: 5 methods with max-loss computation per strategy type).
 
 ### Strategies (`src/strategies/`)
 32 strategies across singles, spreads, butterflies, condors, iron, and calendar categories. Built using helpers (`call_leg`, `put_leg`, `strategy`) in `helpers.rs`. `all_strategies()` returns the full list; `find_strategy(name)` does linear scan. Multi-expiration strategies (calendar/diagonal) use `ExpirationCycle::Primary`/`Secondary` tags on legs.
@@ -209,6 +209,7 @@ Full event-driven day-by-day options simulation with trade log and metrics. Opti
   "max_hold_days": 30,         // Optional: force close after N days
   "stop_loss": 0.50,           // Optional: loss threshold (pct of entry)
   "take_profit": 0.80,         // Optional: profit target (pct of entry)
+  "sizing": null,              // Optional: dynamic position sizing (see PositionSizing enum)
 
   "selector": "Nearest",       // Trade selector: Nearest|HighestPremium|LowestPremium|First
   "adjustment_rules": [],      // Optional: position adjustments
@@ -225,6 +226,7 @@ Full event-driven day-by-day options simulation with trade log and metrics. Opti
 - `trade_summary` — Total, winners, losers, avg P&L, best/worst trades
 - `equity_curve` — ≤50 sampled points from full curve
 - `trade_log` — All trades with entry/exit dates, P&L, days_held, exit_reason
+- `sizing_summary` — Dynamic sizing stats (when sizing is active): method, avg/min/max quantity
 - `suggested_next_steps` — Follow-up actions
 
 #### `run_stock_backtest`
@@ -239,6 +241,7 @@ Signal-driven stock/equity backtest on OHLCV data. Entry signal is required. OHL
   "exit_signal": null,           // Optional: SignalSpec for exit
   "capital": 10000.0,            // Starting equity (default: 10000)
   "quantity": 100,               // Shares per trade (default: 100)
+  "sizing": null,                // Optional: dynamic position sizing
   "max_positions": 1,            // Max concurrent positions (default: 1)
   "slippage": {"type": "Mid"},   // Slippage model (default: Mid)
   "commission": null,            // Optional: Commission config
@@ -403,6 +406,13 @@ Statistical significance test for a backtest result. Shuffles trade entry dates 
 - `Liquidity { fill_ratio: 0.0..=1.0, ref_volume: u64 }` — Volume-based slippage
 - `PerLeg { per_leg: f64 }` — Fixed per-leg points
 
+**`PositionSizing`** (tagged enum, `"method"` field):
+- `fixed` — Passthrough, uses fixed `quantity`
+- `fixed_fractional { risk_pct: 0.001..=1.0 }` — Risk a % of equity per trade
+- `risk_per_trade { risk_amount: >= 1.0 }` — Fixed dollar risk per trade
+- `kelly { fraction: 0.01..=1.0, lookback: Option<usize> }` — Kelly criterion (cold-start: first 20 trades use fallback)
+- `volatility_target { target_vol: 0.01..=2.0, lookback_days: 5..=252 }` — Target annualized portfolio volatility
+
 ### Structs
 
 **`TargetRange`**: `{ target: 0.0..=1.0, min: 0.0..=1.0, max: 0.0..=1.0 }` where `min ≤ max`
@@ -416,9 +426,16 @@ Statistical significance test for a backtest result. Shuffles trade entry dates 
 **`Commission`**: `{ per_contract: f64, base_fee: f64, min_fee: f64 }`
 - `calculate(num_contracts)` returns `max(base_fee + per_contract * num_contracts, min_fee)`
 
+**`SizingConfig`**: `{ method: PositionSizing, constraints: SizingConstraints }`
+- Optional on `BacktestParams`, `SimParams`, `StockBacktestParams`
+- When present, overrides fixed `quantity` with per-trade dynamic sizing
+
+**`SizingConstraints`**: `{ min_quantity: i32 (default 1), max_quantity: Option<i32> }`
+- Clamps computed quantity to `[min, max]`
+
 **`PerformanceMetrics`**: Sharpe, Sortino, CAGR, Calmar, VaR 95%, max drawdown, win rate, profit factor, expectancy, etc.
 
-**`TradeRecord`**: Entry/exit date, strike, legs, quantity, entry_cost, exit_cost, P&L, days_held, exit_reason
+**`TradeRecord`**: Entry/exit date, strike, legs, quantity, entry_cost, exit_cost, P&L, days_held, exit_reason, computed_quantity, entry_equity
 
 ## rmcp 0.17 Patterns
 

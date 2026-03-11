@@ -184,6 +184,7 @@ impl OptopsyServer {
             max_hold_days,
             capital,
             quantity,
+            sizing,
             multiplier,
             max_positions,
             selector,
@@ -201,7 +202,13 @@ impl OptopsyServer {
 
         let (symbol, df) = self.ensure_data_loaded(symbol_param.as_deref()).await?;
 
-        let ohlcv_path = if entry_signal.is_some() || exit_signal.is_some() {
+        let needs_ohlcv = entry_signal.is_some()
+            || exit_signal.is_some()
+            || matches!(
+                sizing.as_ref().map(|s| &s.method),
+                Some(crate::engine::types::PositionSizing::VolatilityTarget { .. })
+            );
+        let ohlcv_path = if needs_ohlcv {
             Some(self.ensure_ohlcv(&symbol).await?)
         } else {
             None
@@ -228,6 +235,7 @@ impl OptopsyServer {
             quantity,
             multiplier,
             max_positions,
+            sizing,
             selector: selector.unwrap_or_default(),
             adjustment_rules: vec![],
             entry_signal,
@@ -509,6 +517,23 @@ impl OptopsyServer {
                 let (symbol, df, backtest_params) =
                     self.resolve_backtest_params(params.base).await?;
 
+                // Naked strategy + sizing requires stop_loss for max-loss calculation
+                if backtest_params.sizing.is_some() && backtest_params.stop_loss.is_none() {
+                    if let Some(strategy_def) =
+                        crate::strategies::find_strategy(&backtest_params.strategy)
+                    {
+                        let is_naked = strategy_def.legs.len() == 1
+                            && strategy_def.legs[0].side == crate::engine::types::Side::Short;
+                        if is_naked {
+                            return Err(
+                                "Dynamic sizing with a naked short strategy requires `stop_loss` \
+                                 to compute max loss per contract. Add a stop_loss value."
+                                    .to_string(),
+                            );
+                        }
+                    }
+                }
+
                 // Try to load underlying OHLCV close prices from cache for chart overlay
                 let underlying_prices = match self.cache.ensure_local_for(&symbol, "prices").await {
                     Ok(path) => {
@@ -613,6 +638,7 @@ impl OptopsyServer {
                     side: params.side.unwrap_or(crate::engine::types::Side::Long),
                     capital: params.capital,
                     quantity: params.quantity,
+                    sizing: params.sizing,
                     max_positions: params.max_positions,
                     slippage: params.slippage,
                     commission: params.commission,
@@ -788,6 +814,7 @@ impl OptopsyServer {
                     ohlcv_path,
                     cross_ohlcv_paths,
                     min_days_between_entries: params.sim_params.min_days_between_entries,
+                    sizing: params.sim_params.sizing,
                     exit_net_delta: params.sim_params.exit_net_delta,
                 },
                 out_of_sample_pct: params.out_of_sample_pct / 100.0,

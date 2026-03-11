@@ -11,8 +11,8 @@ use crate::engine::multiple_comparisons::MultipleComparisonsResult;
 use crate::engine::permutation::MetricPermutationResult;
 use crate::engine::sweep::{DimensionStats, OosResult, StabilityScore};
 use crate::engine::types::{
-    Commission, CompareResult, DteRange, ExpirationFilter, PerformanceMetrics, Side, Slippage,
-    SweepResult, TargetRange, TradeRecord, TradeSelector,
+    Commission, CompareResult, DteRange, ExpirationFilter, PerformanceMetrics, Side, SizingConfig,
+    Slippage, SweepResult, TargetRange, TradeRecord, TradeSelector,
 };
 use crate::signals::registry::SignalSpec;
 
@@ -37,6 +37,21 @@ pub struct UnderlyingPrice {
     pub close: f64,
 }
 
+/// Summary of dynamic position sizing behavior across all trades.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SizingSummary {
+    /// Sizing method used (e.g. `"fixed_fractional(2.0%)"`).
+    pub method: String,
+    /// Average computed quantity across all trades
+    pub avg_quantity: f64,
+    /// Minimum computed quantity
+    pub min_quantity: i32,
+    /// Maximum computed quantity
+    pub max_quantity: i32,
+    /// Final portfolio equity at end of simulation
+    pub final_equity: f64,
+}
+
 /// AI-enriched response for `run_options_backtest`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BacktestResponse {
@@ -49,6 +64,9 @@ pub struct BacktestResponse {
     pub trade_summary: TradeSummary,
     pub trade_log: Vec<TradeRecord>,
     pub data_quality: BacktestDataQuality,
+    /// Dynamic position sizing summary (only present when sizing is active)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sizing_summary: Option<SizingSummary>,
     /// Underlying close prices for the backtest period (empty if OHLCV data not cached)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub underlying_prices: Vec<UnderlyingPrice>,
@@ -83,6 +101,9 @@ pub struct BacktestParamsSummary {
     pub min_days_between_entries: Option<i32>,
     pub expiration_filter: ExpirationFilter,
     pub exit_net_delta: Option<f64>,
+    /// Position sizing configuration (only present when sizing is active)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sizing: Option<SizingConfig>,
 }
 
 /// Summary of stock backtest parameters echoed in responses.
@@ -102,6 +123,9 @@ pub struct StockBacktestParamsSummary {
     pub exit_signal: Option<serde_json::Value>,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
+    /// Position sizing configuration (only present when sizing is active)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sizing: Option<SizingConfig>,
 }
 
 /// AI-enriched response for `run_stock_backtest`, matching options backtest output shape.
@@ -114,6 +138,9 @@ pub struct StockBacktestResponse {
     pub metrics: PerformanceMetrics,
     pub trade_summary: TradeSummary,
     pub trade_log: Vec<TradeRecord>,
+    /// Dynamic position sizing summary (only present when sizing is active)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sizing_summary: Option<SizingSummary>,
     /// Underlying close prices for charting
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub underlying_prices: Vec<UnderlyingPrice>,
