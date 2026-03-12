@@ -258,7 +258,13 @@ pub fn compute_indicator_data(
         // ── Combinators ──────────────────────────────────────────────
         SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
             let mut result = compute_indicator_data(left, ohlcv_df, date_col);
-            result.extend(compute_indicator_data(right, ohlcv_df, date_col));
+            let right_indicators = compute_indicator_data(right, ohlcv_df, date_col);
+            // Deduplicate: skip indicators already present (by name)
+            for ind in right_indicators {
+                if !result.iter().any(|existing| existing.name == ind.name) {
+                    result.push(ind);
+                }
+            }
             result
         }
         SignalSpec::Saved { name } => match super::storage::load_signal(name) {
@@ -273,6 +279,9 @@ pub fn compute_indicator_data(
 // ── Date extraction ──────────────────────────────────────────────────────────
 
 /// Extract date strings from a `DataFrame` column (handles Date and Datetime types).
+///
+/// Returns an error if the column doesn't exist. Individual date extraction failures
+/// produce a sentinel empty string — `build_series` filters these out alongside NaN values.
 fn extract_date_strings(df: &DataFrame, date_col: &str) -> Result<Vec<String>, PolarsError> {
     let col = df.column(date_col)?;
     let n = df.height();
@@ -280,7 +289,10 @@ fn extract_date_strings(df: &DataFrame, date_col: &str) -> Result<Vec<String>, P
     for i in 0..n {
         match extract_date_from_column(col, i) {
             Ok(d) => dates.push(d.format("%Y-%m-%d").to_string()),
-            Err(_) => dates.push(String::new()),
+            Err(_) => {
+                // Sentinel: build_series filters out points with empty dates
+                dates.push(String::new());
+            }
         }
     }
     Ok(dates)
@@ -288,26 +300,51 @@ fn extract_date_strings(df: &DataFrame, date_col: &str) -> Result<Vec<String>, P
 
 // ── Series builder helpers ───────────────────────────────────────────────────
 
-/// Build an `IndicatorSeries` from padded values and date strings, filtering NaN.
-/// Samples down to `MAX_INDICATOR_POINTS` if needed.
-fn build_series(label: &str, padded: &[f64], dates: &[String]) -> IndicatorSeries {
+/// Build an `IndicatorSeries` from padded values and date strings, filtering NaN
+/// and empty-date sentinels. Samples down to `MAX_INDICATOR_POINTS` if needed.
+/// Returns `(series, total_raw_points)` so callers can report sampling metadata.
+fn build_series(label: &str, padded: &[f64], dates: &[String]) -> (IndicatorSeries, usize) {
     let mut points: Vec<IndicatorPoint> = padded
         .iter()
         .zip(dates.iter())
-        .filter(|(&v, _)| !v.is_nan())
+        .filter(|(&v, d)| !v.is_nan() && !d.is_empty())
         .map(|(&v, d)| IndicatorPoint {
             date: d.clone(),
             value: (v * 10000.0).round() / 10000.0,
         })
         .collect();
 
+    let total = points.len();
     if points.len() > MAX_INDICATOR_POINTS {
         points = sample_points(points, MAX_INDICATOR_POINTS);
     }
 
-    IndicatorSeries {
-        label: label.to_string(),
-        values: points,
+    (
+        IndicatorSeries {
+            label: label.to_string(),
+            values: points,
+        },
+        total,
+    )
+}
+
+/// Build a single-series `IndicatorData`, setting `total_points` if data was sampled.
+fn make_indicator(
+    name: String,
+    display_type: DisplayType,
+    padded: &[f64],
+    dates: &[String],
+    series_label: &str,
+    thresholds: Vec<f64>,
+) -> IndicatorData {
+    let (series, total) = build_series(series_label, padded, dates);
+    let sampled = total > MAX_INDICATOR_POINTS;
+    IndicatorData {
+        name,
+        display_type,
+        series: vec![series],
+        thresholds,
+        total_points: if sampled { Some(total) } else { None },
     }
 }
 
@@ -339,12 +376,14 @@ fn compute_rsi_indicator(
     }
     let rsi_values = sti::rsi(&prices);
     let padded = pad_series(&rsi_values, n);
-    vec![IndicatorData {
-        name: "RSI(14)".to_string(),
-        display_type: DisplayType::Subchart,
-        series: vec![build_series("RSI", &padded, dates)],
-        thresholds: vec![threshold],
-    }]
+    vec![make_indicator(
+        "RSI(14)".to_string(),
+        DisplayType::Subchart,
+        &padded,
+        dates,
+        "RSI",
+        vec![threshold],
+    )]
 }
 
 fn compute_macd_indicator(df: &DataFrame, column: &str, dates: &[String]) -> Vec<IndicatorData> {
@@ -358,12 +397,14 @@ fn compute_macd_indicator(df: &DataFrame, column: &str, dates: &[String]) -> Vec
     let macd_values = sti::macd(&prices);
     let histograms: Vec<f64> = macd_values.iter().map(|t| t.2).collect();
     let padded = pad_series(&histograms, n);
-    vec![IndicatorData {
-        name: "MACD Histogram".to_string(),
-        display_type: DisplayType::Subchart,
-        series: vec![build_series("Histogram", &padded, dates)],
-        thresholds: vec![0.0],
-    }]
+    vec![make_indicator(
+        "MACD Histogram".to_string(),
+        DisplayType::Subchart,
+        &padded,
+        dates,
+        "Histogram",
+        vec![0.0],
+    )]
 }
 
 fn compute_stochastic_indicator(
@@ -390,12 +431,14 @@ fn compute_stochastic_indicator(
     }
     let stoch_values = compute_stochastic(&close, &high, &low, period);
     let padded = pad_series(&stoch_values, n);
-    vec![IndicatorData {
-        name: format!("Stochastic({period})"),
-        display_type: DisplayType::Subchart,
-        series: vec![build_series("%K", &padded, dates)],
-        thresholds: vec![threshold],
-    }]
+    vec![make_indicator(
+        format!("Stochastic({period})"),
+        DisplayType::Subchart,
+        &padded,
+        dates,
+        "%K",
+        vec![threshold],
+    )]
 }
 
 fn compute_ma_indicator(
@@ -415,16 +458,14 @@ fn compute_ma_indicator(
     }
     let ma = ma_fn(&prices, period);
     let padded = pad_series(&ma, n);
-    vec![IndicatorData {
-        name: format!("{ma_type}({period})"),
-        display_type: DisplayType::Overlay,
-        series: vec![build_series(
-            &format!("{ma_type}({period})"),
-            &padded,
-            dates,
-        )],
-        thresholds: vec![],
-    }]
+    vec![make_indicator(
+        format!("{ma_type}({period})"),
+        DisplayType::Overlay,
+        &padded,
+        dates,
+        &format!("{ma_type}({period})"),
+        vec![],
+    )]
 }
 
 fn compute_ma_crossover_indicator(
@@ -446,14 +487,21 @@ fn compute_ma_crossover_indicator(
     }
     let fast = pad_series(&ma_fn(&prices, fast_period), n);
     let slow = pad_series(&ma_fn(&prices, slow_period), n);
+    let (fast_series, fast_total) =
+        build_series(&format!("{ma_type}({fast_period})"), &fast, dates);
+    let (slow_series, slow_total) =
+        build_series(&format!("{ma_type}({slow_period})"), &slow, dates);
+    let max_total = fast_total.max(slow_total);
     vec![IndicatorData {
         name: format!("{ma_type} Crossover ({fast_period}/{slow_period})"),
         display_type: DisplayType::Overlay,
-        series: vec![
-            build_series(&format!("{ma_type}({fast_period})"), &fast, dates),
-            build_series(&format!("{ma_type}({slow_period})"), &slow, dates),
-        ],
+        series: vec![fast_series, slow_series],
         thresholds: vec![],
+        total_points: if max_total > MAX_INDICATOR_POINTS {
+            Some(max_total)
+        } else {
+            None
+        },
     }]
 }
 
@@ -482,12 +530,14 @@ fn compute_aroon_indicator(
         .collect();
     let oscillators: Vec<f64> = aroon_values.iter().map(|t| t.2).collect();
     let padded = pad_series(&oscillators, n);
-    vec![IndicatorData {
-        name: format!("Aroon Oscillator({period})"),
-        display_type: DisplayType::Subchart,
-        series: vec![build_series("Oscillator", &padded, dates)],
-        thresholds: vec![0.0],
-    }]
+    vec![make_indicator(
+        format!("Aroon Oscillator({period})"),
+        DisplayType::Subchart,
+        &padded,
+        dates,
+        "Oscillator",
+        vec![0.0],
+    )]
 }
 
 fn compute_aroon_up_indicator(
@@ -511,12 +561,14 @@ fn compute_aroon_up_indicator(
         })
         .collect();
     let padded = pad_series(&aroon_up_values, n);
-    vec![IndicatorData {
-        name: format!("Aroon Up({period})"),
-        display_type: DisplayType::Subchart,
-        series: vec![build_series("Aroon Up", &padded, dates)],
-        thresholds: vec![threshold],
-    }]
+    vec![make_indicator(
+        format!("Aroon Up({period})"),
+        DisplayType::Subchart,
+        &padded,
+        dates,
+        "Aroon Up",
+        vec![threshold],
+    )]
 }
 
 fn compute_supertrend_indicator(
@@ -550,12 +602,14 @@ fn compute_supertrend_indicator(
         period,
     );
     let padded = pad_series(&st, n);
-    vec![IndicatorData {
-        name: format!("Supertrend({period}, {multiplier})"),
-        display_type: DisplayType::Overlay,
-        series: vec![build_series("Supertrend", &padded, dates)],
-        thresholds: vec![],
-    }]
+    vec![make_indicator(
+        format!("Supertrend({period}, {multiplier})"),
+        DisplayType::Overlay,
+        &padded,
+        dates,
+        "Supertrend",
+        vec![],
+    )]
 }
 
 fn compute_atr_indicator(
@@ -582,12 +636,14 @@ fn compute_atr_indicator(
     }
     let atr_values = compute_atr(&close, &high, &low, period);
     let padded = pad_series(&atr_values, n);
-    vec![IndicatorData {
-        name: format!("ATR({period})"),
-        display_type: DisplayType::Subchart,
-        series: vec![build_series("ATR", &padded, dates)],
-        thresholds: vec![threshold],
-    }]
+    vec![make_indicator(
+        format!("ATR({period})"),
+        DisplayType::Subchart,
+        &padded,
+        dates,
+        "ATR",
+        vec![threshold],
+    )]
 }
 
 fn compute_bollinger_indicator(
@@ -606,14 +662,19 @@ fn compute_bollinger_indicator(
     let (lower, upper) = compute_bollinger_bands(&prices, period);
     let lower_padded = pad_series(&lower, n);
     let upper_padded = pad_series(&upper, n);
+    let (lower_series, lower_total) = build_series("Lower Band", &lower_padded, dates);
+    let (upper_series, upper_total) = build_series("Upper Band", &upper_padded, dates);
+    let max_total = lower_total.max(upper_total);
     vec![IndicatorData {
         name: format!("Bollinger Bands({period})"),
         display_type: DisplayType::Overlay,
-        series: vec![
-            build_series("Lower Band", &lower_padded, dates),
-            build_series("Upper Band", &upper_padded, dates),
-        ],
+        series: vec![lower_series, upper_series],
         thresholds: vec![],
+        total_points: if max_total > MAX_INDICATOR_POINTS {
+            Some(max_total)
+        } else {
+            None
+        },
     }]
 }
 
@@ -642,14 +703,19 @@ fn compute_keltner_indicator(
     let (lower, upper) = compute_keltner_channel(&close, &high, &low, period, multiplier);
     let lower_padded = pad_series(&lower, n);
     let upper_padded = pad_series(&upper, n);
+    let (lower_series, lower_total) = build_series("Lower Channel", &lower_padded, dates);
+    let (upper_series, upper_total) = build_series("Upper Channel", &upper_padded, dates);
+    let max_total = lower_total.max(upper_total);
     vec![IndicatorData {
         name: format!("Keltner Channel({period}, {multiplier})"),
         display_type: DisplayType::Overlay,
-        series: vec![
-            build_series("Lower Channel", &lower_padded, dates),
-            build_series("Upper Channel", &upper_padded, dates),
-        ],
+        series: vec![lower_series, upper_series],
         thresholds: vec![],
+        total_points: if max_total > MAX_INDICATOR_POINTS {
+            Some(max_total)
+        } else {
+            None
+        },
     }]
 }
 
@@ -684,12 +750,14 @@ fn compute_mfi_indicator(
     let mfi_values =
         rust_ti::momentum_indicators::bulk::money_flow_index(&typical, &volume, period);
     let padded = pad_series(&mfi_values, n);
-    vec![IndicatorData {
-        name: format!("MFI({period})"),
-        display_type: DisplayType::Subchart,
-        series: vec![build_series("MFI", &padded, dates)],
-        thresholds: vec![threshold],
-    }]
+    vec![make_indicator(
+        format!("MFI({period})"),
+        DisplayType::Subchart,
+        &padded,
+        dates,
+        "MFI",
+        vec![threshold],
+    )]
 }
 
 fn compute_obv_indicator(
@@ -710,12 +778,14 @@ fn compute_obv_indicator(
     }
     let obv_values = rust_ti::momentum_indicators::bulk::on_balance_volume(&prices, &volume, 0.0);
     let padded = pad_series(&obv_values, n);
-    vec![IndicatorData {
-        name: "OBV".to_string(),
-        display_type: DisplayType::Subchart,
-        series: vec![build_series("OBV", &padded, dates)],
-        thresholds: vec![],
-    }]
+    vec![make_indicator(
+        "OBV".to_string(),
+        DisplayType::Subchart,
+        &padded,
+        dates,
+        "OBV",
+        vec![],
+    )]
 }
 
 fn compute_cmf_indicator(
@@ -745,12 +815,14 @@ fn compute_cmf_indicator(
     }
     let cmf_values = compute_cmf(&close, &high, &low, &volume, period);
     let padded = pad_series(&cmf_values, n);
-    vec![IndicatorData {
-        name: format!("CMF({period})"),
-        display_type: DisplayType::Subchart,
-        series: vec![build_series("CMF", &padded, dates)],
-        thresholds: vec![0.0],
-    }]
+    vec![make_indicator(
+        format!("CMF({period})"),
+        DisplayType::Subchart,
+        &padded,
+        dates,
+        "CMF",
+        vec![0.0],
+    )]
 }
 
 fn compute_drawdown_indicator(
@@ -777,12 +849,14 @@ fn compute_drawdown_indicator(
             dd_values.push(0.0);
         }
     }
-    vec![IndicatorData {
-        name: format!("Drawdown({window})"),
-        display_type: DisplayType::Subchart,
-        series: vec![build_series("Drawdown", &dd_values, dates)],
-        thresholds: vec![-threshold],
-    }]
+    vec![make_indicator(
+        format!("Drawdown({window})"),
+        DisplayType::Subchart,
+        &dd_values,
+        dates,
+        "Drawdown",
+        vec![-threshold],
+    )]
 }
 
 fn compute_roc_indicator(
@@ -802,12 +876,14 @@ fn compute_roc_indicator(
             roc_values[i] = (prices[i] - prices[i - period]) / prices[i - period].abs();
         }
     }
-    vec![IndicatorData {
-        name: format!("ROC({period})"),
-        display_type: DisplayType::Subchart,
-        series: vec![build_series("ROC", &roc_values, dates)],
-        thresholds: vec![threshold],
-    }]
+    vec![make_indicator(
+        format!("ROC({period})"),
+        DisplayType::Subchart,
+        &roc_values,
+        dates,
+        "ROC",
+        vec![threshold],
+    )]
 }
 
 #[cfg(test)]
@@ -1007,6 +1083,53 @@ mod tests {
         let result = compute_indicator_data(&spec, &df, "date");
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "ROC(5)");
+    }
+
+    #[test]
+    fn and_combinator_deduplicates_same_indicator() {
+        let df = make_ohlcv_df(30);
+        // Both children use RSI — should only appear once
+        let spec = SignalSpec::And {
+            left: Box::new(SignalSpec::RsiBelow {
+                column: "close".into(),
+                threshold: 30.0,
+            }),
+            right: Box::new(SignalSpec::RsiAbove {
+                column: "close".into(),
+                threshold: 70.0,
+            }),
+        };
+        let result = compute_indicator_data(&spec, &df, "date");
+        assert_eq!(result.len(), 1, "Duplicate RSI should be deduplicated");
+        assert_eq!(result[0].name, "RSI(14)");
+    }
+
+    #[test]
+    fn or_combinator_deduplicates_same_indicator() {
+        let df = make_ohlcv_df(30);
+        let spec = SignalSpec::Or {
+            left: Box::new(SignalSpec::PriceAboveSma {
+                column: "close".into(),
+                period: 5,
+            }),
+            right: Box::new(SignalSpec::PriceBelowSma {
+                column: "close".into(),
+                period: 5,
+            }),
+        };
+        let result = compute_indicator_data(&spec, &df, "date");
+        assert_eq!(result.len(), 1, "Duplicate SMA(5) should be deduplicated");
+    }
+
+    #[test]
+    fn total_points_none_when_not_sampled() {
+        let df = make_ohlcv_df(30);
+        let spec = SignalSpec::RsiBelow {
+            column: "close".into(),
+            threshold: 30.0,
+        };
+        let result = compute_indicator_data(&spec, &df, "date");
+        assert!(result[0].total_points.is_none());
     }
 
     #[test]

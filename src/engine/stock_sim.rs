@@ -440,18 +440,16 @@ pub fn resample_ohlcv(
         None
     };
 
-    // Build group keys for each row
+    // Build group keys for each row.
+    // iso_week().year() correctly handles year boundaries (e.g., Dec 30 → ISO week 1 of next year).
     let n = df.height();
     let mut group_keys: Vec<(i32, u32)> = Vec::with_capacity(n);
     for i in 0..n {
-        let Some(days) = dates.phys.get(i) else {
-            group_keys.push((0, 0));
-            continue;
-        };
-        let Some(date) = NaiveDate::from_num_days_from_ce_opt(days + epoch_offset) else {
-            group_keys.push((0, 0));
-            continue;
-        };
+        let days = dates.phys.get(i).ok_or_else(|| {
+            anyhow::anyhow!("NULL date at row {i}; cannot resample with missing dates")
+        })?;
+        let date = NaiveDate::from_num_days_from_ce_opt(days + epoch_offset)
+            .ok_or_else(|| anyhow::anyhow!("Invalid date value at row {i}"))?;
         let key = match interval {
             Interval::Weekly => (date.iso_week().year(), date.iso_week().week()),
             Interval::Monthly => (date.year(), date.month()),
@@ -484,17 +482,28 @@ pub fn resample_ohlcv(
     let mut out_adjcloses: Vec<f64> = Vec::with_capacity(groups.len());
     let mut out_volumes: Vec<u64> = Vec::with_capacity(groups.len());
 
-    for g in &groups {
+    for (gi, g) in groups.iter().enumerate() {
         let last = g.end - 1;
-        out_dates.push(dates.phys.get(last).unwrap_or(0));
-        out_opens.push(opens.get(g.start).unwrap_or(0.0));
+        // Dates and prices were already validated in the group-key loop above,
+        // so NULLs here indicate a logic error — bail rather than corrupt silently.
+        out_dates.push(
+            dates
+                .phys
+                .get(last)
+                .ok_or_else(|| anyhow::anyhow!("NULL date in group {gi} at row {last}"))?,
+        );
+        out_opens.push(
+            opens
+                .get(g.start)
+                .ok_or_else(|| anyhow::anyhow!("NULL open in group {gi} at row {}", g.start))?,
+        );
 
         let mut max_high = f64::NEG_INFINITY;
         let mut min_low = f64::INFINITY;
         let mut vol_sum: u64 = 0;
         for j in g.start..g.end {
-            let h = highs.get(j).unwrap_or(0.0);
-            let l = lows.get(j).unwrap_or(0.0);
+            let h = highs.get(j).unwrap_or(f64::NAN);
+            let l = lows.get(j).unwrap_or(f64::NAN);
             if h > max_high {
                 max_high = h;
             }
@@ -505,23 +514,33 @@ pub fn resample_ohlcv(
         }
         out_highs.push(max_high);
         out_lows.push(min_low);
-        out_closes.push(closes.get(last).unwrap_or(0.0));
+        out_closes.push(
+            closes
+                .get(last)
+                .ok_or_else(|| anyhow::anyhow!("NULL close in group {gi} at row {last}"))?,
+        );
         out_adjcloses.push(
             adjcloses
                 .as_ref()
                 .and_then(|ac| ac.get(last))
-                .unwrap_or(closes.get(last).unwrap_or(0.0)),
+                .unwrap_or(closes.get(last).ok_or_else(|| {
+                    anyhow::anyhow!("NULL close for adjclose fallback in group {gi}")
+                })?),
         );
         out_volumes.push(vol_sum);
     }
 
-    let date_col = DateChunked::from_naive_date(
-        PlSmallStr::from("date"),
-        out_dates
-            .iter()
-            .map(|&d| NaiveDate::from_num_days_from_ce_opt(d + epoch_offset).unwrap_or_default()),
-    )
-    .into_column();
+    let reconstructed_dates: Vec<NaiveDate> = out_dates
+        .iter()
+        .enumerate()
+        .map(|(i, &d)| {
+            NaiveDate::from_num_days_from_ce_opt(d + epoch_offset).ok_or_else(|| {
+                anyhow::anyhow!("Invalid date value in resampled output at index {i}")
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let date_col =
+        DateChunked::from_naive_date(PlSmallStr::from("date"), reconstructed_dates).into_column();
 
     let mut columns = vec![
         date_col,
@@ -1109,5 +1128,122 @@ mod tests {
         // bars_from_df should work on the resampled output
         let bars = bars_from_df(&result).unwrap();
         assert_eq!(bars.len(), 2);
+    }
+
+    #[test]
+    fn resample_weekly_year_boundary() {
+        // Dec 30, 2024 is ISO week 1 of 2025; Jan 3, 2025 is also ISO week 1 of 2025.
+        // They should group together in weekly resampling.
+        use polars::prelude::*;
+        let dates = vec![
+            NaiveDate::from_ymd_opt(2024, 12, 30).unwrap(), // ISO week 1, 2025
+            NaiveDate::from_ymd_opt(2024, 12, 31).unwrap(), // ISO week 1, 2025
+            NaiveDate::from_ymd_opt(2025, 1, 2).unwrap(),   // ISO week 1, 2025
+            NaiveDate::from_ymd_opt(2025, 1, 3).unwrap(),   // ISO week 1, 2025
+            NaiveDate::from_ymd_opt(2025, 1, 6).unwrap(),   // ISO week 2, 2025
+        ];
+        let date_col = DateChunked::from_naive_date(PlSmallStr::from("date"), dates).into_column();
+        let df = df! {
+            "open" => &[100.0, 101.0, 102.0, 103.0, 104.0],
+            "high" => &[102.0, 103.0, 104.0, 105.0, 106.0],
+            "low" => &[99.0, 100.0, 101.0, 102.0, 103.0],
+            "close" => &[101.0, 102.0, 103.0, 104.0, 105.0],
+            "volume" => &[1000_u64, 1100, 1200, 1300, 1400],
+        }
+        .unwrap()
+        .hstack(&[date_col])
+        .unwrap()
+        .select(["date", "open", "high", "low", "close", "volume"])
+        .unwrap();
+
+        let result = resample_ohlcv(&df, Interval::Weekly).unwrap();
+        // Dec 30 + Dec 31 + Jan 2 + Jan 3 → ISO week 1 → 1 bar
+        // Jan 6 → ISO week 2 → 1 bar
+        assert_eq!(result.height(), 2);
+        let volumes = result.column("volume").unwrap().u64().unwrap();
+        assert_eq!(volumes.get(0).unwrap(), 1000 + 1100 + 1200 + 1300);
+        assert_eq!(volumes.get(1).unwrap(), 1400);
+    }
+
+    #[test]
+    fn resample_empty_dataframe() {
+        use polars::prelude::*;
+        let dates: Vec<NaiveDate> = vec![];
+        let date_col = DateChunked::from_naive_date(PlSmallStr::from("date"), dates).into_column();
+        let df = df! {
+            "open" => Vec::<f64>::new(),
+            "high" => Vec::<f64>::new(),
+            "low" => Vec::<f64>::new(),
+            "close" => Vec::<f64>::new(),
+            "volume" => Vec::<u64>::new(),
+        }
+        .unwrap()
+        .hstack(&[date_col])
+        .unwrap()
+        .select(["date", "open", "high", "low", "close", "volume"])
+        .unwrap();
+
+        let result = resample_ohlcv(&df, Interval::Weekly).unwrap();
+        assert_eq!(result.height(), 0);
+    }
+
+    #[test]
+    fn resample_without_adjclose() {
+        use polars::prelude::*;
+        let dates = vec![
+            NaiveDate::from_ymd_opt(2025, 1, 6).unwrap(),
+            NaiveDate::from_ymd_opt(2025, 1, 7).unwrap(),
+        ];
+        let date_col = DateChunked::from_naive_date(PlSmallStr::from("date"), dates).into_column();
+        let df = df! {
+            "open" => &[100.0, 101.0],
+            "high" => &[102.0, 103.0],
+            "low" => &[99.0, 100.0],
+            "close" => &[101.0, 102.0],
+            "volume" => &[1000_u64, 1100],
+        }
+        .unwrap()
+        .hstack(&[date_col])
+        .unwrap()
+        .select(["date", "open", "high", "low", "close", "volume"])
+        .unwrap();
+
+        let result = resample_ohlcv(&df, Interval::Weekly).unwrap();
+        assert_eq!(result.height(), 1);
+        // Should NOT have adjclose column
+        assert!(result.column("adjclose").is_err());
+    }
+
+    #[test]
+    fn resample_single_row_per_group() {
+        use polars::prelude::*;
+        // Two dates in different weeks, one bar each
+        let dates = vec![
+            NaiveDate::from_ymd_opt(2025, 1, 6).unwrap(),  // Week 2
+            NaiveDate::from_ymd_opt(2025, 1, 13).unwrap(), // Week 3
+        ];
+        let date_col = DateChunked::from_naive_date(PlSmallStr::from("date"), dates).into_column();
+        let df = df! {
+            "open" => &[100.0, 110.0],
+            "high" => &[102.0, 112.0],
+            "low" => &[99.0, 109.0],
+            "close" => &[101.0, 111.0],
+            "volume" => &[1000_u64, 2000],
+        }
+        .unwrap()
+        .hstack(&[date_col])
+        .unwrap()
+        .select(["date", "open", "high", "low", "close", "volume"])
+        .unwrap();
+
+        let result = resample_ohlcv(&df, Interval::Weekly).unwrap();
+        assert_eq!(result.height(), 2);
+        // Each group has one bar, so OHLCV should be unchanged
+        let opens = result.column("open").unwrap().f64().unwrap();
+        let closes = result.column("close").unwrap().f64().unwrap();
+        assert!((opens.get(0).unwrap() - 100.0).abs() < 1e-6);
+        assert!((closes.get(0).unwrap() - 101.0).abs() < 1e-6);
+        assert!((opens.get(1).unwrap() - 110.0).abs() < 1e-6);
+        assert!((closes.get(1).unwrap() - 111.0).abs() < 1e-6);
     }
 }

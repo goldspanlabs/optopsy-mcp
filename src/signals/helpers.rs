@@ -42,6 +42,9 @@ pub struct IndicatorData {
     pub series: Vec<IndicatorSeries>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub thresholds: Vec<f64>,
+    /// Number of raw points before sampling (only set when data was down-sampled).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_points: Option<usize>,
 }
 
 /// Extract a column from a `DataFrame` as a `Vec<f64>`.

@@ -574,7 +574,16 @@ impl OptopsyServer {
                 // Run backtest on a blocking thread — the engine performs synchronous
                 // Polars I/O (scan_parquet) which conflicts with the tokio runtime.
                 tokio::task::spawn_blocking(move || {
-                    tools::backtest::execute(&df, &backtest_params, underlying_prices, None)
+                    // Load OHLCV data for indicator charting (if signals need it)
+                    let ohlcv_df = backtest_params.ohlcv_path.as_deref().and_then(|path| {
+                        crate::engine::stock_sim::load_ohlcv_df(path, None, None).ok()
+                    });
+                    tools::backtest::execute(
+                        &df,
+                        &backtest_params,
+                        underlying_prices,
+                        ohlcv_df.as_ref(),
+                    )
                 })
                 .await
                 .map_err(|e| format!("Backtest task panicked: {e}"))?

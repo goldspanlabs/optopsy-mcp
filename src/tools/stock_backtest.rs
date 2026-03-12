@@ -43,9 +43,15 @@ pub fn execute(
         ));
     }
     if let Some(ref spec) = params.exit_signal {
-        indicator_data.extend(crate::signals::indicators::compute_indicator_data(
-            spec, &ohlcv_df, "date",
-        ));
+        // Deduplicate: skip indicators already present from entry signal
+        for ind in crate::signals::indicators::compute_indicator_data(spec, &ohlcv_df, "date") {
+            if !indicator_data
+                .iter()
+                .any(|existing| existing.name == ind.name)
+            {
+                indicator_data.push(ind);
+            }
+        }
     }
 
     // Run the simulation
