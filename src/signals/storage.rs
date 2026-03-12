@@ -416,7 +416,9 @@ mod tests {
         let name_b = "dup-test-b";
         let formula = "close > sma(close, 20)";
 
-        let spec = SignalSpec::Formula { formula: formula.to_string() };
+        let spec = SignalSpec::Formula {
+            formula: formula.to_string(),
+        };
         save_signal(name_a, &spec).unwrap();
 
         // Same formula under different name should be detected
@@ -436,7 +438,9 @@ mod tests {
         let name = "dup-ws-test";
         let formula = "close > sma(close, 20)";
 
-        let spec = SignalSpec::Formula { formula: formula.to_string() };
+        let spec = SignalSpec::Formula {
+            formula: formula.to_string(),
+        };
         save_signal(name, &spec).unwrap();
 
         // Extra whitespace should still match
@@ -466,7 +470,9 @@ mod tests {
         let name = "dup-nomatch-test";
         let formula = "close > sma(close, 50)";
 
-        let spec = SignalSpec::Formula { formula: formula.to_string() };
+        let spec = SignalSpec::Formula {
+            formula: formula.to_string(),
+        };
         save_signal(name, &spec).unwrap();
 
         // Different formula should not match
@@ -481,10 +487,14 @@ mod tests {
 
         let name = "overwrite-test";
 
-        let spec1 = SignalSpec::Formula { formula: "close > sma(close, 10)".to_string() };
+        let spec1 = SignalSpec::Formula {
+            formula: "close > sma(close, 10)".to_string(),
+        };
         save_signal(name, &spec1).unwrap();
 
-        let spec2 = SignalSpec::Formula { formula: "close > sma(close, 20)".to_string() };
+        let spec2 = SignalSpec::Formula {
+            formula: "close > sma(close, 20)".to_string(),
+        };
         save_signal(name, &spec2).unwrap();
 
         // Should have the updated formula

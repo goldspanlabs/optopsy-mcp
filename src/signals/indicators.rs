@@ -714,7 +714,9 @@ mod tests {
     #[test]
     fn custom_signal_returns_empty_indicators() {
         let df = make_ohlcv_df(30);
-        let spec = SignalSpec::Formula { formula: "rsi(close, 14) < 30".into() };
+        let spec = SignalSpec::Formula {
+            formula: "rsi(close, 14) < 30".into(),
+        };
         let result = compute_indicator_data(&spec, &df, "date");
         assert!(result.is_empty());
     }
@@ -724,7 +726,9 @@ mod tests {
         let df = make_ohlcv_df(10);
         let spec = SignalSpec::CrossSymbol {
             symbol: "^VIX".into(),
-            signal: Box::new(SignalSpec::Formula { formula: "close > 20".into() }),
+            signal: Box::new(SignalSpec::Formula {
+                formula: "close > 20".into(),
+            }),
         };
         let result = compute_indicator_data(&spec, &df, "date");
         assert!(result.is_empty());
@@ -738,8 +742,12 @@ mod tests {
         // Custom signals should yield an empty result.
         let df = make_ohlcv_df(30);
         let spec = SignalSpec::And {
-            left: Box::new(SignalSpec::Formula { formula: "rsi(close, 14) < 30".into() }),
-            right: Box::new(SignalSpec::Formula { formula: "close > sma(close, 5)".into() }),
+            left: Box::new(SignalSpec::Formula {
+                formula: "rsi(close, 14) < 30".into(),
+            }),
+            right: Box::new(SignalSpec::Formula {
+                formula: "close > sma(close, 5)".into(),
+            }),
         };
         let result = compute_indicator_data(&spec, &df, "date");
         assert!(result.is_empty());
@@ -749,8 +757,12 @@ mod tests {
     fn or_combinator_with_custom_children_returns_empty() {
         let df = make_ohlcv_df(30);
         let spec = SignalSpec::Or {
-            left: Box::new(SignalSpec::Formula { formula: "close > sma(close, 5)".into() }),
-            right: Box::new(SignalSpec::Formula { formula: "close > sma(close, 20)".into() }),
+            left: Box::new(SignalSpec::Formula {
+                formula: "close > sma(close, 5)".into(),
+            }),
+            right: Box::new(SignalSpec::Formula {
+                formula: "close > sma(close, 20)".into(),
+            }),
         };
         let result = compute_indicator_data(&spec, &df, "date");
         assert!(result.is_empty());
@@ -762,7 +774,9 @@ mod tests {
     fn total_points_none_when_not_sampled() {
         // Custom signals return empty — verify the vec is empty (no panic on index).
         let df = make_ohlcv_df(30);
-        let spec = SignalSpec::Formula { formula: "rsi(close, 14) < 30".into() };
+        let spec = SignalSpec::Formula {
+            formula: "rsi(close, 14) < 30".into(),
+        };
         let result = compute_indicator_data(&spec, &df, "date");
         // No indicator data returned for Custom signals yet.
         assert!(result.is_empty());

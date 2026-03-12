@@ -235,8 +235,12 @@ mod tests {
     #[test]
     fn build_signal_and_combinator() {
         let spec = SignalSpec::And {
-            left: Box::new(SignalSpec::Formula { formula: "rsi(close, 14) < 30".into() }),
-            right: Box::new(SignalSpec::Formula { formula: "macd_hist(close) > 0".into() }),
+            left: Box::new(SignalSpec::Formula {
+                formula: "rsi(close, 14) < 30".into(),
+            }),
+            right: Box::new(SignalSpec::Formula {
+                formula: "macd_hist(close) > 0".into(),
+            }),
         };
         let signal = build_signal(&spec);
         assert_eq!(signal.name(), "and");
@@ -250,7 +254,9 @@ mod tests {
 
     #[test]
     fn collect_cross_symbols_empty_for_plain() {
-        let spec = SignalSpec::Formula { formula: "consecutive_up(close) >= 2".into() };
+        let spec = SignalSpec::Formula {
+            formula: "consecutive_up(close) >= 2".into(),
+        };
         assert!(collect_cross_symbols(&spec).is_empty());
     }
 
@@ -269,11 +275,15 @@ mod tests {
         let spec = SignalSpec::And {
             left: Box::new(SignalSpec::CrossSymbol {
                 symbol: "^VIX".into(),
-                signal: Box::new(SignalSpec::Formula { formula: "consecutive_up(close) >= 2".into() }),
+                signal: Box::new(SignalSpec::Formula {
+                    formula: "consecutive_up(close) >= 2".into(),
+                }),
             }),
             right: Box::new(SignalSpec::CrossSymbol {
                 symbol: "GLD".into(),
-                signal: Box::new(SignalSpec::Formula { formula: "consecutive_down(close) >= 3".into() }),
+                signal: Box::new(SignalSpec::Formula {
+                    formula: "consecutive_down(close) >= 3".into(),
+                }),
             }),
         };
         let symbols = collect_cross_symbols(&spec);
@@ -286,7 +296,9 @@ mod tests {
     fn cross_symbol_serde_round_trip() {
         let spec = SignalSpec::CrossSymbol {
             symbol: "^VIX".into(),
-            signal: Box::new(SignalSpec::Formula { formula: "close > 20".into() }),
+            signal: Box::new(SignalSpec::Formula {
+                formula: "close > 20".into(),
+            }),
         };
         let json = serde_json::to_string(&spec).unwrap();
         let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
@@ -301,8 +313,12 @@ mod tests {
     #[test]
     fn build_signal_or_combinator() {
         let spec = SignalSpec::Or {
-            left: Box::new(SignalSpec::Formula { formula: "rsi(close, 14) < 30".into() }),
-            right: Box::new(SignalSpec::Formula { formula: "macd_hist(close) > 0".into() }),
+            left: Box::new(SignalSpec::Formula {
+                formula: "rsi(close, 14) < 30".into(),
+            }),
+            right: Box::new(SignalSpec::Formula {
+                formula: "macd_hist(close) > 0".into(),
+            }),
         };
         let signal = build_signal(&spec);
         assert_eq!(signal.name(), "or");
@@ -311,8 +327,12 @@ mod tests {
     #[test]
     fn signal_spec_serde_round_trip_and_combinator() {
         let spec = SignalSpec::And {
-            left: Box::new(SignalSpec::Formula { formula: "rsi(close, 14) < 30".into() }),
-            right: Box::new(SignalSpec::Formula { formula: "close > sma(close, 20)".into() }),
+            left: Box::new(SignalSpec::Formula {
+                formula: "rsi(close, 14) < 30".into(),
+            }),
+            right: Box::new(SignalSpec::Formula {
+                formula: "close > sma(close, 20)".into(),
+            }),
         };
         let json = serde_json::to_string(&spec).unwrap();
         let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
@@ -327,8 +347,12 @@ mod tests {
     #[test]
     fn signal_spec_serde_round_trip_or_combinator() {
         let spec = SignalSpec::Or {
-            left: Box::new(SignalSpec::Formula { formula: "open / close.shift(1) - 1 > 0.02".into() }),
-            right: Box::new(SignalSpec::Formula { formula: "open / close.shift(1) - 1 < -0.02".into() }),
+            left: Box::new(SignalSpec::Formula {
+                formula: "open / close.shift(1) - 1 > 0.02".into(),
+            }),
+            right: Box::new(SignalSpec::Formula {
+                formula: "open / close.shift(1) - 1 < -0.02".into(),
+            }),
         };
         let json = serde_json::to_string(&spec).unwrap();
         let parsed: SignalSpec = serde_json::from_str(&json).unwrap();

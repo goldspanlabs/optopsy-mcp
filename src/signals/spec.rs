@@ -99,7 +99,9 @@ impl<'de> serde::Deserialize<'de> for SignalSpec {
 
         // Plain string → Formula
         if let serde_json::Value::String(formula) = &value {
-            return Ok(SignalSpec::Formula { formula: formula.clone() });
+            return Ok(SignalSpec::Formula {
+                formula: formula.clone(),
+            });
         }
 
         serde_json::from_value::<SignalSpecTagged>(value)
@@ -163,7 +165,9 @@ mod tests {
     #[test]
     fn deserialize_string_shorthand() {
         let spec: SignalSpec = serde_json::from_str(r#""rsi(close, 14) < 30""#).unwrap();
-        assert!(matches!(spec, SignalSpec::Formula { formula: ref f } if f == "rsi(close, 14) < 30"));
+        assert!(
+            matches!(spec, SignalSpec::Formula { formula: ref f } if f == "rsi(close, 14) < 30")
+        );
     }
 
     #[test]
@@ -189,12 +193,17 @@ mod tests {
 
     #[test]
     fn deserialize_and_with_string_children() {
-        let json = r#"{"type": "And", "left": "rsi(close, 14) < 30", "right": "close > sma(close, 50)"}"#;
+        let json =
+            r#"{"type": "And", "left": "rsi(close, 14) < 30", "right": "close > sma(close, 50)"}"#;
         let spec: SignalSpec = serde_json::from_str(json).unwrap();
         match spec {
             SignalSpec::And { left, right } => {
-                assert!(matches!(*left, SignalSpec::Formula { formula: ref f } if f == "rsi(close, 14) < 30"));
-                assert!(matches!(*right, SignalSpec::Formula { formula: ref f } if f == "close > sma(close, 50)"));
+                assert!(
+                    matches!(*left, SignalSpec::Formula { formula: ref f } if f == "rsi(close, 14) < 30")
+                );
+                assert!(
+                    matches!(*right, SignalSpec::Formula { formula: ref f } if f == "close > sma(close, 50)")
+                );
             }
             _ => panic!("expected And variant"),
         }
@@ -207,7 +216,9 @@ mod tests {
         match spec {
             SignalSpec::CrossSymbol { symbol, signal } => {
                 assert_eq!(symbol, "^VIX");
-                assert!(matches!(*signal, SignalSpec::Formula { formula: ref f } if f == "close > 20"));
+                assert!(
+                    matches!(*signal, SignalSpec::Formula { formula: ref f } if f == "close > 20")
+                );
             }
             _ => panic!("expected CrossSymbol variant"),
         }
@@ -215,18 +226,24 @@ mod tests {
 
     #[test]
     fn serialize_roundtrip() {
-        let spec = SignalSpec::Formula { formula: "close > 100".to_string() };
+        let spec = SignalSpec::Formula {
+            formula: "close > 100".to_string(),
+        };
         let json = serde_json::to_string(&spec).unwrap();
         assert!(json.contains(r#""type":"Formula""#));
         let deserialized: SignalSpec = serde_json::from_str(&json).unwrap();
-        assert!(matches!(deserialized, SignalSpec::Formula { formula: ref f } if f == "close > 100"));
+        assert!(
+            matches!(deserialized, SignalSpec::Formula { formula: ref f } if f == "close > 100")
+        );
     }
 
     #[test]
     fn contains_cross_symbol_basic() {
         let spec = SignalSpec::CrossSymbol {
             symbol: "^VIX".to_string(),
-            signal: Box::new(SignalSpec::Formula { formula: "close > 20".to_string() }),
+            signal: Box::new(SignalSpec::Formula {
+                formula: "close > 20".to_string(),
+            }),
         };
         assert!(spec.contains_cross_symbol());
     }
@@ -234,10 +251,14 @@ mod tests {
     #[test]
     fn contains_cross_symbol_nested_and() {
         let spec = SignalSpec::And {
-            left: Box::new(SignalSpec::Formula { formula: "rsi(close, 14) < 30".to_string() }),
+            left: Box::new(SignalSpec::Formula {
+                formula: "rsi(close, 14) < 30".to_string(),
+            }),
             right: Box::new(SignalSpec::CrossSymbol {
                 symbol: "^VIX".to_string(),
-                signal: Box::new(SignalSpec::Formula { formula: "close > 20".to_string() }),
+                signal: Box::new(SignalSpec::Formula {
+                    formula: "close > 20".to_string(),
+                }),
             }),
         };
         assert!(spec.contains_cross_symbol());
@@ -245,7 +266,9 @@ mod tests {
 
     #[test]
     fn no_cross_symbol_in_formula() {
-        let spec = SignalSpec::Formula { formula: "close > 100".to_string() };
+        let spec = SignalSpec::Formula {
+            formula: "close > 100".to_string(),
+        };
         assert!(!spec.contains_cross_symbol());
     }
 }

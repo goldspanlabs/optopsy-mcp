@@ -124,7 +124,9 @@ fn execute_create(
         }
     }
 
-    let spec = SignalSpec::Formula { formula: formula.to_string() };
+    let spec = SignalSpec::Formula {
+        formula: formula.to_string(),
+    };
 
     if save {
         // Check if we're overwriting an existing signal with the same name
@@ -611,7 +613,9 @@ mod tests {
         let _guard = storage::TempSignalsGuard::new();
 
         // Save a custom signal
-        let spec = SignalSpec::Formula { formula: "close < sma(close, 20)".to_string() };
+        let spec = SignalSpec::Formula {
+            formula: "close < sma(close, 20)".to_string(),
+        };
         storage::save_signal("ibs_mean_reversion_entry", &spec).unwrap();
 
         // Search should find it by name
@@ -636,7 +640,9 @@ mod tests {
         let _lock = FS_LOCK.lock().unwrap();
         let _guard = storage::TempSignalsGuard::new();
 
-        let spec = SignalSpec::Formula { formula: "close > high[1]".to_string() };
+        let spec = SignalSpec::Formula {
+            formula: "close > high[1]".to_string(),
+        };
         storage::save_signal("my_exit", &spec).unwrap();
 
         // Search by formula keyword
@@ -655,7 +661,9 @@ mod tests {
         let _lock = FS_LOCK.lock().unwrap();
         let _guard = storage::TempSignalsGuard::new();
 
-        let spec = SignalSpec::Formula { formula: "close > open".to_string() };
+        let spec = SignalSpec::Formula {
+            formula: "close > open".to_string(),
+        };
         storage::save_signal("unrelated_signal", &spec).unwrap();
 
         let resp = execute(Action::Search {
@@ -691,7 +699,9 @@ mod tests {
         let _lock = FS_LOCK.lock().unwrap();
         let _guard = storage::TempSignalsGuard::new();
 
-        let spec = SignalSpec::Formula { formula: "close < sma(close, 14)".to_string() };
+        let spec = SignalSpec::Formula {
+            formula: "close < sma(close, 14)".to_string(),
+        };
         storage::save_signal("rsi_custom_entry", &spec).unwrap();
 
         let resp = execute(Action::Search {
