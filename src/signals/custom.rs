@@ -1413,12 +1413,12 @@ impl Parser {
             // --- New rust_ti momentum indicators ---
 
             "williams_r" => {
-                let (close_expr, high_expr, low_expr, period) =
+                let (high_expr, low_expr, close_expr, period) =
                     extract_three_cols_period(&args, "williams_r")?;
                 Ok(as_struct(vec![
-                    close_expr.alias("__c"),
                     high_expr.alias("__h"),
                     low_expr.alias("__l"),
+                    close_expr.alias("__c"),
                 ])
                 .map(
                     move |col: Column| {
@@ -1506,12 +1506,12 @@ impl Parser {
 
             "adx" | "plus_di" | "minus_di" => {
                 let func = name.to_lowercase();
-                let (close_expr, high_expr, low_expr, period) =
+                let (high_expr, low_expr, close_expr, period) =
                     extract_three_cols_period(&args, &func)?;
                 Ok(as_struct(vec![
-                    close_expr.alias("__c"),
                     high_expr.alias("__h"),
                     low_expr.alias("__l"),
+                    close_expr.alias("__c"),
                 ])
                 .map(
                     move |col: Column| {
@@ -1647,11 +1647,11 @@ impl Parser {
             }
             "ichimoku_tenkan" | "ichimoku_kijun" | "ichimoku_senkou_a" | "ichimoku_senkou_b" => {
                 let func = name.to_lowercase();
-                let (close_expr, high_expr, low_expr) = extract_three_cols(&args, &func)?;
+                let (high_expr, low_expr, close_expr) = extract_three_cols(&args, &func)?;
                 Ok(as_struct(vec![
-                    close_expr.alias("__c"),
                     high_expr.alias("__h"),
                     low_expr.alias("__l"),
+                    close_expr.alias("__c"),
                 ])
                 .map(
                     move |col: Column| {

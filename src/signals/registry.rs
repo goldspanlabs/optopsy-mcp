@@ -267,8 +267,8 @@ pub const SIGNAL_CATALOG: &[SignalInfo] = &[
         formula_example: "tsi(close, 13, 25) > 0",
     },
     SignalInfo {
-        name: "VPT Rising",
-        category: "trend",
+        name: "VPT Above MA",
+        category: "volume",
         description: "Volume Price Trend above its moving average",
         params: "close, volume",
         formula_example: "vpt(close, volume) > sma(vpt(close, volume), 20)",
@@ -368,7 +368,7 @@ pub const SIGNAL_CATALOG: &[SignalInfo] = &[
         formula_example: "rel_volume(volume, 20) > 2.0",
     },
     SignalInfo {
-        name: "A/D Line Rising",
+        name: "A/D Line Positive",
         category: "volume",
         description: "Accumulation/Distribution line positive (accumulation)",
         params: "high, low, close, volume",

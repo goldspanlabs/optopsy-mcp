@@ -229,7 +229,7 @@ fn dispatch_indicator_call(
             let low = call.col_args.get(1).map_or("low", String::as_str);
             let close = call.col_args.get(2).map_or("close", String::as_str);
             let period = call.period.unwrap_or(14);
-            compute_adx_indicator(df, high, low, close, period, dates)
+            compute_dms_indicator(df, high, low, close, period, call.func_name.as_str(), dates)
         }
         "psar" => {
             let high = call.col_args.first().map_or("high", String::as_str);
@@ -916,12 +916,13 @@ fn compute_cmo_indicator(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn compute_adx_indicator(
+fn compute_dms_indicator(
     df: &DataFrame,
     high_col: &str,
     low_col: &str,
     close_col: &str,
     period: usize,
+    component: &str,
     dates: &[String],
 ) -> Vec<IndicatorData> {
     let Ok(high) = column_to_f64(df, high_col) else {
@@ -944,14 +945,18 @@ fn compute_adx_indicator(
         period,
         rust_ti::ConstantModelType::SmoothedMovingAverage,
     );
-    let adx_vals: Vec<f64> = dms.iter().map(|t| t.2).collect();
-    let padded = pad_series(&adx_vals, n);
+    let (vals, label): (Vec<f64>, &str) = match component {
+        "plus_di" => (dms.iter().map(|t| t.0).collect(), "+DI"),
+        "minus_di" => (dms.iter().map(|t| t.1).collect(), "-DI"),
+        _ => (dms.iter().map(|t| t.2).collect(), "ADX"),
+    };
+    let padded = pad_series(&vals, n);
     vec![make_indicator(
-        format!("ADX({period})"),
+        format!("{label}({period})"),
         DisplayType::Subchart,
         &padded,
         dates,
-        "ADX",
+        label,
         vec![20.0, 40.0],
     )]
 }
@@ -1073,16 +1078,19 @@ fn compute_donchian_indicator(
     }
     let dc = cti::donchian_channels(&high, &low, period);
     let upper_vals: Vec<f64> = dc.iter().map(|t| t.0).collect();
+    let mid_vals: Vec<f64> = dc.iter().map(|t| t.1).collect();
     let lower_vals: Vec<f64> = dc.iter().map(|t| t.2).collect();
     let upper_padded = pad_series(&upper_vals, n);
+    let mid_padded = pad_series(&mid_vals, n);
     let lower_padded = pad_series(&lower_vals, n);
     let (upper_series, upper_total) = build_series("Upper", &upper_padded, dates);
+    let (mid_series, mid_total) = build_series("Mid", &mid_padded, dates);
     let (lower_series, lower_total) = build_series("Lower", &lower_padded, dates);
-    let max_total = upper_total.max(lower_total);
+    let max_total = upper_total.max(mid_total).max(lower_total);
     vec![IndicatorData {
         name: format!("Donchian({period})"),
         display_type: DisplayType::Overlay,
-        series: vec![upper_series, lower_series],
+        series: vec![upper_series, mid_series, lower_series],
         thresholds: vec![],
         total_points: if max_total > MAX_INDICATOR_POINTS {
             Some(max_total)
