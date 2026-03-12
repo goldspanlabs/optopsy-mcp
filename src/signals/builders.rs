@@ -1,6 +1,6 @@
 //! Factory module that converts `SignalSpec` enums into concrete `SignalFn` implementations.
 //!
-//! All indicator logic is handled by `FormulaSignal` via the Custom variant.
+//! All indicator logic is handled by `FormulaSignal` via the Formula variant.
 //! This module handles recursion for combinators and saved signal references
 //! with depth limiting.
 
@@ -26,11 +26,7 @@ fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
         return Box::new(FormulaSignal::new("false".to_string()));
     }
     match spec {
-        SignalSpec::Custom {
-            name: _,
-            formula,
-            description: _,
-        } => Box::new(FormulaSignal::new(formula.clone())),
+        SignalSpec::Formula { formula } => Box::new(FormulaSignal::new(formula.clone())),
 
         SignalSpec::Saved { name } => match super::storage::load_signal(name) {
             Ok(loaded) => {

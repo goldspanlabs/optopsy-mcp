@@ -775,21 +775,9 @@ mod tests {
     #[test]
     fn signal_combos_entry_only() {
         let entries = vec![
-            SignalSpec::Custom {
-                name: "rsi_25".into(),
-                formula: "rsi(close, 14) < 25".into(),
-                description: None,
-            },
-            SignalSpec::Custom {
-                name: "rsi_30".into(),
-                formula: "rsi(close, 14) < 30".into(),
-                description: None,
-            },
-            SignalSpec::Custom {
-                name: "rsi_35".into(),
-                formula: "rsi(close, 14) < 35".into(),
-                description: None,
-            },
+            SignalSpec::Formula { formula: "rsi(close, 14) < 25".into() },
+            SignalSpec::Formula { formula: "rsi(close, 14) < 30".into() },
+            SignalSpec::Formula { formula: "rsi(close, 14) < 35".into() },
         ];
         let combos = build_signal_combos(&entries, &[]);
         assert_eq!(combos.len(), 3);
@@ -805,33 +793,13 @@ mod tests {
     #[test]
     fn signal_combos_entry_and_exit() {
         let entries = vec![
-            SignalSpec::Custom {
-                name: "rsi_25".into(),
-                formula: "rsi(close, 14) < 25".into(),
-                description: None,
-            },
-            SignalSpec::Custom {
-                name: "rsi_30".into(),
-                formula: "rsi(close, 14) < 30".into(),
-                description: None,
-            },
-            SignalSpec::Custom {
-                name: "rsi_35".into(),
-                formula: "rsi(close, 14) < 35".into(),
-                description: None,
-            },
+            SignalSpec::Formula { formula: "rsi(close, 14) < 25".into() },
+            SignalSpec::Formula { formula: "rsi(close, 14) < 30".into() },
+            SignalSpec::Formula { formula: "rsi(close, 14) < 35".into() },
         ];
         let exits = vec![
-            SignalSpec::Custom {
-                name: "consec_down_2".into(),
-                formula: "consecutive_down(close) >= 2".into(),
-                description: None,
-            },
-            SignalSpec::Custom {
-                name: "consec_down_3".into(),
-                formula: "consecutive_down(close) >= 3".into(),
-                description: None,
-            },
+            SignalSpec::Formula { formula: "consecutive_down(close) >= 2".into() },
+            SignalSpec::Formula { formula: "consecutive_down(close) >= 3".into() },
         ];
         let combos = build_signal_combos(&entries, &exits);
         assert_eq!(combos.len(), 6); // 3 × 2
@@ -888,21 +856,9 @@ mod tests {
             out_of_sample_pct: 0.0,
             direction: None,
             entry_signals: vec![
-                SignalSpec::Custom {
-                    name: "rsi_25".into(),
-                    formula: "rsi(close, 14) < 25".into(),
-                    description: None,
-                },
-                SignalSpec::Custom {
-                    name: "rsi_30".into(),
-                    formula: "rsi(close, 14) < 30".into(),
-                    description: None,
-                },
-                SignalSpec::Custom {
-                    name: "rsi_35".into(),
-                    formula: "rsi(close, 14) < 35".into(),
-                    description: None,
-                },
+                SignalSpec::Formula { formula: "rsi(close, 14) < 25".into() },
+                SignalSpec::Formula { formula: "rsi(close, 14) < 30".into() },
+                SignalSpec::Formula { formula: "rsi(close, 14) < 35".into() },
             ],
             exit_signals: vec![],
             num_permutations: None,
@@ -936,12 +892,8 @@ mod tests {
     #[test]
     fn signal_spec_label_covers_all_variants() {
         assert_eq!(
-            signal_spec_label(&SignalSpec::Custom {
-                name: "rsi_oversold".into(),
-                formula: "rsi(close, 14) < 30".into(),
-                description: None,
-            }),
-            "rsi_oversold"
+            signal_spec_label(&SignalSpec::Formula { formula: "rsi(close, 14) < 30".into() }),
+            "rsi(close, 14) < 30"
         );
         assert_eq!(
             signal_spec_label(&SignalSpec::Saved {
@@ -952,41 +904,21 @@ mod tests {
         assert_eq!(
             signal_spec_label(&SignalSpec::CrossSymbol {
                 symbol: "^VIX".into(),
-                signal: Box::new(SignalSpec::Custom {
-                    name: "vix_high".into(),
-                    formula: "close > 20".into(),
-                    description: None,
-                }),
+                signal: Box::new(SignalSpec::Formula { formula: "close > 20".into() }),
             }),
             "CrossSymbol(^VIX)"
         );
         assert_eq!(
             signal_spec_label(&SignalSpec::And {
-                left: Box::new(SignalSpec::Custom {
-                    name: "a".into(),
-                    formula: "rsi(close,14) < 30".into(),
-                    description: None,
-                }),
-                right: Box::new(SignalSpec::Custom {
-                    name: "b".into(),
-                    formula: "close > sma(close,20)".into(),
-                    description: None,
-                }),
+                left: Box::new(SignalSpec::Formula { formula: "rsi(close,14) < 30".into() }),
+                right: Box::new(SignalSpec::Formula { formula: "close > sma(close,20)".into() }),
             }),
             "And(…)"
         );
         assert_eq!(
             signal_spec_label(&SignalSpec::Or {
-                left: Box::new(SignalSpec::Custom {
-                    name: "a".into(),
-                    formula: "rsi(close,14) < 30".into(),
-                    description: None,
-                }),
-                right: Box::new(SignalSpec::Custom {
-                    name: "b".into(),
-                    formula: "close > sma(close,20)".into(),
-                    description: None,
-                }),
+                left: Box::new(SignalSpec::Formula { formula: "rsi(close,14) < 30".into() }),
+                right: Box::new(SignalSpec::Formula { formula: "close > sma(close,20)".into() }),
             }),
             "Or(…)"
         );

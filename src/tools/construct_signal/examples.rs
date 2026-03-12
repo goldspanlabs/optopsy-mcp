@@ -373,8 +373,8 @@ mod tests {
         let example = build_example("RsiRange");
         let spec: SignalSpec = serde_json::from_value(example).unwrap();
         if let SignalSpec::And { left, right } = spec {
-            assert!(matches!(*left, SignalSpec::Custom { .. }));
-            assert!(matches!(*right, SignalSpec::Custom { .. }));
+            assert!(matches!(*left, SignalSpec::Formula { .. }));
+            assert!(matches!(*right, SignalSpec::Formula { .. }));
         } else {
             panic!("expected And combinator");
         }

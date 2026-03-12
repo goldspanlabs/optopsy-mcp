@@ -237,7 +237,13 @@ pub fn violates_delta_ordering(strategy_name: &str, delta_targets: &[f64]) -> bo
 /// Generate a short human-readable label for a `SignalSpec`.
 pub(crate) fn signal_spec_label(spec: &SignalSpec) -> String {
     match spec {
-        SignalSpec::Custom { name, .. } => name.clone(),
+        SignalSpec::Formula { formula } => {
+            if formula.len() <= 30 {
+                formula.clone()
+            } else {
+                format!("{}…", &formula[..27])
+            }
+        }
         SignalSpec::Saved { name } => format!("Saved({name})"),
         SignalSpec::CrossSymbol { symbol, .. } => format!("CrossSymbol({symbol})"),
         SignalSpec::And { .. } => "And(…)".to_string(),

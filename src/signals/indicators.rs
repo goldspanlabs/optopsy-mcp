@@ -5,7 +5,7 @@
 //! ready for visualization alongside price charts.
 //!
 //! The private helper functions are retained for future use when formula-based
-//! indicator extraction is implemented for `SignalSpec::Custom` signals.
+//! indicator extraction is implemented for `SignalSpec::Formula` signals.
 #![allow(dead_code)]
 
 use super::helpers::{
@@ -68,7 +68,7 @@ fn compute_indicator_data_inner(
             Err(_) => vec![],
         },
         // Formula-based indicator extraction is future work — return empty for now
-        SignalSpec::Custom { .. } | SignalSpec::CrossSymbol { .. } => vec![],
+        SignalSpec::Formula { .. } | SignalSpec::CrossSymbol { .. } => vec![],
     }
 }
 
@@ -714,11 +714,7 @@ mod tests {
     #[test]
     fn custom_signal_returns_empty_indicators() {
         let df = make_ohlcv_df(30);
-        let spec = SignalSpec::Custom {
-            name: "RSI oversold".into(),
-            formula: "rsi(close, 14) < 30".into(),
-            description: None,
-        };
+        let spec = SignalSpec::Formula { formula: "rsi(close, 14) < 30".into() };
         let result = compute_indicator_data(&spec, &df, "date");
         assert!(result.is_empty());
     }
@@ -728,11 +724,7 @@ mod tests {
         let df = make_ohlcv_df(10);
         let spec = SignalSpec::CrossSymbol {
             symbol: "^VIX".into(),
-            signal: Box::new(SignalSpec::Custom {
-                name: "VIX high".into(),
-                formula: "close > 20".into(),
-                description: None,
-            }),
+            signal: Box::new(SignalSpec::Formula { formula: "close > 20".into() }),
         };
         let result = compute_indicator_data(&spec, &df, "date");
         assert!(result.is_empty());
@@ -746,16 +738,8 @@ mod tests {
         // Custom signals should yield an empty result.
         let df = make_ohlcv_df(30);
         let spec = SignalSpec::And {
-            left: Box::new(SignalSpec::Custom {
-                name: "RSI oversold".into(),
-                formula: "rsi(close, 14) < 30".into(),
-                description: None,
-            }),
-            right: Box::new(SignalSpec::Custom {
-                name: "Above SMA".into(),
-                formula: "close > sma(close, 5)".into(),
-                description: None,
-            }),
+            left: Box::new(SignalSpec::Formula { formula: "rsi(close, 14) < 30".into() }),
+            right: Box::new(SignalSpec::Formula { formula: "close > sma(close, 5)".into() }),
         };
         let result = compute_indicator_data(&spec, &df, "date");
         assert!(result.is_empty());
@@ -765,16 +749,8 @@ mod tests {
     fn or_combinator_with_custom_children_returns_empty() {
         let df = make_ohlcv_df(30);
         let spec = SignalSpec::Or {
-            left: Box::new(SignalSpec::Custom {
-                name: "Above SMA fast".into(),
-                formula: "close > sma(close, 5)".into(),
-                description: None,
-            }),
-            right: Box::new(SignalSpec::Custom {
-                name: "Above SMA slow".into(),
-                formula: "close > sma(close, 20)".into(),
-                description: None,
-            }),
+            left: Box::new(SignalSpec::Formula { formula: "close > sma(close, 5)".into() }),
+            right: Box::new(SignalSpec::Formula { formula: "close > sma(close, 20)".into() }),
         };
         let result = compute_indicator_data(&spec, &df, "date");
         assert!(result.is_empty());
@@ -786,11 +762,7 @@ mod tests {
     fn total_points_none_when_not_sampled() {
         // Custom signals return empty — verify the vec is empty (no panic on index).
         let df = make_ohlcv_df(30);
-        let spec = SignalSpec::Custom {
-            name: "RSI oversold".into(),
-            formula: "rsi(close, 14) < 30".into(),
-            description: None,
-        };
+        let spec = SignalSpec::Formula { formula: "rsi(close, 14) < 30".into() };
         let result = compute_indicator_data(&spec, &df, "date");
         // No indicator data returned for Custom signals yet.
         assert!(result.is_empty());

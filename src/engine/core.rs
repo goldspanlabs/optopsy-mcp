@@ -850,11 +850,7 @@ mod tests {
     fn run_backtest_signal_without_ohlcv_path_errors() {
         let df = make_daily_options_df();
         let mut params = default_backtest_params();
-        params.entry_signal = Some(signals::registry::SignalSpec::Custom {
-            name: "consecutive_up_2".into(),
-            formula: "consecutive_up(close) >= 2".into(),
-            description: None,
-        });
+        params.entry_signal = Some(signals::registry::SignalSpec::Formula { formula: "consecutive_up(close) >= 2".into() });
         // ohlcv_path intentionally left None
         let result = run_backtest(&df, &params);
         assert!(result.is_err());
@@ -913,11 +909,7 @@ mod tests {
         let (_dir, path) = write_ohlcv_parquet(&ohlcv_dates, &closes);
 
         let mut params = default_backtest_params();
-        params.entry_signal = Some(signals::registry::SignalSpec::Custom {
-            name: "consecutive_up_2".into(),
-            formula: "consecutive_up(close) >= 2".into(),
-            description: None,
-        });
+        params.entry_signal = Some(signals::registry::SignalSpec::Formula { formula: "consecutive_up(close) >= 2".into() });
         params.ohlcv_path = Some(path);
 
         let result = run_backtest(&df, &params).unwrap();
@@ -955,11 +947,7 @@ mod tests {
 
         let mut params = default_backtest_params();
         params.max_positions = 1; // prevent re-entry after signal exit
-        params.exit_signal = Some(signals::registry::SignalSpec::Custom {
-            name: "consecutive_up_2".into(),
-            formula: "consecutive_up(close) >= 2".into(),
-            description: None,
-        });
+        params.exit_signal = Some(signals::registry::SignalSpec::Formula { formula: "consecutive_up(close) >= 2".into() });
         params.ohlcv_path = Some(path);
 
         let result = run_backtest(&df, &params).unwrap();
@@ -1144,11 +1132,7 @@ mod tests {
         // Any Custom signal requires ohlcv_path — all signals now use the Custom DSL.
         let df = make_iv_options_df();
         let mut params = default_backtest_params();
-        params.entry_signal = Some(signals::registry::SignalSpec::Custom {
-            name: "consecutive_up_2".into(),
-            formula: "consecutive_up(close) >= 2".into(),
-            description: None,
-        });
+        params.entry_signal = Some(signals::registry::SignalSpec::Formula { formula: "consecutive_up(close) >= 2".into() });
         params.ohlcv_path = None;
 
         let result = run_backtest(&df, &params);

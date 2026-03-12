@@ -275,11 +275,7 @@ pub fn list_saved_signals() -> Result<Vec<SavedSignalInfo>> {
                     Ok(json) => {
                         let spec: Result<SignalSpec, _> = serde_json::from_str(&json);
                         let (formula, description) = match &spec {
-                            Ok(SignalSpec::Custom {
-                                formula,
-                                description,
-                                ..
-                            }) => (Some(formula.clone()), description.clone()),
+                            Ok(SignalSpec::Formula { formula: f }) => (Some(f.clone()), None),
                             _ => (None, None),
                         };
                         signals.push(SavedSignalInfo {
@@ -420,11 +416,7 @@ mod tests {
         let name_b = "dup-test-b";
         let formula = "close > sma(close, 20)";
 
-        let spec = SignalSpec::Custom {
-            name: name_a.to_string(),
-            formula: formula.to_string(),
-            description: None,
-        };
+        let spec = SignalSpec::Formula { formula: formula.to_string() };
         save_signal(name_a, &spec).unwrap();
 
         // Same formula under different name should be detected
@@ -444,11 +436,7 @@ mod tests {
         let name = "dup-ws-test";
         let formula = "close > sma(close, 20)";
 
-        let spec = SignalSpec::Custom {
-            name: name.to_string(),
-            formula: formula.to_string(),
-            description: None,
-        };
+        let spec = SignalSpec::Formula { formula: formula.to_string() };
         save_signal(name, &spec).unwrap();
 
         // Extra whitespace should still match
@@ -478,11 +466,7 @@ mod tests {
         let name = "dup-nomatch-test";
         let formula = "close > sma(close, 50)";
 
-        let spec = SignalSpec::Custom {
-            name: name.to_string(),
-            formula: formula.to_string(),
-            description: None,
-        };
+        let spec = SignalSpec::Formula { formula: formula.to_string() };
         save_signal(name, &spec).unwrap();
 
         // Different formula should not match
@@ -497,26 +481,18 @@ mod tests {
 
         let name = "overwrite-test";
 
-        let spec1 = SignalSpec::Custom {
-            name: name.to_string(),
-            formula: "close > sma(close, 10)".to_string(),
-            description: Some("version 1".to_string()),
-        };
+        let spec1 = SignalSpec::Formula { formula: "close > sma(close, 10)".to_string() };
         save_signal(name, &spec1).unwrap();
 
-        let spec2 = SignalSpec::Custom {
-            name: name.to_string(),
-            formula: "close > sma(close, 20)".to_string(),
-            description: Some("version 2".to_string()),
-        };
+        let spec2 = SignalSpec::Formula { formula: "close > sma(close, 20)".to_string() };
         save_signal(name, &spec2).unwrap();
 
         // Should have the updated formula
         let loaded = load_signal(name).unwrap();
-        if let SignalSpec::Custom { formula, .. } = loaded {
+        if let SignalSpec::Formula { formula } = loaded {
             assert_eq!(formula, "close > sma(close, 20)");
         } else {
-            panic!("Expected Custom signal spec");
+            panic!("Expected Formula signal spec");
         }
     }
 }

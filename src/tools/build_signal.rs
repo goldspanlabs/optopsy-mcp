@@ -74,7 +74,7 @@ fn base_response(
 fn execute_create(
     name: &str,
     formula: &str,
-    description: Option<&str>,
+    _description: Option<&str>,
     save: bool,
 ) -> BuildSignalResponse {
     // Validate the formula first
@@ -124,11 +124,7 @@ fn execute_create(
         }
     }
 
-    let spec = SignalSpec::Custom {
-        name: name.to_string(),
-        formula: formula.to_string(),
-        description: description.map(String::from),
-    };
+    let spec = SignalSpec::Formula { formula: formula.to_string() };
 
     if save {
         // Check if we're overwriting an existing signal with the same name
@@ -615,11 +611,7 @@ mod tests {
         let _guard = storage::TempSignalsGuard::new();
 
         // Save a custom signal
-        let spec = SignalSpec::Custom {
-            name: "ibs_mean_reversion_entry".to_string(),
-            formula: "close < sma(close, 20)".to_string(),
-            description: Some("IBS mean reversion entry".to_string()),
-        };
+        let spec = SignalSpec::Formula { formula: "close < sma(close, 20)".to_string() };
         storage::save_signal("ibs_mean_reversion_entry", &spec).unwrap();
 
         // Search should find it by name
@@ -640,24 +632,20 @@ mod tests {
     }
 
     #[test]
-    fn search_finds_saved_signal_by_description() {
+    fn search_finds_saved_signal_by_formula() {
         let _lock = FS_LOCK.lock().unwrap();
         let _guard = storage::TempSignalsGuard::new();
 
-        let spec = SignalSpec::Custom {
-            name: "my_exit".to_string(),
-            formula: "close > high[1]".to_string(),
-            description: Some("Exit when close exceeds previous high".to_string()),
-        };
+        let spec = SignalSpec::Formula { formula: "close > high[1]".to_string() };
         storage::save_signal("my_exit", &spec).unwrap();
 
-        // Search by description keyword
+        // Search by formula keyword
         let resp = execute(Action::Search {
-            prompt: "previous high".to_string(),
+            prompt: "my_exit".to_string(),
         });
         assert!(
             !resp.saved_signals.is_empty(),
-            "should find saved signal matching description"
+            "should find saved signal matching name"
         );
         assert_eq!(resp.saved_signals[0].name, "my_exit");
     }
@@ -667,11 +655,7 @@ mod tests {
         let _lock = FS_LOCK.lock().unwrap();
         let _guard = storage::TempSignalsGuard::new();
 
-        let spec = SignalSpec::Custom {
-            name: "unrelated_signal".to_string(),
-            formula: "close > open".to_string(),
-            description: None,
-        };
+        let spec = SignalSpec::Formula { formula: "close > open".to_string() };
         storage::save_signal("unrelated_signal", &spec).unwrap();
 
         let resp = execute(Action::Search {
@@ -707,11 +691,7 @@ mod tests {
         let _lock = FS_LOCK.lock().unwrap();
         let _guard = storage::TempSignalsGuard::new();
 
-        let spec = SignalSpec::Custom {
-            name: "rsi_custom_entry".to_string(),
-            formula: "close < sma(close, 14)".to_string(),
-            description: Some("Custom RSI-like entry".to_string()),
-        };
+        let spec = SignalSpec::Formula { formula: "close < sma(close, 14)".to_string() };
         storage::save_signal("rsi_custom_entry", &spec).unwrap();
 
         let resp = execute(Action::Search {
