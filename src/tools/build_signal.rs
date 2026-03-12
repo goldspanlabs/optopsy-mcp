@@ -392,7 +392,7 @@ fn execute_catalog() -> BuildSignalResponse {
         suggested_next_steps: vec![
             "[NEXT] Call build_signal({ action: \"search\", prompt: \"<signal_name>\" }) to get the JSON spec for a signal".to_string(),
             "[THEN] Pass the signal JSON as entry_signal or exit_signal in run_options_backtest — OHLCV data is auto-fetched".to_string(),
-            format!("[INFO] {total} signals across {num_categories} categories: momentum, trend, volatility, overlap, price, volume"),
+            format!("[INFO] {total} signals across {num_categories} categories: momentum, overlap, trend, volatility, volume, price, iv, utility, cross-symbol"),
         ],
     }
 }

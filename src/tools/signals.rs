@@ -38,6 +38,7 @@ pub struct SignalCatalogEntry {
     pub display_name: String,
     pub description: String,
     pub params: String,
+    pub formula_example: String,
 }
 
 /// Response for `list_signals`, containing all signals grouped by category with combinator hints.
@@ -64,6 +65,7 @@ pub fn execute() -> SignalsResponse {
                 name: info.name.to_string(),
                 description: info.description.to_string(),
                 params: info.params.to_string(),
+                formula_example: info.formula_example.to_string(),
             });
     }
 
@@ -75,6 +77,7 @@ pub fn execute() -> SignalsResponse {
                 .map(|s| SignalCatalogEntry {
                     display_name: to_display_name(&s.name),
                     name: s.name,
+                    formula_example: s.formula.clone().unwrap_or_default(),
                     description: s
                         .description
                         .unwrap_or_else(|| s.formula.unwrap_or_default()),

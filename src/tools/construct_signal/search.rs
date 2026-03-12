@@ -120,8 +120,7 @@ mod tests {
         let (result, had_matches) = fuzzy_search("rsi");
         let names: Vec<&str> = result.iter().map(|c| c.name.as_str()).collect();
         assert!(had_matches);
-        // The formula_functions catalog entry for rsi
-        assert!(names.contains(&"rsi (formula)"));
+        assert!(names.contains(&"RSI Below") || names.contains(&"RSI Above"));
     }
 
     #[test]
@@ -130,16 +129,16 @@ mod tests {
         let names: Vec<&str> = result.iter().map(|c| c.name.as_str()).collect();
         assert!(had_matches);
         assert!(
-            names.contains(&"macd_hist (formula)")
-                || names.contains(&"macd_signal (formula)")
-                || names.contains(&"macd_line (formula)")
+            names.contains(&"MACD Bullish")
+                || names.contains(&"MACD Signal Cross Up")
+                || names.contains(&"MACD Line")
         );
     }
 
     #[test]
     fn fuzzy_search_golden_cross() {
-        // "golden cross" refers to SMA crossover; with old variants removed, the
-        // description-based match should surface sma-related formula entries.
+        // "golden cross" refers to SMA crossover; description-based match
+        // should surface SMA-related entries.
         let (result, had_matches) = fuzzy_search("sma crossover");
         let names: Vec<&str> = result.iter().map(|c| c.name.as_str()).collect();
         // Should at minimum find a result (even if just description match)
@@ -152,9 +151,9 @@ mod tests {
         let names: Vec<&str> = result.iter().map(|c| c.name.as_str()).collect();
         assert!(had_matches);
         assert!(
-            names.contains(&"bbands_upper (formula)")
-                || names.contains(&"bbands_lower (formula)")
-                || names.contains(&"bbands_mid (formula)")
+            names.contains(&"Bollinger Upper Break")
+                || names.contains(&"Bollinger Lower Break")
+                || names.contains(&"Bollinger Mid Cross")
         );
     }
 
@@ -167,11 +166,10 @@ mod tests {
 
     #[test]
     fn fuzzy_search_rsi_range() {
-        // "rsi range" no longer has a dedicated catalog entry; searching "rsi"
-        // should still return the formula entry.
+        // Searching "rsi" should return RSI entries.
         let (result, had_matches) = fuzzy_search("rsi");
         let names: Vec<&str> = result.iter().map(|c| c.name.as_str()).collect();
         assert!(had_matches);
-        assert!(names.contains(&"rsi (formula)"));
+        assert!(names.contains(&"RSI Below") || names.contains(&"RSI Above"));
     }
 }
