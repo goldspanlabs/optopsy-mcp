@@ -372,7 +372,17 @@ Most are thin wrappers that build the equivalent Polars expression:
     if args.len() != 3 {
         return Err("range_pct() takes 3 arguments: (close, high, low)".into());
     }
-    let close_e = args[0].into_expr();
+
+    // Define range_pct as the percent position of close within the [low, high] range.
+    // For zero-range bars (high == low), return null to avoid inf/NaN from division by zero.
+    let range = high_e.clone() - low_e.clone();
+    let pct = (close_e - low_e.clone()) / range.clone();
+
+    Ok(
+        when(range.neq(lit(0.0)))
+            .then(pct)
+            .otherwise(lit(NULL)),
+    )
     let high_e = args[1].into_expr();
     let low_e = args[2].into_expr();
     Ok((close_e - low_e.clone()) / (high_e - low_e))
