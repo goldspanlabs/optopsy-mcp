@@ -83,9 +83,9 @@ use polars::prelude::*;
 use rust_ti::standard_indicators::bulk as sti;
 
 use super::helpers::{pad_series, SignalFn};
-use rust_ti::momentum_indicators::bulk as mti;
 use super::volatility::{compute_atr, compute_keltner_channel};
 use super::volume::{compute_cmf, compute_typical_price};
+use rust_ti::momentum_indicators::bulk as mti;
 
 /// A signal driven by a user-defined formula string.
 pub struct FormulaSignal {
