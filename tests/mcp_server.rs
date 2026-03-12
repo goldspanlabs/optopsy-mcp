@@ -1732,24 +1732,25 @@ async fn build_signal_search_returns_candidates() {
         .unwrap();
     let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
 
+    // Search now only searches saved custom signals (not built-in catalog).
+    // With no saved signals, success is false and summary provides guidance.
     assert_eq!(
-        resp["success"], true,
-        "search should succeed when candidates are found"
+        resp["success"], false,
+        "search with no saved signals should return success=false"
     );
-    let candidates = resp["candidates"]
+    assert!(
+        resp["summary"]
+            .as_str()
+            .unwrap()
+            .contains("No saved custom signals"),
+        "summary should explain no saved signals matched"
+    );
+    let next_steps = resp["suggested_next_steps"]
         .as_array()
-        .expect("candidates should be an array");
+        .expect("suggested_next_steps should be an array");
     assert!(
-        !candidates.is_empty(),
-        "search for 'RSI oversold' should return at least one candidate"
-    );
-    assert!(
-        resp["schema"].is_object(),
-        "schema should be present in search response"
-    );
-    assert!(
-        resp["column_defaults"].is_object(),
-        "column_defaults should be present in search response"
+        !next_steps.is_empty(),
+        "should suggest next steps when no results found"
     );
 
     client.cancel().await.unwrap();

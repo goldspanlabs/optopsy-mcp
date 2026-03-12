@@ -712,10 +712,14 @@ fn tool_execute_end_to_end() {
 
     let underlying_prices: Vec<UnderlyingPrice> = dates
         .iter()
-        .zip(closes.iter())
-        .map(|(d, c)| UnderlyingPrice {
+        .enumerate()
+        .map(|(i, d)| UnderlyingPrice {
             date: d.format("%Y-%m-%d").to_string(),
-            close: *c,
+            open: opens[i],
+            high: highs[i],
+            low: lows[i],
+            close: closes[i],
+            volume: None,
         })
         .collect();
 
