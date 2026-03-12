@@ -38,6 +38,29 @@
 //! - `aroon_osc(high, low, period)` — Aroon Oscillator
 //! - `supertrend(close, high, low, period, mult)` — Supertrend line
 //! - `cmf(close, high, low, volume, period)` — Chaikin Money Flow
+//! - `williams_r(high, low, close, period)` — Williams %R (-100 to 0)
+//! - `cci(close, period)` — Commodity Channel Index
+//! - `ppo(close, short, long)` — Percentage Price Oscillator
+//! - `cmo(close, period)` — Chande Momentum Oscillator
+//! - `adx(high, low, close, period)` — Average Directional Index
+//! - `plus_di(high, low, close, period)` — Positive Directional Indicator
+//! - `minus_di(high, low, close, period)` — Negative Directional Indicator
+//! - `psar(high, low, accel, max_accel)` — Parabolic SAR
+//! - `tsi(close, fast, slow)` — True Strength Index
+//! - `vpt(close, volume)` — Volume Price Trend
+//! - `donchian_upper(high, low, period)` — Donchian Channel upper
+//! - `donchian_mid(high, low, period)` — Donchian Channel midline
+//! - `donchian_lower(high, low, period)` — Donchian Channel lower
+//! - `ichimoku_tenkan(high, low, close)` — Ichimoku Tenkan-sen (9/26/52)
+//! - `ichimoku_kijun(high, low, close)` — Ichimoku Kijun-sen
+//! - `ichimoku_senkou_a(high, low, close)` — Ichimoku Senkou Span A
+//! - `ichimoku_senkou_b(high, low, close)` — Ichimoku Senkou Span B
+//! - `envelope_upper(close, period, pct)` — MA Envelope upper band
+//! - `envelope_lower(close, period, pct)` — MA Envelope lower band
+//! - `ad(high, low, close, volume)` — Accumulation/Distribution line
+//! - `pvi(close, volume)` — Positive Volume Index
+//! - `nvi(close, volume)` — Negative Volume Index
+//! - `ulcer(close, period)` — Ulcer Index
 //!
 //! **Functions (derived features)**:
 //! - `tr(close, high, low)` — True Range
@@ -85,7 +108,11 @@ use rust_ti::standard_indicators::bulk as sti;
 use super::helpers::{pad_series, SignalFn};
 use super::volatility::{compute_atr, compute_keltner_channel};
 use super::volume::{compute_cmf, compute_typical_price};
+use rust_ti::candle_indicators::bulk as cti;
 use rust_ti::momentum_indicators::bulk as mti;
+use rust_ti::strength_indicators::bulk as sti_strength;
+use rust_ti::trend_indicators::bulk as tti;
+use rust_ti::volatility_indicators::bulk as vti;
 
 /// A signal driven by a user-defined formula string.
 pub struct FormulaSignal {
@@ -1383,6 +1410,397 @@ impl Parser {
                 ))
             }
 
+            // --- New rust_ti momentum indicators ---
+
+            "williams_r" => {
+                let (high_expr, low_expr, close_expr, period) =
+                    extract_three_cols_period(&args, "williams_r")?;
+                Ok(as_struct(vec![
+                    high_expr.alias("__h"),
+                    low_expr.alias("__l"),
+                    close_expr.alias("__c"),
+                ])
+                .map(
+                    move |col: Column| {
+                        let s = col.as_materialized_series();
+                        let ca = s.struct_()?;
+                        let h: Vec<f64> = ca.field_by_name("__h")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let l: Vec<f64> = ca.field_by_name("__l")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let c: Vec<f64> = ca.field_by_name("__c")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let n = c.len();
+                        if n < period {
+                            return Ok(Series::new("williams_r".into(), vec![f64::NAN; n]).into());
+                        }
+                        let vals = mti::williams_percent_r(&h, &l, &c, period);
+                        let padded = pad_series(&vals, n);
+                        Ok(Series::new("williams_r".into(), padded).into())
+                    },
+                    |_: &Schema, _: &Field| Ok(Field::new("v".into(), DataType::Float64)),
+                ))
+            }
+            "cci" => {
+                let (col_expr, period) = extract_col_period(&args, "cci")?;
+                Ok(col_expr.map(
+                    move |col: Column| {
+                        let ca = col.as_materialized_series().f64()?;
+                        let n = ca.len();
+                        let vals: Vec<f64> = ca.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        if n <= period {
+                            return Ok(Series::new("cci".into(), vec![f64::NAN; n]).into());
+                        }
+                        let cci_vals = mti::commodity_channel_index(
+                            &vals,
+                            rust_ti::ConstantModelType::SimpleMovingAverage,
+                            rust_ti::DeviationModel::MeanAbsoluteDeviation,
+                            0.015,
+                            period,
+                        );
+                        let padded = pad_series(&cci_vals, n);
+                        Ok(Series::new("cci".into(), padded).into())
+                    },
+                    |_: &Schema, _: &Field| Ok(Field::new("v".into(), DataType::Float64)),
+                ))
+            }
+            "ppo" => {
+                let (col_expr, short_period, long_period) =
+                    extract_col_two_periods(&args, "ppo")?;
+                Ok(col_expr.map(
+                    move |col: Column| {
+                        let ca = col.as_materialized_series().f64()?;
+                        let n = ca.len();
+                        let vals: Vec<f64> = ca.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        if n <= long_period {
+                            return Ok(Series::new("ppo".into(), vec![f64::NAN; n]).into());
+                        }
+                        let ppo_vals = mti::percentage_price_oscillator(
+                            &vals,
+                            short_period,
+                            long_period,
+                            rust_ti::ConstantModelType::ExponentialMovingAverage,
+                        );
+                        let padded = pad_series(&ppo_vals, n);
+                        Ok(Series::new("ppo".into(), padded).into())
+                    },
+                    |_: &Schema, _: &Field| Ok(Field::new("v".into(), DataType::Float64)),
+                ))
+            }
+            "cmo" => {
+                let (col_expr, period) = extract_col_period(&args, "cmo")?;
+                Ok(col_expr.map(
+                    move |col: Column| {
+                        let ca = col.as_materialized_series().f64()?;
+                        let n = ca.len();
+                        let vals: Vec<f64> = ca.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        if n <= period {
+                            return Ok(Series::new("cmo".into(), vec![f64::NAN; n]).into());
+                        }
+                        let cmo_vals = mti::chande_momentum_oscillator(&vals, period);
+                        let padded = pad_series(&cmo_vals, n);
+                        Ok(Series::new("cmo".into(), padded).into())
+                    },
+                    |_: &Schema, _: &Field| Ok(Field::new("v".into(), DataType::Float64)),
+                ))
+            }
+
+            // --- New rust_ti trend indicators ---
+
+            "adx" | "plus_di" | "minus_di" => {
+                let func = name.to_lowercase();
+                let (high_expr, low_expr, close_expr, period) =
+                    extract_three_cols_period(&args, &func)?;
+                Ok(as_struct(vec![
+                    high_expr.alias("__h"),
+                    low_expr.alias("__l"),
+                    close_expr.alias("__c"),
+                ])
+                .map(
+                    move |col: Column| {
+                        let s = col.as_materialized_series();
+                        let ca = s.struct_()?;
+                        let h: Vec<f64> = ca.field_by_name("__h")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let l: Vec<f64> = ca.field_by_name("__l")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let c: Vec<f64> = ca.field_by_name("__c")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let n = c.len();
+                        if n < period + 1 {
+                            return Ok(Series::new("dms".into(), vec![f64::NAN; n]).into());
+                        }
+                        let dms = tti::directional_movement_system(
+                            &h, &l, &c, period,
+                            rust_ti::ConstantModelType::SmoothedMovingAverage,
+                        );
+                        let extracted: Vec<f64> = dms.iter().map(|t| match func.as_str() {
+                            "plus_di" => t.0,
+                            "minus_di" => t.1,
+                            _ => t.2, // adx
+                        }).collect();
+                        let padded = pad_series(&extracted, n);
+                        Ok(Series::new("dms".into(), padded).into())
+                    },
+                    |_: &Schema, _: &Field| Ok(Field::new("v".into(), DataType::Float64)),
+                ))
+            }
+            "psar" => {
+                let (high_expr, low_expr, accel, max_accel) =
+                    extract_two_cols_two_floats(&args, "psar")?;
+                Ok(as_struct(vec![
+                    high_expr.alias("__h"),
+                    low_expr.alias("__l"),
+                ])
+                .map(
+                    move |col: Column| {
+                        let s = col.as_materialized_series();
+                        let ca = s.struct_()?;
+                        let h: Vec<f64> = ca.field_by_name("__h")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let l: Vec<f64> = ca.field_by_name("__l")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let n = h.len();
+                        if n < 2 {
+                            return Ok(Series::new("psar".into(), vec![f64::NAN; n]).into());
+                        }
+                        let sar_vals = tti::parabolic_time_price_system(
+                            &h, &l, accel, max_accel, accel,
+                            rust_ti::Position::Long, l[0],
+                        );
+                        let padded = pad_series(&sar_vals, n);
+                        Ok(Series::new("psar".into(), padded).into())
+                    },
+                    |_: &Schema, _: &Field| Ok(Field::new("v".into(), DataType::Float64)),
+                ))
+            }
+            "tsi" => {
+                let (col_expr, fast, slow) = extract_col_two_periods(&args, "tsi")?;
+                Ok(col_expr.map(
+                    move |col: Column| {
+                        let ca = col.as_materialized_series().f64()?;
+                        let n = ca.len();
+                        let vals: Vec<f64> = ca.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        if n <= slow {
+                            return Ok(Series::new("tsi".into(), vec![f64::NAN; n]).into());
+                        }
+                        let tsi_vals = tti::true_strength_index(
+                            &vals,
+                            rust_ti::ConstantModelType::ExponentialMovingAverage,
+                            fast,
+                            rust_ti::ConstantModelType::ExponentialMovingAverage,
+                            slow,
+                        );
+                        let padded = pad_series(&tsi_vals, n);
+                        Ok(Series::new("tsi".into(), padded).into())
+                    },
+                    |_: &Schema, _: &Field| Ok(Field::new("v".into(), DataType::Float64)),
+                ))
+            }
+            "vpt" => {
+                let (close_expr, vol_expr) = extract_two_cols(&args, "vpt")?;
+                Ok(as_struct(vec![
+                    close_expr.alias("__c"),
+                    vol_expr.alias("__v"),
+                ])
+                .map(
+                    move |col: Column| {
+                        let s = col.as_materialized_series();
+                        let ca = s.struct_()?;
+                        let c: Vec<f64> = ca.field_by_name("__c")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let v: Vec<f64> = ca.field_by_name("__v")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let n = c.len();
+                        if n < 2 {
+                            return Ok(Series::new("vpt".into(), vec![f64::NAN; n]).into());
+                        }
+                        let vpt_vals = tti::volume_price_trend(&c, &v[1..], 0.0);
+                        let padded = pad_series(&vpt_vals, n);
+                        Ok(Series::new("vpt".into(), padded).into())
+                    },
+                    |_: &Schema, _: &Field| Ok(Field::new("v".into(), DataType::Float64)),
+                ))
+            }
+
+            // --- New rust_ti channel indicators ---
+
+            "donchian_upper" | "donchian_mid" | "donchian_lower" => {
+                let func = name.to_lowercase();
+                let (high_expr, low_expr, period) =
+                    extract_three_cols_period_as_two_cols(&args, &func)?;
+                Ok(as_struct(vec![
+                    high_expr.alias("__h"),
+                    low_expr.alias("__l"),
+                ])
+                .map(
+                    move |col: Column| {
+                        let s = col.as_materialized_series();
+                        let ca = s.struct_()?;
+                        let h: Vec<f64> = ca.field_by_name("__h")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let l: Vec<f64> = ca.field_by_name("__l")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let n = h.len();
+                        if n < period {
+                            return Ok(Series::new("donchian".into(), vec![f64::NAN; n]).into());
+                        }
+                        let dc = cti::donchian_channels(&h, &l, period);
+                        let extracted: Vec<f64> = dc.iter().map(|t| match func.as_str() {
+                            "donchian_upper" => t.0,
+                            "donchian_lower" => t.2,
+                            _ => t.1, // mid
+                        }).collect();
+                        let padded = pad_series(&extracted, n);
+                        Ok(Series::new("donchian".into(), padded).into())
+                    },
+                    |_: &Schema, _: &Field| Ok(Field::new("v".into(), DataType::Float64)),
+                ))
+            }
+            "ichimoku_tenkan" | "ichimoku_kijun" | "ichimoku_senkou_a" | "ichimoku_senkou_b" => {
+                let func = name.to_lowercase();
+                let (high_expr, low_expr, close_expr) = extract_three_cols(&args, &func)?;
+                Ok(as_struct(vec![
+                    high_expr.alias("__h"),
+                    low_expr.alias("__l"),
+                    close_expr.alias("__c"),
+                ])
+                .map(
+                    move |col: Column| {
+                        let s = col.as_materialized_series();
+                        let ca = s.struct_()?;
+                        let h: Vec<f64> = ca.field_by_name("__h")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let l: Vec<f64> = ca.field_by_name("__l")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let c: Vec<f64> = ca.field_by_name("__c")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let n = c.len();
+                        if n < 52 {
+                            return Ok(Series::new("ichimoku".into(), vec![f64::NAN; n]).into());
+                        }
+                        let ich = cti::ichimoku_cloud(&h, &l, &c, 9, 26, 52);
+                        let extracted: Vec<f64> = ich.iter().map(|t| match func.as_str() {
+                            "ichimoku_tenkan" => t.0,
+                            "ichimoku_kijun" => t.1,
+                            "ichimoku_senkou_a" => t.2,
+                            _ => t.3, // senkou_b
+                        }).collect();
+                        let padded = pad_series(&extracted, n);
+                        Ok(Series::new("ichimoku".into(), padded).into())
+                    },
+                    |_: &Schema, _: &Field| Ok(Field::new("v".into(), DataType::Float64)),
+                ))
+            }
+            "envelope_upper" | "envelope_lower" => {
+                let func = name.to_lowercase();
+                let (col_expr, period, pct) = extract_col_period_float(&args, &func)?;
+                Ok(col_expr.map(
+                    move |col: Column| {
+                        let ca = col.as_materialized_series().f64()?;
+                        let n = ca.len();
+                        let vals: Vec<f64> = ca.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        if n < period {
+                            return Ok(Series::new("envelope".into(), vec![f64::NAN; n]).into());
+                        }
+                        let env = cti::moving_constant_envelopes(
+                            &vals,
+                            rust_ti::ConstantModelType::SimpleMovingAverage,
+                            pct,
+                            period,
+                        );
+                        let extracted: Vec<f64> = env.iter().map(|t| {
+                            if func == "envelope_upper" { t.2 } else { t.0 }
+                        }).collect();
+                        let padded = pad_series(&extracted, n);
+                        Ok(Series::new("envelope".into(), padded).into())
+                    },
+                    |_: &Schema, _: &Field| Ok(Field::new("v".into(), DataType::Float64)),
+                ))
+            }
+
+            // --- New rust_ti strength / volume indicators ---
+
+            "ad" => {
+                let (high_expr, low_expr, close_expr, vol_expr) =
+                    extract_four_cols(&args, "ad")?;
+                Ok(as_struct(vec![
+                    high_expr.alias("__h"),
+                    low_expr.alias("__l"),
+                    close_expr.alias("__c"),
+                    vol_expr.alias("__v"),
+                ])
+                .map(
+                    move |col: Column| {
+                        let s = col.as_materialized_series();
+                        let ca = s.struct_()?;
+                        let h: Vec<f64> = ca.field_by_name("__h")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let l: Vec<f64> = ca.field_by_name("__l")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let c: Vec<f64> = ca.field_by_name("__c")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let v: Vec<f64> = ca.field_by_name("__v")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let n = c.len();
+                        if n < 2 {
+                            return Ok(Series::new("ad".into(), vec![f64::NAN; n]).into());
+                        }
+                        let ad_vals = sti_strength::accumulation_distribution(&h, &l, &c, &v, 0.0);
+                        let padded = pad_series(&ad_vals, n);
+                        Ok(Series::new("ad".into(), padded).into())
+                    },
+                    |_: &Schema, _: &Field| Ok(Field::new("v".into(), DataType::Float64)),
+                ))
+            }
+            "pvi" => {
+                let (close_expr, vol_expr) = extract_two_cols(&args, "pvi")?;
+                Ok(as_struct(vec![
+                    close_expr.alias("__c"),
+                    vol_expr.alias("__v"),
+                ])
+                .map(
+                    move |col: Column| {
+                        let s = col.as_materialized_series();
+                        let ca = s.struct_()?;
+                        let c: Vec<f64> = ca.field_by_name("__c")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let v: Vec<f64> = ca.field_by_name("__v")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let n = c.len();
+                        if n < 2 {
+                            return Ok(Series::new("pvi".into(), vec![f64::NAN; n]).into());
+                        }
+                        let pvi_vals = sti_strength::positive_volume_index(&c, &v, 1000.0);
+                        let padded = pad_series(&pvi_vals, n);
+                        Ok(Series::new("pvi".into(), padded).into())
+                    },
+                    |_: &Schema, _: &Field| Ok(Field::new("v".into(), DataType::Float64)),
+                ))
+            }
+            "nvi" => {
+                let (close_expr, vol_expr) = extract_two_cols(&args, "nvi")?;
+                Ok(as_struct(vec![
+                    close_expr.alias("__c"),
+                    vol_expr.alias("__v"),
+                ])
+                .map(
+                    move |col: Column| {
+                        let s = col.as_materialized_series();
+                        let ca = s.struct_()?;
+                        let c: Vec<f64> = ca.field_by_name("__c")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let v: Vec<f64> = ca.field_by_name("__v")?.f64()?.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        let n = c.len();
+                        if n < 2 {
+                            return Ok(Series::new("nvi".into(), vec![f64::NAN; n]).into());
+                        }
+                        let nvi_vals = sti_strength::negative_volume_index(&c, &v, 1000.0);
+                        let padded = pad_series(&nvi_vals, n);
+                        Ok(Series::new("nvi".into(), padded).into())
+                    },
+                    |_: &Schema, _: &Field| Ok(Field::new("v".into(), DataType::Float64)),
+                ))
+            }
+
+            // --- New rust_ti volatility indicators ---
+
+            "ulcer" => {
+                let (col_expr, period) = extract_col_period(&args, "ulcer")?;
+                Ok(col_expr.map(
+                    move |col: Column| {
+                        let ca = col.as_materialized_series().f64()?;
+                        let n = ca.len();
+                        let vals: Vec<f64> = ca.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+                        if n <= period {
+                            return Ok(Series::new("ulcer".into(), vec![f64::NAN; n]).into());
+                        }
+                        let ulcer_vals = vti::ulcer_index(&vals, period);
+                        let padded = pad_series(&ulcer_vals, n);
+                        Ok(Series::new("ulcer".into(), padded).into())
+                    },
+                    |_: &Schema, _: &Field| Ok(Field::new("v".into(), DataType::Float64)),
+                ))
+            }
+
             // --- Stateful counting functions ---
 
             "consecutive_up" => {
@@ -1432,7 +1850,10 @@ impl Parser {
                  pct_change, rsi, macd_hist, macd_signal, macd_line, roc, bbands_mid, bbands_upper, \
                  bbands_lower, atr, stochastic, keltner_upper, keltner_lower, obv, mfi, tr, \
                  rel_volume, range_pct, zscore, rank, iv_rank, if, aroon_up, aroon_down, aroon_osc, \
-                 supertrend, cmf, consecutive_up, consecutive_down"
+                 supertrend, cmf, consecutive_up, consecutive_down, williams_r, cci, ppo, cmo, \
+                 adx, plus_di, minus_di, psar, tsi, vpt, donchian_upper, donchian_mid, \
+                 donchian_lower, ichimoku_tenkan, ichimoku_kijun, ichimoku_senkou_a, \
+                 ichimoku_senkou_b, envelope_upper, envelope_lower, ad, pvi, nvi, ulcer"
             )),
         }
     }
@@ -1586,6 +2007,87 @@ fn extract_three_cols_period_as_two_cols(
     ))
 }
 
+fn extract_col_two_periods(
+    args: &[FuncArg],
+    func_name: &str,
+) -> Result<(Expr, usize, usize), String> {
+    if args.len() != 3 {
+        return Err(format!(
+            "{func_name}() takes exactly 3 arguments: (column, period1, period2)"
+        ));
+    }
+    Ok((
+        args[0].clone().into_expr(),
+        args[1].as_usize()?,
+        args[2].as_usize()?,
+    ))
+}
+
+fn extract_two_cols_two_floats(
+    args: &[FuncArg],
+    func_name: &str,
+) -> Result<(Expr, Expr, f64, f64), String> {
+    if args.len() != 4 {
+        return Err(format!(
+            "{func_name}() takes exactly 4 arguments: (col1, col2, float1, float2)"
+        ));
+    }
+    let f1 = match &args[2] {
+        FuncArg::Number(n) => *n,
+        FuncArg::Expression(_) => {
+            return Err(format!("{func_name}(): 3rd argument must be a number"))
+        }
+    };
+    let f2 = match &args[3] {
+        FuncArg::Number(n) => *n,
+        FuncArg::Expression(_) => {
+            return Err(format!("{func_name}(): 4th argument must be a number"))
+        }
+    };
+    Ok((
+        args[0].clone().into_expr(),
+        args[1].clone().into_expr(),
+        f1,
+        f2,
+    ))
+}
+
+fn extract_col_period_float(
+    args: &[FuncArg],
+    func_name: &str,
+) -> Result<(Expr, usize, f64), String> {
+    if args.len() != 3 {
+        return Err(format!(
+            "{func_name}() takes exactly 3 arguments: (column, period, float)"
+        ));
+    }
+    let period = args[1].as_usize()?;
+    let f = match &args[2] {
+        FuncArg::Number(n) => *n,
+        FuncArg::Expression(_) => {
+            return Err(format!("{func_name}(): 3rd argument must be a number"))
+        }
+    };
+    Ok((args[0].clone().into_expr(), period, f))
+}
+
+fn extract_four_cols(
+    args: &[FuncArg],
+    func_name: &str,
+) -> Result<(Expr, Expr, Expr, Expr), String> {
+    if args.len() != 4 {
+        return Err(format!(
+            "{func_name}() takes exactly 4 arguments: (col1, col2, col3, col4)"
+        ));
+    }
+    Ok((
+        args[0].clone().into_expr(),
+        args[1].clone().into_expr(),
+        args[2].clone().into_expr(),
+        args[3].clone().into_expr(),
+    ))
+}
+
 /// Compute percentile rank within a rolling window.
 fn compute_rolling_rank(vals: &[f64], period: usize) -> Vec<f64> {
     let n = vals.len();
@@ -1711,6 +2213,29 @@ const INDICATOR_FUNCTIONS: &[&str] = &[
     "obv",
     "cmf",
     "roc",
+    "williams_r",
+    "cci",
+    "ppo",
+    "cmo",
+    "adx",
+    "plus_di",
+    "minus_di",
+    "psar",
+    "tsi",
+    "vpt",
+    "donchian_upper",
+    "donchian_mid",
+    "donchian_lower",
+    "ichimoku_tenkan",
+    "ichimoku_kijun",
+    "ichimoku_senkou_a",
+    "ichimoku_senkou_b",
+    "envelope_upper",
+    "envelope_lower",
+    "ad",
+    "pvi",
+    "nvi",
+    "ulcer",
 ];
 
 /// A recognized indicator function call extracted from a formula.
@@ -2536,5 +3061,271 @@ mod tests {
         // tr, rel_volume, zscore, range_pct are not in INDICATOR_FUNCTIONS
         let calls = extract_indicator_calls("zscore(close, 20) < -2 and tr(close, high, low) > 1");
         assert!(calls.is_empty());
+    }
+
+    // ── New indicator parse tests ───────────────────────────────────────
+
+    #[test]
+    fn formula_williams_r_parses() {
+        assert!(validate_formula("williams_r(high, low, close, 14) < -80").is_ok());
+    }
+
+    #[test]
+    fn formula_cci_parses() {
+        assert!(validate_formula("cci(close, 20) > 100").is_ok());
+    }
+
+    #[test]
+    fn formula_ppo_parses() {
+        assert!(validate_formula("ppo(close, 12, 26) > 0").is_ok());
+    }
+
+    #[test]
+    fn formula_cmo_parses() {
+        assert!(validate_formula("cmo(close, 14) < -50").is_ok());
+    }
+
+    #[test]
+    fn formula_adx_parses() {
+        assert!(validate_formula("adx(high, low, close, 14) > 25").is_ok());
+    }
+
+    #[test]
+    fn formula_plus_di_parses() {
+        assert!(
+            validate_formula("plus_di(high, low, close, 14) > minus_di(high, low, close, 14)")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn formula_psar_parses() {
+        assert!(validate_formula("close > psar(high, low, 0.02, 0.2)").is_ok());
+    }
+
+    #[test]
+    fn formula_tsi_parses() {
+        assert!(validate_formula("tsi(close, 13, 25) > 0").is_ok());
+    }
+
+    #[test]
+    fn formula_vpt_parses() {
+        assert!(validate_formula("vpt(close, volume) > 0").is_ok());
+    }
+
+    #[test]
+    fn formula_donchian_parses() {
+        assert!(validate_formula("close > donchian_upper(high, low, 20)").is_ok());
+        assert!(validate_formula("close < donchian_lower(high, low, 20)").is_ok());
+        assert!(validate_formula("close > donchian_mid(high, low, 20)").is_ok());
+    }
+
+    #[test]
+    fn formula_ichimoku_parses() {
+        assert!(validate_formula("close > ichimoku_tenkan(high, low, close)").is_ok());
+        assert!(validate_formula("ichimoku_kijun(high, low, close) > 0").is_ok());
+        assert!(validate_formula("close > ichimoku_senkou_a(high, low, close)").is_ok());
+        assert!(validate_formula("close > ichimoku_senkou_b(high, low, close)").is_ok());
+    }
+
+    #[test]
+    fn formula_envelope_parses() {
+        assert!(validate_formula("close > envelope_upper(close, 20, 2.5)").is_ok());
+        assert!(validate_formula("close < envelope_lower(close, 20, 2.5)").is_ok());
+    }
+
+    #[test]
+    fn formula_ad_parses() {
+        assert!(validate_formula("ad(high, low, close, volume) > 0").is_ok());
+    }
+
+    #[test]
+    fn formula_pvi_nvi_parses() {
+        assert!(validate_formula("pvi(close, volume) > 1000").is_ok());
+        assert!(validate_formula("nvi(close, volume) > 1000").is_ok());
+    }
+
+    #[test]
+    fn formula_ulcer_parses() {
+        assert!(validate_formula("ulcer(close, 14) > 5").is_ok());
+    }
+
+    // ── New indicator evaluation tests ──────────────────────────────────
+
+    #[test]
+    fn formula_williams_r_evaluates() {
+        let df = eval_df();
+        let signal = FormulaSignal::new("williams_r(high, low, close, 5) < -20".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 30);
+    }
+
+    #[test]
+    fn formula_cci_evaluates() {
+        let df = eval_df();
+        let signal = FormulaSignal::new("cci(close, 10) > 0".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 30);
+    }
+
+    #[test]
+    fn formula_ppo_evaluates() {
+        let df = eval_df();
+        let signal = FormulaSignal::new("ppo(close, 5, 10) > 0".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 30);
+    }
+
+    #[test]
+    fn formula_cmo_evaluates() {
+        let df = eval_df();
+        let signal = FormulaSignal::new("cmo(close, 10) > 0".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 30);
+    }
+
+    #[test]
+    fn formula_adx_evaluates() {
+        let n = 30_i32;
+        let close: Vec<f64> = (0..n).map(|i| 100.0 + f64::from(i) * 0.5).collect();
+        let high: Vec<f64> = close.iter().map(|c| c + 2.0).collect();
+        let low: Vec<f64> = close.iter().map(|c| c - 2.0).collect();
+        let df = df! { "close" => &close, "high" => &high, "low" => &low }.unwrap();
+        let signal = FormulaSignal::new("adx(high, low, close, 5) > 0".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), n as usize);
+    }
+
+    #[test]
+    fn formula_psar_evaluates() {
+        let n = 30_i32;
+        let close: Vec<f64> = (0..n).map(|i| 100.0 + f64::from(i) * 0.5).collect();
+        let high: Vec<f64> = close.iter().map(|c| c + 2.0).collect();
+        let low: Vec<f64> = close.iter().map(|c| c - 2.0).collect();
+        let df = df! { "close" => &close, "high" => &high, "low" => &low }.unwrap();
+        let signal = FormulaSignal::new("close > psar(high, low, 0.02, 0.2)".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), n as usize);
+    }
+
+    #[test]
+    fn formula_tsi_evaluates() {
+        let df = eval_df();
+        let signal = FormulaSignal::new("tsi(close, 5, 10) > 0".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 30);
+    }
+
+    #[test]
+    fn formula_vpt_evaluates() {
+        let df = eval_df();
+        let signal = FormulaSignal::new("vpt(close, volume) > 0".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 30);
+    }
+
+    #[test]
+    fn formula_donchian_evaluates() {
+        let n = 30_i32;
+        let high: Vec<f64> = (0..n).map(|i| 102.0 + f64::from(i)).collect();
+        let low: Vec<f64> = (0..n).map(|i| 98.0 + f64::from(i)).collect();
+        let close: Vec<f64> = (0..n).map(|i| 100.0 + f64::from(i)).collect();
+        let df = df! { "close" => &close, "high" => &high, "low" => &low }.unwrap();
+        let signal = FormulaSignal::new("close > donchian_upper(high, low, 5)".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), n as usize);
+    }
+
+    #[test]
+    fn formula_envelope_evaluates() {
+        let df = eval_df();
+        let signal = FormulaSignal::new("close > envelope_upper(close, 10, 2.5)".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 30);
+    }
+
+    #[test]
+    fn formula_ad_evaluates() {
+        let df = eval_df();
+        let signal = FormulaSignal::new("ad(high, low, close, volume) > 0".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 30);
+    }
+
+    #[test]
+    fn formula_pvi_evaluates() {
+        let df = eval_df();
+        let signal = FormulaSignal::new("pvi(close, volume) > 0".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 30);
+    }
+
+    #[test]
+    fn formula_nvi_evaluates() {
+        let df = eval_df();
+        let signal = FormulaSignal::new("nvi(close, volume) > 0".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 30);
+    }
+
+    #[test]
+    fn formula_ulcer_evaluates() {
+        let df = eval_df();
+        let signal = FormulaSignal::new("ulcer(close, 10) > 0".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 30);
+    }
+
+    // ── New indicator wrong-args tests ──────────────────────────────────
+
+    #[test]
+    fn formula_williams_r_wrong_args() {
+        assert!(validate_formula("williams_r(high, low)").is_err());
+    }
+
+    #[test]
+    fn formula_psar_wrong_args() {
+        assert!(validate_formula("psar(high)").is_err());
+    }
+
+    #[test]
+    fn formula_donchian_wrong_args() {
+        assert!(validate_formula("donchian_upper(high)").is_err());
+    }
+
+    #[test]
+    fn formula_ichimoku_wrong_args() {
+        assert!(validate_formula("ichimoku_tenkan(high)").is_err());
+    }
+
+    #[test]
+    fn formula_ad_wrong_args() {
+        assert!(validate_formula("ad(high, low)").is_err());
+    }
+
+    #[test]
+    fn formula_envelope_wrong_args() {
+        assert!(validate_formula("envelope_upper(close)").is_err());
+    }
+
+    // ── New indicator extraction tests ──────────────────────────────────
+
+    #[test]
+    fn extract_indicator_new_functions() {
+        let calls = extract_indicator_calls("adx(high, low, close, 14) > 25");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].func_name, "adx");
+
+        let calls = extract_indicator_calls("williams_r(high, low, close, 14) < -80");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].func_name, "williams_r");
+
+        let calls = extract_indicator_calls("close > donchian_upper(high, low, 20)");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].func_name, "donchian_upper");
+
+        let calls = extract_indicator_calls("close > psar(high, low, 0.02, 0.2)");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].func_name, "psar");
     }
 }

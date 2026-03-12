@@ -103,6 +103,48 @@ pub const SIGNAL_CATALOG: &[SignalInfo] = &[
         params: "column",
         formula_example: "consecutive_down(close) >= 3",
     },
+    SignalInfo {
+        name: "Williams %R Oversold",
+        category: "momentum",
+        description: "Williams %R below threshold (oversold, near -100)",
+        params: "high, low, close, period",
+        formula_example: "williams_r(high, low, close, 14) < -80",
+    },
+    SignalInfo {
+        name: "Williams %R Overbought",
+        category: "momentum",
+        description: "Williams %R above threshold (overbought, near 0)",
+        params: "high, low, close, period",
+        formula_example: "williams_r(high, low, close, 14) > -20",
+    },
+    SignalInfo {
+        name: "CCI Oversold",
+        category: "momentum",
+        description: "Commodity Channel Index below threshold (oversold)",
+        params: "column, period",
+        formula_example: "cci(close, 20) < -100",
+    },
+    SignalInfo {
+        name: "CCI Overbought",
+        category: "momentum",
+        description: "Commodity Channel Index above threshold (overbought)",
+        params: "column, period",
+        formula_example: "cci(close, 20) > 100",
+    },
+    SignalInfo {
+        name: "PPO Bullish",
+        category: "momentum",
+        description: "Percentage Price Oscillator positive (bullish momentum)",
+        params: "column, short_period, long_period",
+        formula_example: "ppo(close, 12, 26) > 0",
+    },
+    SignalInfo {
+        name: "CMO Oversold",
+        category: "momentum",
+        description: "Chande Momentum Oscillator below threshold (oversold)",
+        params: "column, period",
+        formula_example: "cmo(close, 14) < -50",
+    },
     // ── Overlap ───────────────────────────────────────────────────────
     SignalInfo {
         name: "Price Above SMA",
@@ -196,6 +238,84 @@ pub const SIGNAL_CATALOG: &[SignalInfo] = &[
         params: "high, low, period",
         formula_example: "aroon_osc(high, low, 25) > 0",
     },
+    SignalInfo {
+        name: "ADX Strong Trend",
+        category: "trend",
+        description: "Average Directional Index above threshold (strong trend)",
+        params: "high, low, close, period",
+        formula_example: "adx(high, low, close, 14) > 25",
+    },
+    SignalInfo {
+        name: "+DI Above -DI",
+        category: "trend",
+        description: "Positive DI above Negative DI (bullish trend)",
+        params: "high, low, close, period",
+        formula_example: "plus_di(high, low, close, 14) > minus_di(high, low, close, 14)",
+    },
+    SignalInfo {
+        name: "Parabolic SAR Bullish",
+        category: "trend",
+        description: "Price above Parabolic SAR (bullish, SAR below price)",
+        params: "high, low, accel, max_accel",
+        formula_example: "close > psar(high, low, 0.02, 0.2)",
+    },
+    SignalInfo {
+        name: "TSI Bullish",
+        category: "trend",
+        description: "True Strength Index positive (bullish momentum)",
+        params: "column, fast_period, slow_period",
+        formula_example: "tsi(close, 13, 25) > 0",
+    },
+    SignalInfo {
+        name: "VPT Above MA",
+        category: "volume",
+        description: "Volume Price Trend above its moving average",
+        params: "close, volume",
+        formula_example: "vpt(close, volume) > sma(vpt(close, volume), 20)",
+    },
+    // ── Channels ────────────────────────────────────────────────────
+    SignalInfo {
+        name: "Donchian Upper Break",
+        category: "overlap",
+        description: "Price breaks above Donchian Channel upper band",
+        params: "high, low, period",
+        formula_example: "close > donchian_upper(high, low, 20)",
+    },
+    SignalInfo {
+        name: "Donchian Lower Break",
+        category: "overlap",
+        description: "Price breaks below Donchian Channel lower band",
+        params: "high, low, period",
+        formula_example: "close < donchian_lower(high, low, 20)",
+    },
+    SignalInfo {
+        name: "Ichimoku Cloud Bullish",
+        category: "overlap",
+        description: "Price above Ichimoku Cloud (Senkou Span A and B)",
+        params: "high, low, close",
+        formula_example: "close > ichimoku_senkou_a(high, low, close) and close > ichimoku_senkou_b(high, low, close)",
+    },
+    SignalInfo {
+        name: "Ichimoku TK Cross",
+        category: "overlap",
+        description: "Tenkan-sen crosses above Kijun-sen (bullish signal)",
+        params: "high, low, close",
+        formula_example: "ichimoku_tenkan(high, low, close) > ichimoku_kijun(high, low, close)",
+    },
+    SignalInfo {
+        name: "Envelope Upper Break",
+        category: "overlap",
+        description: "Price breaks above MA Envelope upper band",
+        params: "column, period, pct",
+        formula_example: "close > envelope_upper(close, 20, 2.5)",
+    },
+    SignalInfo {
+        name: "Envelope Lower Break",
+        category: "overlap",
+        description: "Price breaks below MA Envelope lower band",
+        params: "column, period, pct",
+        formula_example: "close < envelope_lower(close, 20, 2.5)",
+    },
     // ── Volatility ────────────────────────────────────────────────────
     SignalInfo {
         name: "ATR High",
@@ -218,6 +338,13 @@ pub const SIGNAL_CATALOG: &[SignalInfo] = &[
         params: "column, period",
         formula_example: "zscore(close, 20) < -2",
     },
+    SignalInfo {
+        name: "Ulcer Index High",
+        category: "volatility",
+        description: "Ulcer Index above threshold (high downside risk)",
+        params: "column, period",
+        formula_example: "ulcer(close, 14) > 5",
+    },
     // ── Volume ────────────────────────────────────────────────────────
     SignalInfo {
         name: "OBV Positive",
@@ -239,6 +366,34 @@ pub const SIGNAL_CATALOG: &[SignalInfo] = &[
         description: "Relative volume above threshold (volume spike)",
         params: "volume, period",
         formula_example: "rel_volume(volume, 20) > 2.0",
+    },
+    SignalInfo {
+        name: "A/D Line Positive",
+        category: "volume",
+        description: "Accumulation/Distribution line positive (accumulation)",
+        params: "high, low, close, volume",
+        formula_example: "ad(high, low, close, volume) > 0",
+    },
+    SignalInfo {
+        name: "VPT Positive",
+        category: "volume",
+        description: "Volume Price Trend positive (volume-confirmed trend)",
+        params: "close, volume",
+        formula_example: "vpt(close, volume) > 0",
+    },
+    SignalInfo {
+        name: "PVI Above SMA",
+        category: "volume",
+        description: "Positive Volume Index above its moving average",
+        params: "close, volume",
+        formula_example: "pvi(close, volume) > sma(pvi(close, volume), 255)",
+    },
+    SignalInfo {
+        name: "NVI Above SMA",
+        category: "volume",
+        description: "Negative Volume Index above its moving average",
+        params: "close, volume",
+        formula_example: "nvi(close, volume) > sma(nvi(close, volume), 255)",
     },
     // ── Price ─────────────────────────────────────────────────────────
     SignalInfo {
@@ -341,8 +496,8 @@ mod tests {
 
     #[test]
     fn catalog_has_all_signals() {
-        // 37 signals across 9 domain categories
-        assert_eq!(SIGNAL_CATALOG.len(), 37);
+        // 59 signals across 9 domain categories
+        assert_eq!(SIGNAL_CATALOG.len(), 59);
     }
 
     #[test]
