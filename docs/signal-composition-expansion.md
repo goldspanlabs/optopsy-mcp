@@ -222,17 +222,17 @@ if(pct_change(close, 1) > 0.02, volume > sma(volume, 20) * 3.0, volume > sma(vol
 
 Add a `tf(timeframe, expr)` function to the formula language that:
 
-1. Resamples the OHLCV DataFrame to the specified `timeframe` **string literal** (for example: `tf("weekly", expr)` or `tf("monthly", expr)`)
+1. Resamples the OHLCV DataFrame to the specified `timeframe` **keyword** (e.g., `tf(weekly, expr)` or `tf(monthly, expr)`)
 2. Evaluates the inner expression on the resampled frame
 3. Forward-fills the result back to daily resolution
 4. Makes it available as a virtual column for the outer expression
 
 ### Supported timeframes
 
-| Timeframe string | Resample rule |
-|------------------|---------------|
-| `"weekly"`       | Calendar week (Mon–Fri) |
-| `"monthly"`      | Calendar month |
+| Keyword    | Resample rule |
+|------------|---------------|
+| `weekly`   | Calendar week (Mon–Fri) |
+| `monthly`  | Calendar month |
 
 ### Formula syntax
 
