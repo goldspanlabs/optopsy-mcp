@@ -2035,17 +2035,13 @@ fn extract_two_cols_two_floats(
     let f1 = match &args[2] {
         FuncArg::Number(n) => *n,
         FuncArg::Expression(_) => {
-            return Err(format!(
-                "{func_name}(): 3rd argument must be a number"
-            ))
+            return Err(format!("{func_name}(): 3rd argument must be a number"))
         }
     };
     let f2 = match &args[3] {
         FuncArg::Number(n) => *n,
         FuncArg::Expression(_) => {
-            return Err(format!(
-                "{func_name}(): 4th argument must be a number"
-            ))
+            return Err(format!("{func_name}(): 4th argument must be a number"))
         }
     };
     Ok((
@@ -2069,15 +2065,16 @@ fn extract_col_period_float(
     let f = match &args[2] {
         FuncArg::Number(n) => *n,
         FuncArg::Expression(_) => {
-            return Err(format!(
-                "{func_name}(): 3rd argument must be a number"
-            ))
+            return Err(format!("{func_name}(): 3rd argument must be a number"))
         }
     };
     Ok((args[0].clone().into_expr(), period, f))
 }
 
-fn extract_four_cols(args: &[FuncArg], func_name: &str) -> Result<(Expr, Expr, Expr, Expr), String> {
+fn extract_four_cols(
+    args: &[FuncArg],
+    func_name: &str,
+) -> Result<(Expr, Expr, Expr, Expr), String> {
     if args.len() != 4 {
         return Err(format!(
             "{func_name}() takes exactly 4 arguments: (col1, col2, col3, col4)"
@@ -3095,7 +3092,10 @@ mod tests {
 
     #[test]
     fn formula_plus_di_parses() {
-        assert!(validate_formula("plus_di(high, low, close, 14) > minus_di(high, low, close, 14)").is_ok());
+        assert!(
+            validate_formula("plus_di(high, low, close, 14) > minus_di(high, low, close, 14)")
+                .is_ok()
+        );
     }
 
     #[test]

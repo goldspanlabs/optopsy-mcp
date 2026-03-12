@@ -803,17 +803,27 @@ fn compute_williams_r_indicator(
     period: usize,
     dates: &[String],
 ) -> Vec<IndicatorData> {
-    let Ok(high) = column_to_f64(df, high_col) else { return vec![] };
-    let Ok(low) = column_to_f64(df, low_col) else { return vec![] };
-    let Ok(close) = column_to_f64(df, close_col) else { return vec![] };
+    let Ok(high) = column_to_f64(df, high_col) else {
+        return vec![];
+    };
+    let Ok(low) = column_to_f64(df, low_col) else {
+        return vec![];
+    };
+    let Ok(close) = column_to_f64(df, close_col) else {
+        return vec![];
+    };
     let n = close.len();
-    if n < period { return vec![] }
+    if n < period {
+        return vec![];
+    }
     let vals = mti::williams_percent_r(&high, &low, &close, period);
     let padded = pad_series(&vals, n);
     vec![make_indicator(
         format!("Williams %R({period})"),
         DisplayType::Subchart,
-        &padded, dates, "%R",
+        &padded,
+        dates,
+        "%R",
         vec![-20.0, -80.0],
     )]
 }
@@ -824,9 +834,13 @@ fn compute_cci_indicator(
     period: usize,
     dates: &[String],
 ) -> Vec<IndicatorData> {
-    let Ok(prices) = column_to_f64(df, column) else { return vec![] };
+    let Ok(prices) = column_to_f64(df, column) else {
+        return vec![];
+    };
     let n = prices.len();
-    if n <= period { return vec![] }
+    if n <= period {
+        return vec![];
+    }
     let vals = mti::commodity_channel_index(
         &prices,
         rust_ti::ConstantModelType::SimpleMovingAverage,
@@ -838,7 +852,9 @@ fn compute_cci_indicator(
     vec![make_indicator(
         format!("CCI({period})"),
         DisplayType::Subchart,
-        &padded, dates, "CCI",
+        &padded,
+        dates,
+        "CCI",
         vec![-100.0, 100.0],
     )]
 }
@@ -850,18 +866,26 @@ fn compute_ppo_indicator(
     long_period: usize,
     dates: &[String],
 ) -> Vec<IndicatorData> {
-    let Ok(prices) = column_to_f64(df, column) else { return vec![] };
+    let Ok(prices) = column_to_f64(df, column) else {
+        return vec![];
+    };
     let n = prices.len();
-    if n <= long_period { return vec![] }
+    if n <= long_period {
+        return vec![];
+    }
     let vals = mti::percentage_price_oscillator(
-        &prices, short_period, long_period,
+        &prices,
+        short_period,
+        long_period,
         rust_ti::ConstantModelType::ExponentialMovingAverage,
     );
     let padded = pad_series(&vals, n);
     vec![make_indicator(
         format!("PPO({short_period},{long_period})"),
         DisplayType::Subchart,
-        &padded, dates, "PPO",
+        &padded,
+        dates,
+        "PPO",
         vec![0.0],
     )]
 }
@@ -872,15 +896,21 @@ fn compute_cmo_indicator(
     period: usize,
     dates: &[String],
 ) -> Vec<IndicatorData> {
-    let Ok(prices) = column_to_f64(df, column) else { return vec![] };
+    let Ok(prices) = column_to_f64(df, column) else {
+        return vec![];
+    };
     let n = prices.len();
-    if n <= period { return vec![] }
+    if n <= period {
+        return vec![];
+    }
     let vals = mti::chande_momentum_oscillator(&prices, period);
     let padded = pad_series(&vals, n);
     vec![make_indicator(
         format!("CMO({period})"),
         DisplayType::Subchart,
-        &padded, dates, "CMO",
+        &padded,
+        dates,
+        "CMO",
         vec![-50.0, 50.0],
     )]
 }
@@ -894,13 +924,24 @@ fn compute_adx_indicator(
     period: usize,
     dates: &[String],
 ) -> Vec<IndicatorData> {
-    let Ok(high) = column_to_f64(df, high_col) else { return vec![] };
-    let Ok(low) = column_to_f64(df, low_col) else { return vec![] };
-    let Ok(close) = column_to_f64(df, close_col) else { return vec![] };
+    let Ok(high) = column_to_f64(df, high_col) else {
+        return vec![];
+    };
+    let Ok(low) = column_to_f64(df, low_col) else {
+        return vec![];
+    };
+    let Ok(close) = column_to_f64(df, close_col) else {
+        return vec![];
+    };
     let n = close.len();
-    if n < period + 1 { return vec![] }
+    if n < period + 1 {
+        return vec![];
+    }
     let dms = tti::directional_movement_system(
-        &high, &low, &close, period,
+        &high,
+        &low,
+        &close,
+        period,
         rust_ti::ConstantModelType::SmoothedMovingAverage,
     );
     let adx_vals: Vec<f64> = dms.iter().map(|t| t.2).collect();
@@ -908,7 +949,9 @@ fn compute_adx_indicator(
     vec![make_indicator(
         format!("ADX({period})"),
         DisplayType::Subchart,
-        &padded, dates, "ADX",
+        &padded,
+        dates,
+        "ADX",
         vec![20.0, 40.0],
     )]
 }
@@ -921,19 +964,32 @@ fn compute_psar_indicator(
     max_accel: f64,
     dates: &[String],
 ) -> Vec<IndicatorData> {
-    let Ok(high) = column_to_f64(df, high_col) else { return vec![] };
-    let Ok(low) = column_to_f64(df, low_col) else { return vec![] };
+    let Ok(high) = column_to_f64(df, high_col) else {
+        return vec![];
+    };
+    let Ok(low) = column_to_f64(df, low_col) else {
+        return vec![];
+    };
     let n = high.len();
-    if n < 2 { return vec![] }
+    if n < 2 {
+        return vec![];
+    }
     let vals = tti::parabolic_time_price_system(
-        &high, &low, accel, max_accel, accel,
-        rust_ti::Position::Long, low[0],
+        &high,
+        &low,
+        accel,
+        max_accel,
+        accel,
+        rust_ti::Position::Long,
+        low[0],
     );
     let padded = pad_series(&vals, n);
     vec![make_indicator(
         format!("Parabolic SAR({accel},{max_accel})"),
         DisplayType::Overlay,
-        &padded, dates, "SAR",
+        &padded,
+        dates,
+        "SAR",
         vec![],
     )]
 }
@@ -945,19 +1001,27 @@ fn compute_tsi_indicator(
     slow: usize,
     dates: &[String],
 ) -> Vec<IndicatorData> {
-    let Ok(prices) = column_to_f64(df, column) else { return vec![] };
+    let Ok(prices) = column_to_f64(df, column) else {
+        return vec![];
+    };
     let n = prices.len();
-    if n <= slow { return vec![] }
+    if n <= slow {
+        return vec![];
+    }
     let vals = tti::true_strength_index(
         &prices,
-        rust_ti::ConstantModelType::ExponentialMovingAverage, fast,
-        rust_ti::ConstantModelType::ExponentialMovingAverage, slow,
+        rust_ti::ConstantModelType::ExponentialMovingAverage,
+        fast,
+        rust_ti::ConstantModelType::ExponentialMovingAverage,
+        slow,
     );
     let padded = pad_series(&vals, n);
     vec![make_indicator(
         format!("TSI({fast},{slow})"),
         DisplayType::Subchart,
-        &padded, dates, "TSI",
+        &padded,
+        dates,
+        "TSI",
         vec![0.0],
     )]
 }
@@ -968,16 +1032,24 @@ fn compute_vpt_indicator(
     volume_col: &str,
     dates: &[String],
 ) -> Vec<IndicatorData> {
-    let Ok(prices) = column_to_f64(df, price_col) else { return vec![] };
-    let Ok(volume) = column_to_f64(df, volume_col) else { return vec![] };
+    let Ok(prices) = column_to_f64(df, price_col) else {
+        return vec![];
+    };
+    let Ok(volume) = column_to_f64(df, volume_col) else {
+        return vec![];
+    };
     let n = prices.len();
-    if n < 2 { return vec![] }
+    if n < 2 {
+        return vec![];
+    }
     let vals = tti::volume_price_trend(&prices, &volume[1..], 0.0);
     let padded = pad_series(&vals, n);
     vec![make_indicator(
         "VPT".to_string(),
         DisplayType::Subchart,
-        &padded, dates, "VPT",
+        &padded,
+        dates,
+        "VPT",
         vec![],
     )]
 }
@@ -989,10 +1061,16 @@ fn compute_donchian_indicator(
     period: usize,
     dates: &[String],
 ) -> Vec<IndicatorData> {
-    let Ok(high) = column_to_f64(df, high_col) else { return vec![] };
-    let Ok(low) = column_to_f64(df, low_col) else { return vec![] };
+    let Ok(high) = column_to_f64(df, high_col) else {
+        return vec![];
+    };
+    let Ok(low) = column_to_f64(df, low_col) else {
+        return vec![];
+    };
     let n = high.len();
-    if n < period { return vec![] }
+    if n < period {
+        return vec![];
+    }
     let dc = cti::donchian_channels(&high, &low, period);
     let upper_vals: Vec<f64> = dc.iter().map(|t| t.0).collect();
     let lower_vals: Vec<f64> = dc.iter().map(|t| t.2).collect();
@@ -1006,7 +1084,11 @@ fn compute_donchian_indicator(
         display_type: DisplayType::Overlay,
         series: vec![upper_series, lower_series],
         thresholds: vec![],
-        total_points: if max_total > MAX_INDICATOR_POINTS { Some(max_total) } else { None },
+        total_points: if max_total > MAX_INDICATOR_POINTS {
+            Some(max_total)
+        } else {
+            None
+        },
     }]
 }
 
@@ -1017,11 +1099,19 @@ fn compute_ichimoku_indicator(
     close_col: &str,
     dates: &[String],
 ) -> Vec<IndicatorData> {
-    let Ok(high) = column_to_f64(df, high_col) else { return vec![] };
-    let Ok(low) = column_to_f64(df, low_col) else { return vec![] };
-    let Ok(close) = column_to_f64(df, close_col) else { return vec![] };
+    let Ok(high) = column_to_f64(df, high_col) else {
+        return vec![];
+    };
+    let Ok(low) = column_to_f64(df, low_col) else {
+        return vec![];
+    };
+    let Ok(close) = column_to_f64(df, close_col) else {
+        return vec![];
+    };
     let n = close.len();
-    if n < 52 { return vec![] }
+    if n < 52 {
+        return vec![];
+    }
     let ich = cti::ichimoku_cloud(&high, &low, &close, 9, 26, 52);
     let tenkan: Vec<f64> = ich.iter().map(|t| t.0).collect();
     let kijun: Vec<f64> = ich.iter().map(|t| t.1).collect();
@@ -1041,7 +1131,11 @@ fn compute_ichimoku_indicator(
         display_type: DisplayType::Overlay,
         series: vec![t_series, k_series, a_series, b_series],
         thresholds: vec![],
-        total_points: if max_total > MAX_INDICATOR_POINTS { Some(max_total) } else { None },
+        total_points: if max_total > MAX_INDICATOR_POINTS {
+            Some(max_total)
+        } else {
+            None
+        },
     }]
 }
 
@@ -1052,9 +1146,13 @@ fn compute_envelope_indicator(
     pct: f64,
     dates: &[String],
 ) -> Vec<IndicatorData> {
-    let Ok(prices) = column_to_f64(df, column) else { return vec![] };
+    let Ok(prices) = column_to_f64(df, column) else {
+        return vec![];
+    };
     let n = prices.len();
-    if n < period { return vec![] }
+    if n < period {
+        return vec![];
+    }
     let env = cti::moving_constant_envelopes(
         &prices,
         rust_ti::ConstantModelType::SimpleMovingAverage,
@@ -1073,7 +1171,11 @@ fn compute_envelope_indicator(
         display_type: DisplayType::Overlay,
         series: vec![upper_series, lower_series],
         thresholds: vec![],
-        total_points: if max_total > MAX_INDICATOR_POINTS { Some(max_total) } else { None },
+        total_points: if max_total > MAX_INDICATOR_POINTS {
+            Some(max_total)
+        } else {
+            None
+        },
     }]
 }
 
@@ -1086,18 +1188,30 @@ fn compute_ad_indicator(
     volume_col: &str,
     dates: &[String],
 ) -> Vec<IndicatorData> {
-    let Ok(high) = column_to_f64(df, high_col) else { return vec![] };
-    let Ok(low) = column_to_f64(df, low_col) else { return vec![] };
-    let Ok(close) = column_to_f64(df, close_col) else { return vec![] };
-    let Ok(volume) = column_to_f64(df, volume_col) else { return vec![] };
+    let Ok(high) = column_to_f64(df, high_col) else {
+        return vec![];
+    };
+    let Ok(low) = column_to_f64(df, low_col) else {
+        return vec![];
+    };
+    let Ok(close) = column_to_f64(df, close_col) else {
+        return vec![];
+    };
+    let Ok(volume) = column_to_f64(df, volume_col) else {
+        return vec![];
+    };
     let n = close.len();
-    if n < 2 { return vec![] }
+    if n < 2 {
+        return vec![];
+    }
     let vals = sti_strength::accumulation_distribution(&high, &low, &close, &volume, 0.0);
     let padded = pad_series(&vals, n);
     vec![make_indicator(
         "A/D Line".to_string(),
         DisplayType::Subchart,
-        &padded, dates, "A/D",
+        &padded,
+        dates,
+        "A/D",
         vec![],
     )]
 }
@@ -1109,20 +1223,34 @@ fn compute_pvi_nvi_indicator(
     func_name: &str,
     dates: &[String],
 ) -> Vec<IndicatorData> {
-    let Ok(prices) = column_to_f64(df, price_col) else { return vec![] };
-    let Ok(volume) = column_to_f64(df, volume_col) else { return vec![] };
+    let Ok(prices) = column_to_f64(df, price_col) else {
+        return vec![];
+    };
+    let Ok(volume) = column_to_f64(df, volume_col) else {
+        return vec![];
+    };
     let n = prices.len();
-    if n < 2 { return vec![] }
+    if n < 2 {
+        return vec![];
+    }
     let (name, vals) = if func_name == "pvi" {
-        ("PVI", sti_strength::positive_volume_index(&prices, &volume, 1000.0))
+        (
+            "PVI",
+            sti_strength::positive_volume_index(&prices, &volume, 1000.0),
+        )
     } else {
-        ("NVI", sti_strength::negative_volume_index(&prices, &volume, 1000.0))
+        (
+            "NVI",
+            sti_strength::negative_volume_index(&prices, &volume, 1000.0),
+        )
     };
     let padded = pad_series(&vals, n);
     vec![make_indicator(
         name.to_string(),
         DisplayType::Subchart,
-        &padded, dates, name,
+        &padded,
+        dates,
+        name,
         vec![],
     )]
 }
@@ -1133,15 +1261,21 @@ fn compute_ulcer_indicator(
     period: usize,
     dates: &[String],
 ) -> Vec<IndicatorData> {
-    let Ok(prices) = column_to_f64(df, column) else { return vec![] };
+    let Ok(prices) = column_to_f64(df, column) else {
+        return vec![];
+    };
     let n = prices.len();
-    if n <= period { return vec![] }
+    if n <= period {
+        return vec![];
+    }
     let vals = vti::ulcer_index(&prices, period);
     let padded = pad_series(&vals, n);
     vec![make_indicator(
         format!("Ulcer Index({period})"),
         DisplayType::Subchart,
-        &padded, dates, "Ulcer",
+        &padded,
+        dates,
+        "Ulcer",
         vec![],
     )]
 }
