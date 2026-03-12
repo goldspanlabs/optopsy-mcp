@@ -53,7 +53,7 @@ Add indicator functions to `build_function_call()` in the parser. These compile 
 
 | Function | Signature | Notes |
 |----------|-----------|-------|
-| `rsi` | `rsi(col, period)` | Wilder's RSI via `rust_ti::bulk::rsi` |
+| `rsi` | `rsi(col, period)` | Wilder's RSI; variable `period` requires a custom implementation (current code uses `rust_ti::standard_indicators::bulk::rsi(&prices)` with a fixed period) |
 | `macd_hist` | `macd_hist(col)` | MACD histogram (12/26/9 default) |
 | `macd_signal` | `macd_signal(col)` | MACD signal line |
 | `macd_line` | `macd_line(col)` | MACD line |
@@ -211,23 +211,23 @@ if(pct_change(close, 1) > 0.02, volume > sma(volume, 20) * 3.0, volume > sma(vol
 
 Add a `tf(timeframe, expr)` function to the formula language that:
 
-1. Resamples the OHLCV DataFrame to the specified timeframe
+1. Resamples the OHLCV DataFrame to the specified `timeframe` **string literal** (for example: `tf("weekly", expr)` or `tf("monthly", expr)`)
 2. Evaluates the inner expression on the resampled frame
 3. Forward-fills the result back to daily resolution
 4. Makes it available as a virtual column for the outer expression
 
 ### Supported timeframes
 
-| Keyword | Resample rule |
-|---------|---------------|
-| `weekly` | Calendar week (Mon–Fri) |
-| `monthly` | Calendar month |
+| Timeframe string | Resample rule |
+|------------------|---------------|
+| `"weekly"`       | Calendar week (Mon–Fri) |
+| `"monthly"`      | Calendar month |
 
 ### Formula syntax
 
 ```
 close > tf(weekly, sma(close, 20))
-rsi(close, 14) < 30 and tf(monthly, ema(close, 12)) > tf(monthly, ema(close, 12))[1]
+rsi(close, 14) < 30 and change(tf(monthly, ema(close, 12)), 1) > 0
 ```
 
 ### Parser changes
@@ -250,11 +250,11 @@ In `build_function_call`:
         _ => return Err("First argument to tf() must be a timeframe name".into()),
     };
     let inner_expr = args[1].into_expr();
-    // Return a placeholder that the evaluator resolves at runtime
-    Ok(Expr::Alias(
-        Box::new(inner_expr),
-        format!("__tf_{timeframe:?}_{unique_id}").into(),
-    ))
+    // Generate a collision-free placeholder name that the evaluator resolves at runtime.
+    // `unique_id` should come from a monotonic counter or UUID generator so no two tf()
+    // calls share the same alias.
+    let placeholder_name = format!("__tf_{timeframe:?}_{unique_id}");
+    Ok(inner_expr.alias(&placeholder_name))
 }
 ```
 
