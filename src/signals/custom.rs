@@ -1711,16 +1711,12 @@ const INDICATOR_FUNCTIONS: &[&str] = &[
     "obv",
     "cmf",
     "roc",
-    "tr",
-    "rel_volume",
-    "zscore",
-    "range_pct",
 ];
 
 /// A recognized indicator function call extracted from a formula.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IndicatorCall {
-    /// Function name (e.g. "rsi", "sma", "`bbands_upper`")
+    /// Function name (e.g. `rsi`, `sma`, `bbands_upper`)
     pub func_name: String,
     /// Column name arguments (e.g. `["close"]` or `["close", "high", "low"]`)
     pub col_args: Vec<String>,
@@ -2385,8 +2381,7 @@ mod tests {
     #[test]
     fn formula_not_with_complex_expr() {
         let df = df! { "close" => &[100.0, 101.0, 102.0, 103.0, 104.0] }.unwrap();
-        let signal =
-            FormulaSignal::new("not (close > 101 and close < 104)".to_string());
+        let signal = FormulaSignal::new("not (close > 101 and close < 104)".to_string());
         let result = signal.evaluate(&df).unwrap();
         let bools = result.bool().unwrap();
         // 100: not(F&F)=T, 101: not(F&T)=T, 102: not(T&T)=F, 103: not(T&T)=F, 104: not(T&F)=T
@@ -2428,10 +2423,10 @@ mod tests {
 
     #[test]
     fn formula_multiple_comparisons_in_if() {
-        assert!(validate_formula(
-            "if(close > sma(close, 20) and rsi(close, 14) < 30, 1, 0) > 0"
-        )
-        .is_ok());
+        assert!(
+            validate_formula("if(close > sma(close, 20) and rsi(close, 14) < 30, 1, 0) > 0")
+                .is_ok()
+        );
     }
 
     #[test]
@@ -2479,15 +2474,13 @@ mod tests {
 
     #[test]
     fn extract_deduplicates_same_call() {
-        let calls =
-            extract_indicator_calls("rsi(close, 14) < 30 and rsi(close, 14) > 20");
+        let calls = extract_indicator_calls("rsi(close, 14) < 30 and rsi(close, 14) > 20");
         assert_eq!(calls.len(), 1);
     }
 
     #[test]
     fn extract_different_periods_not_deduped() {
-        let calls =
-            extract_indicator_calls("sma(close, 20) > sma(close, 50)");
+        let calls = extract_indicator_calls("sma(close, 20) > sma(close, 50)");
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].period, Some(20));
         assert_eq!(calls[1].period, Some(50));
@@ -2528,5 +2521,20 @@ mod tests {
         let calls = extract_indicator_calls("if(rsi(close, 14) < 30, 1, 0) > 0");
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].func_name, "rsi");
+    }
+
+    #[test]
+    fn extract_indicator_inside_abs() {
+        let calls = extract_indicator_calls("abs(rsi(close, 14)) > 50");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].func_name, "rsi");
+        assert_eq!(calls[0].period, Some(14));
+    }
+
+    #[test]
+    fn extract_non_indicator_functions_ignored() {
+        // tr, rel_volume, zscore, range_pct are not in INDICATOR_FUNCTIONS
+        let calls = extract_indicator_calls("zscore(close, 20) < -2 and tr(close, high, low) > 1");
+        assert!(calls.is_empty());
     }
 }

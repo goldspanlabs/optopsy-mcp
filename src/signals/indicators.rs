@@ -18,6 +18,7 @@ use super::volume::{compute_cmf, compute_typical_price};
 
 use crate::engine::price_table::extract_date_from_column;
 use polars::prelude::*;
+use rust_ti::momentum_indicators::bulk as mti;
 use rust_ti::standard_indicators::bulk as sti;
 
 /// Maximum number of indicator points to return per series.
@@ -77,7 +78,9 @@ fn compute_indicator_data_inner(
             Ok(loaded) => compute_indicator_data_inner(&loaded, ohlcv_df, date_col),
             Err(_) => vec![],
         },
-        SignalSpec::Formula { formula } => extract_indicators_from_formula(formula, ohlcv_df, date_col),
+        SignalSpec::Formula { formula } => {
+            extract_indicators_from_formula(formula, ohlcv_df, date_col)
+        }
         SignalSpec::CrossSymbol { .. } => vec![],
     }
 }
@@ -102,7 +105,10 @@ fn extract_indicators_from_formula(
     for call in &calls {
         let indicators = dispatch_indicator_call(call, df, &dates);
         for ind in indicators {
-            if !results.iter().any(|existing: &IndicatorData| existing.name == ind.name) {
+            if !results
+                .iter()
+                .any(|existing: &IndicatorData| existing.name == ind.name)
+            {
                 results.push(ind);
             }
         }
@@ -295,7 +301,11 @@ fn compute_rsi_indicator(
     if n <= period {
         return vec![];
     }
-    let rsi_values = sti::rsi(&prices);
+    let rsi_values = mti::relative_strength_index(
+        &prices,
+        rust_ti::ConstantModelType::SmoothedMovingAverage,
+        period,
+    );
     let padded = pad_series(&rsi_values, n);
     vec![make_indicator(
         format!("RSI({period})"),
@@ -387,7 +397,6 @@ fn compute_ma_indicator(
         vec![],
     )]
 }
-
 
 fn compute_aroon_indicator(
     df: &DataFrame,
@@ -705,7 +714,6 @@ fn compute_cmf_indicator(
         vec![0.0],
     )]
 }
-
 
 fn compute_roc_indicator(
     df: &DataFrame,
