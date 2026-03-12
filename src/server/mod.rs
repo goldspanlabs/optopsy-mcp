@@ -1162,6 +1162,41 @@ impl ServerHandler for OptopsyServer {
                 \n  - compare_strategies — use for manual side-by-side comparison of 2-3 specific configurations\
                 \n    you've already chosen. NOT for grid search (use parameter_sweep instead).\
                 \n\
+                \n### 4. Evaluate Strategy Viability\
+                \n  When a user asks you to test/evaluate if a strategy is viable, follow this reasoning loop:\
+                \n\
+                \n  **Step 1: Build the signals**\
+                \n  - Translate the user's entry/exit conditions into SignalSpec JSON\
+                \n  - For formula-based conditions: use build_signal(action=\"validate\") to verify syntax\
+                \n  - For built-in indicators (RSI, MACD, etc.): construct the SignalSpec directly from the catalog\
+                \n  - If a saved signal name is referenced: use build_signal(action=\"get\") to load it\
+                \n  - If conditions are ambiguous, ask the user to clarify before proceeding\
+                \n\
+                \n  **Step 2: Run a baseline backtest**\
+                \n  - For stocks: run_stock_backtest with the constructed entry/exit signals\
+                \n  - For options: run_options_backtest with signals as entry/exit filters\
+                \n  - Use sensible defaults (capital: 10000, quantity: 100 shares or 1 contract)\
+                \n  - After results, reason about: Does it make money? Are there enough trades to be meaningful?\
+                \n    Is the drawdown acceptable? Read the assessment and key_findings carefully.\
+                \n  - If results are clearly negative or trade count is very low, explain why and stop —\
+                \n    no need to validate a strategy that doesn't work at the basic level.\
+                \n\
+                \n  **Step 3: Validate significance and robustness**\
+                \n  Based on the baseline results, decide which validations are worth running:\
+                \n  - permutation_test — answers \"is this skill or luck?\" Run when results look good but\
+                \n    you want to rule out chance. Look at p-values.\
+                \n  - walk_forward — answers \"does this hold across time periods?\" Run when you want to\
+                \n    check for overfitting. Look at Sharpe decay and % profitable windows.\
+                \n  - parameter_sweep — answers \"is this fragile?\" Run when you suspect results depend on\
+                \n    exact parameter choices. Look at dimension_sensitivity and OOS validation.\
+                \n  You don't need to run all of these. Use your judgment based on what the baseline revealed.\
+                \n\
+                \n  **Step 4: Deliver a verdict**\
+                \n  Synthesize all results into a clear assessment:\
+                \n  - Summarize what passed, what raised concerns, and what failed\
+                \n  - Give an overall viability judgment with reasoning\
+                \n  - Suggest concrete next steps (adjust parameters, try different signals, trade with caution, etc.)\
+                \n\
                 \n## RULES\
                 \n- For OPTIONS: strategy is ALWAYS REQUIRED — signals only filter WHEN to trade\
                 \n- For STOCKS: entry_signal is ALWAYS REQUIRED — it drives when to buy/sell\
