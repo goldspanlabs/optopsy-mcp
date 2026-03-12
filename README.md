@@ -35,8 +35,7 @@ Once connected via Claude Desktop or any MCP client, try asking:
 
 - **Multi-Source Data Integration** — Load options data from EODHD API, local Parquet cache, or S3-compatible storage with fetch-on-miss
 - **Event-Driven Backtesting** — Full simulation with position management, trade log, equity curve, and risk metrics (Sharpe, Sortino, Calmar, VaR, max drawdown)
-- **40+ Built-in Signals** — Filter trades using technical analysis indicators across momentum, trend, volatility, overlap, price, and volume categories
-- **Custom Formula Signals** — Build your own entry/exit signals using a formula DSL with price columns, lookbacks, rolling functions, and logical operators (see [Custom Signals](#custom-signals))
+- **Formula-Based Signals** — Build entry/exit signals using a formula DSL with 35+ functions covering momentum, trend, volatility, volume, and price indicators (see [Custom Signals](#custom-signals))
 - **Signal Persistence** — Save, list, load, and delete custom signals for reuse across sessions
 - **32 Built-in Strategies** — Singles, verticals, straddles, strangles, butterflies, condors, iron condors/butterflies, calendars, diagonals (with multi-expiration support)
 - **4 Slippage Models** — Mid, spread, liquidity-based, per-leg fixed
@@ -132,7 +131,7 @@ The `build_signal` tool lets you create formula-based entry and exit signals usi
 
 **Lookback**: `close[1]` (previous close), `close[5]` (5 bars ago)
 
-**Rolling functions**:
+**Basic rolling functions**:
 
 | Function | Description |
 |----------|-------------|
@@ -145,6 +144,58 @@ The `build_signal` tool lets you create formula-based entry and exit signals usi
 | `change(col, period)` | `col - col[period]` |
 | `pct_change(col, period)` | `(col - col[period]) / col[period]` |
 
+**Momentum**:
+
+| Function | Description |
+|----------|-------------|
+| `rsi(col, period)` | Relative Strength Index (Wilder smoothing) |
+| `macd_line(col)` | MACD line (12/26 EMA difference) |
+| `macd_signal(col)` | MACD signal line (9-period EMA of MACD) |
+| `macd_hist(col)` | MACD histogram (line − signal) |
+| `roc(col, period)` | Rate of Change (percentage) |
+| `stochastic(close, high, low, period)` | Stochastic %K oscillator |
+
+**Trend**:
+
+| Function | Description |
+|----------|-------------|
+| `aroon_up(high, low, period)` | Aroon Up indicator |
+| `aroon_down(high, low, period)` | Aroon Down indicator |
+| `aroon_osc(high, low, period)` | Aroon Oscillator (up − down) |
+| `supertrend(close, high, low, period, mult)` | Supertrend trend-following indicator |
+
+**Volatility**:
+
+| Function | Description |
+|----------|-------------|
+| `atr(close, high, low, period)` | Average True Range |
+| `tr(close, high, low)` | True Range |
+| `bbands_upper(col, period)` | Bollinger Band upper (SMA + 2σ) |
+| `bbands_mid(col, period)` | Bollinger Band middle (SMA) |
+| `bbands_lower(col, period)` | Bollinger Band lower (SMA − 2σ) |
+| `keltner_upper(close, high, low, period, mult)` | Keltner Channel upper |
+| `keltner_lower(close, high, low, period, mult)` | Keltner Channel lower |
+
+**Volume**:
+
+| Function | Description |
+|----------|-------------|
+| `obv(close, volume)` | On-Balance Volume |
+| `mfi(close, high, low, volume, period)` | Money Flow Index |
+| `cmf(close, high, low, volume, period)` | Chaikin Money Flow |
+| `rel_volume(volume, period)` | Relative volume (current / SMA) |
+
+**Derived / Statistical**:
+
+| Function | Description |
+|----------|-------------|
+| `zscore(col, period)` | Z-score (deviation from rolling mean) |
+| `rank(col, period)` | Percentile rank within rolling window |
+| `range_pct(close, high, low)` | Position within bar range: `(close − low) / (high − low)` |
+| `consecutive_up(col)` | Consecutive bars where value increases |
+| `consecutive_down(col)` | Consecutive bars where value decreases |
+| `if(cond, then, else)` | Conditional: returns `then` when `cond` is true, else `else` |
+
 **Operators**: `+`, `-`, `*`, `/`
 
 **Comparisons**: `>`, `<`, `>=`, `<=`, `==`, `!=`
@@ -155,10 +206,11 @@ The `build_signal` tool lets you create formula-based entry and exit signals usi
 
 ```
 close > sma(close, 50) and close > sma(close, 200)
-close < sma(close, 20) - 2.0 * std(close, 20)
-volume > sma(volume, 20) * 2.0
-pct_change(close, 1) > 0.03 or pct_change(close, 1) < -0.03
-(close - low) / (high - low) < 0.2
+rsi(close, 14) < 30 and close > bbands_lower(close, 20)
+macd_hist(close) > 0 and rel_volume(volume, 20) > 2.0
+atr(close, high, low, 14) > 2.0
+stochastic(close, high, low, 14) < 20 and rsi(close, 14) < 30
+consecutive_down(close) >= 3 and volume > sma(volume, 20) * 1.5
 ```
 
 ### Signal management
@@ -172,6 +224,16 @@ Custom signals are saved for reuse across sessions (at `~/.optopsy/signals/`, or
 - **Validate only**: `build_signal` with `action="validate"`
 
 Saved signals can be referenced in backtests via `{ "type": "Saved", "name": "my_signal" }` as `entry_signal` or `exit_signal`.
+
+## Development
+
+After cloning, configure git to use the project's shared hooks:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+This enables a **pre-push hook** that runs `cargo build`, `cargo clippy -- -D warnings`, and `cargo test` before every push, matching the CI checks.
 
 ## Tech Stack
 
