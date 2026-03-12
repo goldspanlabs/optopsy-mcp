@@ -458,6 +458,33 @@ mod tests {
     }
 
     #[test]
+    fn collect_cross_symbols_depth_limit() {
+        // Build a deeply nested CrossSymbol chain (depth > 8)
+        let mut spec = SignalSpec::CrossSymbol {
+            symbol: "DEEP".into(),
+            signal: Box::new(SignalSpec::Formula {
+                formula: "close > 0".into(),
+            }),
+        };
+        for i in 0..10 {
+            spec = SignalSpec::And {
+                left: Box::new(SignalSpec::CrossSymbol {
+                    symbol: format!("SYM{i}"),
+                    signal: Box::new(spec),
+                }),
+                right: Box::new(SignalSpec::Formula {
+                    formula: "close > 0".into(),
+                }),
+            };
+        }
+        // Should not panic — depth limit caps recursion
+        let symbols = collect_cross_symbols(&spec);
+        assert!(symbols.contains("DEEP"));
+        // At minimum some SYM* symbols should be found
+        assert!(symbols.len() > 1);
+    }
+
+    #[test]
     fn catalog_entries_have_non_empty_fields() {
         for info in SIGNAL_CATALOG {
             assert!(!info.name.is_empty());

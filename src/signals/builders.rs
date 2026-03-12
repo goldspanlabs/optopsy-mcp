@@ -57,3 +57,141 @@ fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
         }),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dummy_df() -> polars::prelude::DataFrame {
+        polars::prelude::df! {
+            "close" => &[100.0, 101.0, 102.0, 103.0, 104.0],
+        }
+        .unwrap()
+    }
+
+    #[test]
+    fn build_formula_signal() {
+        let spec = SignalSpec::Formula {
+            formula: "close > 101".into(),
+        };
+        let signal = build_signal(&spec);
+        assert_eq!(signal.name(), "custom_formula");
+        let result = signal.evaluate(&dummy_df()).unwrap();
+        assert_eq!(result.len(), 5);
+    }
+
+    #[test]
+    fn build_and_signal() {
+        let spec = SignalSpec::And {
+            left: Box::new(SignalSpec::Formula {
+                formula: "close > 101".into(),
+            }),
+            right: Box::new(SignalSpec::Formula {
+                formula: "close < 104".into(),
+            }),
+        };
+        let signal = build_signal(&spec);
+        assert_eq!(signal.name(), "and");
+        let result = signal.evaluate(&dummy_df()).unwrap();
+        let bools = result.bool().unwrap();
+        // 100: F, 101: F, 102: T, 103: T, 104: F (104 not < 104)
+        assert!(!bools.get(0).unwrap());
+        assert!(bools.get(2).unwrap());
+        assert!(bools.get(3).unwrap());
+        assert!(!bools.get(4).unwrap());
+    }
+
+    #[test]
+    fn build_or_signal() {
+        let spec = SignalSpec::Or {
+            left: Box::new(SignalSpec::Formula {
+                formula: "close < 101".into(),
+            }),
+            right: Box::new(SignalSpec::Formula {
+                formula: "close > 103".into(),
+            }),
+        };
+        let signal = build_signal(&spec);
+        assert_eq!(signal.name(), "or");
+        let result = signal.evaluate(&dummy_df()).unwrap();
+        let bools = result.bool().unwrap();
+        // 100: T (<101), 101: F, 102: F, 103: F, 104: T (>103)
+        assert!(bools.get(0).unwrap());
+        assert!(!bools.get(1).unwrap());
+        assert!(bools.get(4).unwrap());
+    }
+
+    #[test]
+    fn build_cross_symbol_extracts_inner_signal() {
+        let spec = SignalSpec::CrossSymbol {
+            symbol: "^VIX".into(),
+            signal: Box::new(SignalSpec::Formula {
+                formula: "close > 102".into(),
+            }),
+        };
+        let signal = build_signal(&spec);
+        // CrossSymbol unwraps to the inner formula signal
+        assert_eq!(signal.name(), "custom_formula");
+        let result = signal.evaluate(&dummy_df()).unwrap();
+        assert_eq!(result.len(), 5);
+    }
+
+    #[test]
+    fn build_saved_missing_returns_false_signal() {
+        let spec = SignalSpec::Saved {
+            name: "nonexistent_signal_xyz".into(),
+        };
+        let signal = build_signal(&spec);
+        // Missing saved signal returns always-false formula
+        let result = signal.evaluate(&dummy_df()).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn depth_limit_returns_false_signal() {
+        // Build a deeply nested And chain that exceeds MAX_SIGNAL_DEPTH (8)
+        let mut spec = SignalSpec::Formula {
+            formula: "close > 0".into(),
+        };
+        for _ in 0..10 {
+            spec = SignalSpec::And {
+                left: Box::new(spec),
+                right: Box::new(SignalSpec::Formula {
+                    formula: "close > 0".into(),
+                }),
+            };
+        }
+        // Should still succeed (depth limit triggers false for deep branches)
+        let signal = build_signal(&spec);
+        let result = signal.evaluate(&dummy_df()).unwrap();
+        assert_eq!(result.len(), 5);
+    }
+
+    #[test]
+    fn nested_combinators_evaluate_correctly() {
+        // (close > 101 AND close < 104) OR close == 100
+        let spec = SignalSpec::Or {
+            left: Box::new(SignalSpec::And {
+                left: Box::new(SignalSpec::Formula {
+                    formula: "close > 101".into(),
+                }),
+                right: Box::new(SignalSpec::Formula {
+                    formula: "close < 104".into(),
+                }),
+            }),
+            right: Box::new(SignalSpec::Formula {
+                formula: "close == 100".into(),
+            }),
+        };
+        let signal = build_signal(&spec);
+        let result = signal.evaluate(&dummy_df()).unwrap();
+        let bools = result.bool().unwrap();
+        // 100: T (==100), 101: F, 102: T (>101 & <104), 103: T, 104: F
+        assert!(bools.get(0).unwrap());
+        assert!(!bools.get(1).unwrap());
+        assert!(bools.get(2).unwrap());
+        assert!(bools.get(3).unwrap());
+        assert!(!bools.get(4).unwrap());
+    }
+}

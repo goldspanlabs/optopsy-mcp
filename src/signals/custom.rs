@@ -2203,4 +2203,103 @@ mod tests {
     fn formula_cmf_wrong_args() {
         assert!(validate_formula("cmf(close, high, low)").is_err());
     }
+
+    // ── Edge case tests ─────────────────────────────────────────────
+
+    #[test]
+    fn formula_division_by_zero_evaluates() {
+        let df = df! { "close" => &[0.0, 1.0, 2.0] }.unwrap();
+        let signal = FormulaSignal::new("close / 0 > 0".to_string());
+        // Should not panic — division by zero produces inf/NaN which compares as false
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn formula_large_lookback_evaluates() {
+        let df = df! { "close" => &[100.0, 101.0, 102.0] }.unwrap();
+        // Lookback exceeding data length should produce nulls (not panic)
+        let signal = FormulaSignal::new("close[100] > 0".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn formula_not_operator() {
+        let df = df! { "close" => &[100.0, 101.0, 102.0] }.unwrap();
+        let signal = FormulaSignal::new("not (close > 101)".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        // 100: not false = true, 101: not false = true, 102: not true = false
+        assert!(bools.get(0).unwrap());
+        assert!(bools.get(1).unwrap());
+        assert!(!bools.get(2).unwrap());
+    }
+
+    #[test]
+    fn formula_not_with_complex_expr() {
+        let df = df! { "close" => &[100.0, 101.0, 102.0, 103.0, 104.0] }.unwrap();
+        let signal =
+            FormulaSignal::new("not (close > 101 and close < 104)".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        // 100: not(F&F)=T, 101: not(F&T)=T, 102: not(T&T)=F, 103: not(T&T)=F, 104: not(T&F)=T
+        assert!(bools.get(0).unwrap());
+        assert!(bools.get(1).unwrap());
+        assert!(!bools.get(2).unwrap());
+        assert!(!bools.get(3).unwrap());
+        assert!(bools.get(4).unwrap());
+    }
+
+    #[test]
+    fn formula_empty_df_evaluates() {
+        let df = df! { "close" => Vec::<f64>::new() }.unwrap();
+        let signal = FormulaSignal::new("close > 100".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn formula_nested_function_composition() {
+        // abs of a negative change
+        assert!(validate_formula("abs(change(close, 5)) > 10").is_ok());
+    }
+
+    #[test]
+    fn formula_chained_logical_operators() {
+        assert!(validate_formula("close > 100 and close < 200 or close == 50").is_ok());
+    }
+
+    #[test]
+    fn formula_consecutive_up_on_flat_data() {
+        let df = df! { "close" => &[100.0, 100.0, 100.0] }.unwrap();
+        let signal = FormulaSignal::new("consecutive_up(close) >= 1".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        // Flat data has no rises, so all false
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
+    fn formula_multiple_comparisons_in_if() {
+        assert!(validate_formula(
+            "if(close > sma(close, 20) and rsi(close, 14) < 30, 1, 0) > 0"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn validate_unclosed_paren_errors() {
+        assert!(validate_formula("sma(close, 20").is_err());
+    }
+
+    #[test]
+    fn validate_empty_formula_errors() {
+        assert!(validate_formula("").is_err());
+    }
+
+    #[test]
+    fn validate_unknown_function_errors() {
+        assert!(validate_formula("unknown_func(close, 14) > 0").is_err());
+    }
 }

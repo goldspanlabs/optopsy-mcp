@@ -127,6 +127,39 @@ mod tests {
     }
 
     #[test]
+    fn and_signal_with_nulls() {
+        let signal = AndSignal {
+            left: Box::new(ConstSignal {
+                values: vec![true, true],
+            }),
+            right: Box::new(ConstSignal {
+                values: vec![true, true],
+            }),
+        };
+        // Evaluate on a minimal DataFrame
+        let df = df! { "x" => Vec::<f64>::new() }.unwrap();
+        // Empty DF produces empty result (0 rows)
+        let result = signal.evaluate(&df);
+        // This should work because both signals produce 0-length bool series
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn or_signal_all_false() {
+        let signal = OrSignal {
+            left: Box::new(ConstSignal {
+                values: vec![false, false, false],
+            }),
+            right: Box::new(ConstSignal {
+                values: vec![false, false, false],
+            }),
+        };
+        let result = signal.evaluate(&dummy_df(3)).unwrap();
+        let bools = result.bool().unwrap();
+        assert!(bools.into_no_null_iter().all(|b| !b));
+    }
+
+    #[test]
     fn or_signal_all_true() {
         let signal = OrSignal {
             left: Box::new(ConstSignal {

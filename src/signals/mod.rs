@@ -387,6 +387,83 @@ mod tests {
     }
 
     #[test]
+    fn active_dates_invalid_formula_errors() {
+        let dates = vec![NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()];
+        let df = df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), dates),
+            "close" => &[100.0],
+        }
+        .unwrap();
+
+        let spec = SignalSpec::Formula {
+            formula: "nonexistent_column > 50".into(),
+        };
+        let result = active_dates(&spec, &df, "date");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn active_dates_empty_dataframe() {
+        let dates: Vec<NaiveDate> = vec![];
+        let df = df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), dates),
+            "close" => Vec::<f64>::new(),
+        }
+        .unwrap();
+
+        let spec = SignalSpec::Formula {
+            formula: "close > 100".into(),
+        };
+        let result = active_dates(&spec, &df, "date").unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn active_dates_multi_or_with_cross_symbol() {
+        let dates = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 3).unwrap(),
+        ];
+
+        let primary_df = df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), dates.clone()),
+            "close" => &[100.0, 99.0, 98.0],  // trending down
+        }
+        .unwrap();
+
+        let vix_df = df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), dates.clone()),
+            "close" => &[15.0, 25.0, 30.0],  // trending up
+        }
+        .unwrap();
+
+        let mut cross_dfs = HashMap::new();
+        cross_dfs.insert("^VIX".to_string(), vix_df);
+
+        // OR: primary close < 99 OR VIX close > 20
+        let spec = SignalSpec::Or {
+            left: Box::new(SignalSpec::Formula {
+                formula: "close < 99".into(),
+            }),
+            right: Box::new(SignalSpec::CrossSymbol {
+                symbol: "^VIX".into(),
+                signal: Box::new(SignalSpec::Formula {
+                    formula: "close > 20".into(),
+                }),
+            }),
+        };
+
+        let result = active_dates_multi(&spec, &primary_df, &cross_dfs, "date").unwrap();
+        // Primary close < 99: index 2 (98)
+        // VIX close > 20: indices 1 (25), 2 (30)
+        // OR union: indices 1, 2
+        assert!(!result.contains(&dates[0]));
+        assert!(result.contains(&dates[1]));
+        assert!(result.contains(&dates[2]));
+    }
+
+    #[test]
     fn active_dates_with_datetime_column() {
         use chrono::NaiveDateTime;
         let datetimes: Vec<NaiveDateTime> = vec![
