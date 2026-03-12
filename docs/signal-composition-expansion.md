@@ -53,7 +53,7 @@ Add indicator functions to `build_function_call()` in the parser. These compile 
 
 | Function | Signature | Notes |
 |----------|-----------|-------|
-| `rsi` | `rsi(col, period)` | Wilder's RSI; variable `period` requires a custom implementation (current code uses `rust_ti::standard_indicators::bulk::rsi(&prices)` with a fixed period) |
+| `rsi` | `rsi(col, period)` | Wilder's RSI; variable `period` requires a custom implementation (current code uses `rust_ti::standard_indicators::bulk::rsi(&prices)` via `use rust_ti::standard_indicators::bulk as sti` with a fixed 14-period) |
 | `macd_hist` | `macd_hist(col)` | MACD histogram (12/26/9 default) |
 | `macd_signal` | `macd_signal(col)` | MACD signal line |
 | `macd_line` | `macd_line(col)` | MACD line |
@@ -94,7 +94,10 @@ For indicators like `rsi` that can't be expressed as pure Polars rolling operati
                     Series::new("rsi".into(), vec![f64::NAN; n])
                 ));
             }
-            let rsi_vals = sti::rsi(&vals);
+            // NOTE: sti::rsi() uses a fixed 14-period internally.
+            // To support variable `period`, implement a custom Wilder RSI
+            // (e.g., rolling gain/loss averages over `period` windows).
+            let rsi_vals = compute_rsi_variable_period(&vals, period);
             let padded = pad_series(&rsi_vals, n);
             Ok(Some(Series::new("rsi".into(), padded)))
         },
@@ -131,16 +134,21 @@ For `atr`, since Polars doesn't have a native ATR expression, use `map_multiple`
 "atr" => {
     let (close_expr, high_expr, low_expr, period) =
         extract_three_cols_period(&args, "atr")?;
-    // Build a struct column, then map over it
-    Ok(as_struct(vec![close_expr, high_expr, low_expr]).map(
+    // Alias each expression so field_by_name() finds them reliably
+    Ok(as_struct(vec![
+        close_expr.alias("close"),
+        high_expr.alias("high"),
+        low_expr.alias("low"),
+    ]).map(
         move |s| {
             let ca = s.struct_()?;
             let close = ca.field_by_name("close")?.f64()?;
             let high = ca.field_by_name("high")?.f64()?;
             let low = ca.field_by_name("low")?.f64()?;
-            let c: Vec<f64> = close.into_no_null_iter().collect();
-            let h: Vec<f64> = high.into_no_null_iter().collect();
-            let l: Vec<f64> = low.into_no_null_iter().collect();
+            // Use into_iter + unwrap_or(NAN) to preserve nulls as NaN
+            let c: Vec<f64> = close.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+            let h: Vec<f64> = high.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+            let l: Vec<f64> = low.into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
             let atr_vals = compute_atr(&c, &h, &l, period);
             let padded = pad_series(&atr_vals, s.len());
             Ok(Some(Series::new("atr".into(), padded)))
@@ -183,9 +191,9 @@ Maps directly to Polars `when(...).then(...).otherwise(...)`:
     if args.len() != 3 {
         return Err("if() takes exactly 3 arguments: (condition, then_value, else_value)".into());
     }
-    let cond = args[0].into_expr();
-    let then_val = args[1].into_expr();
-    let else_val = args[2].into_expr();
+    let cond = args[0].clone().into_expr();
+    let then_val = args[1].clone().into_expr();
+    let else_val = args[2].clone().into_expr();
     Ok(when(cond).then(then_val).otherwise(else_val))
 }
 ```
@@ -372,20 +380,20 @@ Most are thin wrappers that build the equivalent Polars expression:
     if args.len() != 3 {
         return Err("range_pct() takes 3 arguments: (close, high, low)".into());
     }
+    let close_e = args[0].clone().into_expr();
+    let high_e = args[1].clone().into_expr();
+    let low_e = args[2].clone().into_expr();
 
-    // Define range_pct as the percent position of close within the [low, high] range.
+    // Percent position of close within the [low, high] range.
     // For zero-range bars (high == low), return null to avoid inf/NaN from division by zero.
-    let range = high_e.clone() - low_e.clone();
-    let pct = (close_e - low_e.clone()) / range.clone();
+    let range = high_e - low_e.clone();
+    let pct = (close_e - low_e) / range.clone();
 
     Ok(
         when(range.neq(lit(0.0)))
             .then(pct)
             .otherwise(lit(NULL)),
     )
-    let high_e = args[1].into_expr();
-    let low_e = args[2].into_expr();
-    Ok((close_e - low_e.clone()) / (high_e - low_e))
 }
 ```
 
@@ -393,7 +401,7 @@ Most are thin wrappers that build the equivalent Polars expression:
 
 ## Supporting Changes
 
-### Signal catalog (`src/signals/registry.rs`)
+### Signal catalog (`src/signals/registry.rs`, `src/tools/build_signal.rs`)
 
 Add entries for every new formula function to `SIGNAL_CATALOG` so the `build_signal` search action can discover them:
 
