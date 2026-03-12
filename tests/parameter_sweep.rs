@@ -517,9 +517,10 @@ fn sweep_entry_signal_filters_some_entries() {
         strategies,
         sweep: sweep_dims,
         sim_params: SimParams {
-            entry_signal: Some(SignalSpec::ConsecutiveUp {
-                column: "close".into(),
-                count: 2,
+            entry_signal: Some(SignalSpec::Custom {
+                name: "consecutive_up_2".into(),
+                formula: "consecutive_up(close) >= 2".into(),
+                description: None,
             }),
             exit_signal: None,
             ohlcv_path: Some(path),
@@ -567,9 +568,10 @@ fn sweep_exit_signal_produces_signal_exits() {
     // Sweep internally builds BacktestParams with these fields from SimParams.
     // Call run_backtest directly to verify ExitType::Signal appears in trade log.
     let mut params = common::backtest_params("long_call", vec![common::delta(0.50)]);
-    params.exit_signal = Some(SignalSpec::ConsecutiveDown {
-        column: "close".into(),
-        count: 1,
+    params.exit_signal = Some(SignalSpec::Custom {
+        name: "consecutive_down_1".into(),
+        formula: "consecutive_down(close) >= 1".into(),
+        description: None,
     });
     params.ohlcv_path = Some(path);
 
@@ -613,9 +615,10 @@ fn sweep_signal_threads_through_oos_path() {
         strategies,
         sweep: sweep_dims,
         sim_params: SimParams {
-            entry_signal: Some(SignalSpec::ConsecutiveUp {
-                column: "close".into(),
-                count: 2,
+            entry_signal: Some(SignalSpec::Custom {
+                name: "consecutive_up_2".into(),
+                formula: "consecutive_up(close) >= 2".into(),
+                description: None,
             }),
             exit_signal: None,
             ohlcv_path: Some(path),
@@ -692,17 +695,20 @@ fn sweep_entry_signals_multiplies_combos() {
             out_of_sample_pct: 0.0,
             direction: None,
             entry_signals: vec![
-                SignalSpec::ConsecutiveUp {
-                    column: "close".into(),
-                    count: 1,
+                SignalSpec::Custom {
+                    name: "consecutive_up_1".into(),
+                    formula: "consecutive_up(close) >= 1".into(),
+                    description: None,
                 },
-                SignalSpec::ConsecutiveUp {
-                    column: "close".into(),
-                    count: 2,
+                SignalSpec::Custom {
+                    name: "consecutive_up_2".into(),
+                    formula: "consecutive_up(close) >= 2".into(),
+                    description: None,
                 },
-                SignalSpec::ConsecutiveUp {
-                    column: "close".into(),
-                    count: 3,
+                SignalSpec::Custom {
+                    name: "consecutive_up_3".into(),
+                    formula: "consecutive_up(close) >= 3".into(),
+                    description: None,
                 },
             ],
             exit_signals: vec![],

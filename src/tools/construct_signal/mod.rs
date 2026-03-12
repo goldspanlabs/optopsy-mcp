@@ -103,21 +103,10 @@ mod tests {
 
     #[test]
     fn execute_basic() {
-        let response = execute("RSI below");
+        let response = execute("rsi formula");
         assert!(!response.candidates.is_empty());
         assert!(response.schema != serde_json::Value::Null);
         assert_eq!(response.column_defaults["close"], "adjclose");
-    }
-
-    #[test]
-    fn execute_rsi_range_shows_range_hint() {
-        let response = execute("RSI range");
-        let has_range = response.candidates.iter().any(|c| c.name == "RsiRange");
-        assert!(has_range);
-        assert!(response
-            .suggested_next_steps
-            .iter()
-            .any(|s| s.contains("Range signals use the And combinator")));
     }
 
     #[test]

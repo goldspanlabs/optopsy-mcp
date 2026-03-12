@@ -279,9 +279,10 @@ fn signal_driven_entry_consecutive_up() {
 
     let mut params = default_params();
     params.ohlcv_path = Some(path.clone());
-    params.entry_signal = Some(SignalSpec::ConsecutiveUp {
-        column: "close".into(),
-        count: 3,
+    params.entry_signal = Some(SignalSpec::Custom {
+        name: "consecutive_up_3".into(),
+        formula: "consecutive_up(close) >= 3".into(),
+        description: None,
     });
 
     let ohlcv_df = load_ohlcv_df(&path, None, None).unwrap();
@@ -303,13 +304,15 @@ fn signal_driven_entry_and_exit() {
 
     let mut params = default_params();
     params.ohlcv_path = Some(path.clone());
-    params.entry_signal = Some(SignalSpec::ConsecutiveUp {
-        column: "close".into(),
-        count: 2,
+    params.entry_signal = Some(SignalSpec::Custom {
+        name: "consecutive_up_2".into(),
+        formula: "consecutive_up(close) >= 2".into(),
+        description: None,
     });
-    params.exit_signal = Some(SignalSpec::ConsecutiveDown {
-        column: "close".into(),
-        count: 2,
+    params.exit_signal = Some(SignalSpec::Custom {
+        name: "consecutive_down_2".into(),
+        formula: "consecutive_down(close) >= 2".into(),
+        description: None,
     });
 
     let ohlcv_df = load_ohlcv_df(&path, None, None).unwrap();
@@ -336,9 +339,10 @@ fn signal_filters_into_full_backtest() {
 
     let mut params = default_params();
     params.ohlcv_path = Some(path.clone());
-    params.entry_signal = Some(SignalSpec::ConsecutiveUp {
-        column: "close".into(),
-        count: 3,
+    params.entry_signal = Some(SignalSpec::Custom {
+        name: "consecutive_up_3".into(),
+        formula: "consecutive_up(close) >= 3".into(),
+        description: None,
     });
 
     let ohlcv_df = load_ohlcv_df(&path, None, None).unwrap();
@@ -367,13 +371,15 @@ fn signal_entry_and_exit_produces_multiple_trades() {
 
     let mut params = default_params();
     params.ohlcv_path = Some(path.clone());
-    params.entry_signal = Some(SignalSpec::ConsecutiveUp {
-        column: "close".into(),
-        count: 2,
+    params.entry_signal = Some(SignalSpec::Custom {
+        name: "consecutive_up_2".into(),
+        formula: "consecutive_up(close) >= 2".into(),
+        description: None,
     });
-    params.exit_signal = Some(SignalSpec::ConsecutiveDown {
-        column: "close".into(),
-        count: 2,
+    params.exit_signal = Some(SignalSpec::Custom {
+        name: "consecutive_down_2".into(),
+        formula: "consecutive_down(close) >= 2".into(),
+        description: None,
     });
 
     let ohlcv_df = load_ohlcv_df(&path, None, None).unwrap();
@@ -705,9 +711,10 @@ fn tool_execute_end_to_end() {
 
     let mut params = default_params();
     params.ohlcv_path = Some(path);
-    params.entry_signal = Some(SignalSpec::ConsecutiveUp {
-        column: "close".into(),
-        count: 3,
+    params.entry_signal = Some(SignalSpec::Custom {
+        name: "consecutive_up_3".into(),
+        formula: "consecutive_up(close) >= 3".into(),
+        description: None,
     });
 
     let underlying_prices: Vec<UnderlyingPrice> = dates
@@ -750,9 +757,10 @@ fn tool_execute_zero_trades_response() {
     let mut params = default_params();
     params.ohlcv_path = Some(path);
     // ConsecutiveUp with high count in downtrend → no signals fire
-    params.entry_signal = Some(SignalSpec::ConsecutiveUp {
-        column: "close".into(),
-        count: 20,
+    params.entry_signal = Some(SignalSpec::Custom {
+        name: "consecutive_up_20".into(),
+        formula: "consecutive_up(close) >= 20".into(),
+        description: None,
     });
 
     let response = optopsy_mcp::tools::stock_backtest::execute(&params, vec![]).unwrap();

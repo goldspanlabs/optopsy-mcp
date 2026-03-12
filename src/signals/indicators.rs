@@ -3,6 +3,10 @@
 //! Pattern-matches on the signal variant to compute the underlying indicator
 //! (RSI line, SMA curve, Bollinger bands, etc.) and returns structured data
 //! ready for visualization alongside price charts.
+//!
+//! The private helper functions are retained for future use when formula-based
+//! indicator extraction is implemented for `SignalSpec::Custom` signals.
+#![allow(dead_code)]
 
 use super::helpers::{
     column_to_f64, pad_series, DisplayType, IndicatorData, IndicatorPoint, IndicatorSeries,
@@ -16,6 +20,11 @@ use crate::engine::price_table::extract_date_from_column;
 use polars::prelude::*;
 use rust_ti::standard_indicators::bulk as sti;
 
+// NOTE: The imports above (compute_stochastic, compute_atr, compute_bollinger_bands,
+// compute_keltner_channel, compute_cmf, compute_typical_price, sti) and the helper
+// functions below are retained for future use when formula-based indicator extraction
+// is implemented for Custom signals.
+
 /// Maximum number of indicator points to return per series.
 /// The frontend charts handle large datasets efficiently, so we use a generous
 /// limit to preserve full resolution (1 point per bar).
@@ -25,237 +34,14 @@ const MAX_INDICATOR_POINTS: usize = 5000;
 ///
 /// Returns one or more `IndicatorData` entries depending on the signal type.
 /// For combinators (And/Or), recursively collects indicators from both children.
-/// Returns an empty vec for event-based signals (gaps, consecutive) or custom formulas.
-#[allow(clippy::too_many_lines)]
+/// Returns an empty vec for Custom formulas and CrossSymbol signals — indicator
+/// extraction from formula ASTs is future work.
 pub fn compute_indicator_data(
     spec: &SignalSpec,
     ohlcv_df: &DataFrame,
     date_col: &str,
 ) -> Vec<IndicatorData> {
-    let Ok(dates) = extract_date_strings(ohlcv_df, date_col) else {
-        return vec![];
-    };
-
     match spec {
-        // ── Momentum ─────────────────────────────────────────────────
-        SignalSpec::RsiBelow { column, threshold } | SignalSpec::RsiAbove { column, threshold } => {
-            compute_rsi_indicator(ohlcv_df, column, *threshold, &dates)
-        }
-        SignalSpec::MacdBullish { column }
-        | SignalSpec::MacdBearish { column }
-        | SignalSpec::MacdCrossover { column } => compute_macd_indicator(ohlcv_df, column, &dates),
-        SignalSpec::StochasticBelow {
-            close_col,
-            high_col,
-            low_col,
-            period,
-            threshold,
-        }
-        | SignalSpec::StochasticAbove {
-            close_col,
-            high_col,
-            low_col,
-            period,
-            threshold,
-        } => compute_stochastic_indicator(
-            ohlcv_df, close_col, high_col, low_col, *period, *threshold, &dates,
-        ),
-
-        // ── Overlap ──────────────────────────────────────────────────
-        SignalSpec::PriceAboveSma { column, period }
-        | SignalSpec::PriceBelowSma { column, period } => compute_ma_indicator(
-            ohlcv_df,
-            column,
-            *period,
-            "SMA",
-            sti::simple_moving_average,
-            &dates,
-        ),
-        SignalSpec::PriceAboveEma { column, period }
-        | SignalSpec::PriceBelowEma { column, period } => compute_ma_indicator(
-            ohlcv_df,
-            column,
-            *period,
-            "EMA",
-            sti::exponential_moving_average,
-            &dates,
-        ),
-        SignalSpec::SmaCrossover {
-            column,
-            fast_period,
-            slow_period,
-        }
-        | SignalSpec::SmaCrossunder {
-            column,
-            fast_period,
-            slow_period,
-        } => compute_ma_crossover_indicator(
-            ohlcv_df,
-            column,
-            *fast_period,
-            *slow_period,
-            "SMA",
-            sti::simple_moving_average,
-            &dates,
-        ),
-        SignalSpec::EmaCrossover {
-            column,
-            fast_period,
-            slow_period,
-        }
-        | SignalSpec::EmaCrossunder {
-            column,
-            fast_period,
-            slow_period,
-        } => compute_ma_crossover_indicator(
-            ohlcv_df,
-            column,
-            *fast_period,
-            *slow_period,
-            "EMA",
-            sti::exponential_moving_average,
-            &dates,
-        ),
-
-        // ── Trend ────────────────────────────────────────────────────
-        SignalSpec::AroonUptrend {
-            high_col,
-            low_col,
-            period,
-        }
-        | SignalSpec::AroonDowntrend {
-            high_col,
-            low_col,
-            period,
-        } => compute_aroon_indicator(ohlcv_df, high_col, low_col, *period, &dates),
-        SignalSpec::AroonUpAbove {
-            high_col,
-            period,
-            threshold,
-        } => compute_aroon_up_indicator(ohlcv_df, high_col, *period, *threshold, &dates),
-        SignalSpec::SupertrendBullish {
-            close_col,
-            high_col,
-            low_col,
-            period,
-            multiplier,
-        }
-        | SignalSpec::SupertrendBearish {
-            close_col,
-            high_col,
-            low_col,
-            period,
-            multiplier,
-        } => compute_supertrend_indicator(
-            ohlcv_df,
-            close_col,
-            high_col,
-            low_col,
-            *period,
-            *multiplier,
-            &dates,
-        ),
-
-        // ── Volatility ───────────────────────────────────────────────
-        SignalSpec::AtrAbove {
-            close_col,
-            high_col,
-            low_col,
-            period,
-            threshold,
-        }
-        | SignalSpec::AtrBelow {
-            close_col,
-            high_col,
-            low_col,
-            period,
-            threshold,
-        } => compute_atr_indicator(
-            ohlcv_df, close_col, high_col, low_col, *period, *threshold, &dates,
-        ),
-        SignalSpec::BollingerLowerTouch { column, period }
-        | SignalSpec::BollingerUpperTouch { column, period } => {
-            compute_bollinger_indicator(ohlcv_df, column, *period, &dates)
-        }
-        SignalSpec::KeltnerLowerBreak {
-            close_col,
-            high_col,
-            low_col,
-            period,
-            multiplier,
-        }
-        | SignalSpec::KeltnerUpperBreak {
-            close_col,
-            high_col,
-            low_col,
-            period,
-            multiplier,
-        } => compute_keltner_indicator(
-            ohlcv_df,
-            close_col,
-            high_col,
-            low_col,
-            *period,
-            *multiplier,
-            &dates,
-        ),
-
-        // ── Volume ───────────────────────────────────────────────────
-        SignalSpec::MfiBelow {
-            high_col,
-            low_col,
-            close_col,
-            volume_col,
-            period,
-            threshold,
-        }
-        | SignalSpec::MfiAbove {
-            high_col,
-            low_col,
-            close_col,
-            volume_col,
-            period,
-            threshold,
-        } => compute_mfi_indicator(
-            ohlcv_df, high_col, low_col, close_col, volume_col, *period, *threshold, &dates,
-        ),
-        SignalSpec::ObvRising {
-            price_col,
-            volume_col,
-        }
-        | SignalSpec::ObvFalling {
-            price_col,
-            volume_col,
-        } => compute_obv_indicator(ohlcv_df, price_col, volume_col, &dates),
-        SignalSpec::CmfPositive {
-            close_col,
-            high_col,
-            low_col,
-            volume_col,
-            period,
-        }
-        | SignalSpec::CmfNegative {
-            close_col,
-            high_col,
-            low_col,
-            volume_col,
-            period,
-        } => compute_cmf_indicator(
-            ohlcv_df, close_col, high_col, low_col, volume_col, *period, &dates,
-        ),
-
-        // ── Price ────────────────────────────────────────────────────
-        SignalSpec::DrawdownBelow {
-            column,
-            window,
-            threshold,
-        } => compute_drawdown_indicator(ohlcv_df, column, *window, *threshold, &dates),
-        SignalSpec::RateOfChange {
-            column,
-            period,
-            threshold,
-        } => compute_roc_indicator(ohlcv_df, column, *period, *threshold, &dates),
-
         // ── Combinators ──────────────────────────────────────────────
         SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
             let mut result = compute_indicator_data(left, ohlcv_df, date_col);
@@ -272,8 +58,10 @@ pub fn compute_indicator_data(
             Ok(loaded) => compute_indicator_data(&loaded, ohlcv_df, date_col),
             Err(_) => vec![],
         },
-        // Event-based, integer streak, IV, custom, or cross-symbol — no continuous indicator
-        _ => vec![],
+        // Formula-based indicator extraction is future work — return empty for now
+        SignalSpec::Custom { .. } => vec![],
+        // Cross-symbol evaluation has no local indicator data to extract
+        SignalSpec::CrossSymbol { .. } => vec![],
     }
 }
 
@@ -914,224 +702,94 @@ mod tests {
         .unwrap()
     }
 
+    // ── Custom / CrossSymbol return empty ────────────────────────────────────
+
     #[test]
-    fn rsi_indicator_returns_data() {
+    fn custom_signal_returns_empty_indicators() {
         let df = make_ohlcv_df(30);
-        let spec = SignalSpec::RsiBelow {
-            column: "close".into(),
-            threshold: 30.0,
+        let spec = SignalSpec::Custom {
+            name: "RSI oversold".into(),
+            formula: "rsi(close, 14) < 30".into(),
+            description: None,
         };
         let result = compute_indicator_data(&spec, &df, "date");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].name, "RSI(14)");
-        assert!(matches!(result[0].display_type, DisplayType::Subchart));
-        assert_eq!(result[0].thresholds, vec![30.0]);
-        assert!(!result[0].series[0].values.is_empty());
+        assert!(result.is_empty());
     }
 
     #[test]
-    fn rsi_above_returns_same_indicator() {
-        let df = make_ohlcv_df(30);
-        let spec = SignalSpec::RsiAbove {
-            column: "close".into(),
-            threshold: 70.0,
+    fn cross_symbol_returns_empty_indicators() {
+        let df = make_ohlcv_df(10);
+        let spec = SignalSpec::CrossSymbol {
+            symbol: "^VIX".into(),
+            signal: Box::new(SignalSpec::Custom {
+                name: "VIX high".into(),
+                formula: "close > 20".into(),
+                description: None,
+            }),
         };
         let result = compute_indicator_data(&spec, &df, "date");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].thresholds, vec![70.0]);
+        assert!(result.is_empty());
     }
 
-    #[test]
-    fn macd_indicator_returns_data() {
-        let df = make_ohlcv_df(50);
-        let spec = SignalSpec::MacdBullish {
-            column: "close".into(),
-        };
-        let result = compute_indicator_data(&spec, &df, "date");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].name, "MACD Histogram");
-        assert!(matches!(result[0].display_type, DisplayType::Subchart));
-    }
+    // ── And / Or combinators ─────────────────────────────────────────────────
 
     #[test]
-    fn sma_indicator_returns_overlay() {
-        let df = make_ohlcv_df(30);
-        let spec = SignalSpec::PriceAboveSma {
-            column: "close".into(),
-            period: 5,
-        };
-        let result = compute_indicator_data(&spec, &df, "date");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].name, "SMA(5)");
-        assert!(matches!(result[0].display_type, DisplayType::Overlay));
-    }
-
-    #[test]
-    fn sma_crossover_returns_two_series() {
-        let df = make_ohlcv_df(30);
-        let spec = SignalSpec::SmaCrossover {
-            column: "close".into(),
-            fast_period: 5,
-            slow_period: 10,
-        };
-        let result = compute_indicator_data(&spec, &df, "date");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].series.len(), 2);
-        assert!(result[0].series[0].label.contains('5'));
-        assert!(result[0].series[1].label.contains("10"));
-    }
-
-    #[test]
-    fn bollinger_returns_two_series() {
-        let df = make_ohlcv_df(30);
-        let spec = SignalSpec::BollingerLowerTouch {
-            column: "close".into(),
-            period: 10,
-        };
-        let result = compute_indicator_data(&spec, &df, "date");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].series.len(), 2);
-        assert!(matches!(result[0].display_type, DisplayType::Overlay));
-    }
-
-    #[test]
-    fn and_combinator_returns_both_indicators() {
+    fn and_combinator_with_custom_children_returns_empty() {
+        // Custom signals don't produce indicator data yet, so And of two
+        // Custom signals should yield an empty result.
         let df = make_ohlcv_df(30);
         let spec = SignalSpec::And {
-            left: Box::new(SignalSpec::RsiBelow {
-                column: "close".into(),
-                threshold: 30.0,
+            left: Box::new(SignalSpec::Custom {
+                name: "RSI oversold".into(),
+                formula: "rsi(close, 14) < 30".into(),
+                description: None,
             }),
-            right: Box::new(SignalSpec::PriceAboveSma {
-                column: "close".into(),
-                period: 5,
+            right: Box::new(SignalSpec::Custom {
+                name: "Above SMA".into(),
+                formula: "close > sma(close, 5)".into(),
+                description: None,
             }),
-        };
-        let result = compute_indicator_data(&spec, &df, "date");
-        assert_eq!(result.len(), 2);
-    }
-
-    #[test]
-    fn event_based_signals_return_empty() {
-        let df = make_ohlcv_df(10);
-        let spec = SignalSpec::GapUp {
-            open_col: "open".into(),
-            close_col: "close".into(),
-            threshold: 0.01,
         };
         let result = compute_indicator_data(&spec, &df, "date");
         assert!(result.is_empty());
     }
 
     #[test]
-    fn consecutive_signals_return_empty() {
-        let df = make_ohlcv_df(10);
-        let spec = SignalSpec::ConsecutiveUp {
-            column: "close".into(),
-            count: 3,
-        };
-        let result = compute_indicator_data(&spec, &df, "date");
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn insufficient_data_returns_empty() {
-        let df = make_ohlcv_df(5);
-        let spec = SignalSpec::RsiBelow {
-            column: "close".into(),
-            threshold: 30.0,
-        };
-        let result = compute_indicator_data(&spec, &df, "date");
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn atr_indicator_returns_data() {
-        let df = make_ohlcv_df(20);
-        let spec = SignalSpec::AtrAbove {
-            close_col: "close".into(),
-            high_col: "high".into(),
-            low_col: "low".into(),
-            period: 5,
-            threshold: 1.0,
-        };
-        let result = compute_indicator_data(&spec, &df, "date");
-        assert_eq!(result.len(), 1);
-        assert!(matches!(result[0].display_type, DisplayType::Subchart));
-    }
-
-    #[test]
-    fn drawdown_indicator_returns_data() {
-        let df = make_ohlcv_df(20);
-        let spec = SignalSpec::DrawdownBelow {
-            column: "close".into(),
-            window: 10,
-            threshold: 0.05,
-        };
-        let result = compute_indicator_data(&spec, &df, "date");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].thresholds, vec![-0.05]);
-    }
-
-    #[test]
-    fn roc_indicator_returns_data() {
-        let df = make_ohlcv_df(20);
-        let spec = SignalSpec::RateOfChange {
-            column: "close".into(),
-            period: 5,
-            threshold: 0.02,
-        };
-        let result = compute_indicator_data(&spec, &df, "date");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].name, "ROC(5)");
-    }
-
-    #[test]
-    fn and_combinator_deduplicates_same_indicator() {
-        let df = make_ohlcv_df(30);
-        // Both children use RSI — should only appear once
-        let spec = SignalSpec::And {
-            left: Box::new(SignalSpec::RsiBelow {
-                column: "close".into(),
-                threshold: 30.0,
-            }),
-            right: Box::new(SignalSpec::RsiAbove {
-                column: "close".into(),
-                threshold: 70.0,
-            }),
-        };
-        let result = compute_indicator_data(&spec, &df, "date");
-        assert_eq!(result.len(), 1, "Duplicate RSI should be deduplicated");
-        assert_eq!(result[0].name, "RSI(14)");
-    }
-
-    #[test]
-    fn or_combinator_deduplicates_same_indicator() {
+    fn or_combinator_with_custom_children_returns_empty() {
         let df = make_ohlcv_df(30);
         let spec = SignalSpec::Or {
-            left: Box::new(SignalSpec::PriceAboveSma {
-                column: "close".into(),
-                period: 5,
+            left: Box::new(SignalSpec::Custom {
+                name: "Above SMA fast".into(),
+                formula: "close > sma(close, 5)".into(),
+                description: None,
             }),
-            right: Box::new(SignalSpec::PriceBelowSma {
-                column: "close".into(),
-                period: 5,
+            right: Box::new(SignalSpec::Custom {
+                name: "Above SMA slow".into(),
+                formula: "close > sma(close, 20)".into(),
+                description: None,
             }),
         };
         let result = compute_indicator_data(&spec, &df, "date");
-        assert_eq!(result.len(), 1, "Duplicate SMA(5) should be deduplicated");
+        assert!(result.is_empty());
     }
+
+    // ── total_points metadata ────────────────────────────────────────────────
 
     #[test]
     fn total_points_none_when_not_sampled() {
+        // Custom signals return empty — verify the vec is empty (no panic on index).
         let df = make_ohlcv_df(30);
-        let spec = SignalSpec::RsiBelow {
-            column: "close".into(),
-            threshold: 30.0,
+        let spec = SignalSpec::Custom {
+            name: "RSI oversold".into(),
+            formula: "rsi(close, 14) < 30".into(),
+            description: None,
         };
         let result = compute_indicator_data(&spec, &df, "date");
-        assert!(result[0].total_points.is_none());
+        // No indicator data returned for Custom signals yet.
+        assert!(result.is_empty());
     }
+
+    // ── sample_points helper ─────────────────────────────────────────────────
 
     #[test]
     fn sampling_limits_points() {

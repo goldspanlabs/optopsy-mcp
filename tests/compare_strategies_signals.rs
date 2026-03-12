@@ -115,9 +115,10 @@ fn compare_entry_signal_changes_entry_date_and_pnl() {
     let signal_params = CompareParams {
         strategies: default_strategies(),
         sim_params: SimParams {
-            entry_signal: Some(SignalSpec::ConsecutiveUp {
-                column: "close".into(),
-                count: 2,
+            entry_signal: Some(SignalSpec::Custom {
+                name: "consecutive_up_2".into(),
+                formula: "consecutive_up(close) >= 2".into(),
+                description: None,
             }),
             exit_signal: None,
             ohlcv_path: Some(path),
@@ -158,9 +159,10 @@ fn compare_exit_signal_produces_signal_exits() {
 
     // Build the same `BacktestParams` that `compare_strategies` constructs internally
     let mut params = common::backtest_params("long_call", vec![common::delta(0.50)]);
-    params.exit_signal = Some(SignalSpec::ConsecutiveDown {
-        column: "close".into(),
-        count: 1,
+    params.exit_signal = Some(SignalSpec::Custom {
+        name: "consecutive_down_1".into(),
+        formula: "consecutive_down(close) >= 1".into(),
+        description: None,
     });
     params.ohlcv_path = Some(path);
 

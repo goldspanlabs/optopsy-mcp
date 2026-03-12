@@ -88,10 +88,8 @@ fn contains_iv_inner(spec: &signals::registry::SignalSpec, depth: usize) -> bool
         return false;
     }
     match spec {
-        SignalSpec::IvRankAbove { .. }
-        | SignalSpec::IvRankBelow { .. }
-        | SignalSpec::IvPercentileAbove { .. }
-        | SignalSpec::IvPercentileBelow { .. } => true,
+        // No dedicated IV variants remain — IV logic is expressed via Custom formulas.
+        // Custom and CrossSymbol do not carry an IV-specific marker we can inspect here.
         SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
             contains_iv_inner(left, depth + 1) || contains_iv_inner(right, depth + 1)
         }
@@ -108,16 +106,13 @@ fn contains_non_iv_inner(spec: &signals::registry::SignalSpec, depth: usize) -> 
         return false;
     }
     match spec {
-        SignalSpec::IvRankAbove { .. }
-        | SignalSpec::IvRankBelow { .. }
-        | SignalSpec::IvPercentileAbove { .. }
-        | SignalSpec::IvPercentileBelow { .. } => false,
         SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
             contains_non_iv_inner(left, depth + 1) || contains_non_iv_inner(right, depth + 1)
         }
         SignalSpec::Saved { name } => signals::storage::load_signal(name)
             .map(|s| contains_non_iv_inner(&s, depth + 1))
             .unwrap_or(false),
+        // Custom, CrossSymbol — treat as non-IV (OHLCV path needed)
         _ => true,
     }
 }
@@ -855,9 +850,10 @@ mod tests {
     fn run_backtest_signal_without_ohlcv_path_errors() {
         let df = make_daily_options_df();
         let mut params = default_backtest_params();
-        params.entry_signal = Some(signals::registry::SignalSpec::ConsecutiveUp {
-            column: "close".into(),
-            count: 2,
+        params.entry_signal = Some(signals::registry::SignalSpec::Custom {
+            name: "consecutive_up_2".into(),
+            formula: "consecutive_up(close) >= 2".into(),
+            description: None,
         });
         // ohlcv_path intentionally left None
         let result = run_backtest(&df, &params);
@@ -917,9 +913,10 @@ mod tests {
         let (_dir, path) = write_ohlcv_parquet(&ohlcv_dates, &closes);
 
         let mut params = default_backtest_params();
-        params.entry_signal = Some(signals::registry::SignalSpec::ConsecutiveUp {
-            column: "close".into(),
-            count: 2,
+        params.entry_signal = Some(signals::registry::SignalSpec::Custom {
+            name: "consecutive_up_2".into(),
+            formula: "consecutive_up(close) >= 2".into(),
+            description: None,
         });
         params.ohlcv_path = Some(path);
 
@@ -958,9 +955,10 @@ mod tests {
 
         let mut params = default_backtest_params();
         params.max_positions = 1; // prevent re-entry after signal exit
-        params.exit_signal = Some(signals::registry::SignalSpec::ConsecutiveUp {
-            column: "close".into(),
-            count: 2,
+        params.exit_signal = Some(signals::registry::SignalSpec::Custom {
+            name: "consecutive_up_2".into(),
+            formula: "consecutive_up(close) >= 2".into(),
+            description: None,
         });
         params.ohlcv_path = Some(path);
 
@@ -1142,75 +1140,14 @@ mod tests {
     }
 
     #[test]
-    fn run_backtest_pure_iv_signal_without_ohlcv() {
-        // Pure IV signal should work without ohlcv_path
+    fn run_backtest_custom_signal_without_ohlcv_errors() {
+        // Any Custom signal requires ohlcv_path — all signals now use the Custom DSL.
         let df = make_iv_options_df();
         let mut params = default_backtest_params();
-        // IV Rank with lookback=3, threshold=50 — should allow some entries
-        params.entry_signal = Some(signals::registry::SignalSpec::IvRankAbove {
-            lookback: 3,
-            threshold: 50.0,
-        });
-        params.ohlcv_path = None; // No OHLCV needed for pure IV signal
-
-        let result = run_backtest(&df, &params);
-        assert!(
-            result.is_ok(),
-            "Pure IV signal backtest failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn run_backtest_mixed_iv_and_ohlcv_signal() {
-        // Mixed signal: IV + OHLCV combinator requires ohlcv_path
-        let df = make_iv_options_df();
-        let ohlcv_dates: Vec<NaiveDate> = vec![
-            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 1, 29).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 2, 1).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 2, 5).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(),
-        ];
-        let closes = vec![100.0, 101.0, 102.0, 103.0, 104.0, 105.0];
-        let (_dir, path) = write_ohlcv_parquet(&ohlcv_dates, &closes);
-
-        let mut params = default_backtest_params();
-        params.entry_signal = Some(signals::registry::SignalSpec::And {
-            left: Box::new(signals::registry::SignalSpec::IvRankAbove {
-                lookback: 3,
-                threshold: 50.0,
-            }),
-            right: Box::new(signals::registry::SignalSpec::ConsecutiveUp {
-                column: "close".into(),
-                count: 2,
-            }),
-        });
-        params.ohlcv_path = Some(path);
-
-        let result = run_backtest(&df, &params);
-        assert!(
-            result.is_ok(),
-            "Mixed IV+OHLCV signal backtest failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn run_backtest_mixed_signal_without_ohlcv_errors() {
-        // Mixed IV + non-IV signal without ohlcv_path should error
-        let df = make_iv_options_df();
-        let mut params = default_backtest_params();
-        params.entry_signal = Some(signals::registry::SignalSpec::And {
-            left: Box::new(signals::registry::SignalSpec::IvRankAbove {
-                lookback: 3,
-                threshold: 50.0,
-            }),
-            right: Box::new(signals::registry::SignalSpec::ConsecutiveUp {
-                column: "close".into(),
-                count: 2,
-            }),
+        params.entry_signal = Some(signals::registry::SignalSpec::Custom {
+            name: "consecutive_up_2".into(),
+            formula: "consecutive_up(close) >= 2".into(),
+            description: None,
         });
         params.ohlcv_path = None;
 

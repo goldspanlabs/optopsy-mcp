@@ -120,10 +120,11 @@ mod tests {
         }
         .unwrap();
 
-        // ConsecutiveUp with count=2: true at indices 2,3,4
-        let spec = SignalSpec::ConsecutiveUp {
-            column: "close".into(),
-            count: 2,
+        // Custom consecutive_up with count=2: true at indices 2,3,4
+        let spec = SignalSpec::Custom {
+            name: "consecutive_up_2".into(),
+            formula: "consecutive_up(close) >= 2".into(),
+            description: None,
         };
         let result = active_dates(&spec, &df, "date").unwrap();
         assert!(result.contains(&dates[2]));
@@ -148,9 +149,10 @@ mod tests {
         }
         .unwrap();
 
-        let spec = SignalSpec::ConsecutiveDown {
-            column: "close".into(),
-            count: 2,
+        let spec = SignalSpec::Custom {
+            name: "consecutive_down_2".into(),
+            formula: "consecutive_down(close) >= 2".into(),
+            description: None,
         };
         let result = active_dates(&spec, &df, "date").unwrap();
         assert!(result.contains(&dates[2]));
@@ -174,9 +176,10 @@ mod tests {
         .unwrap();
 
         // Looking for 5 consecutive ups but data trends down
-        let spec = SignalSpec::ConsecutiveUp {
-            column: "close".into(),
-            count: 5,
+        let spec = SignalSpec::Custom {
+            name: "consecutive_up_5".into(),
+            formula: "consecutive_up(close) >= 5".into(),
+            description: None,
         };
         let result = active_dates(&spec, &df, "date").unwrap();
         assert!(result.is_empty());
@@ -198,13 +201,15 @@ mod tests {
         .unwrap();
 
         let spec = SignalSpec::And {
-            left: Box::new(SignalSpec::ConsecutiveUp {
-                column: "close".into(),
-                count: 2,
+            left: Box::new(SignalSpec::Custom {
+                name: "consecutive_up_2".into(),
+                formula: "consecutive_up(close) >= 2".into(),
+                description: None,
             }),
-            right: Box::new(SignalSpec::ConsecutiveUp {
-                column: "close".into(),
-                count: 3,
+            right: Box::new(SignalSpec::Custom {
+                name: "consecutive_up_3".into(),
+                formula: "consecutive_up(close) >= 3".into(),
+                description: None,
             }),
         };
         let result = active_dates(&spec, &df, "date").unwrap();
@@ -231,13 +236,15 @@ mod tests {
         .unwrap();
 
         let spec = SignalSpec::Or {
-            left: Box::new(SignalSpec::ConsecutiveUp {
-                column: "close".into(),
-                count: 4,
+            left: Box::new(SignalSpec::Custom {
+                name: "consecutive_up_4".into(),
+                formula: "consecutive_up(close) >= 4".into(),
+                description: None,
             }),
-            right: Box::new(SignalSpec::ConsecutiveUp {
-                column: "close".into(),
-                count: 2,
+            right: Box::new(SignalSpec::Custom {
+                name: "consecutive_up_2".into(),
+                formula: "consecutive_up(close) >= 2".into(),
+                description: None,
             }),
         };
         let result = active_dates(&spec, &df, "date").unwrap();
@@ -277,12 +284,13 @@ mod tests {
         let mut cross_dfs = HashMap::new();
         cross_dfs.insert("^VIX".to_string(), vix_df);
 
-        // CrossSymbol: ConsecutiveUp(count=2) on VIX
+        // CrossSymbol: consecutive_up(count=2) on VIX
         let spec = SignalSpec::CrossSymbol {
             symbol: "^VIX".into(),
-            signal: Box::new(SignalSpec::ConsecutiveUp {
-                column: "close".into(),
-                count: 2,
+            signal: Box::new(SignalSpec::Custom {
+                name: "vix_up_2".into(),
+                formula: "consecutive_up(close) >= 2".into(),
+                description: None,
             }),
         };
 
@@ -323,17 +331,19 @@ mod tests {
         let mut cross_dfs = HashMap::new();
         cross_dfs.insert("^VIX".to_string(), vix_df);
 
-        // AND: primary ConsecutiveUp(2) AND CrossSymbol(VIX ConsecutiveUp(3))
+        // AND: primary consecutive_up(2) AND CrossSymbol(VIX consecutive_up(3))
         let spec = SignalSpec::And {
-            left: Box::new(SignalSpec::ConsecutiveUp {
-                column: "close".into(),
-                count: 2,
+            left: Box::new(SignalSpec::Custom {
+                name: "consecutive_up_2".into(),
+                formula: "consecutive_up(close) >= 2".into(),
+                description: None,
             }),
             right: Box::new(SignalSpec::CrossSymbol {
                 symbol: "^VIX".into(),
-                signal: Box::new(SignalSpec::ConsecutiveUp {
-                    column: "close".into(),
-                    count: 3,
+                signal: Box::new(SignalSpec::Custom {
+                    name: "vix_up_3".into(),
+                    formula: "consecutive_up(close) >= 3".into(),
+                    description: None,
                 }),
             }),
         };
@@ -361,9 +371,10 @@ mod tests {
 
         let spec = SignalSpec::CrossSymbol {
             symbol: "^VIX".into(),
-            signal: Box::new(SignalSpec::ConsecutiveUp {
-                column: "close".into(),
-                count: 1,
+            signal: Box::new(SignalSpec::Custom {
+                name: "vix_up_1".into(),
+                formula: "consecutive_up(close) >= 1".into(),
+                description: None,
             }),
         };
 
@@ -388,9 +399,10 @@ mod tests {
         let cross_dfs = HashMap::new();
 
         // Plain signal (no CrossSymbol) should use primary_df
-        let spec = SignalSpec::ConsecutiveUp {
-            column: "close".into(),
-            count: 2,
+        let spec = SignalSpec::Custom {
+            name: "consecutive_up_2".into(),
+            formula: "consecutive_up(close) >= 2".into(),
+            description: None,
         };
 
         let result = active_dates_multi(&spec, &primary_df, &cross_dfs, "date").unwrap();
@@ -419,9 +431,10 @@ mod tests {
         )
         .unwrap();
 
-        let spec = SignalSpec::ConsecutiveUp {
-            column: "close".into(),
-            count: 2,
+        let spec = SignalSpec::Custom {
+            name: "consecutive_up_2".into(),
+            formula: "consecutive_up(close) >= 2".into(),
+            description: None,
         };
         let result = active_dates(&spec, &df, "datetime").unwrap();
         assert!(result.contains(&NaiveDate::from_ymd_opt(2024, 1, 3).unwrap()));
