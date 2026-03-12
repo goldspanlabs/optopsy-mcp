@@ -400,6 +400,7 @@ fn execute_catalog() -> BuildSignalResponse {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn formula_help() -> FormulaHelp {
     FormulaHelp {
         columns: vec![

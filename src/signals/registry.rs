@@ -218,7 +218,7 @@ fn collect_cross_symbols_inner(
                 collect_cross_symbols_inner(&loaded_spec, out, visited_saved, depth + 1);
             }
         }
-        _ => {}
+        SignalSpec::Custom { .. } => {}
     }
 }
 

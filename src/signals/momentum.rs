@@ -40,9 +40,9 @@ pub(crate) fn compute_rsi_variable_period(prices: &[f64], period: usize) -> Vec<
     });
 
     // Wilder smoothing for remaining bars
-    for i in period..changes.len() {
-        let gain = if changes[i] > 0.0 { changes[i] } else { 0.0 };
-        let loss = if changes[i] < 0.0 { -changes[i] } else { 0.0 };
+    for &change in &changes[period..] {
+        let gain = if change > 0.0 { change } else { 0.0 };
+        let loss = if change < 0.0 { -change } else { 0.0 };
         avg_gain = (avg_gain * (period as f64 - 1.0) + gain) / period as f64;
         avg_loss = (avg_loss * (period as f64 - 1.0) + loss) / period as f64;
         let rs = if avg_loss == 0.0 {

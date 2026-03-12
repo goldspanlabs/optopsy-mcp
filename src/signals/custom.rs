@@ -75,6 +75,9 @@
 //! if(close > 100, 1, 0)
 //! ```
 
+// Multi-column map closures use conventional short names (s, c, h, l, v, n)
+#![allow(clippy::many_single_char_names)]
+
 use polars::prelude::*;
 use rust_ti::standard_indicators::bulk as sti;
 
@@ -565,6 +568,7 @@ impl Parser {
         Ok(FuncArg::Expression(expr))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn build_function_call(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
         match name.to_lowercase().as_str() {
             "sma" => {

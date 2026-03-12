@@ -34,9 +34,18 @@ const MAX_INDICATOR_POINTS: usize = 5000;
 ///
 /// Returns one or more `IndicatorData` entries depending on the signal type.
 /// For combinators (And/Or), recursively collects indicators from both children.
-/// Returns an empty vec for Custom formulas and CrossSymbol signals — indicator
+/// Returns an empty vec for `Custom` formulas and `CrossSymbol` signals — indicator
 /// extraction from formula ASTs is future work.
 pub fn compute_indicator_data(
+    spec: &SignalSpec,
+    ohlcv_df: &DataFrame,
+    date_col: &str,
+) -> Vec<IndicatorData> {
+    compute_indicator_data_inner(spec, ohlcv_df, date_col)
+}
+
+#[allow(clippy::only_used_in_recursion)]
+fn compute_indicator_data_inner(
     spec: &SignalSpec,
     ohlcv_df: &DataFrame,
     date_col: &str,
@@ -44,8 +53,8 @@ pub fn compute_indicator_data(
     match spec {
         // ── Combinators ──────────────────────────────────────────────
         SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
-            let mut result = compute_indicator_data(left, ohlcv_df, date_col);
-            let right_indicators = compute_indicator_data(right, ohlcv_df, date_col);
+            let mut result = compute_indicator_data_inner(left, ohlcv_df, date_col);
+            let right_indicators = compute_indicator_data_inner(right, ohlcv_df, date_col);
             // Deduplicate: skip indicators already present (by name)
             for ind in right_indicators {
                 if !result.iter().any(|existing| existing.name == ind.name) {
@@ -55,13 +64,11 @@ pub fn compute_indicator_data(
             result
         }
         SignalSpec::Saved { name } => match super::storage::load_signal(name) {
-            Ok(loaded) => compute_indicator_data(&loaded, ohlcv_df, date_col),
+            Ok(loaded) => compute_indicator_data_inner(&loaded, ohlcv_df, date_col),
             Err(_) => vec![],
         },
         // Formula-based indicator extraction is future work — return empty for now
-        SignalSpec::Custom { .. } => vec![],
-        // Cross-symbol evaluation has no local indicator data to extract
-        SignalSpec::CrossSymbol { .. } => vec![],
+        SignalSpec::Custom { .. } | SignalSpec::CrossSymbol { .. } => vec![],
     }
 }
 
