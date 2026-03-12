@@ -17,8 +17,9 @@ use polars::prelude::*;
 use rust_ti::standard_indicators::bulk as sti;
 
 /// Maximum number of indicator points to return per series.
-/// Beyond this, values are evenly sampled to avoid overwhelming the response.
-const MAX_INDICATOR_POINTS: usize = 200;
+/// The frontend charts handle large datasets efficiently, so we use a generous
+/// limit to preserve full resolution (1 point per bar).
+const MAX_INDICATOR_POINTS: usize = 5000;
 
 /// Compute raw indicator data for charting from a signal specification.
 ///
