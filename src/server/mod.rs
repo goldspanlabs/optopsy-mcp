@@ -311,15 +311,22 @@ impl OptopsyServer {
     }
 }
 
-/// Load close prices from a cached OHLCV parquet file for chart overlay.
-fn load_underlying_closes(path: &std::path::Path) -> Vec<tools::response_types::UnderlyingPrice> {
+/// Load OHLCV prices from a cached parquet file for chart overlay.
+fn load_underlying_prices(path: &std::path::Path) -> Vec<tools::response_types::UnderlyingPrice> {
     let args = ScanArgsParquet::default();
     let path_str = path.to_string_lossy();
     let Ok(lf) = LazyFrame::scan_parquet(path_str.as_ref().into(), args) else {
         return vec![];
     };
     let Ok(df) = lf
-        .select([col("date"), col("close")])
+        .select([
+            col("date"),
+            col("open"),
+            col("high"),
+            col("low"),
+            col("close"),
+            col("volume"),
+        ])
         .sort(["date"], SortMultipleOptions::default())
         .collect()
     else {
@@ -329,21 +336,46 @@ fn load_underlying_closes(path: &std::path::Path) -> Vec<tools::response_types::
     let Ok(dates) = df.column("date").and_then(|c| Ok(c.date()?.clone())) else {
         return vec![];
     };
+    let Ok(opens) = df.column("open").and_then(|c| Ok(c.f64()?.clone())) else {
+        return vec![];
+    };
+    let Ok(highs) = df.column("high").and_then(|c| Ok(c.f64()?.clone())) else {
+        return vec![];
+    };
+    let Ok(lows) = df.column("low").and_then(|c| Ok(c.f64()?.clone())) else {
+        return vec![];
+    };
     let Ok(closes) = df.column("close").and_then(|c| Ok(c.f64()?.clone())) else {
         return vec![];
     };
+    // Volume may be i64 or u64 depending on the parquet source
+    let volumes = df
+        .column("volume")
+        .and_then(|c| Ok(c.cast(&polars::prelude::DataType::UInt64)?.u64()?.clone()))
+        .ok();
 
     let mut prices = Vec::with_capacity(df.height());
     for i in 0..df.height() {
-        if let (Some(days), Some(close)) = (dates.phys.get(i), closes.get(i)) {
-            if let Some(date) =
-                chrono::NaiveDate::from_num_days_from_ce_opt(days + EPOCH_DAYS_CE_OFFSET)
-            {
-                prices.push(tools::response_types::UnderlyingPrice {
-                    date: date.format("%Y-%m-%d").to_string(),
-                    close,
-                });
-            }
+        let (Some(days), Some(open), Some(high), Some(low), Some(close)) = (
+            dates.phys.get(i),
+            opens.get(i),
+            highs.get(i),
+            lows.get(i),
+            closes.get(i),
+        ) else {
+            continue;
+        };
+        if let Some(date) =
+            chrono::NaiveDate::from_num_days_from_ce_opt(days + EPOCH_DAYS_CE_OFFSET)
+        {
+            prices.push(tools::response_types::UnderlyingPrice {
+                date: date.format("%Y-%m-%d").to_string(),
+                open,
+                high,
+                low,
+                close,
+                volume: volumes.as_ref().and_then(|v| v.get(i)),
+            });
         }
     }
     prices
@@ -561,7 +593,7 @@ impl OptopsyServer {
                         // Read on blocking thread since it's Polars I/O
                         let prices = tokio::task::spawn_blocking(
                             move || -> Vec<tools::response_types::UnderlyingPrice> {
-                                load_underlying_closes(&path)
+                                load_underlying_prices(&path)
                             },
                         )
                         .await
@@ -650,7 +682,7 @@ impl OptopsyServer {
                 let underlying_prices = match self.cache.ensure_local_for(&symbol, "prices").await {
                     Ok(path) => {
                         let prices =
-                            tokio::task::spawn_blocking(move || load_underlying_closes(&path))
+                            tokio::task::spawn_blocking(move || load_underlying_prices(&path))
                                 .await
                                 .unwrap_or_default();
                         prices

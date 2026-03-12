@@ -31,11 +31,16 @@ pub struct BacktestDataQuality {
     pub warnings: Vec<String>,
 }
 
-/// A date + close price pair for overlaying the underlying's price on equity curve charts.
+/// OHLCV price bar for overlaying the underlying's price on charts.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct UnderlyingPrice {
     pub date: String,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
     pub close: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume: Option<u64>,
 }
 
 /// Summary of dynamic position sizing behavior across all trades.
