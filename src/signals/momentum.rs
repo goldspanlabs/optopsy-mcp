@@ -149,18 +149,18 @@ mod tests {
         );
         // All RSI values should be in [0, 100]
         for &v in &our_rsi {
-            assert!(v >= 0.0 && v <= 100.0, "RSI out of range: {v}");
+            assert!((0.0..=100.0).contains(&v), "RSI out of range: {v}");
         }
     }
 
     #[test]
     fn compute_rsi_variable_period_custom_period() {
-        let prices: Vec<f64> = (0..30).map(|i| 100.0 + (i as f64).sin() * 10.0).collect();
+        let prices: Vec<f64> = (0..30).map(|i| 100.0 + f64::from(i).sin() * 10.0).collect();
         let result = compute_rsi_variable_period(&prices, 7);
         assert!(!result.is_empty());
         // All values should be in [0, 100]
         for &v in &result {
-            assert!(v >= 0.0 && v <= 100.0, "RSI out of range: {v}");
+            assert!((0.0..=100.0).contains(&v), "RSI out of range: {v}");
         }
     }
 

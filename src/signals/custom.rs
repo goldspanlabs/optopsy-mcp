@@ -1917,14 +1917,14 @@ mod tests {
     fn eval_df() -> DataFrame {
         // 30 rows with realistic OHLCV data for evaluation tests
         let close: Vec<f64> = (0..30)
-            .map(|i| 100.0 + (i as f64) * 0.5 + (i as f64 * 0.3).sin() * 2.0)
+            .map(|i| 100.0 + f64::from(i) * 0.5 + (f64::from(i) * 0.3).sin() * 2.0)
             .collect();
         let high: Vec<f64> = close.iter().map(|c| c + 1.5).collect();
         let low: Vec<f64> = close.iter().map(|c| c - 1.5).collect();
         let open: Vec<f64> = close.iter().map(|c| c - 0.2).collect();
-        let volume: Vec<f64> = (0..30).map(|i| 1000.0 + (i as f64) * 50.0).collect();
+        let volume: Vec<f64> = (0..30).map(|i| 1000.0 + f64::from(i) * 50.0).collect();
         let iv: Vec<f64> = (0..30)
-            .map(|i| 0.15 + (i as f64) * 0.005 + (i as f64 * 0.5).sin() * 0.03)
+            .map(|i| 0.15 + f64::from(i) * 0.005 + (f64::from(i) * 0.5).sin() * 0.03)
             .collect();
         df! {
             "close" => &close,
@@ -1987,7 +1987,7 @@ mod tests {
     #[test]
     fn formula_macd_evaluates() {
         // Need 34+ rows for MACD; eval_df has 30, so use a larger df
-        let close: Vec<f64> = (0..40).map(|i| 100.0 + (i as f64) * 0.5).collect();
+        let close: Vec<f64> = (0..40).map(|i| 100.0 + f64::from(i) * 0.5).collect();
         let df = df! { "close" => &close }.unwrap();
         let signal = FormulaSignal::new("macd_hist(close) > 0".to_string());
         let result = signal.evaluate(&df).unwrap();
@@ -2096,9 +2096,9 @@ mod tests {
 
     #[test]
     fn formula_aroon_up_evaluates() {
-        let n = 30;
-        let high: Vec<f64> = (0..n).map(|i| 100.0 + i as f64 + 2.0).collect();
-        let low: Vec<f64> = (0..n).map(|i| 100.0 + i as f64 - 2.0).collect();
+        let n = 30_i32;
+        let high: Vec<f64> = (0..n).map(|i| 100.0 + f64::from(i) + 2.0).collect();
+        let low: Vec<f64> = (0..n).map(|i| 100.0 + f64::from(i) - 2.0).collect();
         let df = df! {
             "high" => &high,
             "low" => &low,
@@ -2106,13 +2106,13 @@ mod tests {
         .unwrap();
         let signal = FormulaSignal::new("aroon_up(high, low, 14) > 50".to_string());
         let result = signal.evaluate(&df).unwrap();
-        assert_eq!(result.len(), n);
+        assert_eq!(result.len(), n as usize);
     }
 
     #[test]
     fn formula_supertrend_evaluates() {
-        let n = 30;
-        let close: Vec<f64> = (0..n).map(|i| 100.0 + (i as f64) * 0.5).collect();
+        let n = 30_i32;
+        let close: Vec<f64> = (0..n).map(|i| 100.0 + f64::from(i) * 0.5).collect();
         let high: Vec<f64> = close.iter().map(|c| c + 2.0).collect();
         let low: Vec<f64> = close.iter().map(|c| c - 2.0).collect();
         let df = df! {
@@ -2124,13 +2124,13 @@ mod tests {
         let signal =
             FormulaSignal::new("close > supertrend(close, high, low, 10, 3.0)".to_string());
         let result = signal.evaluate(&df).unwrap();
-        assert_eq!(result.len(), n);
+        assert_eq!(result.len(), n as usize);
     }
 
     #[test]
     fn formula_cmf_evaluates() {
-        let n = 30;
-        let close: Vec<f64> = (0..n).map(|i| 100.0 + (i as f64) * 0.3).collect();
+        let n = 30_i32;
+        let close: Vec<f64> = (0..n).map(|i| 100.0 + f64::from(i) * 0.3).collect();
         let high: Vec<f64> = close.iter().map(|c| c + 1.5).collect();
         let low: Vec<f64> = close.iter().map(|c| c - 1.5).collect();
         let volume: Vec<f64> = (0..n).map(|_| 1_000_000.0).collect();
@@ -2143,7 +2143,7 @@ mod tests {
         .unwrap();
         let signal = FormulaSignal::new("cmf(close, high, low, volume, 20) > 0".to_string());
         let result = signal.evaluate(&df).unwrap();
-        assert_eq!(result.len(), n);
+        assert_eq!(result.len(), n as usize);
     }
 
     #[test]
@@ -2176,7 +2176,7 @@ mod tests {
 
     #[test]
     fn formula_lookback_on_sma_evaluates() {
-        let close: Vec<f64> = (0..20).map(|i| 100.0 + i as f64).collect();
+        let close: Vec<f64> = (0..20).map(|i| 100.0 + f64::from(i)).collect();
         let df = df! { "close" => &close }.unwrap();
         let signal = FormulaSignal::new("sma(close, 5)[1] > 0".to_string());
         let result = signal.evaluate(&df).unwrap();
