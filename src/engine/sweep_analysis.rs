@@ -237,57 +237,18 @@ pub fn violates_delta_ordering(strategy_name: &str, delta_targets: &[f64]) -> bo
 /// Generate a short human-readable label for a `SignalSpec`.
 pub(crate) fn signal_spec_label(spec: &SignalSpec) -> String {
     match spec {
-        SignalSpec::RsiBelow { threshold, .. } => format!("RsiBelow(t={threshold})"),
-        SignalSpec::RsiAbove { threshold, .. } => format!("RsiAbove(t={threshold})"),
-        SignalSpec::MacdBullish { .. } => "MacdBullish".to_string(),
-        SignalSpec::MacdBearish { .. } => "MacdBearish".to_string(),
-        SignalSpec::MacdCrossover { .. } => "MacdCrossover".to_string(),
-        SignalSpec::StochasticBelow {
-            period, threshold, ..
-        } => format!("StochBelow(p={period},t={threshold})"),
-        SignalSpec::StochasticAbove {
-            period, threshold, ..
-        } => format!("StochAbove(p={period},t={threshold})"),
-        SignalSpec::PriceAboveSma { period, .. } => format!("AboveSma(p={period})"),
-        SignalSpec::PriceBelowSma { period, .. } => format!("BelowSma(p={period})"),
-        SignalSpec::PriceAboveEma { period, .. } => format!("AboveEma(p={period})"),
-        SignalSpec::PriceBelowEma { period, .. } => format!("BelowEma(p={period})"),
-        SignalSpec::SmaCrossover {
-            fast_period,
-            slow_period,
-            ..
-        } => format!("SmaCross(f={fast_period},s={slow_period})"),
-        SignalSpec::SmaCrossunder {
-            fast_period,
-            slow_period,
-            ..
-        } => format!("SmaXunder(f={fast_period},s={slow_period})"),
-        SignalSpec::EmaCrossover {
-            fast_period,
-            slow_period,
-            ..
-        } => format!("EmaCross(f={fast_period},s={slow_period})"),
-        SignalSpec::EmaCrossunder {
-            fast_period,
-            slow_period,
-            ..
-        } => format!("EmaXunder(f={fast_period},s={slow_period})"),
-        SignalSpec::BollingerLowerTouch { period, .. } => format!("BollLower(p={period})"),
-        SignalSpec::BollingerUpperTouch { period, .. } => format!("BollUpper(p={period})"),
-        SignalSpec::ConsecutiveUp { count, .. } => format!("ConsecUp(n={count})"),
-        SignalSpec::ConsecutiveDown { count, .. } => format!("ConsecDown(n={count})"),
-        SignalSpec::RateOfChange {
-            period, threshold, ..
-        } => format!("RoC(p={period},t={threshold})"),
+        SignalSpec::Formula { formula } => {
+            if formula.len() <= 30 {
+                formula.clone()
+            } else {
+                let truncated: String = formula.chars().take(27).collect();
+                format!("{truncated}…")
+            }
+        }
+        SignalSpec::Saved { name } => format!("Saved({name})"),
+        SignalSpec::CrossSymbol { symbol, .. } => format!("CrossSymbol({symbol})"),
         SignalSpec::And { .. } => "And(…)".to_string(),
         SignalSpec::Or { .. } => "Or(…)".to_string(),
-        // Fallback: use Debug variant name truncated
-        other => {
-            let dbg = format!("{other:?}");
-            // Take up to the first '{' or 100 chars
-            let end = dbg.find('{').unwrap_or(dbg.len()).min(100);
-            dbg[..end].trim().to_string()
-        }
     }
 }
 

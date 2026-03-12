@@ -376,12 +376,9 @@ fn signal_exit_fires_mid_position() {
     let (_dir, path) = common::write_ohlcv_parquet(&dates, &closes);
 
     let mut params = common::backtest_params("long_call", vec![common::delta(0.50)]);
-    params.exit_signal = Some(
-        optopsy_mcp::signals::registry::SignalSpec::ConsecutiveDown {
-            column: "close".into(),
-            count: 1,
-        },
-    );
+    params.exit_signal = Some(optopsy_mcp::signals::registry::SignalSpec::Formula {
+        formula: "consecutive_down(close) >= 1".into(),
+    });
     params.ohlcv_path = Some(path);
 
     let result = run_backtest(&df, &params).expect("backtest failed");
@@ -419,12 +416,9 @@ fn signal_exit_has_priority_over_dte_when_same_day() {
     let (_dir, path) = common::write_ohlcv_parquet(&dates, &closes);
 
     let mut params = common::backtest_params("long_call", vec![common::delta(0.50)]);
-    params.exit_signal = Some(
-        optopsy_mcp::signals::registry::SignalSpec::ConsecutiveDown {
-            column: "close".into(),
-            count: 1,
-        },
-    );
+    params.exit_signal = Some(optopsy_mcp::signals::registry::SignalSpec::Formula {
+        formula: "consecutive_down(close) >= 1".into(),
+    });
     params.ohlcv_path = Some(path);
 
     let result = run_backtest(&df, &params).expect("backtest failed");

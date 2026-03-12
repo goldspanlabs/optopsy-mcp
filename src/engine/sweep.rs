@@ -775,17 +775,14 @@ mod tests {
     #[test]
     fn signal_combos_entry_only() {
         let entries = vec![
-            SignalSpec::RsiBelow {
-                column: "close".into(),
-                threshold: 25.0,
+            SignalSpec::Formula {
+                formula: "rsi(close, 14) < 25".into(),
             },
-            SignalSpec::RsiBelow {
-                column: "close".into(),
-                threshold: 30.0,
+            SignalSpec::Formula {
+                formula: "rsi(close, 14) < 30".into(),
             },
-            SignalSpec::RsiBelow {
-                column: "close".into(),
-                threshold: 35.0,
+            SignalSpec::Formula {
+                formula: "rsi(close, 14) < 35".into(),
             },
         ];
         let combos = build_signal_combos(&entries, &[]);
@@ -802,27 +799,22 @@ mod tests {
     #[test]
     fn signal_combos_entry_and_exit() {
         let entries = vec![
-            SignalSpec::RsiBelow {
-                column: "close".into(),
-                threshold: 25.0,
+            SignalSpec::Formula {
+                formula: "rsi(close, 14) < 25".into(),
             },
-            SignalSpec::RsiBelow {
-                column: "close".into(),
-                threshold: 30.0,
+            SignalSpec::Formula {
+                formula: "rsi(close, 14) < 30".into(),
             },
-            SignalSpec::RsiBelow {
-                column: "close".into(),
-                threshold: 35.0,
+            SignalSpec::Formula {
+                formula: "rsi(close, 14) < 35".into(),
             },
         ];
         let exits = vec![
-            SignalSpec::ConsecutiveDown {
-                column: "close".into(),
-                count: 2,
+            SignalSpec::Formula {
+                formula: "consecutive_down(close) >= 2".into(),
             },
-            SignalSpec::ConsecutiveDown {
-                column: "close".into(),
-                count: 3,
+            SignalSpec::Formula {
+                formula: "consecutive_down(close) >= 3".into(),
             },
         ];
         let combos = build_signal_combos(&entries, &exits);
@@ -880,17 +872,14 @@ mod tests {
             out_of_sample_pct: 0.0,
             direction: None,
             entry_signals: vec![
-                SignalSpec::RsiBelow {
-                    column: "close".into(),
-                    threshold: 25.0,
+                SignalSpec::Formula {
+                    formula: "rsi(close, 14) < 25".into(),
                 },
-                SignalSpec::RsiBelow {
-                    column: "close".into(),
-                    threshold: 30.0,
+                SignalSpec::Formula {
+                    formula: "rsi(close, 14) < 30".into(),
                 },
-                SignalSpec::RsiBelow {
-                    column: "close".into(),
-                    threshold: 35.0,
+                SignalSpec::Formula {
+                    formula: "rsi(close, 14) < 35".into(),
                 },
             ],
             exit_signals: vec![],
@@ -923,28 +912,49 @@ mod tests {
     }
 
     #[test]
-    fn signal_spec_label_covers_common_variants() {
+    fn signal_spec_label_covers_all_variants() {
         assert_eq!(
-            signal_spec_label(&SignalSpec::RsiBelow {
-                column: "close".into(),
-                threshold: 25.0,
+            signal_spec_label(&SignalSpec::Formula {
+                formula: "rsi(close, 14) < 30".into()
             }),
-            "RsiBelow(t=25)"
+            "rsi(close, 14) < 30"
         );
         assert_eq!(
-            signal_spec_label(&SignalSpec::SmaCrossover {
-                column: "close".into(),
-                fast_period: 10,
-                slow_period: 20,
+            signal_spec_label(&SignalSpec::Saved {
+                name: "my_signal".into(),
             }),
-            "SmaCross(f=10,s=20)"
+            "Saved(my_signal)"
         );
         assert_eq!(
-            signal_spec_label(&SignalSpec::ConsecutiveUp {
-                column: "close".into(),
-                count: 3,
+            signal_spec_label(&SignalSpec::CrossSymbol {
+                symbol: "^VIX".into(),
+                signal: Box::new(SignalSpec::Formula {
+                    formula: "close > 20".into()
+                }),
             }),
-            "ConsecUp(n=3)"
+            "CrossSymbol(^VIX)"
+        );
+        assert_eq!(
+            signal_spec_label(&SignalSpec::And {
+                left: Box::new(SignalSpec::Formula {
+                    formula: "rsi(close,14) < 30".into()
+                }),
+                right: Box::new(SignalSpec::Formula {
+                    formula: "close > sma(close,20)".into()
+                }),
+            }),
+            "And(…)"
+        );
+        assert_eq!(
+            signal_spec_label(&SignalSpec::Or {
+                left: Box::new(SignalSpec::Formula {
+                    formula: "rsi(close,14) < 30".into()
+                }),
+                right: Box::new(SignalSpec::Formula {
+                    formula: "close > sma(close,20)".into()
+                }),
+            }),
+            "Or(…)"
         );
     }
 

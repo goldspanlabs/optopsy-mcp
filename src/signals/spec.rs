@@ -1,262 +1,40 @@
 //! Signal specification enum defining all supported signal types.
 //!
-//! Each variant maps 1:1 to a `SignalFn` implementation and is serializable
-//! for JSON Schema generation, storage, and MCP transport.
+//! All indicator logic is expressed through the formula DSL.
+//! A plain string is the primary way to pass a formula signal:
+//! ```json
+//! "rsi(close, 14) < 30"
+//! ```
+//! Tagged objects are used for structural variants (`Saved`, `CrossSymbol`, `And`, `Or`).
 
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
-/// Serializable signal specification. Each variant maps 1:1 to a `SignalFn` struct.
-/// Use `build_signal` to convert a `SignalSpec` into a concrete `Box<dyn SignalFn>`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+/// Serializable signal specification.
+///
+/// A plain formula string is the primary input format:
+/// `"rsi(close, 14) < 30"` deserialized as `Formula { formula: "rsi(close, 14) < 30".to_string() }`.
+///
+/// Tagged objects are used for `Saved`, `CrossSymbol`, `And`, and `Or`.
+#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
 pub enum SignalSpec {
-    /// Fire when RSI is below the threshold (oversold).
-    RsiBelow { column: String, threshold: f64 },
-    /// Fire when RSI is above the threshold (overbought).
-    RsiAbove { column: String, threshold: f64 },
-    /// Fire when MACD histogram is positive (bullish momentum).
-    MacdBullish { column: String },
-    /// Fire when MACD histogram is negative (bearish momentum).
-    MacdBearish { column: String },
-    /// Fire when MACD line crosses above the signal line.
-    MacdCrossover { column: String },
-    /// Fire when Stochastic %K is below the threshold (oversold).
-    StochasticBelow {
-        close_col: String,
-        high_col: String,
-        low_col: String,
-        period: usize,
-        threshold: f64,
-    },
-    /// Fire when Stochastic %K is above the threshold (overbought).
-    StochasticAbove {
-        close_col: String,
-        high_col: String,
-        low_col: String,
-        period: usize,
-        threshold: f64,
-    },
-
-    /// Fire when price is above the simple moving average.
-    PriceAboveSma { column: String, period: usize },
-    /// Fire when price is below the simple moving average.
-    PriceBelowSma { column: String, period: usize },
-    /// Fire when price is above the exponential moving average.
-    PriceAboveEma { column: String, period: usize },
-    /// Fire when price is below the exponential moving average.
-    PriceBelowEma { column: String, period: usize },
-    /// Fire when the fast SMA crosses above the slow SMA (bullish crossover).
-    SmaCrossover {
-        column: String,
-        fast_period: usize,
-        slow_period: usize,
-    },
-    /// Fire when the fast SMA crosses below the slow SMA (bearish crossunder).
-    SmaCrossunder {
-        column: String,
-        fast_period: usize,
-        slow_period: usize,
-    },
-    /// Fire when the fast EMA crosses above the slow EMA (bullish crossover).
-    EmaCrossover {
-        column: String,
-        fast_period: usize,
-        slow_period: usize,
-    },
-    /// Fire when the fast EMA crosses below the slow EMA (bearish crossunder).
-    EmaCrossunder {
-        column: String,
-        fast_period: usize,
-        slow_period: usize,
-    },
-
-    /// Fire when Aroon Up exceeds Aroon Down (uptrend).
-    AroonUptrend {
-        high_col: String,
-        low_col: String,
-        period: usize,
-    },
-    /// Fire when Aroon Down exceeds Aroon Up (downtrend).
-    AroonDowntrend {
-        high_col: String,
-        low_col: String,
-        period: usize,
-    },
-    /// Fire when Aroon Up exceeds the threshold.
-    AroonUpAbove {
-        high_col: String,
-        period: usize,
-        threshold: f64,
-    },
-    /// Fire when price is above the Supertrend indicator (bullish).
-    SupertrendBullish {
-        close_col: String,
-        high_col: String,
-        low_col: String,
-        period: usize,
-        multiplier: f64,
-    },
-    /// Fire when price is below the Supertrend indicator (bearish).
-    SupertrendBearish {
-        close_col: String,
-        high_col: String,
-        low_col: String,
-        period: usize,
-        multiplier: f64,
-    },
-
-    /// Fire when Average True Range exceeds the threshold (high volatility).
-    AtrAbove {
-        close_col: String,
-        high_col: String,
-        low_col: String,
-        period: usize,
-        threshold: f64,
-    },
-    /// Fire when Average True Range is below the threshold (low volatility).
-    AtrBelow {
-        close_col: String,
-        high_col: String,
-        low_col: String,
-        period: usize,
-        threshold: f64,
-    },
-    /// Fire when price touches or crosses below the lower Bollinger Band.
-    BollingerLowerTouch { column: String, period: usize },
-    /// Fire when price touches or crosses above the upper Bollinger Band.
-    BollingerUpperTouch { column: String, period: usize },
-    /// Fire when price breaks below the lower Keltner Channel.
-    KeltnerLowerBreak {
-        close_col: String,
-        high_col: String,
-        low_col: String,
-        period: usize,
-        multiplier: f64,
-    },
-    /// Fire when price breaks above the upper Keltner Channel.
-    KeltnerUpperBreak {
-        close_col: String,
-        high_col: String,
-        low_col: String,
-        period: usize,
-        multiplier: f64,
-    },
-
-    // -- IV (implied volatility from options chain) --
-    /// IV Rank above threshold. `IV Rank = (current - min) / (max - min) × 100`.
-    /// Derived from options chain `implied_volatility` column (not OHLCV data).
-    IvRankAbove {
-        /// Rolling lookback window in trading days (recommended: 252 ≈ 1 year)
-        lookback: usize,
-        /// Threshold 0–100 (e.g. 50.0 means IV Rank > 50%)
-        threshold: f64,
-    },
-    /// IV Rank below threshold.
-    IvRankBelow { lookback: usize, threshold: f64 },
-    /// IV Percentile above threshold. IV Percentile = % of lookback days with IV below current × 100.
-    IvPercentileAbove { lookback: usize, threshold: f64 },
-    /// IV Percentile below threshold.
-    IvPercentileBelow { lookback: usize, threshold: f64 },
-
-    /// Fire when today's open gaps up from the previous close by at least the threshold.
-    GapUp {
-        open_col: String,
-        close_col: String,
-        threshold: f64,
-    },
-    /// Fire when today's open gaps down from the previous close by at least the threshold.
-    GapDown {
-        open_col: String,
-        close_col: String,
-        threshold: f64,
-    },
-    /// Fire when drawdown from the rolling high exceeds the threshold.
-    DrawdownBelow {
-        column: String,
-        window: usize,
-        threshold: f64,
-    },
-    /// Fire after N consecutive bars of rising prices.
-    ConsecutiveUp { column: String, count: usize },
-    /// Fire after N consecutive bars of falling prices.
-    ConsecutiveDown { column: String, count: usize },
-    /// Fire when the rate of change over the period exceeds the threshold.
-    RateOfChange {
-        column: String,
-        period: usize,
-        threshold: f64,
-    },
-
-    /// Fire when Money Flow Index is below the threshold (oversold).
-    MfiBelow {
-        high_col: String,
-        low_col: String,
-        close_col: String,
-        volume_col: String,
-        period: usize,
-        threshold: f64,
-    },
-    /// Fire when Money Flow Index is above the threshold (overbought).
-    MfiAbove {
-        high_col: String,
-        low_col: String,
-        close_col: String,
-        volume_col: String,
-        period: usize,
-        threshold: f64,
-    },
-    /// Fire when On-Balance Volume is rising (accumulation).
-    ObvRising {
-        price_col: String,
-        volume_col: String,
-    },
-    /// Fire when On-Balance Volume is falling (distribution).
-    ObvFalling {
-        price_col: String,
-        volume_col: String,
-    },
-    /// Fire when Chaikin Money Flow is positive (buying pressure).
-    CmfPositive {
-        close_col: String,
-        high_col: String,
-        low_col: String,
-        volume_col: String,
-        period: usize,
-    },
-    /// Fire when Chaikin Money Flow is negative (selling pressure).
-    CmfNegative {
-        close_col: String,
-        high_col: String,
-        low_col: String,
-        volume_col: String,
-        period: usize,
-    },
-
-    // -- Custom (user-defined formula) --
-    /// User-defined formula signal. The `formula` field contains an expression
-    /// using price columns (close, open, high, low, volume) with operators and
-    /// comparisons. Examples:
+    /// A formula expression that evaluates to a boolean series.
+    /// Examples:
     /// - `"close > sma(close, 20)"` — price above 20-day SMA
-    /// - `"close > close[1] * 1.02"` — 2% gap up from previous close
-    /// - `"(close - low) / (high - low) < 0.2"` — near session lows
-    /// - `"volume > sma(volume, 20) * 2.0"` — volume spike
-    Custom {
-        /// Human-readable name for this signal
-        name: String,
+    /// - `"rsi(close, 14) < 30 and close > bbands_lower(close, 20)"` — oversold + below lower band
+    /// - `"iv_rank(iv, 252) > 50"` — IV rank above 50%
+    Formula {
         /// Formula expression that evaluates to a boolean series
         formula: String,
-        /// Optional description of what this signal detects
-        description: Option<String>,
     },
 
-    // -- Saved (reference to a previously saved custom signal by name) --
+    /// Reference to a previously saved signal by name.
     Saved {
-        /// Name of a previously saved custom signal
+        /// Name of a previously saved signal
         name: String,
     },
 
-    // -- Cross-symbol --
     /// Evaluate the inner signal against a different symbol's OHLCV data.
     /// Example: use VIX close > 20 as an entry filter for SPY strategies.
     CrossSymbol {
@@ -278,6 +56,95 @@ pub enum SignalSpec {
     },
 }
 
+// ---------------------------------------------------------------------------
+// Custom Deserialize: accept a plain string as Formula shorthand
+// ---------------------------------------------------------------------------
+
+/// Internal tagged representation for object-form deserialization.
+/// Accepts both `"type": "Formula"` and legacy `"type": "Custom"`.
+#[derive(serde::Deserialize, JsonSchema)]
+#[serde(tag = "type")]
+enum SignalSpecTagged {
+    Formula {
+        formula: String,
+    },
+    /// Legacy: `{"type": "Custom", "formula": "..."}` → Formula
+    Custom {
+        formula: String,
+    },
+    Saved {
+        name: String,
+    },
+    CrossSymbol {
+        symbol: String,
+        signal: Box<SignalSpec>,
+    },
+    And {
+        left: Box<SignalSpec>,
+        right: Box<SignalSpec>,
+    },
+    Or {
+        left: Box<SignalSpec>,
+        right: Box<SignalSpec>,
+    },
+}
+
+impl<'de> serde::Deserialize<'de> for SignalSpec {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+        let value = serde_json::Value::deserialize(deserializer)?;
+
+        // Plain string → Formula
+        if let serde_json::Value::String(formula) = &value {
+            return Ok(SignalSpec::Formula {
+                formula: formula.clone(),
+            });
+        }
+
+        serde_json::from_value::<SignalSpecTagged>(value)
+            .map(|tagged| match tagged {
+                SignalSpecTagged::Formula { formula } | SignalSpecTagged::Custom { formula } => {
+                    SignalSpec::Formula { formula }
+                }
+                SignalSpecTagged::Saved { name } => SignalSpec::Saved { name },
+                SignalSpecTagged::CrossSymbol { symbol, signal } => {
+                    SignalSpec::CrossSymbol { symbol, signal }
+                }
+                SignalSpecTagged::And { left, right } => SignalSpec::And { left, right },
+                SignalSpecTagged::Or { left, right } => SignalSpec::Or { left, right },
+            })
+            .map_err(D::Error::custom)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Custom JsonSchema: advertise string shorthand + tagged objects
+// ---------------------------------------------------------------------------
+
+impl JsonSchema for SignalSpec {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "SignalSpec".into()
+    }
+
+    fn json_schema(gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        // Generate the tagged-object schema from the internal enum
+        let object_schema = gen.subschema_for::<SignalSpecTagged>();
+
+        // Combine: anyOf [string, tagged-object]
+        let combined = serde_json::json!({
+            "description": "Signal specification. Pass a plain formula string (e.g. \"rsi(close, 14) < 30\"), or an object with \"type\" for Saved, CrossSymbol, And, Or.",
+            "anyOf": [
+                { "type": "string", "description": "Formula string shorthand — e.g. \"rsi(close, 14) < 30\"" },
+                object_schema
+            ]
+        });
+        schemars::Schema::try_from(combined).expect("SignalSpec schema is a valid JSON Schema")
+    }
+}
+
 impl SignalSpec {
     /// Check if this spec (or any nested child) contains a `CrossSymbol` variant.
     pub fn contains_cross_symbol(&self) -> bool {
@@ -288,5 +155,120 @@ impl SignalSpec {
             }
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_string_shorthand() {
+        let spec: SignalSpec = serde_json::from_str(r#""rsi(close, 14) < 30""#).unwrap();
+        assert!(
+            matches!(spec, SignalSpec::Formula { formula: ref f } if f == "rsi(close, 14) < 30")
+        );
+    }
+
+    #[test]
+    fn deserialize_legacy_custom_object() {
+        let json = r#"{"type": "Custom", "formula": "close > 100"}"#;
+        let spec: SignalSpec = serde_json::from_str(json).unwrap();
+        assert!(matches!(spec, SignalSpec::Formula { formula: ref f } if f == "close > 100"));
+    }
+
+    #[test]
+    fn deserialize_formula_object() {
+        let json = r#"{"type": "Formula", "formula": "close > 100"}"#;
+        let spec: SignalSpec = serde_json::from_str(json).unwrap();
+        assert!(matches!(spec, SignalSpec::Formula { formula: ref f } if f == "close > 100"));
+    }
+
+    #[test]
+    fn deserialize_saved() {
+        let json = r#"{"type": "Saved", "name": "my_signal"}"#;
+        let spec: SignalSpec = serde_json::from_str(json).unwrap();
+        assert!(matches!(spec, SignalSpec::Saved { name } if name == "my_signal"));
+    }
+
+    #[test]
+    fn deserialize_and_with_string_children() {
+        let json =
+            r#"{"type": "And", "left": "rsi(close, 14) < 30", "right": "close > sma(close, 50)"}"#;
+        let spec: SignalSpec = serde_json::from_str(json).unwrap();
+        match spec {
+            SignalSpec::And { left, right } => {
+                assert!(
+                    matches!(*left, SignalSpec::Formula { formula: ref f } if f == "rsi(close, 14) < 30")
+                );
+                assert!(
+                    matches!(*right, SignalSpec::Formula { formula: ref f } if f == "close > sma(close, 50)")
+                );
+            }
+            _ => panic!("expected And variant"),
+        }
+    }
+
+    #[test]
+    fn deserialize_cross_symbol_with_string_signal() {
+        let json = r#"{"type": "CrossSymbol", "symbol": "^VIX", "signal": "close > 20"}"#;
+        let spec: SignalSpec = serde_json::from_str(json).unwrap();
+        match spec {
+            SignalSpec::CrossSymbol { symbol, signal } => {
+                assert_eq!(symbol, "^VIX");
+                assert!(
+                    matches!(*signal, SignalSpec::Formula { formula: ref f } if f == "close > 20")
+                );
+            }
+            _ => panic!("expected CrossSymbol variant"),
+        }
+    }
+
+    #[test]
+    fn serialize_roundtrip() {
+        let spec = SignalSpec::Formula {
+            formula: "close > 100".to_string(),
+        };
+        let json = serde_json::to_string(&spec).unwrap();
+        assert!(json.contains(r#""type":"Formula""#));
+        let deserialized: SignalSpec = serde_json::from_str(&json).unwrap();
+        assert!(
+            matches!(deserialized, SignalSpec::Formula { formula: ref f } if f == "close > 100")
+        );
+    }
+
+    #[test]
+    fn contains_cross_symbol_basic() {
+        let spec = SignalSpec::CrossSymbol {
+            symbol: "^VIX".to_string(),
+            signal: Box::new(SignalSpec::Formula {
+                formula: "close > 20".to_string(),
+            }),
+        };
+        assert!(spec.contains_cross_symbol());
+    }
+
+    #[test]
+    fn contains_cross_symbol_nested_and() {
+        let spec = SignalSpec::And {
+            left: Box::new(SignalSpec::Formula {
+                formula: "rsi(close, 14) < 30".to_string(),
+            }),
+            right: Box::new(SignalSpec::CrossSymbol {
+                symbol: "^VIX".to_string(),
+                signal: Box::new(SignalSpec::Formula {
+                    formula: "close > 20".to_string(),
+                }),
+            }),
+        };
+        assert!(spec.contains_cross_symbol());
+    }
+
+    #[test]
+    fn no_cross_symbol_in_formula() {
+        let spec = SignalSpec::Formula {
+            formula: "close > 100".to_string(),
+        };
+        assert!(!spec.contains_cross_symbol());
     }
 }

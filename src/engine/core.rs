@@ -88,18 +88,36 @@ fn contains_iv_inner(spec: &signals::registry::SignalSpec, depth: usize) -> bool
         return false;
     }
     match spec {
-        SignalSpec::IvRankAbove { .. }
-        | SignalSpec::IvRankBelow { .. }
-        | SignalSpec::IvPercentileAbove { .. }
-        | SignalSpec::IvPercentileBelow { .. } => true,
+        SignalSpec::Formula { formula } => formula_references_iv(formula),
+        SignalSpec::CrossSymbol { signal, .. } => contains_iv_inner(signal, depth + 1),
         SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
             contains_iv_inner(left, depth + 1) || contains_iv_inner(right, depth + 1)
         }
         SignalSpec::Saved { name } => signals::storage::load_signal(name)
             .map(|s| contains_iv_inner(&s, depth + 1))
             .unwrap_or(false),
-        _ => false,
     }
+}
+
+/// Check if a formula string references the `iv` column.
+///
+/// Matches `iv` as a standalone identifier (not as part of longer words like `pivot`).
+/// Looks for `iv` preceded by a non-alphanumeric char (or start of string) and followed
+/// by a non-alphanumeric char (or end of string).
+fn formula_references_iv(formula: &str) -> bool {
+    let bytes = formula.as_bytes();
+    let iv = b"iv";
+    for i in 0..bytes.len().saturating_sub(1) {
+        if &bytes[i..i + 2] == iv {
+            let before_ok = i == 0 || !bytes[i - 1].is_ascii_alphanumeric() && bytes[i - 1] != b'_';
+            let after_ok = i + 2 >= bytes.len()
+                || !bytes[i + 2].is_ascii_alphanumeric() && bytes[i + 2] != b'_';
+            if before_ok && after_ok {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn contains_non_iv_inner(spec: &signals::registry::SignalSpec, depth: usize) -> bool {
@@ -108,17 +126,14 @@ fn contains_non_iv_inner(spec: &signals::registry::SignalSpec, depth: usize) -> 
         return false;
     }
     match spec {
-        SignalSpec::IvRankAbove { .. }
-        | SignalSpec::IvRankBelow { .. }
-        | SignalSpec::IvPercentileAbove { .. }
-        | SignalSpec::IvPercentileBelow { .. } => false,
         SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
             contains_non_iv_inner(left, depth + 1) || contains_non_iv_inner(right, depth + 1)
         }
         SignalSpec::Saved { name } => signals::storage::load_signal(name)
             .map(|s| contains_non_iv_inner(&s, depth + 1))
             .unwrap_or(false),
-        _ => true,
+        SignalSpec::Formula { formula } => !formula_references_iv(formula),
+        SignalSpec::CrossSymbol { signal, .. } => contains_non_iv_inner(signal, depth + 1),
     }
 }
 
@@ -176,8 +191,8 @@ pub fn build_signal_filters(
             df
         } else {
             return Err(anyhow::anyhow!(
-                "ohlcv_path is required when entry_signal or exit_signal contains non-IV indicators (e.g. RSI, SMA). \
-                 Pure IV signals (IvRankAbove, IvPercentileBelow, etc.) do not require OHLCV data."
+                "ohlcv_path is required when entry_signal or exit_signal references OHLCV columns (e.g. close, volume). \
+                 Pure IV formulas (e.g. iv_rank(iv, 252) > 50) do not require OHLCV data."
             ));
         }
     } else if needs_iv {
@@ -855,9 +870,8 @@ mod tests {
     fn run_backtest_signal_without_ohlcv_path_errors() {
         let df = make_daily_options_df();
         let mut params = default_backtest_params();
-        params.entry_signal = Some(signals::registry::SignalSpec::ConsecutiveUp {
-            column: "close".into(),
-            count: 2,
+        params.entry_signal = Some(signals::registry::SignalSpec::Formula {
+            formula: "consecutive_up(close) >= 2".into(),
         });
         // ohlcv_path intentionally left None
         let result = run_backtest(&df, &params);
@@ -917,9 +931,8 @@ mod tests {
         let (_dir, path) = write_ohlcv_parquet(&ohlcv_dates, &closes);
 
         let mut params = default_backtest_params();
-        params.entry_signal = Some(signals::registry::SignalSpec::ConsecutiveUp {
-            column: "close".into(),
-            count: 2,
+        params.entry_signal = Some(signals::registry::SignalSpec::Formula {
+            formula: "consecutive_up(close) >= 2".into(),
         });
         params.ohlcv_path = Some(path);
 
@@ -958,9 +971,8 @@ mod tests {
 
         let mut params = default_backtest_params();
         params.max_positions = 1; // prevent re-entry after signal exit
-        params.exit_signal = Some(signals::registry::SignalSpec::ConsecutiveUp {
-            column: "close".into(),
-            count: 2,
+        params.exit_signal = Some(signals::registry::SignalSpec::Formula {
+            formula: "consecutive_up(close) >= 2".into(),
         });
         params.ohlcv_path = Some(path);
 
@@ -1142,75 +1154,12 @@ mod tests {
     }
 
     #[test]
-    fn run_backtest_pure_iv_signal_without_ohlcv() {
-        // Pure IV signal should work without ohlcv_path
+    fn run_backtest_custom_signal_without_ohlcv_errors() {
+        // Any Custom signal requires ohlcv_path — all signals now use the Custom DSL.
         let df = make_iv_options_df();
         let mut params = default_backtest_params();
-        // IV Rank with lookback=3, threshold=50 — should allow some entries
-        params.entry_signal = Some(signals::registry::SignalSpec::IvRankAbove {
-            lookback: 3,
-            threshold: 50.0,
-        });
-        params.ohlcv_path = None; // No OHLCV needed for pure IV signal
-
-        let result = run_backtest(&df, &params);
-        assert!(
-            result.is_ok(),
-            "Pure IV signal backtest failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn run_backtest_mixed_iv_and_ohlcv_signal() {
-        // Mixed signal: IV + OHLCV combinator requires ohlcv_path
-        let df = make_iv_options_df();
-        let ohlcv_dates: Vec<NaiveDate> = vec![
-            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 1, 29).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 2, 1).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 2, 5).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(),
-        ];
-        let closes = vec![100.0, 101.0, 102.0, 103.0, 104.0, 105.0];
-        let (_dir, path) = write_ohlcv_parquet(&ohlcv_dates, &closes);
-
-        let mut params = default_backtest_params();
-        params.entry_signal = Some(signals::registry::SignalSpec::And {
-            left: Box::new(signals::registry::SignalSpec::IvRankAbove {
-                lookback: 3,
-                threshold: 50.0,
-            }),
-            right: Box::new(signals::registry::SignalSpec::ConsecutiveUp {
-                column: "close".into(),
-                count: 2,
-            }),
-        });
-        params.ohlcv_path = Some(path);
-
-        let result = run_backtest(&df, &params);
-        assert!(
-            result.is_ok(),
-            "Mixed IV+OHLCV signal backtest failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn run_backtest_mixed_signal_without_ohlcv_errors() {
-        // Mixed IV + non-IV signal without ohlcv_path should error
-        let df = make_iv_options_df();
-        let mut params = default_backtest_params();
-        params.entry_signal = Some(signals::registry::SignalSpec::And {
-            left: Box::new(signals::registry::SignalSpec::IvRankAbove {
-                lookback: 3,
-                threshold: 50.0,
-            }),
-            right: Box::new(signals::registry::SignalSpec::ConsecutiveUp {
-                column: "close".into(),
-                count: 2,
-            }),
+        params.entry_signal = Some(signals::registry::SignalSpec::Formula {
+            formula: "consecutive_up(close) >= 2".into(),
         });
         params.ohlcv_path = None;
 
@@ -1220,5 +1169,49 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("ohlcv_path is required"));
+    }
+
+    #[test]
+    fn formula_references_iv_standalone() {
+        assert!(formula_references_iv("iv_rank(iv, 252) > 50"));
+        assert!(formula_references_iv("iv > 0.3"));
+        assert!(formula_references_iv("rank(iv, 252) < 10"));
+    }
+
+    #[test]
+    fn formula_references_iv_not_substring() {
+        assert!(!formula_references_iv("close > sma(close, 20)"));
+        assert!(!formula_references_iv("pivot > 100"));
+        assert!(!formula_references_iv("relative_volume > 2"));
+    }
+
+    #[test]
+    fn contains_iv_inner_detects_formula_iv() {
+        let spec = signals::registry::SignalSpec::Formula {
+            formula: "iv_rank(iv, 252) > 50".into(),
+        };
+        assert!(contains_iv_inner(&spec, 0));
+    }
+
+    #[test]
+    fn contains_iv_inner_false_for_non_iv_formula() {
+        let spec = signals::registry::SignalSpec::Formula {
+            formula: "rsi(close, 14) < 30".into(),
+        };
+        assert!(!contains_iv_inner(&spec, 0));
+    }
+
+    #[test]
+    fn contains_iv_inner_nested_and() {
+        let spec = signals::registry::SignalSpec::And {
+            left: Box::new(signals::registry::SignalSpec::Formula {
+                formula: "rsi(close, 14) < 30".into(),
+            }),
+            right: Box::new(signals::registry::SignalSpec::Formula {
+                formula: "iv_rank(iv, 252) > 50".into(),
+            }),
+        };
+        assert!(contains_iv_inner(&spec, 0));
+        assert!(contains_non_iv_inner(&spec, 0));
     }
 }

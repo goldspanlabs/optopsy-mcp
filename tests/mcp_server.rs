@@ -1674,12 +1674,11 @@ async fn build_signal_create_without_save() {
     let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
 
     assert_eq!(resp["success"], true);
-    // signal_spec should be present and be a Custom variant
+    // signal_spec should be present and be a Formula variant
     let spec = &resp["signal_spec"];
     assert!(!spec.is_null(), "signal_spec should be present");
-    assert_eq!(spec["type"], "Custom");
+    assert_eq!(spec["type"], "Formula");
     assert_eq!(spec["formula"], "close > close[1]");
-    assert_eq!(spec["name"], "my_test_signal");
     // saved_signals should be empty (not saved); field may be absent when empty
     let saved_count = resp["saved_signals"].as_array().map_or(0, Vec::len);
     assert_eq!(

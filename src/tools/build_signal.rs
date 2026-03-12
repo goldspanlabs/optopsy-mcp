@@ -37,7 +37,11 @@ pub fn execute(action: Action) -> BuildSignalResponse {
             formula,
             description,
             save,
-        } => execute_create(&name, &formula, description.as_deref(), save),
+        } => {
+            // `description` is accepted for backward compatibility but not persisted
+            let _ = description;
+            execute_create(&name, &formula, save)
+        }
         Action::List => execute_list(),
         Action::Delete { name } => execute_delete(&name),
         Action::Validate { formula } => execute_validate(&formula),
@@ -71,12 +75,7 @@ fn base_response(
     }
 }
 
-fn execute_create(
-    name: &str,
-    formula: &str,
-    description: Option<&str>,
-    save: bool,
-) -> BuildSignalResponse {
+fn execute_create(name: &str, formula: &str, save: bool) -> BuildSignalResponse {
     // Validate the formula first
     if let Err(e) = validate_formula(formula) {
         return base_response(
@@ -124,10 +123,8 @@ fn execute_create(
         }
     }
 
-    let spec = SignalSpec::Custom {
-        name: name.to_string(),
+    let spec = SignalSpec::Formula {
         formula: formula.to_string(),
-        description: description.map(String::from),
     };
 
     if save {
@@ -400,6 +397,7 @@ fn execute_catalog() -> BuildSignalResponse {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn formula_help() -> FormulaHelp {
     FormulaHelp {
         columns: vec![
@@ -409,9 +407,11 @@ fn formula_help() -> FormulaHelp {
             "low".to_string(),
             "volume".to_string(),
             "adjclose".to_string(),
+            "iv".to_string(),
         ],
         lookback: "close[1] = previous close, close[5] = 5 bars ago".to_string(),
         functions: HashMap::from([
+            // Basic
             (
                 "sma(col, period)".to_string(),
                 "Simple Moving Average".to_string(),
@@ -441,6 +441,124 @@ fn formula_help() -> FormulaHelp {
                 "pct_change(col, period)".to_string(),
                 "(col - col[period]) / col[period]".to_string(),
             ),
+            // TA indicators
+            (
+                "rsi(col, period)".to_string(),
+                "Relative Strength Index (Wilder smoothing, variable period)".to_string(),
+            ),
+            (
+                "macd_hist(col)".to_string(),
+                "MACD histogram (12/26/9 default)".to_string(),
+            ),
+            (
+                "macd_signal(col)".to_string(),
+                "MACD signal line (12/26/9 default)".to_string(),
+            ),
+            (
+                "macd_line(col)".to_string(),
+                "MACD line (12/26/9 default)".to_string(),
+            ),
+            (
+                "roc(col, period)".to_string(),
+                "Rate of change: (col - col[period]) / col[period] * 100".to_string(),
+            ),
+            (
+                "bbands_upper(col, period)".to_string(),
+                "Bollinger upper band: SMA + 2 * std".to_string(),
+            ),
+            (
+                "bbands_lower(col, period)".to_string(),
+                "Bollinger lower band: SMA - 2 * std".to_string(),
+            ),
+            (
+                "bbands_mid(col, period)".to_string(),
+                "Bollinger middle band (= SMA)".to_string(),
+            ),
+            (
+                "atr(close, high, low, period)".to_string(),
+                "Average True Range (multi-column)".to_string(),
+            ),
+            (
+                "stochastic(close, high, low, period)".to_string(),
+                "Stochastic %K oscillator (multi-column)".to_string(),
+            ),
+            (
+                "keltner_upper(close, high, low, period, mult)".to_string(),
+                "Upper Keltner Channel (multi-column)".to_string(),
+            ),
+            (
+                "keltner_lower(close, high, low, period, mult)".to_string(),
+                "Lower Keltner Channel (multi-column)".to_string(),
+            ),
+            (
+                "obv(close, volume)".to_string(),
+                "On-Balance Volume (multi-column)".to_string(),
+            ),
+            (
+                "mfi(close, high, low, volume, period)".to_string(),
+                "Money Flow Index (multi-column)".to_string(),
+            ),
+            // Derived features
+            (
+                "tr(close, high, low)".to_string(),
+                "True Range: max(H-L, |H-prevC|, |L-prevC|)".to_string(),
+            ),
+            (
+                "rel_volume(vol, period)".to_string(),
+                "Relative volume: vol / SMA(vol, period)".to_string(),
+            ),
+            (
+                "range_pct(close, high, low)".to_string(),
+                "Position within bar range: (close-low)/(high-low)".to_string(),
+            ),
+            (
+                "zscore(col, period)".to_string(),
+                "Z-score: (col - rolling_mean) / rolling_std".to_string(),
+            ),
+            (
+                "rank(col, period)".to_string(),
+                "Percentile rank within rolling window (0-100). Use rank(iv, 252) for IV Percentile".to_string(),
+            ),
+            (
+                "iv_rank(col, period)".to_string(),
+                "Min-max rank: (current - min) / (max - min) × 100. Use iv_rank(iv, 252) for IV Rank".to_string(),
+            ),
+            // Trend
+            (
+                "aroon_up(high, low, period)".to_string(),
+                "Aroon Up indicator (0-100)".to_string(),
+            ),
+            (
+                "aroon_down(high, low, period)".to_string(),
+                "Aroon Down indicator (0-100)".to_string(),
+            ),
+            (
+                "aroon_osc(high, low, period)".to_string(),
+                "Aroon Oscillator (Up - Down, range -100 to 100)".to_string(),
+            ),
+            (
+                "supertrend(close, high, low, period, mult)".to_string(),
+                "Supertrend line value".to_string(),
+            ),
+            // Volume
+            (
+                "cmf(close, high, low, volume, period)".to_string(),
+                "Chaikin Money Flow (-1 to 1)".to_string(),
+            ),
+            // Counting
+            (
+                "consecutive_up(col)".to_string(),
+                "Count of consecutive rises (resets on non-rise)".to_string(),
+            ),
+            (
+                "consecutive_down(col)".to_string(),
+                "Count of consecutive falls (resets on non-fall)".to_string(),
+            ),
+            // Control flow
+            (
+                "if(cond, then, else)".to_string(),
+                "Conditional: when(cond).then(then).otherwise(else)".to_string(),
+            ),
         ]),
         operators: vec![
             "+".to_string(),
@@ -465,6 +583,18 @@ fn formula_help() -> FormulaHelp {
             "close > sma(close, 50) and close > sma(close, 200)".to_string(),
             "pct_change(close, 1) > 0.03 or pct_change(close, 1) < -0.03".to_string(),
             "close < sma(close, 20) - 2.0 * std(close, 20)".to_string(),
+            "rsi(close, 14) < 30 and close > bbands_lower(close, 20)".to_string(),
+            "atr(close, high, low, 14) > 2.0 and stochastic(close, high, low, 14) < 20".to_string(),
+            "if(atr(close, high, low, 14) > 3.0, rsi(close, 14) < 25, rsi(close, 14) < 35)"
+                .to_string(),
+            "macd_hist(close) > 0 and rel_volume(volume, 20) > 2.0".to_string(),
+            "zscore(close, 20) < -2 and range_pct(close, high, low) < 0.2".to_string(),
+            "aroon_osc(high, low, 25) > 0 and close > supertrend(close, high, low, 10, 3.0)"
+                .to_string(),
+            "cmf(close, high, low, volume, 20) > 0 and consecutive_up(close) >= 3".to_string(),
+            "sma(close, 5)[1] > sma(close, 5)[2]".to_string(),
+            "iv_rank(iv, 252) > 50".to_string(),
+            "rank(iv, 252) < 10 and rsi(close, 14) < 30".to_string(),
         ],
     }
 }
@@ -482,10 +612,8 @@ mod tests {
         let _guard = storage::TempSignalsGuard::new();
 
         // Save a custom signal
-        let spec = SignalSpec::Custom {
-            name: "ibs_mean_reversion_entry".to_string(),
+        let spec = SignalSpec::Formula {
             formula: "close < sma(close, 20)".to_string(),
-            description: Some("IBS mean reversion entry".to_string()),
         };
         storage::save_signal("ibs_mean_reversion_entry", &spec).unwrap();
 
@@ -507,24 +635,22 @@ mod tests {
     }
 
     #[test]
-    fn search_finds_saved_signal_by_description() {
+    fn search_finds_saved_signal_by_name() {
         let _lock = FS_LOCK.lock().unwrap();
         let _guard = storage::TempSignalsGuard::new();
 
-        let spec = SignalSpec::Custom {
-            name: "my_exit".to_string(),
+        let spec = SignalSpec::Formula {
             formula: "close > high[1]".to_string(),
-            description: Some("Exit when close exceeds previous high".to_string()),
         };
         storage::save_signal("my_exit", &spec).unwrap();
 
-        // Search by description keyword
+        // Search by saved signal name
         let resp = execute(Action::Search {
-            prompt: "previous high".to_string(),
+            prompt: "my_exit".to_string(),
         });
         assert!(
             !resp.saved_signals.is_empty(),
-            "should find saved signal matching description"
+            "should find saved signal matching name"
         );
         assert_eq!(resp.saved_signals[0].name, "my_exit");
     }
@@ -534,10 +660,8 @@ mod tests {
         let _lock = FS_LOCK.lock().unwrap();
         let _guard = storage::TempSignalsGuard::new();
 
-        let spec = SignalSpec::Custom {
-            name: "unrelated_signal".to_string(),
+        let spec = SignalSpec::Formula {
             formula: "close > open".to_string(),
-            description: None,
         };
         storage::save_signal("unrelated_signal", &spec).unwrap();
 
@@ -574,10 +698,8 @@ mod tests {
         let _lock = FS_LOCK.lock().unwrap();
         let _guard = storage::TempSignalsGuard::new();
 
-        let spec = SignalSpec::Custom {
-            name: "rsi_custom_entry".to_string(),
+        let spec = SignalSpec::Formula {
             formula: "close < sma(close, 14)".to_string(),
-            description: Some("Custom RSI-like entry".to_string()),
         };
         storage::save_signal("rsi_custom_entry", &spec).unwrap();
 
