@@ -127,7 +127,7 @@ The `build_signal` tool lets you create formula-based entry and exit signals usi
 
 ### Supported syntax
 
-**Columns**: `close`, `open`, `high`, `low`, `volume`, `adjclose`
+**Columns**: `close`, `open`, `high`, `low`, `volume`, `adjclose`, `iv`
 
 **Lookback**: `close[1]` (previous close), `close[5]` (5 bars ago)
 
@@ -190,7 +190,8 @@ The `build_signal` tool lets you create formula-based entry and exit signals usi
 | Function | Description |
 |----------|-------------|
 | `zscore(col, period)` | Z-score (deviation from rolling mean) |
-| `rank(col, period)` | Percentile rank within rolling window |
+| `rank(col, period)` | Percentile rank within rolling window (= IV Percentile on `iv`) |
+| `iv_rank(col, period)` | Min-max rank: `(current - min) / (max - min) × 100` (= IV Rank on `iv`) |
 | `range_pct(close, high, low)` | Position within bar range: `(close − low) / (high − low)` |
 | `consecutive_up(col)` | Consecutive bars where value increases |
 | `consecutive_down(col)` | Consecutive bars where value decreases |
@@ -211,6 +212,8 @@ macd_hist(close) > 0 and rel_volume(volume, 20) > 2.0
 atr(close, high, low, 14) > 2.0
 stochastic(close, high, low, 14) < 20 and rsi(close, 14) < 30
 consecutive_down(close) >= 3 and volume > sma(volume, 20) * 1.5
+iv_rank(iv, 252) > 50 and rsi(close, 14) < 30
+rank(iv, 252) < 10
 ```
 
 ### Signal management

@@ -44,7 +44,8 @@
 //! - `rel_volume(vol, period)` — Relative Volume (vol / SMA(vol, period))
 //! - `range_pct(close, high, low)` — Position within bar range
 //! - `zscore(col, period)` — Z-score (standard deviations from rolling mean)
-//! - `rank(col, period)` — Percentile rank within rolling window
+//! - `rank(col, period)` — Percentile rank within rolling window (= IV Percentile when used on `iv`)
+//! - `iv_rank(col, period)` — Min-max rank: `(current - min) / (max - min) × 100`
 //! - `consecutive_up(col)` — Count of consecutive rises
 //! - `consecutive_down(col)` — Count of consecutive falls
 //!
@@ -838,6 +839,29 @@ impl Parser {
                 ))
             }
 
+            "iv_rank" => {
+                let (col_expr, period) = extract_col_period(&args, "iv_rank")?;
+                Ok(col_expr.map(
+                    move |col: Column| {
+                        let ca = col.as_materialized_series().f64()?;
+                        let vals: Vec<f64> = ca
+                            .into_iter()
+                            .map(|opt_v| opt_v.unwrap_or(f64::NAN))
+                            .collect();
+                        let n = vals.len();
+                        if n < period {
+                            return Ok(
+                                Series::new("iv_rank".into(), vec![f64::NAN; n]).into(),
+                            );
+                        }
+                        let rank_vals = compute_iv_rank(&vals, period);
+                        let padded = pad_series(&rank_vals, n);
+                        Ok(Series::new("iv_rank".into(), padded).into())
+                    },
+                    |_: &Schema, _: &Field| Ok(Field::new("v".into(), DataType::Float64)),
+                ))
+            }
+
             // --- Multi-column as_struct + map functions ---
 
             "atr" => {
@@ -1403,7 +1427,7 @@ impl Parser {
                 "Unknown function: '{other}'. Available: sma, ema, std, max, min, abs, change, \
                  pct_change, rsi, macd_hist, macd_signal, macd_line, roc, bbands_mid, bbands_upper, \
                  bbands_lower, atr, stochastic, keltner_upper, keltner_lower, obv, mfi, tr, \
-                 rel_volume, range_pct, zscore, rank, if, aroon_up, aroon_down, aroon_osc, \
+                 rel_volume, range_pct, zscore, rank, iv_rank, if, aroon_up, aroon_down, aroon_osc, \
                  supertrend, cmf, consecutive_up, consecutive_down"
             )),
         }
@@ -1581,6 +1605,47 @@ fn compute_rolling_rank(vals: &[f64], period: usize) -> Vec<f64> {
             } else {
                 below as f64 / valid as f64 * 100.0
             }
+        })
+        .collect()
+}
+
+/// Compute IV Rank (min-max normalization) within a rolling window.
+/// `IV Rank = (current - window_min) / (window_max - window_min) × 100`
+fn compute_iv_rank(vals: &[f64], period: usize) -> Vec<f64> {
+    let n = vals.len();
+    if period == 0 || n < period {
+        return vec![];
+    }
+    (0..=n - period)
+        .map(|i| {
+            let window = &vals[i..i + period];
+            let current = vals[i + period - 1];
+            if current.is_nan() {
+                return f64::NAN;
+            }
+            let mut min = f64::INFINITY;
+            let mut max = f64::NEG_INFINITY;
+            let mut valid = 0usize;
+            for &v in window {
+                if !v.is_nan() {
+                    valid += 1;
+                    if v < min {
+                        min = v;
+                    }
+                    if v > max {
+                        max = v;
+                    }
+                }
+            }
+            // Require at least half the lookback to have valid data
+            if valid < period / 2 + 1 {
+                return f64::NAN;
+            }
+            let range = max - min;
+            if range <= 0.0 {
+                return f64::NAN;
+            }
+            (current - min) / range * 100.0
         })
         .collect()
 }
@@ -1828,6 +1893,16 @@ mod tests {
     }
 
     #[test]
+    fn formula_iv_rank_parses() {
+        assert!(validate_formula("iv_rank(iv, 252) > 50").is_ok());
+    }
+
+    #[test]
+    fn formula_iv_percentile_via_rank_parses() {
+        assert!(validate_formula("rank(iv, 252) < 10").is_ok());
+    }
+
+    #[test]
     fn formula_zscore_parses() {
         assert!(validate_formula("zscore(close, 20) < -2").is_ok());
     }
@@ -1848,12 +1923,16 @@ mod tests {
         let low: Vec<f64> = close.iter().map(|c| c - 1.5).collect();
         let open: Vec<f64> = close.iter().map(|c| c - 0.2).collect();
         let volume: Vec<f64> = (0..30).map(|i| 1000.0 + (i as f64) * 50.0).collect();
+        let iv: Vec<f64> = (0..30)
+            .map(|i| 0.15 + (i as f64) * 0.005 + (i as f64 * 0.5).sin() * 0.03)
+            .collect();
         df! {
             "close" => &close,
             "open" => &open,
             "high" => &high,
             "low" => &low,
             "volume" => &volume,
+            "iv" => &iv,
         }
         .unwrap()
     }
@@ -1882,6 +1961,25 @@ mod tests {
     fn formula_if_evaluates() {
         let df = eval_df();
         let signal = FormulaSignal::new("if(close > 110, close, 0) > 0".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 30);
+    }
+
+    #[test]
+    fn formula_iv_rank_evaluates() {
+        let df = eval_df();
+        let signal = FormulaSignal::new("iv_rank(iv, 10) > 0".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        assert_eq!(result.len(), 30);
+        let bools = result.bool().unwrap();
+        let non_null = (0..30).filter_map(|i| bools.get(i)).count();
+        assert!(non_null > 0);
+    }
+
+    #[test]
+    fn formula_iv_percentile_evaluates() {
+        let df = eval_df();
+        let signal = FormulaSignal::new("rank(iv, 10) > 50".to_string());
         let result = signal.evaluate(&df).unwrap();
         assert_eq!(result.len(), 30);
     }
@@ -1925,6 +2023,11 @@ mod tests {
     #[test]
     fn formula_rsi_wrong_args() {
         assert!(validate_formula("rsi(close)").is_err());
+    }
+
+    #[test]
+    fn formula_iv_rank_wrong_args() {
+        assert!(validate_formula("iv_rank(iv)").is_err());
     }
 
     #[test]

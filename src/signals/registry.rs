@@ -122,8 +122,14 @@ pub const SIGNAL_CATALOG: &[SignalInfo] = &[
     SignalInfo {
         name: "rank (formula)",
         category: "formula_functions",
-        description: "Percentile rank within rolling window as a formula function.",
-        params: "rank(column, period) — e.g. rank(close, 20) > 80",
+        description: "Percentile rank within rolling window as a formula function. Equivalent to IV Percentile when used on the iv column.",
+        params: "rank(column, period) — e.g. rank(iv, 252) < 10 (IV Percentile below 10%)",
+    },
+    SignalInfo {
+        name: "iv_rank (formula)",
+        category: "formula_functions",
+        description: "Min-max rank: (current - min) / (max - min) × 100. The standard IV Rank metric when used on the iv column.",
+        params: "iv_rank(column, period) — e.g. iv_rank(iv, 252) > 50 (IV Rank above 50%)",
     },
     SignalInfo {
         name: "if (formula)",
@@ -246,8 +252,8 @@ mod tests {
 
     #[test]
     fn catalog_has_all_signals() {
-        // 28 signals (27 formula_functions entries + 1 CrossSymbol entry)
-        assert_eq!(SIGNAL_CATALOG.len(), 28);
+        // 29 signals (28 formula_functions entries + 1 CrossSymbol entry)
+        assert_eq!(SIGNAL_CATALOG.len(), 29);
     }
 
     #[test]

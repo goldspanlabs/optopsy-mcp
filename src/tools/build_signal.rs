@@ -410,6 +410,7 @@ fn formula_help() -> FormulaHelp {
             "low".to_string(),
             "volume".to_string(),
             "adjclose".to_string(),
+            "iv".to_string(),
         ],
         lookback: "close[1] = previous close, close[5] = 5 bars ago".to_string(),
         functions: HashMap::from([
@@ -519,7 +520,11 @@ fn formula_help() -> FormulaHelp {
             ),
             (
                 "rank(col, period)".to_string(),
-                "Percentile rank within rolling window (0-100)".to_string(),
+                "Percentile rank within rolling window (0-100). Use rank(iv, 252) for IV Percentile".to_string(),
+            ),
+            (
+                "iv_rank(col, period)".to_string(),
+                "Min-max rank: (current - min) / (max - min) × 100. Use iv_rank(iv, 252) for IV Rank".to_string(),
             ),
             // Trend
             (
@@ -591,6 +596,8 @@ fn formula_help() -> FormulaHelp {
                 .to_string(),
             "cmf(close, high, low, volume, 20) > 0 and consecutive_up(close) >= 3".to_string(),
             "sma(close, 5)[1] > sma(close, 5)[2]".to_string(),
+            "iv_rank(iv, 252) > 50".to_string(),
+            "rank(iv, 252) < 10 and rsi(close, 14) < 30".to_string(),
         ],
     }
 }
