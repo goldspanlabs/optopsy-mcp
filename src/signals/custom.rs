@@ -83,7 +83,7 @@ use polars::prelude::*;
 use rust_ti::standard_indicators::bulk as sti;
 
 use super::helpers::{pad_series, SignalFn};
-use super::momentum::compute_rsi_variable_period;
+use rust_ti::momentum_indicators::bulk as mti;
 use super::volatility::{compute_atr, compute_keltner_channel};
 use super::volume::{compute_cmf, compute_typical_price};
 
@@ -740,7 +740,11 @@ impl Parser {
                                 Series::new("rsi".into(), vec![f64::NAN; n]).into(),
                             );
                         }
-                        let rsi_vals = compute_rsi_variable_period(&vals, period);
+                        let rsi_vals = mti::relative_strength_index(
+                            &vals,
+                            rust_ti::ConstantModelType::SmoothedMovingAverage,
+                            period,
+                        );
                         let padded = pad_series(&rsi_vals, n);
                         Ok(Series::new("rsi".into(), padded).into())
                     },
