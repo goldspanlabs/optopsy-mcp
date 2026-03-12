@@ -91,7 +91,8 @@ cargo fmt --check                    # check formatting
 cargo clippy --all-targets           # lint
 ```
 
-CI and the pre-push hook enforce `RUSTFLAGS="-Dwarnings"` — all warnings are errors.
+CI uses `@stable` (latest Rust stable) and enforces `-D warnings` — all warnings are errors.
+Run `rustup update` locally before developing to stay in sync with CI's toolchain and clippy lints.
 
 ## Environment Variables
 
