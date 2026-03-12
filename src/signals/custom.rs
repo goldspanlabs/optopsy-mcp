@@ -1684,6 +1684,152 @@ pub fn validate_formula(formula: &str) -> Result<(), String> {
     parse_formula(formula).map(|_| ())
 }
 
+// ---------------------------------------------------------------------------
+// Indicator extraction (for chart overlays)
+// ---------------------------------------------------------------------------
+
+/// Recognized indicator function names for chart extraction.
+const INDICATOR_FUNCTIONS: &[&str] = &[
+    "rsi",
+    "macd_hist",
+    "macd_signal",
+    "macd_line",
+    "stochastic",
+    "sma",
+    "ema",
+    "bbands_upper",
+    "bbands_lower",
+    "bbands_mid",
+    "keltner_upper",
+    "keltner_lower",
+    "atr",
+    "aroon_up",
+    "aroon_down",
+    "aroon_osc",
+    "supertrend",
+    "mfi",
+    "obv",
+    "cmf",
+    "roc",
+    "tr",
+    "rel_volume",
+    "zscore",
+    "range_pct",
+];
+
+/// A recognized indicator function call extracted from a formula.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndicatorCall {
+    /// Function name (e.g. "rsi", "sma", "`bbands_upper`")
+    pub func_name: String,
+    /// Column name arguments (e.g. `["close"]` or `["close", "high", "low"]`)
+    pub col_args: Vec<String>,
+    /// Period parameter if present (e.g. 14 for rsi(close, 14))
+    pub period: Option<usize>,
+    /// Extra numeric parameter if present (e.g. multiplier for keltner/supertrend)
+    pub multiplier: Option<f64>,
+}
+
+/// Extract recognized indicator function calls from a formula string.
+///
+/// Scans the token stream for `Ident(name) LParen ... RParen` patterns where
+/// `name` is a known indicator function. Extracts column names, period, and
+/// optional multiplier from the arguments. Deduplicates by function signature.
+pub fn extract_indicator_calls(formula: &str) -> Vec<IndicatorCall> {
+    let Ok(tokens) = tokenize(formula) else {
+        return vec![];
+    };
+
+    let mut calls = Vec::new();
+    let mut i = 0;
+
+    while i < tokens.len() {
+        if let Token::Ident(ref name) = tokens[i] {
+            let name_lower = name.to_lowercase();
+            if INDICATOR_FUNCTIONS.contains(&name_lower.as_str())
+                && tokens.get(i + 1) == Some(&Token::LParen)
+            {
+                // Find matching RParen
+                let args_start = i + 2;
+                if let Some(args_end) = find_matching_paren(&tokens, i + 1) {
+                    let call = parse_indicator_args(&name_lower, &tokens[args_start..args_end]);
+                    // Deduplicate
+                    if !calls.contains(&call) {
+                        calls.push(call);
+                    }
+                    i = args_end + 1;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+
+    calls
+}
+
+/// Find the index of the `RParen` matching the `LParen` at `lparen_idx`.
+fn find_matching_paren(tokens: &[Token], lparen_idx: usize) -> Option<usize> {
+    let mut depth = 1;
+    let mut i = lparen_idx + 1;
+    while i < tokens.len() {
+        match tokens[i] {
+            Token::LParen => depth += 1,
+            Token::RParen => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Parse the token slice between parens into an `IndicatorCall`.
+/// Extracts column identifiers, period (first integer), and multiplier (second float).
+fn parse_indicator_args(func_name: &str, arg_tokens: &[Token]) -> IndicatorCall {
+    let mut col_args = Vec::new();
+    let mut numbers = Vec::new();
+
+    for token in arg_tokens {
+        match token {
+            Token::Ident(name) => {
+                let lower = name.to_lowercase();
+                if VALID_COLUMNS.contains(&lower.as_str()) {
+                    col_args.push(lower);
+                }
+                // Skip non-column idents (nested function names, etc.)
+            }
+            Token::Number(n) => numbers.push(*n),
+            _ => {} // Skip operators, parens, commas
+        }
+    }
+
+    let period = numbers.first().and_then(|n| {
+        if *n > 0.0 && n.fract() == 0.0 {
+            Some(*n as usize)
+        } else {
+            None
+        }
+    });
+
+    let multiplier = if numbers.len() >= 2 {
+        Some(numbers[numbers.len() - 1])
+    } else {
+        None
+    };
+
+    IndicatorCall {
+        func_name: func_name.to_string(),
+        col_args,
+        period,
+        multiplier,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2301,5 +2447,86 @@ mod tests {
     #[test]
     fn validate_unknown_function_errors() {
         assert!(validate_formula("unknown_func(close, 14) > 0").is_err());
+    }
+
+    // --- extract_indicator_calls tests ---
+
+    #[test]
+    fn extract_rsi_call() {
+        let calls = extract_indicator_calls("rsi(close, 14) < 30");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].func_name, "rsi");
+        assert_eq!(calls[0].col_args, vec!["close"]);
+        assert_eq!(calls[0].period, Some(14));
+    }
+
+    #[test]
+    fn extract_sma_call() {
+        let calls = extract_indicator_calls("close > sma(close, 50)");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].func_name, "sma");
+        assert_eq!(calls[0].col_args, vec!["close"]);
+        assert_eq!(calls[0].period, Some(50));
+    }
+
+    #[test]
+    fn extract_multiple_calls() {
+        let calls = extract_indicator_calls("rsi(close, 14) < 30 and close > sma(close, 20)");
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].func_name, "rsi");
+        assert_eq!(calls[1].func_name, "sma");
+    }
+
+    #[test]
+    fn extract_deduplicates_same_call() {
+        let calls =
+            extract_indicator_calls("rsi(close, 14) < 30 and rsi(close, 14) > 20");
+        assert_eq!(calls.len(), 1);
+    }
+
+    #[test]
+    fn extract_different_periods_not_deduped() {
+        let calls =
+            extract_indicator_calls("sma(close, 20) > sma(close, 50)");
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].period, Some(20));
+        assert_eq!(calls[1].period, Some(50));
+    }
+
+    #[test]
+    fn extract_multi_column_call() {
+        let calls = extract_indicator_calls("stochastic(close, high, low, 14) < 20");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].func_name, "stochastic");
+        assert_eq!(calls[0].col_args, vec!["close", "high", "low"]);
+        assert_eq!(calls[0].period, Some(14));
+    }
+
+    #[test]
+    fn extract_with_multiplier() {
+        let calls = extract_indicator_calls("close > keltner_upper(close, high, low, 20, 2.0)");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].func_name, "keltner_upper");
+        assert_eq!(calls[0].period, Some(20));
+        assert_eq!(calls[0].multiplier, Some(2.0));
+    }
+
+    #[test]
+    fn extract_no_indicator_functions() {
+        let calls = extract_indicator_calls("close > 100 and open < 50");
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn extract_invalid_formula_returns_empty() {
+        let calls = extract_indicator_calls("((((");
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn extract_nested_function_in_if() {
+        let calls = extract_indicator_calls("if(rsi(close, 14) < 30, 1, 0) > 0");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].func_name, "rsi");
     }
 }

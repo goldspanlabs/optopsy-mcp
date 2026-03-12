@@ -11,7 +11,7 @@ pub trait SignalFn: Send + Sync {
 }
 
 /// How an indicator should be displayed on a chart.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum DisplayType {
     /// Overlay on the price chart (e.g., SMA, Bollinger Bands)

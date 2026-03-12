@@ -4,10 +4,10 @@
 //! (RSI line, SMA curve, Bollinger bands, etc.) and returns structured data
 //! ready for visualization alongside price charts.
 //!
-//! The private helper functions are retained for future use when formula-based
-//! indicator extraction is implemented for `SignalSpec::Formula` signals.
-#![allow(dead_code)]
+//! For `Formula` signals, uses `extract_indicator_calls()` to scan the formula
+//! for recognized indicator functions and computes their chart overlay data.
 
+use super::custom::extract_indicator_calls;
 use super::helpers::{
     column_to_f64, pad_series, DisplayType, IndicatorData, IndicatorPoint, IndicatorSeries,
 };
@@ -20,22 +20,33 @@ use crate::engine::price_table::extract_date_from_column;
 use polars::prelude::*;
 use rust_ti::standard_indicators::bulk as sti;
 
-// NOTE: The imports above (compute_stochastic, compute_atr, compute_bollinger_bands,
-// compute_keltner_channel, compute_cmf, compute_typical_price, sti) and the helper
-// functions below are retained for future use when formula-based indicator extraction
-// is implemented for Custom signals.
-
 /// Maximum number of indicator points to return per series.
 /// The frontend charts handle large datasets efficiently, so we use a generous
 /// limit to preserve full resolution (1 point per bar).
 const MAX_INDICATOR_POINTS: usize = 5000;
 
+/// Compute SMA using `rust_ti`.
+fn compute_sma(prices: &[f64], period: usize) -> Vec<f64> {
+    if prices.len() < period || period == 0 {
+        return vec![];
+    }
+    sti::simple_moving_average(prices, period)
+}
+
+/// Compute EMA using `rust_ti`.
+fn compute_ema(prices: &[f64], period: usize) -> Vec<f64> {
+    if prices.len() < period || period == 0 {
+        return vec![];
+    }
+    sti::exponential_moving_average(prices, period)
+}
+
 /// Compute raw indicator data for charting from a signal specification.
 ///
 /// Returns one or more `IndicatorData` entries depending on the signal type.
+/// For `Formula` signals, extracts recognized indicator function calls from the
+/// formula string and computes their chart overlay data.
 /// For combinators (And/Or), recursively collects indicators from both children.
-/// Returns an empty vec for `Custom` formulas and `CrossSymbol` signals — indicator
-/// extraction from formula ASTs is future work.
 pub fn compute_indicator_data(
     spec: &SignalSpec,
     ohlcv_df: &DataFrame,
@@ -44,7 +55,6 @@ pub fn compute_indicator_data(
     compute_indicator_data_inner(spec, ohlcv_df, date_col)
 }
 
-#[allow(clippy::only_used_in_recursion)]
 fn compute_indicator_data_inner(
     spec: &SignalSpec,
     ohlcv_df: &DataFrame,
@@ -67,8 +77,123 @@ fn compute_indicator_data_inner(
             Ok(loaded) => compute_indicator_data_inner(&loaded, ohlcv_df, date_col),
             Err(_) => vec![],
         },
-        // Formula-based indicator extraction is future work — return empty for now
-        SignalSpec::Formula { .. } | SignalSpec::CrossSymbol { .. } => vec![],
+        SignalSpec::Formula { formula } => extract_indicators_from_formula(formula, ohlcv_df, date_col),
+        SignalSpec::CrossSymbol { .. } => vec![],
+    }
+}
+
+/// Extract indicator chart data from a formula string by scanning for recognized
+/// indicator function calls and computing their series against the `DataFrame`.
+fn extract_indicators_from_formula(
+    formula: &str,
+    df: &DataFrame,
+    date_col: &str,
+) -> Vec<IndicatorData> {
+    let calls = extract_indicator_calls(formula);
+    if calls.is_empty() {
+        return vec![];
+    }
+
+    let Ok(dates) = extract_date_strings(df, date_col) else {
+        return vec![];
+    };
+
+    let mut results = Vec::new();
+    for call in &calls {
+        let indicators = dispatch_indicator_call(call, df, &dates);
+        for ind in indicators {
+            if !results.iter().any(|existing: &IndicatorData| existing.name == ind.name) {
+                results.push(ind);
+            }
+        }
+    }
+
+    results
+}
+
+/// Dispatch a single `IndicatorCall` to the appropriate compute function.
+fn dispatch_indicator_call(
+    call: &super::custom::IndicatorCall,
+    df: &DataFrame,
+    dates: &[String],
+) -> Vec<IndicatorData> {
+    let col = call.col_args.first().map_or("close", String::as_str);
+    match call.func_name.as_str() {
+        "rsi" => {
+            let period = call.period.unwrap_or(14);
+            compute_rsi_indicator(df, col, period, dates)
+        }
+        "macd_hist" | "macd_signal" | "macd_line" => compute_macd_indicator(df, col, dates),
+        "stochastic" => {
+            let high = call.col_args.get(1).map_or("high", String::as_str);
+            let low = call.col_args.get(2).map_or("low", String::as_str);
+            let period = call.period.unwrap_or(14);
+            compute_stochastic_indicator(df, col, high, low, period, dates)
+        }
+        "sma" => {
+            let period = call.period.unwrap_or(20);
+            compute_ma_indicator(df, col, period, "SMA", compute_sma, dates)
+        }
+        "ema" => {
+            let period = call.period.unwrap_or(20);
+            compute_ma_indicator(df, col, period, "EMA", compute_ema, dates)
+        }
+        "bbands_upper" | "bbands_lower" | "bbands_mid" => {
+            let period = call.period.unwrap_or(20);
+            compute_bollinger_indicator(df, col, period, dates)
+        }
+        "keltner_upper" | "keltner_lower" => {
+            let high = call.col_args.get(1).map_or("high", String::as_str);
+            let low = call.col_args.get(2).map_or("low", String::as_str);
+            let period = call.period.unwrap_or(20);
+            let mult = call.multiplier.unwrap_or(2.0);
+            compute_keltner_indicator(df, col, high, low, period, mult, dates)
+        }
+        "atr" => {
+            let high = call.col_args.get(1).map_or("high", String::as_str);
+            let low = call.col_args.get(2).map_or("low", String::as_str);
+            let period = call.period.unwrap_or(14);
+            compute_atr_indicator(df, col, high, low, period, dates)
+        }
+        "aroon_up" => {
+            let period = call.period.unwrap_or(25);
+            compute_aroon_up_indicator(df, col, period, dates)
+        }
+        "aroon_down" | "aroon_osc" => {
+            let low = call.col_args.get(1).map_or("low", String::as_str);
+            let period = call.period.unwrap_or(25);
+            compute_aroon_indicator(df, col, low, period, dates)
+        }
+        "supertrend" => {
+            let high = call.col_args.get(1).map_or("high", String::as_str);
+            let low = call.col_args.get(2).map_or("low", String::as_str);
+            let period = call.period.unwrap_or(10);
+            let mult = call.multiplier.unwrap_or(3.0);
+            compute_supertrend_indicator(df, col, high, low, period, mult, dates)
+        }
+        "mfi" => {
+            let high = call.col_args.get(1).map_or("high", String::as_str);
+            let low = call.col_args.get(2).map_or("low", String::as_str);
+            let vol = call.col_args.get(3).map_or("volume", String::as_str);
+            let period = call.period.unwrap_or(14);
+            compute_mfi_indicator(df, high, low, col, vol, period, dates)
+        }
+        "obv" => {
+            let vol = call.col_args.get(1).map_or("volume", String::as_str);
+            compute_obv_indicator(df, col, vol, dates)
+        }
+        "cmf" => {
+            let high = call.col_args.get(1).map_or("high", String::as_str);
+            let low = call.col_args.get(2).map_or("low", String::as_str);
+            let vol = call.col_args.get(3).map_or("volume", String::as_str);
+            let period = call.period.unwrap_or(20);
+            compute_cmf_indicator(df, col, high, low, vol, period, dates)
+        }
+        "roc" => {
+            let period = call.period.unwrap_or(10);
+            compute_roc_indicator(df, col, period, dates)
+        }
+        _ => vec![],
     }
 }
 
@@ -160,25 +285,25 @@ fn sample_points(points: Vec<IndicatorPoint>, max: usize) -> Vec<IndicatorPoint>
 fn compute_rsi_indicator(
     df: &DataFrame,
     column: &str,
-    threshold: f64,
+    period: usize,
     dates: &[String],
 ) -> Vec<IndicatorData> {
     let Ok(prices) = column_to_f64(df, column) else {
         return vec![];
     };
     let n = prices.len();
-    if n <= 14 {
+    if n <= period {
         return vec![];
     }
     let rsi_values = sti::rsi(&prices);
     let padded = pad_series(&rsi_values, n);
     vec![make_indicator(
-        "RSI(14)".to_string(),
+        format!("RSI({period})"),
         DisplayType::Subchart,
         &padded,
         dates,
         "RSI",
-        vec![threshold],
+        vec![30.0, 70.0],
     )]
 }
 
@@ -209,7 +334,6 @@ fn compute_stochastic_indicator(
     high_col: &str,
     low_col: &str,
     period: usize,
-    threshold: f64,
     dates: &[String],
 ) -> Vec<IndicatorData> {
     let Ok(close) = column_to_f64(df, close_col) else {
@@ -233,7 +357,7 @@ fn compute_stochastic_indicator(
         &padded,
         dates,
         "%K",
-        vec![threshold],
+        vec![20.0, 80.0],
     )]
 }
 
@@ -264,42 +388,6 @@ fn compute_ma_indicator(
     )]
 }
 
-fn compute_ma_crossover_indicator(
-    df: &DataFrame,
-    column: &str,
-    fast_period: usize,
-    slow_period: usize,
-    ma_type: &str,
-    ma_fn: fn(&[f64], usize) -> Vec<f64>,
-    dates: &[String],
-) -> Vec<IndicatorData> {
-    let Ok(prices) = column_to_f64(df, column) else {
-        return vec![];
-    };
-    let n = prices.len();
-    let min_period = fast_period.max(slow_period);
-    if n < min_period {
-        return vec![];
-    }
-    let fast = pad_series(&ma_fn(&prices, fast_period), n);
-    let slow = pad_series(&ma_fn(&prices, slow_period), n);
-    let (fast_series, fast_total) =
-        build_series(&format!("{ma_type}({fast_period})"), &fast, dates);
-    let (slow_series, slow_total) =
-        build_series(&format!("{ma_type}({slow_period})"), &slow, dates);
-    let max_total = fast_total.max(slow_total);
-    vec![IndicatorData {
-        name: format!("{ma_type} Crossover ({fast_period}/{slow_period})"),
-        display_type: DisplayType::Overlay,
-        series: vec![fast_series, slow_series],
-        thresholds: vec![],
-        total_points: if max_total > MAX_INDICATOR_POINTS {
-            Some(max_total)
-        } else {
-            None
-        },
-    }]
-}
 
 fn compute_aroon_indicator(
     df: &DataFrame,
@@ -340,7 +428,6 @@ fn compute_aroon_up_indicator(
     df: &DataFrame,
     high_col: &str,
     period: usize,
-    threshold: f64,
     dates: &[String],
 ) -> Vec<IndicatorData> {
     let Ok(highs) = column_to_f64(df, high_col) else {
@@ -363,7 +450,7 @@ fn compute_aroon_up_indicator(
         &padded,
         dates,
         "Aroon Up",
-        vec![threshold],
+        vec![70.0],
     )]
 }
 
@@ -414,7 +501,6 @@ fn compute_atr_indicator(
     high_col: &str,
     low_col: &str,
     period: usize,
-    threshold: f64,
     dates: &[String],
 ) -> Vec<IndicatorData> {
     let Ok(close) = column_to_f64(df, close_col) else {
@@ -438,7 +524,7 @@ fn compute_atr_indicator(
         &padded,
         dates,
         "ATR",
-        vec![threshold],
+        vec![],
     )]
 }
 
@@ -523,7 +609,6 @@ fn compute_mfi_indicator(
     close_col: &str,
     volume_col: &str,
     period: usize,
-    threshold: f64,
     dates: &[String],
 ) -> Vec<IndicatorData> {
     let Ok(high) = column_to_f64(df, high_col) else {
@@ -552,7 +637,7 @@ fn compute_mfi_indicator(
         &padded,
         dates,
         "MFI",
-        vec![threshold],
+        vec![20.0, 80.0],
     )]
 }
 
@@ -621,45 +706,11 @@ fn compute_cmf_indicator(
     )]
 }
 
-fn compute_drawdown_indicator(
-    df: &DataFrame,
-    column: &str,
-    window: usize,
-    threshold: f64,
-    dates: &[String],
-) -> Vec<IndicatorData> {
-    let Ok(prices) = column_to_f64(df, column) else {
-        return vec![];
-    };
-    let n = prices.len();
-    let mut dd_values = Vec::with_capacity(n);
-    for i in 0..n {
-        let start = i.saturating_sub(window.saturating_sub(1));
-        let rolling_max = prices[start..=i]
-            .iter()
-            .copied()
-            .fold(f64::NEG_INFINITY, f64::max);
-        if rolling_max > 0.0 {
-            dd_values.push((prices[i] - rolling_max) / rolling_max);
-        } else {
-            dd_values.push(0.0);
-        }
-    }
-    vec![make_indicator(
-        format!("Drawdown({window})"),
-        DisplayType::Subchart,
-        &dd_values,
-        dates,
-        "Drawdown",
-        vec![-threshold],
-    )]
-}
 
 fn compute_roc_indicator(
     df: &DataFrame,
     column: &str,
     period: usize,
-    threshold: f64,
     dates: &[String],
 ) -> Vec<IndicatorData> {
     let Ok(prices) = column_to_f64(df, column) else {
@@ -678,7 +729,7 @@ fn compute_roc_indicator(
         &roc_values,
         dates,
         "ROC",
-        vec![threshold],
+        vec![0.0],
     )]
 }
 
@@ -711,11 +762,51 @@ mod tests {
 
     // ── Custom / CrossSymbol return empty ────────────────────────────────────
 
+    // ── Formula indicator extraction ────────────────────────────────────────
+
     #[test]
-    fn custom_signal_returns_empty_indicators() {
+    fn formula_rsi_extracts_indicator() {
         let df = make_ohlcv_df(30);
         let spec = SignalSpec::Formula {
             formula: "rsi(close, 14) < 30".into(),
+        };
+        let result = compute_indicator_data(&spec, &df, "date");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "RSI(14)");
+        assert_eq!(result[0].display_type, DisplayType::Subchart);
+        assert_eq!(result[0].thresholds, vec![30.0, 70.0]);
+    }
+
+    #[test]
+    fn formula_sma_extracts_overlay() {
+        let df = make_ohlcv_df(30);
+        let spec = SignalSpec::Formula {
+            formula: "close > sma(close, 5)".into(),
+        };
+        let result = compute_indicator_data(&spec, &df, "date");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "SMA(5)");
+        assert_eq!(result[0].display_type, DisplayType::Overlay);
+    }
+
+    #[test]
+    fn formula_multiple_indicators_extracted() {
+        let df = make_ohlcv_df(30);
+        let spec = SignalSpec::Formula {
+            formula: "rsi(close, 14) < 30 and close > sma(close, 5)".into(),
+        };
+        let result = compute_indicator_data(&spec, &df, "date");
+        assert_eq!(result.len(), 2);
+        let names: Vec<&str> = result.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"RSI(14)"));
+        assert!(names.contains(&"SMA(5)"));
+    }
+
+    #[test]
+    fn formula_no_indicator_functions_returns_empty() {
+        let df = make_ohlcv_df(30);
+        let spec = SignalSpec::Formula {
+            formula: "close > 100".into(),
         };
         let result = compute_indicator_data(&spec, &df, "date");
         assert!(result.is_empty());
@@ -737,9 +828,7 @@ mod tests {
     // ── And / Or combinators ─────────────────────────────────────────────────
 
     #[test]
-    fn and_combinator_with_custom_children_returns_empty() {
-        // Custom signals don't produce indicator data yet, so And of two
-        // Custom signals should yield an empty result.
+    fn and_combinator_extracts_from_both_children() {
         let df = make_ohlcv_df(30);
         let spec = SignalSpec::And {
             left: Box::new(SignalSpec::Formula {
@@ -750,11 +839,14 @@ mod tests {
             }),
         };
         let result = compute_indicator_data(&spec, &df, "date");
-        assert!(result.is_empty());
+        assert_eq!(result.len(), 2);
+        let names: Vec<&str> = result.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"RSI(14)"));
+        assert!(names.contains(&"SMA(5)"));
     }
 
     #[test]
-    fn or_combinator_with_custom_children_returns_empty() {
+    fn or_combinator_deduplicates_indicators() {
         let df = make_ohlcv_df(30);
         let spec = SignalSpec::Or {
             left: Box::new(SignalSpec::Formula {
@@ -765,21 +857,22 @@ mod tests {
             }),
         };
         let result = compute_indicator_data(&spec, &df, "date");
-        assert!(result.is_empty());
+        // Both are SMA but different periods — should produce 2 entries
+        assert_eq!(result.len(), 2);
     }
 
     // ── total_points metadata ────────────────────────────────────────────────
 
     #[test]
     fn total_points_none_when_not_sampled() {
-        // Custom signals return empty — verify the vec is empty (no panic on index).
         let df = make_ohlcv_df(30);
         let spec = SignalSpec::Formula {
             formula: "rsi(close, 14) < 30".into(),
         };
         let result = compute_indicator_data(&spec, &df, "date");
-        // No indicator data returned for Custom signals yet.
-        assert!(result.is_empty());
+        assert!(!result.is_empty());
+        // 30 data points is well under MAX_INDICATOR_POINTS
+        assert!(result[0].total_points.is_none());
     }
 
     // ── sample_points helper ─────────────────────────────────────────────────
