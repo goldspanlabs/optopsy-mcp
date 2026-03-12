@@ -210,6 +210,54 @@ pub fn build_example(signal_name: &str) -> Value {
             "left": format!("mfi({}, {}, {}, {}, 14) > 20", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW, DEFAULT_VOLUME),
             "right": format!("mfi({}, {}, {}, {}, 14) < 80", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW, DEFAULT_VOLUME),
         }),
+        // Catalog function names → delegate to pattern examples
+        "rsi (formula)" => build_example("RsiBelow"),
+        "macd_hist (formula)" | "macd_signal (formula)" | "macd_line (formula)" => {
+            build_example("MacdBullish")
+        }
+        "roc (formula)" => build_example("RateOfChange"),
+        "bbands_upper (formula)" => build_example("BollingerUpperTouch"),
+        "bbands_lower (formula)" => build_example("BollingerLowerTouch"),
+        "bbands_mid (formula)" => build_example("PriceAboveSma"),
+        "atr (formula)" | "tr (formula)" => build_example("AtrAbove"),
+        "stochastic (formula)" => build_example("StochasticBelow"),
+        "keltner_upper (formula)" => build_example("KeltnerUpperBreak"),
+        "keltner_lower (formula)" => build_example("KeltnerLowerBreak"),
+        "obv (formula)" => build_example("ObvRising"),
+        "mfi (formula)" => build_example("MfiBelow"),
+        "rel_volume (formula)" => json!({
+            "type": "Formula",
+            "formula": format!("rel_volume({}, 20) > 2.0", DEFAULT_VOLUME),
+        }),
+        "range_pct (formula)" => json!({
+            "type": "Formula",
+            "formula": format!("range_pct({}, {}, {}) < 0.2", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW),
+        }),
+        "zscore (formula)" => json!({
+            "type": "Formula",
+            "formula": format!("zscore({}, 20) < -2.0", DEFAULT_CLOSE),
+        }),
+        "rank (formula)" => build_example("IvPercentileBelow"),
+        "iv_rank (formula)" => build_example("IvRankAbove"),
+        "if (formula)" => json!({
+            "type": "Formula",
+            "formula": format!("if({} > 100, 1, 0)", DEFAULT_CLOSE),
+        }),
+        "aroon_up (formula)" => build_example("AroonUpAbove"),
+        "aroon_down (formula)" => json!({
+            "type": "Formula",
+            "formula": format!("aroon_down({}, {}, 25) < 30", DEFAULT_HIGH, DEFAULT_LOW),
+        }),
+        "aroon_osc (formula)" => build_example("AroonUptrend"),
+        "supertrend (formula)" => build_example("SupertrendBullish"),
+        "cmf (formula)" => build_example("CmfPositive"),
+        "consecutive_up (formula)" => build_example("ConsecutiveUp"),
+        "consecutive_down (formula)" => build_example("ConsecutiveDown"),
+        "CrossSymbol" => json!({
+            "type": "CrossSymbol",
+            "symbol": "^VIX",
+            "signal": format!("{} > 20", DEFAULT_CLOSE),
+        }),
         // Fallback: return a structured placeholder with explicit error message
         _ => json!({
             "type": "UnknownSignal",

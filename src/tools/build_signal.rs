@@ -37,7 +37,11 @@ pub fn execute(action: Action) -> BuildSignalResponse {
             formula,
             description,
             save,
-        } => execute_create(&name, &formula, description.as_deref(), save),
+        } => {
+            // `description` is accepted for backward compatibility but not persisted
+            let _ = description;
+            execute_create(&name, &formula, save)
+        }
         Action::List => execute_list(),
         Action::Delete { name } => execute_delete(&name),
         Action::Validate { formula } => execute_validate(&formula),
@@ -71,12 +75,7 @@ fn base_response(
     }
 }
 
-fn execute_create(
-    name: &str,
-    formula: &str,
-    _description: Option<&str>,
-    save: bool,
-) -> BuildSignalResponse {
+fn execute_create(name: &str, formula: &str, save: bool) -> BuildSignalResponse {
     // Validate the formula first
     if let Err(e) = validate_formula(formula) {
         return base_response(
@@ -636,7 +635,7 @@ mod tests {
     }
 
     #[test]
-    fn search_finds_saved_signal_by_formula() {
+    fn search_finds_saved_signal_by_name() {
         let _lock = FS_LOCK.lock().unwrap();
         let _guard = storage::TempSignalsGuard::new();
 
@@ -645,7 +644,7 @@ mod tests {
         };
         storage::save_signal("my_exit", &spec).unwrap();
 
-        // Search by formula keyword
+        // Search by saved signal name
         let resp = execute(Action::Search {
             prompt: "my_exit".to_string(),
         });

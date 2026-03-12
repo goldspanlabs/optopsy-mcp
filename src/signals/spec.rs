@@ -13,7 +13,7 @@ use serde::Serialize;
 /// Serializable signal specification.
 ///
 /// A plain formula string is the primary input format:
-/// `"rsi(close, 14) < 30"` deserialized as `Formula("rsi(close, 14) < 30")`.
+/// `"rsi(close, 14) < 30"` deserialized as `Formula { formula: "rsi(close, 14) < 30".to_string() }`.
 ///
 /// Tagged objects are used for `Saved`, `CrossSymbol`, `And`, and `Or`.
 #[derive(Debug, Clone, Serialize)]
@@ -141,7 +141,7 @@ impl JsonSchema for SignalSpec {
                 object_schema
             ]
         });
-        schemars::Schema::try_from(combined).unwrap_or_else(|_| true.into())
+        schemars::Schema::try_from(combined).expect("SignalSpec schema is a valid JSON Schema")
     }
 }
 
