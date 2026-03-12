@@ -84,8 +84,11 @@ For indicators like `rsi` that can't be expressed as pure Polars rolling operati
     Ok(col_expr.map(
         move |s| {
             let ca = s.f64()?;
-            let vals: Vec<f64> = ca.into_no_null_iter().collect();
-            let n = s.len();
+            let n = ca.len();
+            let vals: Vec<f64> = ca
+                .into_iter()
+                .map(|opt_v| opt_v.unwrap_or(f64::NAN))
+                .collect();
             if n <= period {
                 return Ok(Some(
                     Series::new("rsi".into(), vec![f64::NAN; n])
