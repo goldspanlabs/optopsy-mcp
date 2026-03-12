@@ -348,10 +348,10 @@ mod tests {
     fn signal_spec_serde_round_trip_or_combinator() {
         let spec = SignalSpec::Or {
             left: Box::new(SignalSpec::Formula {
-                formula: "open / close.shift(1) - 1 > 0.02".into(),
+                formula: "open / close[1] - 1 > 0.02".into(),
             }),
             right: Box::new(SignalSpec::Formula {
-                formula: "open / close.shift(1) - 1 < -0.02".into(),
+                formula: "open / close[1] - 1 < -0.02".into(),
             }),
         };
         let json = serde_json::to_string(&spec).unwrap();

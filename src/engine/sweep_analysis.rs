@@ -241,7 +241,8 @@ pub(crate) fn signal_spec_label(spec: &SignalSpec) -> String {
             if formula.len() <= 30 {
                 formula.clone()
             } else {
-                format!("{}…", &formula[..27])
+                let truncated: String = formula.chars().take(27).collect();
+                format!("{truncated}…")
             }
         }
         SignalSpec::Saved { name } => format!("Saved({name})"),

@@ -16,323 +16,199 @@ pub fn build_example(signal_name: &str) -> Value {
     match signal_name {
         // Momentum (formula-based)
         "RsiBelow" => json!({
-            "type": "Custom",
-            "name": "RSI Below 30",
+            "type": "Formula",
             "formula": format!("rsi({}, 14) < 30", DEFAULT_CLOSE),
-            "description": null,
         }),
         "RsiAbove" => json!({
-            "type": "Custom",
-            "name": "RSI Above 70",
+            "type": "Formula",
             "formula": format!("rsi({}, 14) > 70", DEFAULT_CLOSE),
-            "description": null,
         }),
         "MacdBullish" => json!({
-            "type": "Custom",
-            "name": "MACD Bullish",
+            "type": "Formula",
             "formula": format!("macd_hist({}) > 0", DEFAULT_CLOSE),
-            "description": null,
         }),
         "MacdBearish" => json!({
-            "type": "Custom",
-            "name": "MACD Bearish",
+            "type": "Formula",
             "formula": format!("macd_hist({}) < 0", DEFAULT_CLOSE),
-            "description": null,
         }),
         "MacdCrossover" => json!({
-            "type": "Custom",
-            "name": "MACD Crossover",
-            "formula": format!("macd_hist({}) > 0", DEFAULT_CLOSE),
-            "description": null,
+            "type": "Formula",
+            "formula": format!("macd_hist({}) > 0 and macd_hist({})[1] <= 0", DEFAULT_CLOSE, DEFAULT_CLOSE),
         }),
         "StochasticBelow" => json!({
-            "type": "Custom",
-            "name": "Stochastic Oversold",
+            "type": "Formula",
             "formula": format!("stochastic({}, {}, {}, 14) < 20", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW),
-            "description": null,
         }),
         "StochasticAbove" => json!({
-            "type": "Custom",
-            "name": "Stochastic Overbought",
+            "type": "Formula",
             "formula": format!("stochastic({}, {}, {}, 14) > 80", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW),
-            "description": null,
         }),
         // Overlap (formula-based)
         "PriceAboveSma" => json!({
-            "type": "Custom",
-            "name": "Price Above SMA 20",
+            "type": "Formula",
             "formula": format!("{} > sma({}, 20)", DEFAULT_CLOSE, DEFAULT_CLOSE),
-            "description": null,
         }),
         "PriceBelowSma" => json!({
-            "type": "Custom",
-            "name": "Price Below SMA 20",
+            "type": "Formula",
             "formula": format!("{} < sma({}, 20)", DEFAULT_CLOSE, DEFAULT_CLOSE),
-            "description": null,
         }),
         "PriceAboveEma" => json!({
-            "type": "Custom",
-            "name": "Price Above EMA 20",
+            "type": "Formula",
             "formula": format!("{} > ema({}, 20)", DEFAULT_CLOSE, DEFAULT_CLOSE),
-            "description": null,
         }),
         "PriceBelowEma" => json!({
-            "type": "Custom",
-            "name": "Price Below EMA 20",
+            "type": "Formula",
             "formula": format!("{} < ema({}, 20)", DEFAULT_CLOSE, DEFAULT_CLOSE),
-            "description": null,
         }),
         "SmaCrossover" => json!({
-            "type": "Custom",
-            "name": "SMA Golden Cross",
-            "formula": format!("sma({}, 50) > sma({}, 200)", DEFAULT_CLOSE, DEFAULT_CLOSE),
-            "description": null,
+            "type": "Formula",
+            "formula": format!("sma({}, 50) > sma({}, 200) and sma({}, 50)[1] <= sma({}, 200)[1]", DEFAULT_CLOSE, DEFAULT_CLOSE, DEFAULT_CLOSE, DEFAULT_CLOSE),
         }),
         "SmaCrossunder" => json!({
-            "type": "Custom",
-            "name": "SMA Death Cross",
-            "formula": format!("sma({}, 50) < sma({}, 200)", DEFAULT_CLOSE, DEFAULT_CLOSE),
-            "description": null,
+            "type": "Formula",
+            "formula": format!("sma({}, 50) < sma({}, 200) and sma({}, 50)[1] >= sma({}, 200)[1]", DEFAULT_CLOSE, DEFAULT_CLOSE, DEFAULT_CLOSE, DEFAULT_CLOSE),
         }),
         "EmaCrossover" => json!({
-            "type": "Custom",
-            "name": "EMA Crossover",
-            "formula": format!("ema({}, 12) > ema({}, 26)", DEFAULT_CLOSE, DEFAULT_CLOSE),
-            "description": null,
+            "type": "Formula",
+            "formula": format!("ema({}, 12) > ema({}, 26) and ema({}, 12)[1] <= ema({}, 26)[1]", DEFAULT_CLOSE, DEFAULT_CLOSE, DEFAULT_CLOSE, DEFAULT_CLOSE),
         }),
         "EmaCrossunder" => json!({
-            "type": "Custom",
-            "name": "EMA Crossunder",
-            "formula": format!("ema({}, 12) < ema({}, 26)", DEFAULT_CLOSE, DEFAULT_CLOSE),
-            "description": null,
+            "type": "Formula",
+            "formula": format!("ema({}, 12) < ema({}, 26) and ema({}, 12)[1] >= ema({}, 26)[1]", DEFAULT_CLOSE, DEFAULT_CLOSE, DEFAULT_CLOSE, DEFAULT_CLOSE),
         }),
         // Trend (formula-based)
         "AroonUptrend" => json!({
-            "type": "Custom",
-            "name": "Aroon Uptrend",
+            "type": "Formula",
             "formula": format!("aroon_osc({}, {}, 25) > 0", DEFAULT_HIGH, DEFAULT_LOW),
-            "description": null,
         }),
         "AroonDowntrend" => json!({
-            "type": "Custom",
-            "name": "Aroon Downtrend",
+            "type": "Formula",
             "formula": format!("aroon_osc({}, {}, 25) < 0", DEFAULT_HIGH, DEFAULT_LOW),
-            "description": null,
         }),
         "AroonUpAbove" => json!({
-            "type": "Custom",
-            "name": "Aroon Up Above 70",
+            "type": "Formula",
             "formula": format!("aroon_up({}, {}, 25) > 70", DEFAULT_HIGH, DEFAULT_LOW),
-            "description": null,
         }),
         "SupertrendBullish" => json!({
-            "type": "Custom",
-            "name": "Supertrend Bullish",
+            "type": "Formula",
             "formula": format!("{} > supertrend({}, {}, {}, 10, 3.0)", DEFAULT_CLOSE, DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW),
-            "description": null,
         }),
         "SupertrendBearish" => json!({
-            "type": "Custom",
-            "name": "Supertrend Bearish",
+            "type": "Formula",
             "formula": format!("{} < supertrend({}, {}, {}, 10, 3.0)", DEFAULT_CLOSE, DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW),
-            "description": null,
         }),
         // Volatility (formula-based)
         "AtrAbove" => json!({
-            "type": "Custom",
-            "name": "ATR Above 1.0",
+            "type": "Formula",
             "formula": format!("atr({}, {}, {}, 14) > 1.0", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW),
-            "description": null,
         }),
         "AtrBelow" => json!({
-            "type": "Custom",
-            "name": "ATR Below 0.5",
+            "type": "Formula",
             "formula": format!("atr({}, {}, {}, 14) < 0.5", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW),
-            "description": null,
         }),
         "BollingerLowerTouch" => json!({
-            "type": "Custom",
-            "name": "Bollinger Lower Touch",
+            "type": "Formula",
             "formula": format!("{} < bbands_lower({}, 20)", DEFAULT_CLOSE, DEFAULT_CLOSE),
-            "description": null,
         }),
         "BollingerUpperTouch" => json!({
-            "type": "Custom",
-            "name": "Bollinger Upper Touch",
+            "type": "Formula",
             "formula": format!("{} > bbands_upper({}, 20)", DEFAULT_CLOSE, DEFAULT_CLOSE),
-            "description": null,
         }),
         "KeltnerLowerBreak" => json!({
-            "type": "Custom",
-            "name": "Keltner Lower Break",
+            "type": "Formula",
             "formula": format!("{} < keltner_lower({}, {}, {}, 20, 2.0)", DEFAULT_CLOSE, DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW),
-            "description": null,
         }),
         "KeltnerUpperBreak" => json!({
-            "type": "Custom",
-            "name": "Keltner Upper Break",
+            "type": "Formula",
             "formula": format!("{} > keltner_upper({}, {}, {}, 20, 2.0)", DEFAULT_CLOSE, DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW),
-            "description": null,
         }),
-        // IV (implied volatility) — no formula DSL equivalent; use Custom placeholders
+        // IV (implied volatility)
         "IvRankAbove" => json!({
-            "type": "Custom",
-            "name": "IV Rank Above 50",
-            "formula": "iv_rank(252) > 50",
-            "description": null,
+            "type": "Formula",
+            "formula": "iv_rank(iv, 252) > 50",
         }),
         "IvRankBelow" => json!({
-            "type": "Custom",
-            "name": "IV Rank Below 30",
-            "formula": "iv_rank(252) < 30",
-            "description": null,
+            "type": "Formula",
+            "formula": "iv_rank(iv, 252) < 30",
         }),
         "IvPercentileAbove" => json!({
-            "type": "Custom",
-            "name": "IV Percentile Above 50",
-            "formula": "iv_percentile(252) > 50",
-            "description": null,
+            "type": "Formula",
+            "formula": "rank(iv, 252) > 50",
         }),
         "IvPercentileBelow" => json!({
-            "type": "Custom",
-            "name": "IV Percentile Below 30",
-            "formula": "iv_percentile(252) < 30",
-            "description": null,
+            "type": "Formula",
+            "formula": "rank(iv, 252) < 30",
         }),
         // Price (formula-based)
         "GapUp" => json!({
-            "type": "Custom",
-            "name": "Gap Up 2%",
-            "formula": format!("{} / close.shift(1) - 1 > 0.02", DEFAULT_OPEN),
-            "description": null,
+            "type": "Formula",
+            "formula": format!("{} / {}[1] - 1 > 0.02", DEFAULT_OPEN, DEFAULT_CLOSE),
         }),
         "GapDown" => json!({
-            "type": "Custom",
-            "name": "Gap Down 2%",
-            "formula": format!("{} / close.shift(1) - 1 < -0.02", DEFAULT_OPEN),
-            "description": null,
+            "type": "Formula",
+            "formula": format!("{} / {}[1] - 1 < -0.02", DEFAULT_OPEN, DEFAULT_CLOSE),
         }),
         "DrawdownBelow" => json!({
-            "type": "Custom",
-            "name": "Drawdown Below 10%",
-            "formula": format!("{} / rolling_max({}, 20) - 1 < -0.1", DEFAULT_CLOSE, DEFAULT_CLOSE),
-            "description": null,
+            "type": "Formula",
+            "formula": format!("{} / max({}, 20) - 1 < -0.1", DEFAULT_CLOSE, DEFAULT_CLOSE),
         }),
         "ConsecutiveUp" => json!({
-            "type": "Custom",
-            "name": "3 Consecutive Up",
+            "type": "Formula",
             "formula": format!("consecutive_up({}) >= 3", DEFAULT_CLOSE),
-            "description": null,
         }),
         "ConsecutiveDown" => json!({
-            "type": "Custom",
-            "name": "3 Consecutive Down",
+            "type": "Formula",
             "formula": format!("consecutive_down({}) >= 3", DEFAULT_CLOSE),
-            "description": null,
         }),
         "RateOfChange" => json!({
-            "type": "Custom",
-            "name": "Rate of Change 2%",
-            "formula": format!("roc({}, 14) > 0.02", DEFAULT_CLOSE),
-            "description": null,
+            "type": "Formula",
+            "formula": format!("roc({}, 14) > 2.0", DEFAULT_CLOSE),
         }),
         // Volume (formula-based)
         "MfiBelow" => json!({
-            "type": "Custom",
-            "name": "MFI Oversold",
+            "type": "Formula",
             "formula": format!("mfi({}, {}, {}, {}, 14) < 20", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW, DEFAULT_VOLUME),
-            "description": null,
         }),
         "MfiAbove" => json!({
-            "type": "Custom",
-            "name": "MFI Overbought",
+            "type": "Formula",
             "formula": format!("mfi({}, {}, {}, {}, 14) > 80", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW, DEFAULT_VOLUME),
-            "description": null,
         }),
         "ObvRising" => json!({
-            "type": "Custom",
-            "name": "OBV Rising",
-            "formula": format!("obv({}, {}) > 0", DEFAULT_CLOSE, DEFAULT_VOLUME),
-            "description": null,
+            "type": "Formula",
+            "formula": format!("obv({}, {}) > obv({}, {})[1]", DEFAULT_CLOSE, DEFAULT_VOLUME, DEFAULT_CLOSE, DEFAULT_VOLUME),
         }),
         "ObvFalling" => json!({
-            "type": "Custom",
-            "name": "OBV Falling",
-            "formula": format!("obv({}, {}) < 0", DEFAULT_CLOSE, DEFAULT_VOLUME),
-            "description": null,
+            "type": "Formula",
+            "formula": format!("obv({}, {}) < obv({}, {})[1]", DEFAULT_CLOSE, DEFAULT_VOLUME, DEFAULT_CLOSE, DEFAULT_VOLUME),
         }),
         "CmfPositive" => json!({
-            "type": "Custom",
-            "name": "CMF Positive",
+            "type": "Formula",
             "formula": format!("cmf({}, {}, {}, {}, 20) > 0", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW, DEFAULT_VOLUME),
-            "description": null,
         }),
         "CmfNegative" => json!({
-            "type": "Custom",
-            "name": "CMF Negative",
+            "type": "Formula",
             "formula": format!("cmf({}, {}, {}, {}, 20) < 0", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW, DEFAULT_VOLUME),
-            "description": null,
         }),
-        // Range (And combinator patterns using Custom signals)
+        // Range (And combinator patterns)
         "RsiRange" => json!({
             "type": "And",
-            "left": {
-                "type": "Custom",
-                "name": "RSI Above 30",
-                "formula": format!("rsi({}, 14) > 30", DEFAULT_CLOSE),
-                "description": null,
-            },
-            "right": {
-                "type": "Custom",
-                "name": "RSI Below 40",
-                "formula": format!("rsi({}, 14) < 40", DEFAULT_CLOSE),
-                "description": null,
-            },
+            "left": format!("rsi({}, 14) > 30", DEFAULT_CLOSE),
+            "right": format!("rsi({}, 14) < 40", DEFAULT_CLOSE),
         }),
         "StochasticRange" => json!({
             "type": "And",
-            "left": {
-                "type": "Custom",
-                "name": "Stochastic Above 20",
-                "formula": format!("stochastic({}, {}, {}, 14) > 20", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW),
-                "description": null,
-            },
-            "right": {
-                "type": "Custom",
-                "name": "Stochastic Below 80",
-                "formula": format!("stochastic({}, {}, {}, 14) < 80", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW),
-                "description": null,
-            },
+            "left": format!("stochastic({}, {}, {}, 14) > 20", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW),
+            "right": format!("stochastic({}, {}, {}, 14) < 80", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW),
         }),
         "AtrRange" => json!({
             "type": "And",
-            "left": {
-                "type": "Custom",
-                "name": "ATR Above 0.5",
-                "formula": format!("atr({}, {}, {}, 14) > 0.5", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW),
-                "description": null,
-            },
-            "right": {
-                "type": "Custom",
-                "name": "ATR Below 1.5",
-                "formula": format!("atr({}, {}, {}, 14) < 1.5", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW),
-                "description": null,
-            },
+            "left": format!("atr({}, {}, {}, 14) > 0.5", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW),
+            "right": format!("atr({}, {}, {}, 14) < 1.5", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW),
         }),
         "MfiRange" => json!({
             "type": "And",
-            "left": {
-                "type": "Custom",
-                "name": "MFI Above 20",
-                "formula": format!("mfi({}, {}, {}, {}, 14) > 20", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW, DEFAULT_VOLUME),
-                "description": null,
-            },
-            "right": {
-                "type": "Custom",
-                "name": "MFI Below 80",
-                "formula": format!("mfi({}, {}, {}, {}, 14) < 80", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW, DEFAULT_VOLUME),
-                "description": null,
-            },
+            "left": format!("mfi({}, {}, {}, {}, 14) > 20", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW, DEFAULT_VOLUME),
+            "right": format!("mfi({}, {}, {}, {}, 14) < 80", DEFAULT_CLOSE, DEFAULT_HIGH, DEFAULT_LOW, DEFAULT_VOLUME),
         }),
         // Fallback: return a structured placeholder with explicit error message
         _ => json!({
@@ -350,7 +226,7 @@ mod tests {
     #[test]
     fn build_example_rsi() {
         let example = build_example("RsiBelow");
-        assert_eq!(example["type"], "Custom");
+        assert_eq!(example["type"], "Formula");
         assert!(example["formula"].as_str().unwrap().contains("rsi"));
         assert!(example["formula"].as_str().unwrap().contains("30"));
     }
@@ -359,13 +235,9 @@ mod tests {
     fn build_example_rsi_range() {
         let example = build_example("RsiRange");
         assert_eq!(example["type"], "And");
-        assert_eq!(example["left"]["type"], "Custom");
-        assert!(example["left"]["formula"].as_str().unwrap().contains("rsi"));
-        assert_eq!(example["right"]["type"], "Custom");
-        assert!(example["right"]["formula"]
-            .as_str()
-            .unwrap()
-            .contains("rsi"));
+        // Children are string shorthand
+        assert!(example["left"].as_str().unwrap().contains("rsi"));
+        assert!(example["right"].as_str().unwrap().contains("rsi"));
     }
 
     #[test]
