@@ -394,9 +394,9 @@ SignalMeta {
 },
 ```
 
-### Tool response (`src/tools/construct_signal/`)
+### Tool response (`src/tools/build_signal.rs`)
 
-Update the `formula_help` field in `BuildSignalResponse` to include:
+Update the content returned by `fn formula_help() -> FormulaHelp` (used to populate `BuildSignalResponse.formula_help`) to include:
 - New function signatures
 - `if()` syntax
 - `tf()` syntax with examples
