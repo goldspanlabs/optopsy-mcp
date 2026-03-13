@@ -33,6 +33,7 @@ fn default_params() -> StockBacktestParams {
         stop_loss: None,
         take_profit: None,
         max_hold_days: None,
+        min_days_between_entries: None,
         entry_signal: None,
         exit_signal: None,
         ohlcv_path: None,

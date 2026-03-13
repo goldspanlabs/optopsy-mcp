@@ -31,6 +31,8 @@ pub struct StockBacktestParams {
     pub stop_loss: Option<f64>,
     pub take_profit: Option<f64>,
     pub max_hold_days: Option<i32>,
+    /// Minimum calendar days between consecutive position entries (cooldown / stagger).
+    pub min_days_between_entries: Option<i32>,
     pub entry_signal: Option<crate::signals::registry::SignalSpec>,
     pub exit_signal: Option<crate::signals::registry::SignalSpec>,
     pub ohlcv_path: Option<String>,
@@ -93,6 +95,7 @@ pub fn run_stock_backtest(
     let mut next_trade_id: usize = 1;
     let mut skipped_capital: usize = 0;
     let mut first_skip_required: Option<f64> = None;
+    let mut last_entry_date: Option<chrono::NaiveDate> = None;
 
     let signal_fire_count = entry_dates.as_ref().map_or(0, |dates| dates.len());
 
@@ -127,7 +130,15 @@ pub fn run_stock_backtest(
             .as_ref()
             .is_some_and(|dates| dates.contains(&bar.datetime));
 
-        if can_enter && signal_fires {
+        // Stagger check: skip entry if we entered too recently
+        let stagger_ok = match (params.min_days_between_entries, last_entry_date) {
+            (Some(min_days), Some(last)) => {
+                (bar.datetime.date() - last).num_days() >= i64::from(min_days)
+            }
+            _ => true,
+        };
+
+        if can_enter && signal_fires && stagger_ok {
             let entry_price = compute_entry_price(bar, params.side, &params.slippage);
 
             // Dynamic position sizing
@@ -178,6 +189,7 @@ pub fn run_stock_backtest(
                     entry_commission: commission_cost,
                 };
                 next_trade_id += 1;
+                last_entry_date = Some(bar.datetime.date());
                 positions.push(pos);
             }
         }
@@ -1180,6 +1192,64 @@ pub fn build_stock_signal_filters(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Helpers for stock advanced tools (walk-forward, permutation, sweep, compare)
+// ---------------------------------------------------------------------------
+
+/// Slice bars to a `[start, end)` date range (half-open interval on calendar dates).
+pub fn slice_bars_by_date_range(bars: &[Bar], start: NaiveDate, end: NaiveDate) -> Vec<Bar> {
+    bars.iter()
+        .filter(|b| {
+            let d = b.datetime.date();
+            d >= start && d < end
+        })
+        .cloned()
+        .collect()
+}
+
+/// Filter a `HashSet<NaiveDateTime>` to only datetimes within `[start, end)` calendar dates.
+#[allow(clippy::implicit_hasher)]
+pub fn filter_datetime_set(
+    dates: &HashSet<NaiveDateTime>,
+    start: NaiveDate,
+    end: NaiveDate,
+) -> HashSet<NaiveDateTime> {
+    dates
+        .iter()
+        .filter(|dt| {
+            let d = dt.date();
+            d >= start && d < end
+        })
+        .copied()
+        .collect()
+}
+
+/// Get the min and max calendar dates from a slice of bars.
+pub fn bar_date_range(bars: &[Bar]) -> Option<(NaiveDate, NaiveDate)> {
+    if bars.is_empty() {
+        return None;
+    }
+    let min = bars.first().unwrap().datetime.date();
+    let max = bars.last().unwrap().datetime.date();
+    Some((min, max))
+}
+
+/// Load OHLCV data, apply session filter, resample, and extract bars.
+/// Returns `(bars, ohlcv_df)` — the `DataFrame` is needed for signal evaluation.
+pub fn prepare_stock_data(
+    ohlcv_path: &str,
+    interval: Interval,
+    session_filter: Option<&SessionFilter>,
+    start_date: Option<NaiveDate>,
+    end_date: Option<NaiveDate>,
+) -> Result<(Vec<Bar>, polars::prelude::DataFrame)> {
+    let df = load_ohlcv_df(ohlcv_path, start_date, end_date)?;
+    let df = filter_session(&df, session_filter)?;
+    let df = resample_ohlcv(&df, interval)?;
+    let bars = bars_from_df(&df)?;
+    Ok((bars, df))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1245,6 +1315,7 @@ mod tests {
             stop_loss: None,
             take_profit: None,
             max_hold_days: None,
+            min_days_between_entries: None,
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,

@@ -495,6 +495,96 @@ pub fn compare_strategies(
     Ok((results, labeled_entries))
 }
 
+// ---------------------------------------------------------------------------
+// Stock compare
+// ---------------------------------------------------------------------------
+
+use super::stock_sim::{self, StockBacktestParams};
+
+/// A single stock entry for comparison.
+#[derive(Debug, Clone)]
+pub struct StockCompareEntry {
+    pub label: String,
+    pub params: StockBacktestParams,
+}
+
+/// Compare multiple stock strategies side-by-side.
+///
+/// Each entry carries its own `StockBacktestParams` (with entry/exit signals,
+/// interval, side, etc.). Data is prepared per unique (interval, `session_filter`)
+/// group to avoid redundant I/O.
+pub fn compare_stock_strategies(entries: &[StockCompareEntry]) -> Result<Vec<CompareResult>> {
+    let mut results = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for entry in entries {
+        if !seen.insert(entry.label.clone()) {
+            tracing::info!("Skipping duplicate stock entry: {}", entry.label);
+            continue;
+        }
+
+        let ohlcv_path = entry
+            .params
+            .ohlcv_path
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("ohlcv_path is required for stock compare"))?;
+        let (bars, ohlcv_df) = stock_sim::prepare_stock_data(
+            ohlcv_path,
+            entry.params.interval,
+            entry.params.session_filter.as_ref(),
+            entry.params.start_date,
+            entry.params.end_date,
+        )?;
+        let (entry_dates, exit_dates) =
+            stock_sim::build_stock_signal_filters(&entry.params, &ohlcv_df)?;
+
+        match stock_sim::run_stock_backtest(
+            &bars,
+            &entry.params,
+            entry_dates.as_ref(),
+            exit_dates.as_ref(),
+        ) {
+            Ok(bt) => {
+                results.push(CompareResult {
+                    display_name: entry.label.clone(),
+                    strategy: entry.label.clone(),
+                    trades: bt.trade_count,
+                    pnl: bt.total_pnl,
+                    sharpe: bt.metrics.sharpe,
+                    sortino: bt.metrics.sortino,
+                    max_dd: bt.metrics.max_drawdown,
+                    win_rate: bt.metrics.win_rate,
+                    profit_factor: bt.metrics.profit_factor,
+                    calmar: bt.metrics.calmar,
+                    total_return_pct: bt.metrics.total_return_pct,
+                    trade_log: bt.trade_log,
+                    error: None,
+                });
+            }
+            Err(e) => {
+                tracing::warn!("Stock compare entry '{}' failed: {e}", entry.label);
+                results.push(CompareResult {
+                    display_name: entry.label.clone(),
+                    strategy: entry.label.clone(),
+                    trades: 0,
+                    pnl: 0.0,
+                    sharpe: 0.0,
+                    sortino: 0.0,
+                    max_dd: 0.0,
+                    win_rate: 0.0,
+                    profit_factor: 0.0,
+                    calmar: 0.0,
+                    total_return_pct: 0.0,
+                    trade_log: vec![],
+                    error: Some(e.to_string()),
+                });
+            }
+        }
+    }
+
+    Ok(results)
+}
+
 /// Build descriptive labels for compare entries.
 ///
 /// If all entries have unique strategy names, the labels are just the names.

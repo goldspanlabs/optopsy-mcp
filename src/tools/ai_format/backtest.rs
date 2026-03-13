@@ -6,7 +6,8 @@
 
 use crate::engine::stock_sim::StockBacktestParams;
 use crate::engine::types::{
-    to_display_name, BacktestParams, BacktestResult, CompareEntry, CompareResult,
+    to_display_name, BacktestParams, BacktestResult, CompareEntry, CompareResult, DteRange,
+    Slippage,
 };
 use crate::signals::helpers::IndicatorData;
 use crate::tools::ai_helpers::{
@@ -291,6 +292,93 @@ pub fn format_compare(
 
     CompareResponse {
         summary,
+        mode: None,
+        strategies_compared,
+        ranking_by_sharpe,
+        ranking_by_pnl,
+        best_overall,
+        results,
+        suggested_next_steps,
+    }
+}
+
+/// Format a stock compare result into a `CompareResponse`.
+///
+/// Stock entries don't have options-specific fields, so `strategies_compared`
+/// uses placeholder values for `leg_deltas`, `entry_dte`, `exit_dte`.
+pub fn format_stock_compare(results: Vec<CompareResult>, labels: &[String]) -> CompareResponse {
+    let mut sharpe_indices: Vec<usize> = (0..results.len()).collect();
+    sharpe_indices.sort_by(|&a, &b| {
+        results[b]
+            .sharpe
+            .partial_cmp(&results[a].sharpe)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let ranking_by_sharpe: Vec<String> = sharpe_indices
+        .iter()
+        .map(|&i| results[i].strategy.clone())
+        .collect();
+
+    let mut pnl_indices: Vec<usize> = (0..results.len()).collect();
+    pnl_indices.sort_by(|&a, &b| {
+        results[b]
+            .pnl
+            .partial_cmp(&results[a].pnl)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let ranking_by_pnl: Vec<String> = pnl_indices
+        .iter()
+        .map(|&i| results[i].strategy.clone())
+        .collect();
+
+    let best_overall = ranking_by_sharpe.first().cloned();
+
+    let summary = if results.is_empty() {
+        "No stock strategies to compare.".to_string()
+    } else {
+        let best_sharpe_idx = sharpe_indices[0];
+        let best_pnl_idx = pnl_indices[0];
+        format!(
+            "Stock comparison of {} entries. Best by Sharpe: {} ({:.2}). Best by P&L: {} ({}).",
+            results.len(),
+            results[best_sharpe_idx].strategy,
+            results[best_sharpe_idx].sharpe,
+            results[best_pnl_idx].strategy,
+            format_pnl(results[best_pnl_idx].pnl),
+        )
+    };
+
+    let mut suggested_next_steps = Vec::new();
+    if !results.is_empty() {
+        let best_label = &results[sharpe_indices[0]].strategy;
+        suggested_next_steps.push(format!(
+            "[NEXT] Use run_stock_backtest with the {best_label} configuration for detailed trade-level analysis",
+        ));
+        suggested_next_steps.push(
+            "[ITERATE] Use compare_strategies(mode=\"stock\") with parameter variations to further optimize".to_string(),
+        );
+    }
+
+    let strategies_compared = labels
+        .iter()
+        .map(|label| CompareStrategyEntry {
+            display_name: label.clone(),
+            name: label.clone(),
+            leg_deltas: vec![],
+            entry_dte: DteRange {
+                target: 0,
+                min: 0,
+                max: 0,
+            },
+            exit_dte: 0,
+            slippage: Slippage::Mid,
+            commission: None,
+        })
+        .collect();
+
+    CompareResponse {
+        summary,
+        mode: Some("stock".to_string()),
         strategies_compared,
         ranking_by_sharpe,
         ranking_by_pnl,

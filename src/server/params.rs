@@ -39,6 +39,30 @@ pub(crate) fn validate_end_date_after_start(
     }
 }
 
+/// Returns `true` when the mode string indicates stock mode.
+#[allow(clippy::ref_option)]
+fn is_stock_mode(mode: &Option<String>) -> bool {
+    mode.as_deref() == Some("stock")
+}
+
+/// Validate `strategy` based on `mode`: required (non-empty) in options mode, ignored in stock mode.
+#[allow(clippy::ref_option)]
+fn validate_strategy_for_mode(
+    mode: &Option<String>,
+) -> impl FnOnce(&Option<String>, &()) -> garde::Result + '_ {
+    move |strategy: &Option<String>, (): &()| {
+        if is_stock_mode(mode) {
+            return Ok(()); // strategy not needed in stock mode
+        }
+        match strategy {
+            Some(s) if !s.is_empty() => Ok(()),
+            _ => Err(garde::Error::new(
+                "strategy is required when mode is \"options\" (or omitted)",
+            )),
+        }
+    }
+}
+
 /// Resolve `leg_deltas`: use provided deltas or fall back to strategy defaults.
 pub(crate) fn resolve_leg_deltas(
     leg_deltas: Option<Vec<TargetRange>>,
@@ -84,12 +108,24 @@ pub(crate) fn default_capital() -> f64 {
 
 /// Shared base parameters for all backtest-related tools (`run_options_backtest`, `walk_forward`,
 /// `permutation_test`). Extracted to eliminate field duplication across parameter structs.
+///
+/// When `mode` is `"stock"`, options-specific fields (`strategy`, `leg_deltas`, `entry_dte`,
+/// `exit_dte`, `min_bid_ask`, `selector`, etc.) are ignored and `entry_signal` is required.
+/// When `mode` is omitted or `"options"` (default), `strategy` is required.
 #[derive(Debug, Clone, Deserialize, JsonSchema, Validate)]
+#[garde(context(()))]
 pub struct BacktestBaseParams {
+    /// Backtest mode: `"stock"` for stock/equity backtests, `"options"` (default) for options.
+    /// Stock mode ignores options-specific fields (strategy, `leg_deltas`, `entry_dte`, `exit_dte`,
+    /// `min_bid_ask`, selector, `expiration_filter`, `net_premium`/delta filters).
+    #[serde(default)]
+    #[garde(skip)]
+    pub mode: Option<String>,
     /// The option strategy name (e.g. `short_put`, `iron_condor`, `short_strangle`).
-    /// Call `list_strategies` to see all 32 options.
-    #[garde(length(min = 1))]
-    pub strategy: String,
+    /// Call `list_strategies` to see all 32 options. Required for options mode, ignored for stock mode.
+    #[serde(default)]
+    #[garde(custom(validate_strategy_for_mode(&self.mode)))]
+    pub strategy: Option<String>,
     /// Per-leg delta targets (optional — uses strategy-specific defaults if omitted)
     #[serde(default)]
     #[garde(inner(length(min = 1)))]
@@ -161,7 +197,29 @@ pub struct BacktestBaseParams {
     #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
     pub symbol: Option<String>,
 
-    // ── Entry filters ────────────────────────────────────────────────────────
+    // ── Stock-mode fields (ignored when mode is "options" or omitted) ────────
+    /// Position direction: Long or Short (default: Long). Stock mode only.
+    #[serde(default)]
+    #[garde(skip)]
+    pub side: Option<crate::engine::types::Side>,
+    /// Bar interval: "daily" (default), "weekly", "monthly", or intraday ("1m", "5m", "30m", "1h"). Stock mode only.
+    #[serde(default)]
+    #[garde(skip)]
+    pub interval: Option<crate::engine::types::Interval>,
+    /// Session filter for intraday data. Stock mode only.
+    #[serde(default)]
+    #[garde(skip)]
+    pub session_filter: Option<crate::engine::types::SessionFilter>,
+    /// Start date filter (YYYY-MM-DD). Stock mode only.
+    #[serde(default)]
+    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))]
+    pub start_date: Option<String>,
+    /// End date filter (YYYY-MM-DD). Stock mode only.
+    #[serde(default)]
+    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")), custom(validate_end_date_after_start(&self.start_date)))]
+    pub end_date: Option<String>,
+
+    // ── Entry filters (options mode only) ─────────────────────────────────
     /// Minimum absolute net premium (debit or credit) at entry, in dollars per share.
     #[serde(default)]
     #[garde(inner(range(min = 0.0)))]
@@ -255,6 +313,10 @@ pub struct RunStockBacktestParams {
     /// Maximum days to hold a position
     #[garde(inner(range(min = 1)))]
     pub max_hold_days: Option<i32>,
+    /// Minimum calendar days between consecutive position entries (cooldown / stagger).
+    #[serde(default)]
+    #[garde(inner(range(min = 1)))]
+    pub min_days_between_entries: Option<i32>,
     /// Entry signal — REQUIRED. Opens positions when this signal fires.
     /// Use `build_signal(action="search")` to find suitable signals.
     #[garde(skip)]
@@ -369,12 +431,65 @@ pub struct ServerCompareEntry {
     pub commission: Option<Commission>,
 }
 
+/// A single stock signal configuration for `compare_strategies` in stock mode.
+#[derive(Debug, Clone, Deserialize, JsonSchema, Validate)]
+pub struct StockCompareEntry {
+    /// Human-readable label for this entry (auto-generated if omitted)
+    #[serde(default)]
+    #[garde(skip)]
+    pub label: Option<String>,
+    /// Entry signal — REQUIRED. Opens positions when this signal fires.
+    #[garde(skip)]
+    pub entry_signal: SignalSpec,
+    /// Exit signal — optional. Closes positions when this signal fires.
+    #[serde(default)]
+    #[garde(skip)]
+    pub exit_signal: Option<SignalSpec>,
+    /// Position direction (default: Long)
+    #[serde(default)]
+    #[garde(skip)]
+    pub side: Option<crate::engine::types::Side>,
+    /// Bar interval (default: daily)
+    #[serde(default)]
+    #[garde(skip)]
+    pub interval: Option<crate::engine::types::Interval>,
+    /// Session filter for intraday data
+    #[serde(default)]
+    #[garde(skip)]
+    pub session_filter: Option<crate::engine::types::SessionFilter>,
+    /// Stop loss as fraction of entry price
+    #[garde(inner(range(min = 0.0)))]
+    pub stop_loss: Option<f64>,
+    /// Take profit as fraction of entry price
+    #[garde(inner(range(min = 0.0)))]
+    pub take_profit: Option<f64>,
+    /// Slippage model (default: Mid for stocks)
+    #[serde(default = "default_stock_slippage")]
+    #[garde(dive)]
+    pub slippage: Slippage,
+    /// Commission structure
+    #[serde(default)]
+    #[garde(dive)]
+    pub commission: Option<Commission>,
+}
+
 /// Parameters for the `compare_strategies` side-by-side comparison tool.
+///
+/// When `mode` is `"stock"`, use `stock_entries` instead of `strategies`.
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct CompareStrategiesParams {
-    /// List of strategies with their parameters
-    #[garde(length(min = 2), dive)]
-    pub strategies: Vec<ServerCompareEntry>,
+    /// Backtest mode: `"stock"` for stock/equity comparisons, `"options"` (default) for options.
+    #[serde(default)]
+    #[garde(skip)]
+    pub mode: Option<String>,
+    /// List of strategies with their parameters. Required for options mode.
+    #[serde(default)]
+    #[garde(dive)]
+    pub strategies: Option<Vec<ServerCompareEntry>>,
+    /// List of stock signal configurations to compare. Required for stock mode (min 2 entries).
+    #[serde(default)]
+    #[garde(dive)]
+    pub stock_entries: Option<Vec<StockCompareEntry>>,
     /// Shared simulation parameters
     #[garde(dive)]
     pub sim_params: SimParams,
@@ -388,7 +503,7 @@ pub struct CompareStrategiesParams {
     #[serde(default)]
     #[garde(skip)]
     pub exit_signal: Option<SignalSpec>,
-    /// Symbol to compare strategies on (required if multiple symbols are loaded; optional if only one is loaded)
+    /// Symbol to compare on (required if multiple symbols are loaded; optional if only one is loaded)
     #[serde(default)]
     #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
     pub symbol: Option<String>,
@@ -549,16 +664,67 @@ fn default_sweep_slippage() -> Vec<Slippage> {
     vec![Slippage::Spread]
 }
 
+/// Stock sweep dimensions for `parameter_sweep` in stock mode.
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+pub struct StockSweepDimensions {
+    /// Entry signal variants to sweep (required, min 1)
+    #[garde(length(min = 1))]
+    pub entry_signals: Vec<SignalSpec>,
+    /// Exit signal variants to sweep (optional)
+    #[serde(default)]
+    #[garde(skip)]
+    pub exit_signals: Option<Vec<SignalSpec>>,
+    /// Bar intervals to sweep (e.g. `["daily", "1h"]`)
+    #[serde(default)]
+    #[garde(skip)]
+    pub intervals: Option<Vec<Interval>>,
+    /// Position sides to sweep (e.g. `["Long", "Short"]`)
+    #[serde(default)]
+    #[garde(skip)]
+    pub sides: Option<Vec<crate::engine::types::Side>>,
+    /// Session filters to sweep
+    #[serde(default)]
+    #[garde(skip)]
+    pub session_filters: Option<Vec<crate::engine::types::SessionFilter>>,
+    /// Stop loss values to sweep (e.g. [0.03, 0.05, 0.10])
+    #[serde(default)]
+    #[garde(skip)]
+    pub stop_losses: Option<Vec<f64>>,
+    /// Take profit values to sweep (e.g. [0.05, 0.10, 0.20])
+    #[serde(default)]
+    #[garde(skip)]
+    pub take_profits: Option<Vec<f64>>,
+    /// Slippage models to sweep (default: [Mid])
+    #[serde(default = "default_stock_sweep_slippage")]
+    #[garde(length(min = 1), dive)]
+    pub slippage_models: Vec<Slippage>,
+}
+
+fn default_stock_sweep_slippage() -> Vec<Slippage> {
+    vec![Slippage::Mid]
+}
+
 /// Parameters for the `parameter_sweep` optimization tool.
+///
+/// When `mode` is `"stock"`, use `stock_sweep` instead of `sweep`/`strategies`/`direction`.
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct ParameterSweepParams {
-    /// Strategies to sweep (optional if `direction` is provided)
+    /// Backtest mode: `"stock"` for stock/equity sweeps, `"options"` (default) for options.
+    #[serde(default)]
+    #[garde(skip)]
+    pub mode: Option<String>,
+    /// Strategies to sweep (optional if `direction` is provided). Options mode only.
     #[serde(default)]
     #[garde(dive)]
     pub strategies: Option<Vec<SweepStrategyInput>>,
-    /// Sweep dimensions: DTE targets, exit DTEs, slippage models
+    /// Sweep dimensions: DTE targets, exit DTEs, slippage models. Required for options mode.
+    #[serde(default)]
     #[garde(dive)]
-    pub sweep: SweepDimensionsInput,
+    pub sweep: Option<SweepDimensionsInput>,
+    /// Stock sweep dimensions: signals, intervals, sides, session filters. Required for stock mode.
+    #[serde(default)]
+    #[garde(dive)]
+    pub stock_sweep: Option<StockSweepDimensions>,
     /// Shared simulation parameters
     #[garde(dive)]
     pub sim_params: SweepSimParams,
@@ -566,9 +732,7 @@ pub struct ParameterSweepParams {
     #[serde(default = "default_oos_pct")]
     #[garde(range(min = 0.0, max = 99.99))]
     pub out_of_sample_pct: f64,
-    /// Filter strategies by market direction (bullish, bearish, neutral, volatile).
-    /// If both `strategies` and `direction` provided, filters the list.
-    /// If only `direction`, auto-selects matching strategies.
+    /// Filter strategies by market direction (bullish, bearish, neutral, volatile). Options mode only.
     #[serde(default)]
     #[garde(skip)]
     pub direction: Option<Direction>,
@@ -656,6 +820,16 @@ pub struct SweepSimParams {
     #[serde(default)]
     #[garde(inner(range(min = 0.0)))]
     pub exit_net_delta: Option<f64>,
+
+    // ── Stock-mode fields (ignored when mode is "options" or omitted) ────────
+    /// Start date filter (YYYY-MM-DD). Stock mode only.
+    #[serde(default)]
+    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))]
+    pub start_date: Option<String>,
+    /// End date filter (YYYY-MM-DD). Stock mode only.
+    #[serde(default)]
+    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")), custom(validate_end_date_after_start(&self.start_date)))]
+    pub end_date: Option<String>,
 }
 
 /// Resolve sweep strategies from input params.

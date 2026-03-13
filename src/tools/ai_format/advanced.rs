@@ -151,6 +151,7 @@ pub fn format_sweep(output: SweepOutput) -> SweepResponse {
 
     SweepResponse {
         summary,
+        mode: output.mode,
         combinations_total: output.combinations_total,
         combinations_run: output.combinations_run,
         combinations_skipped: output.combinations_skipped,
@@ -243,6 +244,7 @@ pub fn format_walk_forward(
 
     WalkForwardResponse {
         summary,
+        mode: None,
         windows,
         aggregate: WalkForwardAggregate {
             successful_windows: agg.successful_windows,
@@ -332,9 +334,219 @@ pub fn format_permutation_test(
 
     PermutationTestResponse {
         summary,
+        mode: None,
         assessment,
         key_findings,
         parameters: build_params_summary(params),
+        num_permutations: output.num_permutations,
+        num_completed: output.num_completed,
+        real_metrics: real.metrics.clone(),
+        real_trade_count: real.trade_count,
+        real_total_pnl,
+        metric_tests: output.metric_results,
+        is_significant,
+        suggested_next_steps,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stock-mode format helpers
+// ---------------------------------------------------------------------------
+
+/// Format walk-forward results for stock mode (uses a label string instead of `BacktestParams`).
+pub fn format_walk_forward_stock(
+    result: &WalkForwardResult,
+    label: &str,
+    train_days: i32,
+    test_days: i32,
+    step_days: Option<i32>,
+) -> WalkForwardResponse {
+    let agg = &result.aggregate;
+    let step = step_days.unwrap_or(test_days);
+
+    let attempted_windows = agg.successful_windows + agg.failed_windows;
+    let window_desc = if agg.failed_windows > 0 {
+        format!(
+            "{} of {} attempted windows ({} failed)",
+            agg.successful_windows, attempted_windows, agg.failed_windows
+        )
+    } else {
+        format!("{} windows", agg.successful_windows)
+    };
+
+    let summary = format!(
+        "Stock walk-forward analysis for {label} across {window_desc} (train={train_days}d, test={test_days}d, step={step}d): \
+         avg test Sharpe {:.2} (±{:.2}), {:.0}% profitable windows, total test P&L {}",
+        agg.avg_test_sharpe,
+        agg.std_test_sharpe,
+        agg.pct_profitable_windows,
+        format_pnl(agg.total_test_pnl),
+    );
+
+    let windows: Vec<WalkForwardWindowResult> = result
+        .windows
+        .iter()
+        .map(|w| WalkForwardWindowResult {
+            window_number: w.window_number,
+            train_start: w.train_start.to_string(),
+            train_end: w.train_end.to_string(),
+            test_start: w.test_start.to_string(),
+            test_end: w.test_end.to_string(),
+            train_sharpe: w.train_sharpe,
+            test_sharpe: w.test_sharpe,
+            train_pnl: w.train_pnl,
+            test_pnl: w.test_pnl,
+            train_trades: w.train_trades,
+            test_trades: w.test_trades,
+            train_win_rate: w.train_win_rate,
+            test_win_rate: w.test_win_rate,
+        })
+        .collect();
+
+    let key_findings = walk_forward_findings(agg);
+
+    let mut suggested_next_steps = vec![];
+    if agg.avg_train_test_sharpe_decay > 0.5 {
+        suggested_next_steps
+            .push("Consider simplifying signal parameters to reduce overfitting".to_string());
+    }
+    if agg.pct_profitable_windows < 50.0 {
+        suggested_next_steps.push("Try different signals or parameters".to_string());
+    }
+    suggested_next_steps.push(
+        "Use `parameter_sweep` with `mode: \"stock\"` to find optimal signal parameters, then validate with `walk_forward`"
+            .to_string(),
+    );
+
+    WalkForwardResponse {
+        summary,
+        mode: Some("stock".to_string()),
+        windows,
+        aggregate: WalkForwardAggregate {
+            successful_windows: agg.successful_windows,
+            failed_windows: agg.failed_windows,
+            avg_test_sharpe: agg.avg_test_sharpe,
+            std_test_sharpe: agg.std_test_sharpe,
+            avg_test_pnl: agg.avg_test_pnl,
+            pct_profitable_windows: agg.pct_profitable_windows,
+            avg_train_test_sharpe_decay: agg.avg_train_test_sharpe_decay,
+            total_test_pnl: agg.total_test_pnl,
+        },
+        key_findings,
+        suggested_next_steps,
+    }
+}
+
+/// Format permutation test results for stock mode.
+#[allow(clippy::too_many_lines)]
+pub fn format_permutation_test_stock(
+    output: PermutationOutput,
+    label: &str,
+) -> PermutationTestResponse {
+    let real = &output.real_result;
+    let real_total_pnl: f64 = real.trade_log.iter().map(|t| t.pnl).sum();
+
+    let sharpe_p = output
+        .metric_results
+        .iter()
+        .find(|m| m.metric_name == "sharpe")
+        .map_or(1.0, |m| m.p_value);
+    let pnl_p = output
+        .metric_results
+        .iter()
+        .find(|m| m.metric_name == "total_pnl")
+        .map_or(1.0, |m| m.p_value);
+    let is_significant = sharpe_p < P_SIGNIFICANT && pnl_p < P_SIGNIFICANT;
+
+    let sig_label = if is_significant {
+        "statistically significant"
+    } else {
+        "NOT statistically significant"
+    };
+    let pnl_str = format_pnl(real_total_pnl);
+
+    let summary = format!(
+        "Stock permutation test for {label} ({} permutations, {} completed): results are {sig_label}. \
+         Real Sharpe {:.2} (p={sharpe_p:.3}), real PnL {pnl_str} (p={pnl_p:.3}).",
+        output.num_permutations, output.num_completed, real.metrics.sharpe,
+    );
+
+    let assessment = if is_significant {
+        let sig = interpret_p_value(sharpe_p.max(pnl_p));
+        format!("The strategy shows a {sig} edge over random entry timing (Sharpe p={sharpe_p:.3}, PnL p={pnl_p:.3})")
+    } else {
+        format!(
+            "The strategy does NOT show a significant edge over random entry timing \
+             (Sharpe p={sharpe_p:.3}, PnL p={pnl_p:.3}). Results could be due to chance."
+        )
+    };
+
+    let key_findings: Vec<String> = output
+        .metric_results
+        .iter()
+        .map(|m| {
+            let sig = interpret_p_value(m.p_value);
+            format!(
+                "{}: real={:.4}, permuted mean={:.4} (±{:.4}), p={:.3} ({sig})",
+                m.metric_name, m.real_value, m.mean_permuted, m.std_permuted, m.p_value,
+            )
+        })
+        .collect();
+
+    let suggested_next_steps = if is_significant {
+        vec![
+            format!(
+                "[NEXT] Run parameter_sweep with mode: \"stock\" to optimize {label} parameters further"
+            ),
+            "[VALIDATE] Run with more permutations (500-1000) for tighter p-value estimates"
+                .to_string(),
+        ]
+    } else {
+        vec![
+            "[ITERATE] Try different entry/exit signals to find a significant edge".to_string(),
+            "[COMPARE] Use compare_strategies with mode: \"stock\" to test alternative signal configs".to_string(),
+        ]
+    };
+
+    // Build a minimal params summary for stock mode
+    let parameters = crate::tools::response_types::BacktestParamsSummary {
+        display_name: label.to_string(),
+        strategy: "stock".to_string(),
+        leg_deltas: vec![],
+        entry_dte: crate::engine::types::DteRange {
+            target: 0,
+            min: 0,
+            max: 0,
+        },
+        exit_dte: 0,
+        slippage: crate::engine::types::Slippage::Mid,
+        commission: None,
+        capital: 0.0,
+        quantity: 0,
+        multiplier: 1,
+        max_positions: 0,
+        stop_loss: None,
+        take_profit: None,
+        max_hold_days: None,
+        selector: crate::engine::types::TradeSelector::default(),
+        entry_signal: None,
+        exit_signal: None,
+        min_net_premium: None,
+        max_net_premium: None,
+        min_net_delta: None,
+        max_net_delta: None,
+        min_days_between_entries: None,
+        expiration_filter: crate::engine::types::ExpirationFilter::default(),
+        exit_net_delta: None,
+        sizing: None,
+    };
+
+    PermutationTestResponse {
+        summary,
+        mode: Some("stock".to_string()),
+        assessment,
+        key_findings,
+        parameters,
         num_permutations: output.num_permutations,
         num_completed: output.num_completed,
         real_metrics: real.metrics.clone(),
@@ -423,6 +635,7 @@ mod tests {
         ];
 
         let output = SweepOutput {
+            mode: None,
             combinations_total: 5,
             combinations_run: 2,
             combinations_skipped: 3,
@@ -457,6 +670,7 @@ mod tests {
     #[test]
     fn format_sweep_no_results() {
         let output = SweepOutput {
+            mode: None,
             combinations_total: 10,
             combinations_run: 0,
             combinations_skipped: 10,
@@ -483,6 +697,7 @@ mod tests {
         use crate::engine::sweep::OosResult;
 
         let output = SweepOutput {
+            mode: None,
             combinations_total: 2,
             combinations_run: 1,
             combinations_skipped: 1,
