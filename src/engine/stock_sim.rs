@@ -138,7 +138,11 @@ pub fn run_stock_backtest(
                 }
                 let vol = super::sizing::vol_lookback(cfg).and_then(|lookback| {
                     let closes: Vec<f64> = bars[..=bar_idx].iter().map(|b| b.close).collect();
-                    super::sizing::compute_realized_vol(&closes, lookback, params.interval.bars_per_year())
+                    super::sizing::compute_realized_vol(
+                        &closes,
+                        lookback,
+                        params.interval.bars_per_year(),
+                    )
                 });
                 super::sizing::compute_quantity(
                     cfg,
@@ -209,9 +213,13 @@ pub fn run_stock_backtest(
     let total_pnl: f64 = trade_log.iter().map(|t| t.pnl).sum();
     let trade_count = trade_log.len();
 
-    let perf_metrics =
-        metrics::calculate_metrics(&equity_curve, &trade_log, params.capital, params.interval.bars_per_year())
-            .unwrap_or(metrics::DEFAULT_METRICS);
+    let perf_metrics = metrics::calculate_metrics(
+        &equity_curve,
+        &trade_log,
+        params.capital,
+        params.interval.bars_per_year(),
+    )
+    .unwrap_or(metrics::DEFAULT_METRICS);
 
     // Build warnings for diagnostic feedback
     let mut warnings = Vec::new();
@@ -509,19 +517,11 @@ fn resample_datetime(
             Interval::Min1 => unreachable!(), // handled by passthrough
             Interval::Min5 => {
                 let trunc_min = (dt.time().minute() / 5) * 5;
-                (
-                    dt.date().num_days_from_ce(),
-                    dt.time().hour(),
-                    trunc_min,
-                )
+                (dt.date().num_days_from_ce(), dt.time().hour(), trunc_min)
             }
             Interval::Min30 => {
                 let trunc_min = (dt.time().minute() / 30) * 30;
-                (
-                    dt.date().num_days_from_ce(),
-                    dt.time().hour(),
-                    trunc_min,
-                )
+                (dt.date().num_days_from_ce(), dt.time().hour(), trunc_min)
             }
             Interval::Hour1 => (dt.date().num_days_from_ce(), dt.time().hour(), 0),
             // Daily+: group by date/week/month
@@ -621,14 +621,13 @@ fn resample_datetime(
         }
         columns.push(Series::new("volume".into(), &out_volumes).into());
 
-        let result = DataFrame::new(groups.len(), columns)
-            .map_err(|e| anyhow::anyhow!("DataFrame: {e}"))?;
+        let result =
+            DataFrame::new(groups.len(), columns).map_err(|e| anyhow::anyhow!("DataFrame: {e}"))?;
         Ok(result)
     } else {
         // Output "date" (Date) column for Daily/Weekly/Monthly targets
         let dates: Vec<NaiveDate> = out_datetimes.iter().map(NaiveDateTime::date).collect();
-        let date_col =
-            DateChunked::from_naive_date(PlSmallStr::from("date"), dates).into_column();
+        let date_col = DateChunked::from_naive_date(PlSmallStr::from("date"), dates).into_column();
 
         let mut columns = vec![
             date_col,
@@ -642,8 +641,8 @@ fn resample_datetime(
         }
         columns.push(Series::new("volume".into(), &out_volumes).into());
 
-        let result = DataFrame::new(groups.len(), columns)
-            .map_err(|e| anyhow::anyhow!("DataFrame: {e}"))?;
+        let result =
+            DataFrame::new(groups.len(), columns).map_err(|e| anyhow::anyhow!("DataFrame: {e}"))?;
         Ok(result)
     }
 }
@@ -818,8 +817,7 @@ pub fn load_ohlcv_df(
         "date"
     };
 
-    let mut lazy = lazy_base
-        .filter(col("open").gt(lit(0.0)).and(col("close").gt(lit(0.0))));
+    let mut lazy = lazy_base.filter(col("open").gt(lit(0.0)).and(col("close").gt(lit(0.0))));
 
     if let Some(start) = start_date {
         if date_col_name == "datetime" {
@@ -833,11 +831,7 @@ pub fn load_ohlcv_df(
     if let Some(end) = end_date {
         if date_col_name == "datetime" {
             // Use next day at midnight with < to include all bars on the end date
-            let end_next = end
-                .succ_opt()
-                .unwrap_or(end)
-                .and_hms_opt(0, 0, 0)
-                .unwrap();
+            let end_next = end.succ_opt().unwrap_or(end).and_hms_opt(0, 0, 0).unwrap();
             lazy = lazy.filter(col(date_col_name).lt(lit(end_next)));
         } else {
             lazy = lazy.filter(col(date_col_name).lt_eq(lit(end)));
@@ -1664,7 +1658,9 @@ mod tests {
         .unwrap()
         .hstack(&[dt_series.into()])
         .unwrap()
-        .select(["datetime", "open", "high", "low", "close", "adjclose", "volume"])
+        .select([
+            "datetime", "open", "high", "low", "close", "adjclose", "volume",
+        ])
         .unwrap();
 
         df
@@ -1789,10 +1785,13 @@ mod tests {
 
     fn load_fixture_df() -> polars::prelude::DataFrame {
         use polars::prelude::*;
-        LazyFrame::scan_parquet("tests/fixtures/SPY_1min_sample.parquet".into(), ScanArgsParquet::default())
-            .expect("scan parquet")
-            .collect()
-            .expect("collect")
+        LazyFrame::scan_parquet(
+            "tests/fixtures/SPY_1min_sample.parquet".into(),
+            ScanArgsParquet::default(),
+        )
+        .expect("scan parquet")
+        .collect()
+        .expect("collect")
     }
 
     #[test]
@@ -1801,7 +1800,10 @@ mod tests {
         let bars = bars_from_df(&df).unwrap();
         assert!(bars.len() > 1000, "expected many bars, got {}", bars.len());
         // Bars should have sub-day precision
-        assert_ne!(bars[0].datetime.time(), chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+        assert_ne!(
+            bars[0].datetime.time(),
+            chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()
+        );
     }
 
     #[test]
@@ -1809,8 +1811,11 @@ mod tests {
         let df = load_fixture_df();
         let result = resample_ohlcv(&df, Interval::Min5).unwrap();
         // 10269 1-min bars → ~2054 5-min bars
-        assert!(result.height() > 2000 && result.height() < 2200,
-            "unexpected 5m bar count: {}", result.height());
+        assert!(
+            result.height() > 2000 && result.height() < 2200,
+            "unexpected 5m bar count: {}",
+            result.height()
+        );
         assert!(result.column("datetime").is_ok());
     }
 
@@ -1818,8 +1823,11 @@ mod tests {
     fn fixture_resample_1m_to_hourly() {
         let df = load_fixture_df();
         let result = resample_ohlcv(&df, Interval::Hour1).unwrap();
-        assert!(result.height() > 100 && result.height() < 200,
-            "unexpected hourly bar count: {}", result.height());
+        assert!(
+            result.height() > 100 && result.height() < 200,
+            "unexpected hourly bar count: {}",
+            result.height()
+        );
         assert!(result.column("datetime").is_ok());
     }
 
@@ -1828,7 +1836,11 @@ mod tests {
         let df = load_fixture_df();
         let result = resample_ohlcv(&df, Interval::Daily).unwrap();
         // Multi-day dataset → several daily bars
-        assert!(result.height() >= 2, "expected multiple daily bars, got {}", result.height());
+        assert!(
+            result.height() >= 2,
+            "expected multiple daily bars, got {}",
+            result.height()
+        );
         assert!(result.column("date").is_ok());
 
         // OHLCV invariants: high >= open, high >= close, low <= open, low <= close
@@ -1838,8 +1850,10 @@ mod tests {
         let closes = result.column("close").unwrap().f64().unwrap();
         for i in 0..result.height() {
             let (o, h, l, c) = (
-                opens.get(i).unwrap(), highs.get(i).unwrap(),
-                lows.get(i).unwrap(), closes.get(i).unwrap(),
+                opens.get(i).unwrap(),
+                highs.get(i).unwrap(),
+                lows.get(i).unwrap(),
+                closes.get(i).unwrap(),
             );
             assert!(h >= o && h >= c, "high < open or close at row {i}");
             assert!(l <= o && l <= c, "low > open or close at row {i}");
@@ -1853,7 +1867,10 @@ mod tests {
         let bars = bars_from_df(&daily).unwrap();
         assert!(bars.len() >= 2);
         // Daily bars should be at midnight
-        assert_eq!(bars[0].datetime.time(), chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+        assert_eq!(
+            bars[0].datetime.time(),
+            chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()
+        );
     }
 
     #[test]
@@ -1864,8 +1881,22 @@ mod tests {
         assert!(result.column("date").is_ok());
 
         // Volume should sum correctly — total should match source
-        let src_vol: i64 = df.column("volume").unwrap().i64().unwrap().into_iter().flatten().sum();
-        let dst_vol: i64 = result.column("volume").unwrap().i64().unwrap().into_iter().flatten().sum();
+        let src_vol: i64 = df
+            .column("volume")
+            .unwrap()
+            .i64()
+            .unwrap()
+            .into_iter()
+            .flatten()
+            .sum();
+        let dst_vol: i64 = result
+            .column("volume")
+            .unwrap()
+            .i64()
+            .unwrap()
+            .into_iter()
+            .flatten()
+            .sum();
         assert_eq!(src_vol, dst_vol, "volume mismatch after weekly resample");
     }
 
@@ -1875,7 +1906,10 @@ mod tests {
         let mut bars = bars_from_df(&df).unwrap();
         let before = bars.len();
         let (start, end) = crate::engine::types::SessionFilter::Premarket.time_range();
-        bars.retain(|b| { let t = b.datetime.time(); t >= start && t < end });
+        bars.retain(|b| {
+            let t = b.datetime.time();
+            t >= start && t < end
+        });
         // Premarket = 04:00-09:30 — fixture starts at 04:00 so should have premarket bars
         assert!(!bars.is_empty(), "no premarket bars found");
         assert!(bars.len() < before, "filter should reduce bar count");

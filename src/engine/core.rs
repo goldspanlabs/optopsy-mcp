@@ -40,7 +40,10 @@ fn load_ohlcv_closes(
 
     // Intraday path: "datetime" Datetime column → extract date portion.
     // Later entries (sorted chronologically) overwrite earlier ones, giving last-close-per-day.
-    if let Ok(dt_ca) = df.column("datetime").and_then(|c| Ok(c.datetime()?.clone())) {
+    if let Ok(dt_ca) = df
+        .column("datetime")
+        .and_then(|c| Ok(c.datetime()?.clone()))
+    {
         let micros_per_sec: i64 = match dt_ca.time_unit() {
             polars::prelude::TimeUnit::Microseconds => 1_000_000,
             polars::prelude::TimeUnit::Milliseconds => 1_000,
@@ -69,8 +72,7 @@ fn load_ohlcv_closes(
             let Some(days) = dates.phys.get(i) else {
                 continue;
             };
-            let Some(date) =
-                NaiveDate::from_num_days_from_ce_opt(days + EPOCH_DAYS_CE_OFFSET)
+            let Some(date) = NaiveDate::from_num_days_from_ce_opt(days + EPOCH_DAYS_CE_OFFSET)
             else {
                 continue;
             };
@@ -335,7 +337,8 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
         run_event_loop_path(df, params, &strategy_def, &entry_dates, &exit_dates)?
     };
 
-    let perf_metrics = metrics::calculate_metrics(&equity_curve, &trade_log, params.capital, 252.0)?;
+    let perf_metrics =
+        metrics::calculate_metrics(&equity_curve, &trade_log, params.capital, 252.0)?;
 
     let total_pnl: f64 = trade_log.iter().map(|t| t.pnl).sum();
     tracing::info!(

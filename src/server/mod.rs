@@ -364,7 +364,10 @@ fn load_underlying_prices(path: &std::path::Path) -> Vec<tools::response_types::
 
     // Intraday path: "datetime" Datetime column
     if has_datetime {
-        let Ok(dt_ca) = df.column("datetime").and_then(|c| Ok(c.datetime()?.clone())) else {
+        let Ok(dt_ca) = df
+            .column("datetime")
+            .and_then(|c| Ok(c.datetime()?.clone()))
+        else {
             return vec![];
         };
         let micros_per_sec: i64 = match dt_ca.time_unit() {
