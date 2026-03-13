@@ -292,14 +292,18 @@ fn check_exit(
         }
     }
 
-    // Max hold days
-    if let Some(max_days) = params.max_hold_days {
-        let days_held = (bar.datetime - pos.entry_datetime).num_days();
-        if days_held >= i64::from(max_days) {
-            return Some(ExitDecision {
-                exit_type: ExitType::MaxHold,
-                fill_price: None,
-            });
+    // Max hold days — only applicable to daily (or coarser) intervals.
+    // For intraday data, time-based exits should use exit signals instead.
+    if !params.interval.is_intraday() {
+        if let Some(max_days) = params.max_hold_days {
+            let days_held =
+                (bar.datetime.date() - pos.entry_datetime.date()).num_days();
+            if days_held >= i64::from(max_days) {
+                return Some(ExitDecision {
+                    exit_type: ExitType::MaxHold,
+                    fill_price: None,
+                });
+            }
         }
     }
 
@@ -371,7 +375,7 @@ fn close_position(
         .map_or(0.0, |c| c.calculate(pos.quantity));
     let pnl = pnl_before_commission - pos.entry_commission - exit_commission;
 
-    let days_held = (bar.datetime - pos.entry_datetime).num_days();
+    let days_held = (bar.datetime.date() - pos.entry_datetime.date()).num_days();
 
     let entry_cost = pos.entry_price * qty * direction;
     let exit_proceeds = exit_price * qty * direction;
@@ -552,18 +556,9 @@ fn resample_datetime(
         .sort(["datetime"], SortMultipleOptions::default())
         .collect()?;
 
-    let dt_col = df
+    let dt_col_ref = df
         .column("datetime")
-        .map_err(|e| anyhow::anyhow!("Missing 'datetime' column: {e}"))?
-        .datetime()
-        .map_err(|e| anyhow::anyhow!("'datetime' not Datetime type: {e}"))?;
-
-    let time_unit = dt_col.time_unit();
-    let micros_per_sec: i64 = match time_unit {
-        TimeUnit::Microseconds => 1_000_000,
-        TimeUnit::Milliseconds => 1_000,
-        TimeUnit::Nanoseconds => 1_000_000_000,
-    };
+        .map_err(|e| anyhow::anyhow!("Missing 'datetime' column: {e}"))?;
 
     let opens = df.column("open")?.f64()?;
     let highs = df.column("high")?.f64()?;
@@ -581,19 +576,9 @@ fn resample_datetime(
     let n = df.height();
     let mut datetimes: Vec<NaiveDateTime> = Vec::with_capacity(n);
     for i in 0..n {
-        let raw = dt_col.phys.get(i).ok_or_else(|| {
-            anyhow::anyhow!("NULL datetime at row {i}; cannot resample with missing datetimes")
-        })?;
-        let secs = raw.div_euclid(micros_per_sec);
-        let subsec = raw.rem_euclid(micros_per_sec);
-        let nsecs = match time_unit {
-            TimeUnit::Microseconds => (subsec * 1_000) as u32,
-            TimeUnit::Milliseconds => (subsec * 1_000_000) as u32,
-            TimeUnit::Nanoseconds => subsec as u32,
-        };
-        let chrono_dt = chrono::DateTime::from_timestamp(secs, nsecs)
-            .ok_or_else(|| anyhow::anyhow!("Invalid timestamp at row {i}"))?;
-        datetimes.push(chrono_dt.naive_utc());
+        datetimes.push(crate::engine::price_table::extract_datetime_from_column(
+            dt_col_ref, i,
+        )?);
     }
 
     // Build group keys by truncating to interval boundary.
@@ -648,7 +633,8 @@ fn resample_datetime(
 
     for (gi, g) in groups.iter().enumerate() {
         let last = g.end - 1;
-        out_datetimes.push(datetimes[last]);
+        // Use the first bar's timestamp as the candle open time (standard convention)
+        out_datetimes.push(datetimes[g.start]);
         out_opens.push(
             opens
                 .get(g.start)
@@ -659,15 +645,25 @@ fn resample_datetime(
         let mut min_low = f64::INFINITY;
         let mut vol_sum: i64 = 0;
         for j in g.start..g.end {
-            let h = highs.get(j).unwrap_or(f64::NAN);
-            let l = lows.get(j).unwrap_or(f64::NAN);
-            if h > max_high {
-                max_high = h;
+            if let Some(h) = highs.get(j).filter(|v| v.is_finite()) {
+                if h > max_high {
+                    max_high = h;
+                }
             }
-            if l < min_low {
-                min_low = l;
+            if let Some(l) = lows.get(j).filter(|v| v.is_finite()) {
+                if l < min_low {
+                    min_low = l;
+                }
             }
             vol_sum += volumes.get(j).unwrap_or(0);
+        }
+        // If all highs/lows were NaN/NULL, fall back to the group's open price
+        let fallback = opens.get(g.start).unwrap_or(0.0);
+        if max_high == f64::NEG_INFINITY {
+            max_high = fallback;
+        }
+        if min_low == f64::INFINITY {
+            min_low = fallback;
         }
         out_highs.push(max_high);
         out_lows.push(min_low);
@@ -810,6 +806,10 @@ fn resample_date(
 
     for (gi, g) in groups.iter().enumerate() {
         let last = g.end - 1;
+        // Use the last trading day's date for weekly/monthly candles (period-end convention).
+        // This differs from resample_datetime which uses the first bar's timestamp (candle
+        // open time), because daily→weekly/monthly candles conventionally carry the date of
+        // the last bar whose close price they represent.
         out_dates.push(
             dates
                 .phys
@@ -826,15 +826,24 @@ fn resample_date(
         let mut min_low = f64::INFINITY;
         let mut vol_sum: i64 = 0;
         for j in g.start..g.end {
-            let h = highs.get(j).unwrap_or(f64::NAN);
-            let l = lows.get(j).unwrap_or(f64::NAN);
-            if h > max_high {
-                max_high = h;
+            if let Some(h) = highs.get(j).filter(|v| v.is_finite()) {
+                if h > max_high {
+                    max_high = h;
+                }
             }
-            if l < min_low {
-                min_low = l;
+            if let Some(l) = lows.get(j).filter(|v| v.is_finite()) {
+                if l < min_low {
+                    min_low = l;
+                }
             }
             vol_sum += volumes.get(j).unwrap_or(0);
+        }
+        let fallback = opens.get(g.start).unwrap_or(0.0);
+        if max_high == f64::NEG_INFINITY {
+            max_high = fallback;
+        }
+        if min_low == f64::INFINITY {
+            min_low = fallback;
         }
         out_highs.push(max_high);
         out_lows.push(min_low);
@@ -970,49 +979,35 @@ pub fn bars_from_df(df: &polars::prelude::DataFrame) -> Result<Vec<Bar>> {
     let epoch_offset = super::types::EPOCH_DAYS_CE_OFFSET;
     let mut bars = Vec::with_capacity(df.height());
 
-    // Intraday path: "datetime" column (Datetime type with microsecond timestamps)
-    if let Ok(dt_col) = df.column("datetime") {
-        if let Ok(dt_ca) = dt_col.datetime() {
-            let micros_per_sec: i64 = match dt_ca.time_unit() {
-                polars::prelude::TimeUnit::Microseconds => 1_000_000,
-                polars::prelude::TimeUnit::Milliseconds => 1_000,
-                polars::prelude::TimeUnit::Nanoseconds => 1_000_000_000,
+    // Intraday path: "datetime" column (Datetime type)
+    let date_col_name = detect_date_col(df);
+    if date_col_name == "datetime" {
+        let dt_col_ref = df.column("datetime")?;
+        for i in 0..df.height() {
+            let Ok(datetime) =
+                crate::engine::price_table::extract_datetime_from_column(dt_col_ref, i)
+            else {
+                continue;
             };
-            for i in 0..df.height() {
-                let Some(raw) = dt_ca.phys.get(i) else {
-                    continue;
-                };
-                let secs = raw.div_euclid(micros_per_sec);
-                let subsec = raw.rem_euclid(micros_per_sec);
-                let nsecs = match dt_ca.time_unit() {
-                    polars::prelude::TimeUnit::Microseconds => (subsec * 1_000) as u32,
-                    polars::prelude::TimeUnit::Milliseconds => (subsec * 1_000_000) as u32,
-                    polars::prelude::TimeUnit::Nanoseconds => subsec as u32,
-                };
-                let Some(chrono_dt) = chrono::DateTime::from_timestamp(secs, nsecs) else {
-                    continue;
-                };
-                let datetime = chrono_dt.naive_utc();
 
-                let open = opens.get(i).unwrap_or(0.0);
-                let high = highs.get(i).unwrap_or(0.0);
-                let low = lows.get(i).unwrap_or(0.0);
-                let close = closes.get(i).unwrap_or(0.0);
+            let open = opens.get(i).unwrap_or(0.0);
+            let high = highs.get(i).unwrap_or(0.0);
+            let low = lows.get(i).unwrap_or(0.0);
+            let close = closes.get(i).unwrap_or(0.0);
 
-                if open <= 0.0 || close <= 0.0 {
-                    continue;
-                }
-
-                bars.push(Bar {
-                    datetime,
-                    open,
-                    high,
-                    low,
-                    close,
-                });
+            if open <= 0.0 || close <= 0.0 {
+                continue;
             }
-            return Ok(bars);
+
+            bars.push(Bar {
+                datetime,
+                open,
+                high,
+                low,
+                close,
+            });
         }
+        return Ok(bars);
     }
 
     // Daily path: "date" column (Date type) → promote to midnight NaiveDateTime
@@ -2047,5 +2042,334 @@ mod tests {
         let df = load_fixture_df();
         let filtered = filter_session(&df, None).unwrap();
         assert_eq!(filtered.height(), df.height());
+    }
+
+    // ── AfterHours + ExtendedHours session filter tests ─────────────────
+
+    #[test]
+    fn filter_session_after_hours() {
+        let df = load_fixture_df();
+        let before = df.height();
+        let filtered = filter_session(
+            &df,
+            Some(&crate::engine::types::SessionFilter::AfterHours),
+        )
+        .unwrap();
+
+        // After hours = 16:00-20:00
+        if filtered.height() > 0 {
+            assert!(filtered.height() < before);
+            let bars = bars_from_df(&filtered).unwrap();
+            let start = chrono::NaiveTime::from_hms_opt(16, 0, 0).unwrap();
+            let end = chrono::NaiveTime::from_hms_opt(20, 0, 0).unwrap();
+            for b in &bars {
+                let t = b.datetime.time();
+                assert!(
+                    t >= start && t < end,
+                    "bar at {t} outside after hours [16:00, 20:00)"
+                );
+            }
+        }
+        // If no after-hours bars in fixture, that's OK — just verify no crash
+    }
+
+    #[test]
+    fn filter_session_extended_hours() {
+        let df = load_fixture_df();
+        let filtered = filter_session(
+            &df,
+            Some(&crate::engine::types::SessionFilter::ExtendedHours),
+        )
+        .unwrap();
+
+        // Extended = 04:00-20:00 — should include nearly all bars in fixture
+        assert!(filtered.height() > 0);
+        let bars = bars_from_df(&filtered).unwrap();
+        let start = chrono::NaiveTime::from_hms_opt(4, 0, 0).unwrap();
+        let end = chrono::NaiveTime::from_hms_opt(20, 0, 0).unwrap();
+        for b in &bars {
+            let t = b.datetime.time();
+            assert!(
+                t >= start && t < end,
+                "bar at {t} outside extended hours [04:00, 20:00)"
+            );
+        }
+    }
+
+    #[test]
+    fn filter_session_on_daily_data_is_noop() {
+        use polars::prelude::*;
+        let dates = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 3).unwrap(),
+        ];
+        let date_col =
+            DateChunked::from_naive_date(PlSmallStr::from("date"), dates).into_column();
+        let df = polars::prelude::df! {
+            "open" => &[100.0, 101.0],
+            "high" => &[102.0, 103.0],
+            "low" => &[99.0, 100.0],
+            "close" => &[101.0, 102.0],
+            "volume" => &[1000_i64, 1100],
+        }
+        .unwrap()
+        .hstack(&[date_col])
+        .unwrap();
+
+        // Session filter on daily (no "datetime" column) should be a no-op
+        let filtered = filter_session(
+            &df,
+            Some(&crate::engine::types::SessionFilter::RegularHours),
+        )
+        .unwrap();
+        assert_eq!(filtered.height(), df.height());
+    }
+
+    // ── detect_date_col tests ───────────────────────────────────────────
+
+    #[test]
+    fn detect_date_col_with_datetime() {
+        use polars::prelude::*;
+        let datetimes = vec![chrono::NaiveDateTime::parse_from_str(
+            "2024-01-02 09:30:00",
+            "%Y-%m-%d %H:%M:%S",
+        )
+        .unwrap()];
+        let dt_chunked: DatetimeChunked =
+            DatetimeChunked::new(PlSmallStr::from("datetime"), &datetimes);
+        let df = DataFrame::new(
+            1,
+            vec![
+                dt_chunked.into_series().into(),
+                Series::new("close".into(), &[100.0]).into(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(detect_date_col(&df), "datetime");
+    }
+
+    #[test]
+    fn detect_date_col_with_date_only() {
+        use polars::prelude::*;
+        let dates = vec![NaiveDate::from_ymd_opt(2024, 1, 2).unwrap()];
+        let date_col =
+            DateChunked::from_naive_date(PlSmallStr::from("date"), dates).into_column();
+        let df = DataFrame::new(
+            1,
+            vec![
+                date_col,
+                Series::new("close".into(), &[100.0]).into(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(detect_date_col(&df), "date");
+    }
+
+    #[test]
+    fn detect_date_col_prefers_datetime_over_date() {
+        use polars::prelude::*;
+        // DataFrame with BOTH "date" and "datetime" columns
+        let dates = vec![NaiveDate::from_ymd_opt(2024, 1, 2).unwrap()];
+        let date_col =
+            DateChunked::from_naive_date(PlSmallStr::from("date"), dates).into_column();
+        let datetimes = vec![chrono::NaiveDateTime::parse_from_str(
+            "2024-01-02 09:30:00",
+            "%Y-%m-%d %H:%M:%S",
+        )
+        .unwrap()];
+        let dt_chunked: DatetimeChunked =
+            DatetimeChunked::new(PlSmallStr::from("datetime"), &datetimes);
+        let df = DataFrame::new(
+            1,
+            vec![
+                date_col,
+                dt_chunked.into_series().into(),
+                Series::new("close".into(), &[100.0]).into(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(detect_date_col(&df), "datetime");
+    }
+
+    #[test]
+    fn detect_date_col_string_datetime_column_falls_back_to_date() {
+        use polars::prelude::*;
+        // A "datetime" column that is String type, not Datetime — should fall back to "date"
+        let dates = vec![NaiveDate::from_ymd_opt(2024, 1, 2).unwrap()];
+        let date_col =
+            DateChunked::from_naive_date(PlSmallStr::from("date"), dates).into_column();
+        let df = DataFrame::new(
+            1,
+            vec![
+                date_col,
+                Series::new("datetime".into(), &["2024-01-02 09:30:00"]).into(),
+                Series::new("close".into(), &[100.0]).into(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(detect_date_col(&df), "date");
+    }
+
+    // ── Session filter + resampling combo ───────────────────────────────
+
+    #[test]
+    fn filter_session_then_resample_to_5m() {
+        let df = load_fixture_df();
+        // Filter to regular hours first
+        let filtered = filter_session(
+            &df,
+            Some(&crate::engine::types::SessionFilter::RegularHours),
+        )
+        .unwrap();
+        assert!(filtered.height() > 0);
+
+        // Resample filtered data to 5-min
+        let resampled = resample_ohlcv(&filtered, Interval::Min5).unwrap();
+        assert!(resampled.height() > 0);
+
+        // All resampled bars should be within regular hours
+        let bars = bars_from_df(&resampled).unwrap();
+        let start = chrono::NaiveTime::from_hms_opt(9, 30, 0).unwrap();
+        let end = chrono::NaiveTime::from_hms_opt(16, 0, 0).unwrap();
+        for b in &bars {
+            let t = b.datetime.time();
+            assert!(
+                t >= start && t < end,
+                "resampled bar at {t} outside regular hours"
+            );
+        }
+    }
+
+    #[test]
+    fn filter_session_then_resample_to_hourly() {
+        let df = load_fixture_df();
+        let filtered = filter_session(
+            &df,
+            Some(&crate::engine::types::SessionFilter::RegularHours),
+        )
+        .unwrap();
+
+        let resampled = resample_ohlcv(&filtered, Interval::Hour1).unwrap();
+        assert!(resampled.height() > 0);
+
+        // Volume should be preserved: filtered sum == resampled sum
+        let filtered_vol: i64 = volume_as_i64(&filtered)
+            .unwrap()
+            .into_iter()
+            .flatten()
+            .sum();
+        let resampled_vol: i64 = filtered
+            .column("volume")
+            .ok()
+            .and_then(|_| volume_as_i64(&resampled).ok())
+            .map(|v| v.into_iter().flatten().sum())
+            .unwrap_or(0);
+        assert_eq!(filtered_vol, resampled_vol, "volume mismatch after session filter + resample");
+    }
+
+    // ── Intraday position sizing ────────────────────────────────────────
+
+    #[test]
+    fn intraday_sizing_uses_correct_bars_per_year() {
+        // Verify that volatility target sizing with intraday bars produces a different
+        // quantity than with daily bars, due to different annualization factor.
+        use super::super::sizing;
+
+        // Constant returns: daily vs 5-min should both get None vol (constant),
+        // so both fall back to fixed quantity — this verifies the plumbing doesn't crash.
+        let closes = vec![100.0; 100];
+        let vol_daily = sizing::compute_realized_vol(&closes, 30, Interval::Daily.bars_per_year());
+        let vol_5m = sizing::compute_realized_vol(&closes, 30, Interval::Min5.bars_per_year());
+        // Both should be zero/None for constant prices
+        assert!(vol_daily.is_none() || vol_daily.unwrap().abs() < 1e-10);
+        assert!(vol_5m.is_none() || vol_5m.unwrap().abs() < 1e-10);
+    }
+
+    #[test]
+    fn intraday_vol_target_sizing_scales_with_bars_per_year() {
+        use super::super::sizing;
+
+        // Varying prices: realized vol should differ based on annualization factor
+        let closes: Vec<f64> = (0..100)
+            .map(|i| 100.0 + (f64::from(i) * 0.1).sin() * 2.0)
+            .collect();
+
+        let vol_daily = sizing::compute_realized_vol(&closes, 60, Interval::Daily.bars_per_year());
+        let vol_5m = sizing::compute_realized_vol(&closes, 60, Interval::Min5.bars_per_year());
+
+        // Both should be Some and positive
+        assert!(vol_daily.is_some());
+        assert!(vol_5m.is_some());
+
+        // 5-min annualized vol should be much larger than daily annualized vol
+        // because bars_per_year(Min5) = 252*78 >> 252
+        let vd = vol_daily.unwrap();
+        let v5 = vol_5m.unwrap();
+        assert!(
+            v5 > vd,
+            "5-min annualized vol ({v5}) should exceed daily ({vd})"
+        );
+    }
+
+    #[test]
+    fn intraday_backtest_with_sizing_doesnt_crash() {
+        use super::super::types::{PositionSizing, SizingConfig, SizingConstraints};
+
+        // Build a few intraday bars
+        let bars = vec![
+            Bar {
+                datetime: chrono::NaiveDateTime::parse_from_str(
+                    "2024-01-02 09:30:00",
+                    "%Y-%m-%d %H:%M:%S",
+                )
+                .unwrap(),
+                open: 100.0,
+                high: 101.0,
+                low: 99.0,
+                close: 100.5,
+            },
+            Bar {
+                datetime: chrono::NaiveDateTime::parse_from_str(
+                    "2024-01-02 09:31:00",
+                    "%Y-%m-%d %H:%M:%S",
+                )
+                .unwrap(),
+                open: 100.5,
+                high: 102.0,
+                low: 100.0,
+                close: 101.5,
+            },
+            Bar {
+                datetime: chrono::NaiveDateTime::parse_from_str(
+                    "2024-01-02 09:32:00",
+                    "%Y-%m-%d %H:%M:%S",
+                )
+                .unwrap(),
+                open: 101.5,
+                high: 103.0,
+                low: 101.0,
+                close: 102.0,
+            },
+        ];
+
+        let mut params = default_params();
+        params.interval = Interval::Min1;
+        params.stop_loss = Some(0.05);
+        params.sizing = Some(SizingConfig {
+            method: PositionSizing::FixedFractional { risk_pct: 0.02 },
+            constraints: SizingConstraints {
+                min_quantity: 1,
+                max_quantity: Some(1000),
+            },
+        });
+
+        let mut entry_dates = HashSet::new();
+        entry_dates.insert(bars[0].datetime);
+
+        let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+        assert_eq!(result.trade_count, 1);
+        // Should have used dynamic sizing
+        let trade = &result.trade_log[0];
+        assert!(trade.computed_quantity.is_some());
     }
 }

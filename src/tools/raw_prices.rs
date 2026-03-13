@@ -112,27 +112,11 @@ pub fn execute(
     let mut bars: Vec<PriceBar> = Vec::with_capacity(rows);
 
     // Intraday path: "datetime" Datetime column → format with time
-    if let Ok(dt_col) = output_df.column("datetime") {
-        if let Ok(dt_ca) = dt_col.datetime() {
-            let micros_per_sec: i64 = match dt_ca.time_unit() {
-                TimeUnit::Microseconds => 1_000_000,
-                TimeUnit::Milliseconds => 1_000,
-                TimeUnit::Nanoseconds => 1_000_000_000,
-            };
+    if let Ok(dt_col_ref) = output_df.column("datetime") {
+        if matches!(dt_col_ref.dtype(), polars::prelude::DataType::Datetime(_, _)) {
             for i in 0..rows {
-                let raw = dt_ca.phys.get(i).ok_or_else(|| {
-                    anyhow::anyhow!("Null datetime at row {i}; OHLCV data may be corrupted")
-                })?;
-                let secs = raw.div_euclid(micros_per_sec);
-                let subsec = raw.rem_euclid(micros_per_sec);
-                let nsecs = match dt_ca.time_unit() {
-                    TimeUnit::Microseconds => (subsec * 1_000) as u32,
-                    TimeUnit::Milliseconds => (subsec * 1_000_000) as u32,
-                    TimeUnit::Nanoseconds => subsec as u32,
-                };
-                let ndt = chrono::DateTime::from_timestamp(secs, nsecs)
-                    .map(|dt| dt.naive_utc())
-                    .ok_or_else(|| anyhow::anyhow!("Invalid datetime at row {i}"))?;
+                let ndt =
+                    crate::engine::price_table::extract_datetime_from_column(dt_col_ref, i)?;
                 let date = if ndt.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
                     ndt.format("%Y-%m-%d").to_string()
                 } else {

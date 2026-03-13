@@ -55,24 +55,12 @@ fn load_ohlcv_closes(
             .collect()
             .ok()?;
         let closes = sorted.column("close").ok()?.f64().ok()?;
-        let dt_ca = sorted
-            .column("datetime")
-            .and_then(|c| Ok(c.datetime()?.clone()))
-            .ok()?;
-        let micros_per_sec: i64 = match dt_ca.time_unit() {
-            polars::prelude::TimeUnit::Microseconds => 1_000_000,
-            polars::prelude::TimeUnit::Milliseconds => 1_000,
-            polars::prelude::TimeUnit::Nanoseconds => 1_000_000_000,
-        };
+        let dt_col_ref = sorted.column("datetime").ok()?;
         for i in 0..sorted.height() {
-            let Some(raw) = dt_ca.phys.get(i) else {
+            let Ok(ndt) = super::price_table::extract_datetime_from_column(dt_col_ref, i) else {
                 continue;
             };
-            let secs = raw.div_euclid(micros_per_sec);
-            let Some(chrono_dt) = chrono::DateTime::from_timestamp(secs, 0) else {
-                continue;
-            };
-            let date = chrono_dt.naive_utc().date();
+            let date = ndt.date();
             let Some(close) = closes.get(i) else {
                 continue;
             };

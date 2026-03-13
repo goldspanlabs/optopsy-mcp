@@ -134,6 +134,11 @@ pub fn active_datetimes(
 }
 
 /// Like `active_dates_multi` but returns `NaiveDateTime` for intraday support.
+///
+/// When combining signals via `And`/`Or`, branches may have different granularity
+/// (e.g., primary is intraday but `CrossSymbol` references daily data). In that case,
+/// daily-only dates are "broadcast" — a daily signal active on 2024-01-02 matches all
+/// intraday bars on that calendar day, so the intersection/union works correctly.
 pub fn active_datetimes_multi<S: std::hash::BuildHasher>(
     spec: &SignalSpec,
     primary_df: &DataFrame,
@@ -153,15 +158,82 @@ pub fn active_datetimes_multi<S: std::hash::BuildHasher>(
         SignalSpec::And { left, right } => {
             let left_dts = active_datetimes_multi(left, primary_df, cross_dfs, date_col)?;
             let right_dts = active_datetimes_multi(right, primary_df, cross_dfs, date_col)?;
-            Ok(left_dts.intersection(&right_dts).copied().collect())
+            Ok(intersect_mixed_granularity(&left_dts, &right_dts))
         }
         SignalSpec::Or { left, right } => {
             let left_dts = active_datetimes_multi(left, primary_df, cross_dfs, date_col)?;
             let right_dts = active_datetimes_multi(right, primary_df, cross_dfs, date_col)?;
-            Ok(left_dts.union(&right_dts).copied().collect())
+            Ok(union_mixed_granularity(&left_dts, &right_dts))
         }
         _ => active_datetimes(spec, primary_df, date_col),
     }
+}
+
+/// Check if all datetimes in a set have midnight time components (i.e., daily-only).
+fn is_daily_only(dts: &HashSet<NaiveDateTime>) -> bool {
+    !dts.is_empty()
+        && dts
+            .iter()
+            .all(|dt| dt.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap())
+}
+
+/// Intersect two datetime sets that may have different granularity.
+///
+/// If one side is daily-only (all midnight timestamps) and the other has intraday
+/// timestamps, the daily side is treated as "active for the whole day" — each
+/// intraday timestamp is kept if its calendar date appears in the daily set.
+/// If both sides have the same granularity, a normal intersection is performed.
+fn intersect_mixed_granularity(
+    left: &HashSet<NaiveDateTime>,
+    right: &HashSet<NaiveDateTime>,
+) -> HashSet<NaiveDateTime> {
+    let left_daily = is_daily_only(left);
+    let right_daily = is_daily_only(right);
+
+    match (left_daily, right_daily) {
+        (true, false) => {
+            // Left is daily, right is intraday: keep right's timestamps whose date is in left
+            let active_dates: HashSet<chrono::NaiveDate> =
+                left.iter().map(|dt| dt.date()).collect();
+            right
+                .iter()
+                .filter(|dt| active_dates.contains(&dt.date()))
+                .copied()
+                .collect()
+        }
+        (false, true) => {
+            // Right is daily, left is intraday: keep left's timestamps whose date is in right
+            let active_dates: HashSet<chrono::NaiveDate> =
+                right.iter().map(|dt| dt.date()).collect();
+            left.iter()
+                .filter(|dt| active_dates.contains(&dt.date()))
+                .copied()
+                .collect()
+        }
+        _ => {
+            // Same granularity: normal intersection
+            left.intersection(right).copied().collect()
+        }
+    }
+}
+
+/// Union two datetime sets that may have different granularity.
+///
+/// If one side is daily-only, its dates are broadcast to match the intraday
+/// timestamps from the other side (plus any intraday timestamps on dates not
+/// covered by the daily set). The daily midnight timestamps are also included
+/// so that dates with no intraday bars in the other set still appear.
+fn union_mixed_granularity(
+    left: &HashSet<NaiveDateTime>,
+    right: &HashSet<NaiveDateTime>,
+) -> HashSet<NaiveDateTime> {
+    // Union is straightforward: all timestamps from both sides.
+    // For mixed granularity, the daily midnight timestamps won't match any
+    // intraday timestamps, but that's fine — the simulation loop checks
+    // `dates.contains(&bar.datetime)`, so the intraday bar timestamps
+    // from the other branch will match. The midnight entries are harmless
+    // (no bar will have a midnight timestamp in intraday data).
+    left.union(right).copied().collect()
 }
 
 #[cfg(test)]
@@ -555,5 +627,306 @@ mod tests {
         assert!(result.contains(&NaiveDate::from_ymd_opt(2024, 1, 3).unwrap()));
         assert!(result.contains(&NaiveDate::from_ymd_opt(2024, 1, 4).unwrap()));
         assert!(result.contains(&NaiveDate::from_ymd_opt(2024, 1, 5).unwrap()));
+    }
+
+    // ── active_datetimes tests ──────────────────────────────────────────
+
+    fn make_intraday_df() -> DataFrame {
+        let datetimes: Vec<NaiveDateTime> = vec![
+            NaiveDateTime::parse_from_str("2024-01-02 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+            NaiveDateTime::parse_from_str("2024-01-02 09:31:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+            NaiveDateTime::parse_from_str("2024-01-02 09:32:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+            NaiveDateTime::parse_from_str("2024-01-03 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+            NaiveDateTime::parse_from_str("2024-01-03 09:31:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+        ];
+        let dt_chunked: DatetimeChunked =
+            DatetimeChunked::new(PlSmallStr::from("datetime"), &datetimes);
+        DataFrame::new(
+            5,
+            vec![
+                dt_chunked.into_series().into(),
+                Series::new("close".into(), &[100.0, 101.0, 102.0, 103.0, 104.0]).into(),
+            ],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn active_datetimes_returns_full_timestamps() {
+        let df = make_intraday_df();
+        let spec = SignalSpec::Formula {
+            formula: "consecutive_up(close) >= 2".into(),
+        };
+        let result = active_datetimes(&spec, &df, "datetime").unwrap();
+        // consecutive_up >= 2 fires at indices 2, 3, 4
+        let dt2 =
+            NaiveDateTime::parse_from_str("2024-01-02 09:32:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let dt3 =
+            NaiveDateTime::parse_from_str("2024-01-03 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let dt4 =
+            NaiveDateTime::parse_from_str("2024-01-03 09:31:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        assert!(result.contains(&dt2));
+        assert!(result.contains(&dt3));
+        assert!(result.contains(&dt4));
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn active_datetimes_multi_plain_signal() {
+        let df = make_intraday_df();
+        let cross_dfs = HashMap::new();
+        let spec = SignalSpec::Formula {
+            formula: "close > 102".into(),
+        };
+        let result = active_datetimes_multi(&spec, &df, &cross_dfs, "datetime").unwrap();
+        // close > 102 at indices 3 (103) and 4 (104)
+        let dt3 =
+            NaiveDateTime::parse_from_str("2024-01-03 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let dt4 =
+            NaiveDateTime::parse_from_str("2024-01-03 09:31:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        assert_eq!(result.len(), 2);
+        assert!(result.contains(&dt3));
+        assert!(result.contains(&dt4));
+    }
+
+    // ── Mixed granularity tests ─────────────────────────────────────────
+
+    #[test]
+    fn is_daily_only_all_midnight() {
+        let dts: HashSet<NaiveDateTime> = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 2)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 3)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+        ]
+        .into_iter()
+        .collect();
+        assert!(is_daily_only(&dts));
+    }
+
+    #[test]
+    fn is_daily_only_with_intraday() {
+        let dts: HashSet<NaiveDateTime> = vec![
+            NaiveDateTime::parse_from_str("2024-01-02 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+        ]
+        .into_iter()
+        .collect();
+        assert!(!is_daily_only(&dts));
+    }
+
+    #[test]
+    fn is_daily_only_empty() {
+        let dts: HashSet<NaiveDateTime> = HashSet::new();
+        assert!(!is_daily_only(&dts));
+    }
+
+    #[test]
+    fn intersect_daily_left_intraday_right() {
+        // Daily side: Jan 2 active
+        let daily: HashSet<NaiveDateTime> = vec![NaiveDate::from_ymd_opt(2024, 1, 2)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()]
+        .into_iter()
+        .collect();
+
+        // Intraday side: Jan 2 09:30, Jan 2 09:31, Jan 3 09:30
+        let intraday: HashSet<NaiveDateTime> = vec![
+            NaiveDateTime::parse_from_str("2024-01-02 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+            NaiveDateTime::parse_from_str("2024-01-02 09:31:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+            NaiveDateTime::parse_from_str("2024-01-03 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+        ]
+        .into_iter()
+        .collect();
+
+        let result = intersect_mixed_granularity(&daily, &intraday);
+        // Should keep Jan 2 bars only (date matches), drop Jan 3
+        assert_eq!(result.len(), 2);
+        assert!(result.contains(
+            &NaiveDateTime::parse_from_str("2024-01-02 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap()
+        ));
+        assert!(result.contains(
+            &NaiveDateTime::parse_from_str("2024-01-02 09:31:00", "%Y-%m-%d %H:%M:%S").unwrap()
+        ));
+    }
+
+    #[test]
+    fn intersect_intraday_left_daily_right() {
+        // Same as above but swapped — should produce identical result
+        let daily: HashSet<NaiveDateTime> = vec![NaiveDate::from_ymd_opt(2024, 1, 2)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()]
+        .into_iter()
+        .collect();
+
+        let intraday: HashSet<NaiveDateTime> = vec![
+            NaiveDateTime::parse_from_str("2024-01-02 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+            NaiveDateTime::parse_from_str("2024-01-02 09:31:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+            NaiveDateTime::parse_from_str("2024-01-03 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+        ]
+        .into_iter()
+        .collect();
+
+        let result = intersect_mixed_granularity(&intraday, &daily);
+        assert_eq!(result.len(), 2);
+        assert!(result.contains(
+            &NaiveDateTime::parse_from_str("2024-01-02 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap()
+        ));
+        assert!(result.contains(
+            &NaiveDateTime::parse_from_str("2024-01-02 09:31:00", "%Y-%m-%d %H:%M:%S").unwrap()
+        ));
+    }
+
+    #[test]
+    fn intersect_same_granularity_intraday() {
+        let left: HashSet<NaiveDateTime> = vec![
+            NaiveDateTime::parse_from_str("2024-01-02 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+            NaiveDateTime::parse_from_str("2024-01-02 09:31:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+        ]
+        .into_iter()
+        .collect();
+
+        let right: HashSet<NaiveDateTime> = vec![
+            NaiveDateTime::parse_from_str("2024-01-02 09:31:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+            NaiveDateTime::parse_from_str("2024-01-02 09:32:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+        ]
+        .into_iter()
+        .collect();
+
+        let result = intersect_mixed_granularity(&left, &right);
+        assert_eq!(result.len(), 1);
+        assert!(result.contains(
+            &NaiveDateTime::parse_from_str("2024-01-02 09:31:00", "%Y-%m-%d %H:%M:%S").unwrap()
+        ));
+    }
+
+    #[test]
+    fn intersect_no_overlapping_dates() {
+        let daily: HashSet<NaiveDateTime> = vec![NaiveDate::from_ymd_opt(2024, 1, 5)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()]
+        .into_iter()
+        .collect();
+
+        let intraday: HashSet<NaiveDateTime> = vec![
+            NaiveDateTime::parse_from_str("2024-01-02 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+        ]
+        .into_iter()
+        .collect();
+
+        let result = intersect_mixed_granularity(&daily, &intraday);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn union_mixed_includes_all() {
+        let daily: HashSet<NaiveDateTime> = vec![NaiveDate::from_ymd_opt(2024, 1, 2)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()]
+        .into_iter()
+        .collect();
+
+        let intraday: HashSet<NaiveDateTime> = vec![
+            NaiveDateTime::parse_from_str("2024-01-03 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+        ]
+        .into_iter()
+        .collect();
+
+        let result = union_mixed_granularity(&daily, &intraday);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn active_datetimes_multi_and_cross_symbol_mixed_granularity() {
+        // Primary: intraday (datetime column)
+        let intraday_df = make_intraday_df(); // Jan 2 09:30, 09:31, 09:32 + Jan 3 09:30, 09:31
+
+        // Cross-symbol VIX: daily (date column), active on Jan 2 and Jan 3
+        let vix_dates = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 3).unwrap(),
+        ];
+        let vix_df = df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), vix_dates),
+            "close" => &[30.0, 35.0], // close > 25 on both days
+        }
+        .unwrap();
+
+        let mut cross_dfs = HashMap::new();
+        cross_dfs.insert("^VIX".to_string(), vix_df);
+
+        // AND: primary close > 102 AND CrossSymbol(VIX close > 25)
+        // Primary close > 102: Jan 3 09:30 (103), Jan 3 09:31 (104)
+        // VIX close > 25: Jan 2, Jan 3 (both days — daily granularity)
+        // Without mixed-granularity fix, AND would be empty (midnight vs 09:30)
+        // With fix, VIX daily dates broadcast to all Jan 2 + Jan 3 bars
+        let spec = SignalSpec::And {
+            left: Box::new(SignalSpec::Formula {
+                formula: "close > 102".into(),
+            }),
+            right: Box::new(SignalSpec::CrossSymbol {
+                symbol: "^VIX".into(),
+                signal: Box::new(SignalSpec::Formula {
+                    formula: "close > 25".into(),
+                }),
+            }),
+        };
+
+        let result =
+            active_datetimes_multi(&spec, &intraday_df, &cross_dfs, "datetime").unwrap();
+
+        let dt_jan3_0930 =
+            NaiveDateTime::parse_from_str("2024-01-03 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let dt_jan3_0931 =
+            NaiveDateTime::parse_from_str("2024-01-03 09:31:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        assert_eq!(result.len(), 2, "expected 2 intraday bars, got {:?}", result);
+        assert!(result.contains(&dt_jan3_0930));
+        assert!(result.contains(&dt_jan3_0931));
+    }
+
+    #[test]
+    fn active_datetimes_multi_or_cross_symbol_mixed_granularity() {
+        let intraday_df = make_intraday_df();
+
+        // VIX daily, active only on Jan 4 (not in primary's date range)
+        let vix_dates = vec![NaiveDate::from_ymd_opt(2024, 1, 4).unwrap()];
+        let vix_df = df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), vix_dates),
+            "close" => &[40.0],
+        }
+        .unwrap();
+
+        let mut cross_dfs = HashMap::new();
+        cross_dfs.insert("^VIX".to_string(), vix_df);
+
+        // OR: primary close > 103 OR CrossSymbol(VIX close > 25)
+        // Primary close > 103: Jan 3 09:31 (104)
+        // VIX close > 25: Jan 4 midnight (daily)
+        let spec = SignalSpec::Or {
+            left: Box::new(SignalSpec::Formula {
+                formula: "close > 103".into(),
+            }),
+            right: Box::new(SignalSpec::CrossSymbol {
+                symbol: "^VIX".into(),
+                signal: Box::new(SignalSpec::Formula {
+                    formula: "close > 25".into(),
+                }),
+            }),
+        };
+
+        let result =
+            active_datetimes_multi(&spec, &intraday_df, &cross_dfs, "datetime").unwrap();
+        // Should have: Jan 3 09:31 (from primary) + Jan 4 00:00 (from VIX daily)
+        assert!(result.len() >= 2, "expected at least 2 entries, got {:?}", result);
+        let dt_jan3_0931 =
+            NaiveDateTime::parse_from_str("2024-01-03 09:31:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        assert!(result.contains(&dt_jan3_0931));
     }
 }

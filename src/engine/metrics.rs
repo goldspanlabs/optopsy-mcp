@@ -609,4 +609,69 @@ mod tests {
         let m = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
         assert!((m.total_return_pct - 10.0).abs() < 1e-10);
     }
+
+    // ── Intraday annualization tests ────────────────────────────────────
+
+    #[test]
+    fn intraday_sharpe_scales_with_bars_per_year() {
+        // Same equity curve, different bars_per_year: Sharpe should scale by sqrt ratio
+        let curve = make_equity_curve(&[11000.0, 9900.0, 10890.0]);
+
+        let m_daily = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
+        let m_5min = calculate_metrics(&curve, &[], 10000.0, 252.0 * 78.0).unwrap();
+
+        // Sharpe = mean/std * sqrt(bars_per_year)
+        // Ratio should be sqrt(252*78) / sqrt(252) = sqrt(78)
+        let expected_ratio = 78.0_f64.sqrt();
+        if m_daily.sharpe.abs() > 1e-10 {
+            let actual_ratio = m_5min.sharpe / m_daily.sharpe;
+            assert!(
+                (actual_ratio - expected_ratio).abs() < 0.01,
+                "Sharpe ratio scaling wrong: expected {expected_ratio}, got {actual_ratio}"
+            );
+        }
+    }
+
+    #[test]
+    fn intraday_sortino_scales_with_bars_per_year() {
+        // Curve with a downside move to trigger non-zero Sortino
+        let curve = make_equity_curve(&[11000.0, 9900.0, 10890.0]);
+
+        let m_daily = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
+        let m_hourly = calculate_metrics(&curve, &[], 10000.0, 252.0 * 7.0).unwrap();
+
+        // Sortino = mean/downside_dev * sqrt(bars_per_year)
+        let expected_ratio = 7.0_f64.sqrt();
+        if m_daily.sortino.abs() > 1e-10 {
+            let actual_ratio = m_hourly.sortino / m_daily.sortino;
+            assert!(
+                (actual_ratio - expected_ratio).abs() < 0.01,
+                "Sortino ratio scaling wrong: expected {expected_ratio}, got {actual_ratio}"
+            );
+        }
+    }
+
+    #[test]
+    fn bars_per_year_values_correct() {
+        use crate::engine::types::Interval;
+        assert!((Interval::Daily.bars_per_year() - 252.0).abs() < f64::EPSILON);
+        assert!((Interval::Weekly.bars_per_year() - 52.0).abs() < f64::EPSILON);
+        assert!((Interval::Monthly.bars_per_year() - 12.0).abs() < f64::EPSILON);
+        assert!((Interval::Min1.bars_per_year() - 252.0 * 390.0).abs() < f64::EPSILON);
+        assert!((Interval::Min5.bars_per_year() - 252.0 * 78.0).abs() < f64::EPSILON);
+        assert!((Interval::Min30.bars_per_year() - 252.0 * 13.0).abs() < f64::EPSILON);
+        assert!((Interval::Hour1.bars_per_year() - 252.0 * 7.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn is_intraday_correct_for_all_intervals() {
+        use crate::engine::types::Interval;
+        assert!(!Interval::Daily.is_intraday());
+        assert!(!Interval::Weekly.is_intraday());
+        assert!(!Interval::Monthly.is_intraday());
+        assert!(Interval::Min1.is_intraday());
+        assert!(Interval::Min5.is_intraday());
+        assert!(Interval::Min30.is_intraday());
+        assert!(Interval::Hour1.is_intraday());
+    }
 }
