@@ -210,7 +210,7 @@ fn run_shuffled_permutations<S: BuildHasher>(
             exit_dates,
         ) {
             Ok((trade_log, equity_curve, _)) => {
-                let m = metrics::calculate_metrics(&equity_curve, &trade_log, ctx.params.capital)?;
+                let m = metrics::calculate_metrics(&equity_curve, &trade_log, ctx.params.capital, 252.0)?;
                 let total_pnl: f64 = trade_log.iter().map(|t| t.pnl).sum();
                 perm_metrics.push(PermMetrics {
                     sharpe: m.sharpe,

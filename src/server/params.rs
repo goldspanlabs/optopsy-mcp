@@ -276,6 +276,12 @@ pub struct RunStockBacktestParams {
     #[serde(default)]
     #[garde(skip)]
     pub interval: Option<Interval>,
+    /// Session filter for intraday data. Only applies when using intraday intervals.
+    /// Options: `Premarket` (04:00-09:30), `RegularHours` (09:30-16:00),
+    /// `AfterHours` (16:00-20:00), `ExtendedHours` (04:00-20:00).
+    #[serde(default)]
+    #[garde(skip)]
+    pub session_filter: Option<crate::engine::types::SessionFilter>,
 }
 
 fn default_stock_slippage() -> Slippage {

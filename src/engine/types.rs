@@ -4,7 +4,7 @@
 //! simulation result types, trade records, and enum variants for sides,
 //! option types, slippage models, exit types, and trade selectors.
 
-use chrono::NaiveDateTime;
+use chrono::{NaiveDateTime, NaiveTime};
 use garde::Validate;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -18,7 +18,7 @@ use crate::signals::registry::SignalSpec;
 /// it to `from_num_days_from_ce_opt`.
 pub const EPOCH_DAYS_CE_OFFSET: i32 = 719_163;
 
-/// Bar interval for OHLCV resampling (daily, weekly, monthly).
+/// Bar interval for OHLCV resampling.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Interval {
@@ -26,6 +26,40 @@ pub enum Interval {
     Daily,
     Weekly,
     Monthly,
+    /// 1-minute bars
+    #[serde(alias = "1m")]
+    Min1,
+    /// 5-minute bars
+    #[serde(alias = "5m")]
+    Min5,
+    /// 30-minute bars
+    #[serde(alias = "30m")]
+    Min30,
+    /// 1-hour bars
+    #[serde(alias = "1h")]
+    Hour1,
+}
+
+impl Interval {
+    /// Approximate number of bars per trading year for annualization.
+    ///
+    /// Intraday counts assume a 6.5-hour regular session (390 minutes) × 252 trading days.
+    pub fn bars_per_year(self) -> f64 {
+        match self {
+            Self::Daily => 252.0,
+            Self::Weekly => 52.0,
+            Self::Monthly => 12.0,
+            Self::Min1 => 252.0 * 390.0,
+            Self::Min5 => 252.0 * 78.0,
+            Self::Min30 => 252.0 * 13.0,
+            Self::Hour1 => 252.0 * 6.5,
+        }
+    }
+
+    /// Whether this interval represents intraday data.
+    pub fn is_intraday(self) -> bool {
+        matches!(self, Self::Min1 | Self::Min5 | Self::Min30 | Self::Hour1)
+    }
 }
 
 impl std::fmt::Display for Interval {
@@ -34,6 +68,47 @@ impl std::fmt::Display for Interval {
             Self::Daily => write!(f, "daily"),
             Self::Weekly => write!(f, "weekly"),
             Self::Monthly => write!(f, "monthly"),
+            Self::Min1 => write!(f, "1m"),
+            Self::Min5 => write!(f, "5m"),
+            Self::Min30 => write!(f, "30m"),
+            Self::Hour1 => write!(f, "1h"),
+        }
+    }
+}
+
+/// Trading session time-of-day filter for intraday data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum SessionFilter {
+    /// Pre-market session: 04:00 – 09:30 ET
+    Premarket,
+    /// Regular trading hours: 09:30 – 16:00 ET
+    RegularHours,
+    /// After-hours session: 16:00 – 20:00 ET
+    AfterHours,
+    /// Full extended hours: 04:00 – 20:00 ET
+    ExtendedHours,
+}
+
+impl SessionFilter {
+    /// Return the `(start, end)` time range for this session (half-open: `[start, end)`).
+    pub fn time_range(self) -> (NaiveTime, NaiveTime) {
+        match self {
+            Self::Premarket => (
+                NaiveTime::from_hms_opt(4, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(9, 30, 0).unwrap(),
+            ),
+            Self::RegularHours => (
+                NaiveTime::from_hms_opt(9, 30, 0).unwrap(),
+                NaiveTime::from_hms_opt(16, 0, 0).unwrap(),
+            ),
+            Self::AfterHours => (
+                NaiveTime::from_hms_opt(16, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(20, 0, 0).unwrap(),
+            ),
+            Self::ExtendedHours => (
+                NaiveTime::from_hms_opt(4, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(20, 0, 0).unwrap(),
+            ),
         }
     }
 }

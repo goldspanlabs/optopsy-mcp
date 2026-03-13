@@ -21,10 +21,10 @@ pub mod volume;
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
-use chrono::NaiveDate;
+use chrono::{NaiveDate, NaiveDateTime};
 use polars::prelude::*;
 
-use crate::engine::price_table::extract_date_from_column;
+use crate::engine::price_table::{extract_date_from_column, extract_datetime_from_column};
 use helpers::SignalFn;
 use registry::{build_signal, SignalSpec};
 
@@ -97,6 +97,67 @@ pub fn active_dates_multi<S: std::hash::BuildHasher>(
         }
         // All other variants evaluate against the primary DataFrame
         _ => active_dates(spec, primary_df, date_col),
+    }
+}
+
+/// Like `active_dates` but returns `NaiveDateTime` for intraday support.
+///
+/// For Date columns, datetimes have midnight time component.
+/// For Datetime columns, the full timestamp is preserved.
+pub fn active_datetimes(
+    spec: &SignalSpec,
+    ohlcv_df: &DataFrame,
+    date_col: &str,
+) -> Result<HashSet<NaiveDateTime>> {
+    if spec.contains_cross_symbol() {
+        tracing::warn!(
+            "Signal spec contains CrossSymbol references but active_datetimes() was called \
+             without cross-symbol DataFrames. Use active_datetimes_multi() instead."
+        );
+    }
+    let signal: Box<dyn SignalFn> = build_signal(spec);
+    let bools = signal.evaluate(ohlcv_df)?;
+    let bool_ca = bools.bool()?;
+
+    let col = ohlcv_df.column(date_col)?;
+    let mut result = HashSet::new();
+
+    for i in 0..ohlcv_df.height() {
+        if bool_ca.get(i) == Some(true) {
+            let dt = extract_datetime_from_column(col, i)?;
+            result.insert(dt);
+        }
+    }
+
+    Ok(result)
+}
+
+/// Like `active_dates_multi` but returns `NaiveDateTime` for intraday support.
+pub fn active_datetimes_multi<S: std::hash::BuildHasher>(
+    spec: &SignalSpec,
+    primary_df: &DataFrame,
+    cross_dfs: &HashMap<String, DataFrame, S>,
+    date_col: &str,
+) -> Result<HashSet<NaiveDateTime>> {
+    match spec {
+        SignalSpec::CrossSymbol { symbol, signal } => {
+            let upper = symbol.to_uppercase();
+            let df = cross_dfs.get(&upper).ok_or_else(|| {
+                anyhow::anyhow!("CrossSymbol references '{upper}' but no OHLCV data loaded for it")
+            })?;
+            active_datetimes_multi(signal, df, cross_dfs, date_col)
+        }
+        SignalSpec::And { left, right } => {
+            let left_dts = active_datetimes_multi(left, primary_df, cross_dfs, date_col)?;
+            let right_dts = active_datetimes_multi(right, primary_df, cross_dfs, date_col)?;
+            Ok(left_dts.intersection(&right_dts).copied().collect())
+        }
+        SignalSpec::Or { left, right } => {
+            let left_dts = active_datetimes_multi(left, primary_df, cross_dfs, date_col)?;
+            let right_dts = active_datetimes_multi(right, primary_df, cross_dfs, date_col)?;
+            Ok(left_dts.union(&right_dts).copied().collect())
+        }
+        _ => active_datetimes(spec, primary_df, date_col),
     }
 }
 

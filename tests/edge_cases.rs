@@ -69,7 +69,7 @@ fn select_closest_delta_on_empty_df() {
 
 #[test]
 fn metrics_with_no_trades_returns_defaults() {
-    let result = optopsy_mcp::engine::metrics::calculate_metrics(&[], &[], 10_000.0).unwrap();
+    let result = optopsy_mcp::engine::metrics::calculate_metrics(&[], &[], 10_000.0, 252.0).unwrap();
     assert!((result.sharpe - 0.0).abs() < f64::EPSILON);
     assert!((result.win_rate - 0.0).abs() < f64::EPSILON);
     assert!((result.profit_factor - 0.0).abs() < f64::EPSILON);
@@ -77,14 +77,14 @@ fn metrics_with_no_trades_returns_defaults() {
 
 #[test]
 fn metrics_with_zero_capital_returns_defaults() {
-    let result = optopsy_mcp::engine::metrics::calculate_metrics(&[], &[], 0.0).unwrap();
+    let result = optopsy_mcp::engine::metrics::calculate_metrics(&[], &[], 0.0, 252.0).unwrap();
     assert!((result.sharpe - 0.0).abs() < f64::EPSILON);
     assert!((result.cagr - 0.0).abs() < f64::EPSILON);
 }
 
 #[test]
 fn metrics_with_negative_capital_returns_defaults() {
-    let result = optopsy_mcp::engine::metrics::calculate_metrics(&[], &[], -100.0).unwrap();
+    let result = optopsy_mcp::engine::metrics::calculate_metrics(&[], &[], -100.0, 252.0).unwrap();
     assert!((result.max_drawdown - 0.0).abs() < f64::EPSILON);
 }
 
@@ -120,7 +120,7 @@ fn metrics_all_fields_are_finite() {
             equity: 10_050.0,
         },
     ];
-    let m = optopsy_mcp::engine::metrics::calculate_metrics(&equity, &[trade], 10_000.0).unwrap();
+    let m = optopsy_mcp::engine::metrics::calculate_metrics(&equity, &[trade], 10_000.0, 252.0).unwrap();
     assert!(m.sharpe.is_finite(), "sharpe must be finite");
     assert!(m.sortino.is_finite(), "sortino must be finite");
     assert!(m.cagr.is_finite(), "cagr must be finite");

@@ -312,30 +312,36 @@ impl OptopsyServer {
 }
 
 /// Load OHLCV prices from a cached parquet file for chart overlay.
+#[allow(clippy::too_many_lines)]
 fn load_underlying_prices(path: &std::path::Path) -> Vec<tools::response_types::UnderlyingPrice> {
     let args = ScanArgsParquet::default();
     let path_str = path.to_string_lossy();
     let Ok(lf) = LazyFrame::scan_parquet(path_str.as_ref().into(), args) else {
         return vec![];
     };
+
+    // Detect whether this file uses "datetime" or "date" column
+    let Ok(schema) = lf.clone().collect_schema() else {
+        return vec![];
+    };
+    let has_datetime = schema.contains("datetime");
+    let date_col_name = if has_datetime { "datetime" } else { "date" };
+
     let Ok(df) = lf
         .select([
-            col("date"),
+            col(date_col_name),
             col("open"),
             col("high"),
             col("low"),
             col("close"),
             col("volume"),
         ])
-        .sort(["date"], SortMultipleOptions::default())
+        .sort([date_col_name], SortMultipleOptions::default())
         .collect()
     else {
         return vec![];
     };
 
-    let Ok(dates) = df.column("date").and_then(|c| Ok(c.date()?.clone())) else {
-        return vec![];
-    };
     let Ok(opens) = df.column("open").and_then(|c| Ok(c.f64()?.clone())) else {
         return vec![];
     };
@@ -355,6 +361,59 @@ fn load_underlying_prices(path: &std::path::Path) -> Vec<tools::response_types::
         .ok();
 
     let mut prices = Vec::with_capacity(df.height());
+
+    // Intraday path: "datetime" Datetime column
+    if has_datetime {
+        let Ok(dt_ca) = df.column("datetime").and_then(|c| Ok(c.datetime()?.clone())) else {
+            return vec![];
+        };
+        let micros_per_sec: i64 = match dt_ca.time_unit() {
+            polars::prelude::TimeUnit::Microseconds => 1_000_000,
+            polars::prelude::TimeUnit::Milliseconds => 1_000,
+            polars::prelude::TimeUnit::Nanoseconds => 1_000_000_000,
+        };
+        for i in 0..df.height() {
+            let (Some(raw), Some(open), Some(high), Some(low), Some(close)) = (
+                dt_ca.phys.get(i),
+                opens.get(i),
+                highs.get(i),
+                lows.get(i),
+                closes.get(i),
+            ) else {
+                continue;
+            };
+            let secs = raw.div_euclid(micros_per_sec);
+            let subsec = raw.rem_euclid(micros_per_sec);
+            let nsecs = match dt_ca.time_unit() {
+                polars::prelude::TimeUnit::Microseconds => (subsec * 1_000) as u32,
+                polars::prelude::TimeUnit::Milliseconds => (subsec * 1_000_000) as u32,
+                polars::prelude::TimeUnit::Nanoseconds => subsec as u32,
+            };
+            if let Some(chrono_dt) = chrono::DateTime::from_timestamp(secs, nsecs) {
+                let ndt = chrono_dt.naive_utc();
+                // Use full timestamp for intraday, date-only for midnight
+                let fmt = if ndt.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
+                    ndt.format("%Y-%m-%d").to_string()
+                } else {
+                    ndt.format("%Y-%m-%dT%H:%M:%S").to_string()
+                };
+                prices.push(tools::response_types::UnderlyingPrice {
+                    date: fmt,
+                    open,
+                    high,
+                    low,
+                    close,
+                    volume: volumes.as_ref().and_then(|v| v.get(i)),
+                });
+            }
+        }
+        return prices;
+    }
+
+    // Daily path: "date" Date column
+    let Ok(dates) = df.column("date").and_then(|c| Ok(c.date()?.clone())) else {
+        return vec![];
+    };
     for i in 0..df.height() {
         let (Some(days), Some(open), Some(high), Some(low), Some(close)) = (
             dates.phys.get(i),
@@ -718,6 +777,7 @@ impl OptopsyServer {
                     start_date,
                     end_date,
                     interval: params.interval.unwrap_or_default(),
+                    session_filter: params.session_filter,
                 };
 
                 tokio::task::spawn_blocking(move || {

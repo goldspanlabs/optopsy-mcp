@@ -255,6 +255,57 @@ pub(crate) fn extract_date_from_column(col: &Column, idx: usize) -> Result<Naive
     }
 }
 
+/// Extract a `NaiveDateTime` from a column value at a given index.
+///
+/// For `Date` columns, returns midnight. For `Datetime` columns, returns the full timestamp.
+/// For `String` columns, attempts `"%Y-%m-%dT%H:%M:%S"` then `"%Y-%m-%d"` (midnight).
+pub(crate) fn extract_datetime_from_column(
+    col: &Column,
+    idx: usize,
+) -> Result<chrono::NaiveDateTime> {
+    match col.dtype() {
+        DataType::Date => {
+            let date = extract_date_from_column(col, idx)?;
+            Ok(date.and_hms_opt(0, 0, 0).unwrap())
+        }
+        DataType::Datetime(tu, _) => {
+            let val = col.datetime()?.phys.get(idx);
+            match val {
+                Some(v) => {
+                    let ndt = match tu {
+                        TimeUnit::Milliseconds => {
+                            chrono::DateTime::from_timestamp_millis(v).map(|dt| dt.naive_utc())
+                        }
+                        TimeUnit::Microseconds => {
+                            chrono::DateTime::from_timestamp_micros(v).map(|dt| dt.naive_utc())
+                        }
+                        TimeUnit::Nanoseconds => {
+                            let secs = v.div_euclid(1_000_000_000);
+                            let nsecs = v.rem_euclid(1_000_000_000) as u32;
+                            chrono::DateTime::from_timestamp(secs, nsecs).map(|dt| dt.naive_utc())
+                        }
+                    };
+                    ndt.ok_or_else(|| anyhow::anyhow!("Invalid datetime value at index {idx}"))
+                }
+                None => bail!("Null datetime at index {idx}"),
+            }
+        }
+        DataType::String => {
+            let str_val = col.str()?.get(idx);
+            match str_val {
+                Some(s) => chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
+                    .or_else(|_| {
+                        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                            .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
+                    })
+                    .map_err(|e| anyhow::anyhow!("Cannot parse datetime '{s}': {e}")),
+                None => bail!("Null string datetime at index {idx}"),
+            }
+        }
+        other => bail!("Unsupported column type for datetime extraction: {other:?}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

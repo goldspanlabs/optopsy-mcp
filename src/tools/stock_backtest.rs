@@ -25,26 +25,32 @@ pub fn execute(
         .ok_or_else(|| anyhow::anyhow!("ohlcv_path is required for stock backtest"))?;
 
     let ohlcv_df = stock_sim::load_ohlcv_df(ohlcv_path, params.start_date, params.end_date)?;
-    let ohlcv_df = if params.interval == crate::engine::types::Interval::Daily {
-        ohlcv_df
-    } else {
-        stock_sim::resample_ohlcv(&ohlcv_df, params.interval)?
-    };
-    let bars = stock_sim::bars_from_df(&ohlcv_df)?;
+    let ohlcv_df = stock_sim::resample_ohlcv(&ohlcv_df, params.interval)?;
+    let mut bars = stock_sim::bars_from_df(&ohlcv_df)?;
+
+    // Apply session filter for intraday data
+    if let Some(ref filter) = params.session_filter {
+        let (start_time, end_time) = filter.time_range();
+        bars.retain(|b| {
+            let t = b.datetime.time();
+            t >= start_time && t < end_time
+        });
+    }
 
     // Build signal date filters from the same DataFrame (no double-read)
+    let date_col = stock_sim::detect_date_col(&ohlcv_df);
     let (entry_dates, exit_dates) = stock_sim::build_stock_signal_filters(params, &ohlcv_df)?;
 
     // Compute raw indicator data for charting from signals
     let mut indicator_data: Vec<IndicatorData> = vec![];
     if let Some(ref spec) = params.entry_signal {
         indicator_data.extend(crate::signals::indicators::compute_indicator_data(
-            spec, &ohlcv_df, "date",
+            spec, &ohlcv_df, date_col,
         ));
     }
     if let Some(ref spec) = params.exit_signal {
         // Deduplicate: skip indicators already present from entry signal
-        for ind in crate::signals::indicators::compute_indicator_data(spec, &ohlcv_df, "date") {
+        for ind in crate::signals::indicators::compute_indicator_data(spec, &ohlcv_df, date_col) {
             if !indicator_data
                 .iter()
                 .any(|existing| existing.name == ind.name)
