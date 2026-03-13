@@ -403,6 +403,49 @@ fn empty_result(_capital: f64) -> BacktestResult {
     }
 }
 
+/// Filter a `DataFrame` with a `"datetime"` column by session time window.
+///
+/// Returns the input unchanged if `session` is `None` or the `DataFrame` has no
+/// `"datetime"` column (daily data).
+pub fn filter_session(
+    df: &polars::prelude::DataFrame,
+    session: Option<&SessionFilter>,
+) -> Result<polars::prelude::DataFrame> {
+    use polars::prelude::*;
+
+    let Some(filter) = session else {
+        return Ok(df.clone());
+    };
+
+    // Only applies to DataFrames with a datetime column
+    if df.column("datetime").is_err() {
+        return Ok(df.clone());
+    }
+
+    let (start_time, end_time) = filter.time_range();
+    let start_us = i64::from(start_time.num_seconds_from_midnight()) * 1_000_000;
+    let end_us = i64::from(end_time.num_seconds_from_midnight()) * 1_000_000;
+
+    let filtered = df
+        .clone()
+        .lazy()
+        .filter(
+            col("datetime")
+                .dt()
+                .time()
+                .gt_eq(lit(start_us).cast(DataType::Time))
+                .and(
+                    col("datetime")
+                        .dt()
+                        .time()
+                        .lt(lit(end_us).cast(DataType::Time)),
+                ),
+        )
+        .collect()?;
+
+    Ok(filtered)
+}
+
 /// Resample OHLCV data to a different interval.
 ///
 /// Supports both daily data (`"date"` Date column) and intraday data
@@ -456,12 +499,22 @@ pub fn resample_ohlcv(
 }
 
 /// Resample a `DataFrame` with `"datetime"` (Datetime) column to any target interval.
+///
+/// Input must contain a `"datetime"` column of Datetime type. The `DataFrame` is
+/// sorted by `"datetime"` internally so callers don't need to pre-sort.
 #[allow(clippy::too_many_lines, clippy::items_after_statements)]
 fn resample_datetime(
     df: &polars::prelude::DataFrame,
     interval: Interval,
 ) -> Result<polars::prelude::DataFrame> {
     use polars::prelude::*;
+
+    // Sort by datetime to ensure consecutive grouping is correct
+    let df = df
+        .clone()
+        .lazy()
+        .sort(["datetime"], SortMultipleOptions::default())
+        .collect()?;
 
     let dt_col = df
         .column("datetime")

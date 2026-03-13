@@ -25,37 +25,21 @@ pub fn execute(
         .ok_or_else(|| anyhow::anyhow!("ohlcv_path is required for stock backtest"))?;
 
     let ohlcv_df = stock_sim::load_ohlcv_df(ohlcv_path, params.start_date, params.end_date)?;
+
+    // Apply session filter to the DataFrame BEFORE resampling so that
+    // out-of-session rows don't pollute aggregated OHLC values.
+    let ohlcv_df = if params.interval.is_intraday() {
+        stock_sim::filter_session(&ohlcv_df, params.session_filter.as_ref())?
+    } else {
+        ohlcv_df
+    };
+
     let ohlcv_df = stock_sim::resample_ohlcv(&ohlcv_df, params.interval)?;
-    let mut bars = stock_sim::bars_from_df(&ohlcv_df)?;
+    let bars = stock_sim::bars_from_df(&ohlcv_df)?;
 
-    // Build signal date filters from the same DataFrame (no double-read)
+    // Build signal date filters from the session-filtered, resampled DataFrame
     let date_col = stock_sim::detect_date_col(&ohlcv_df);
-    let (mut entry_dates, mut exit_dates) =
-        stock_sim::build_stock_signal_filters(params, &ohlcv_df)?;
-
-    // Apply session filter for intraday data only
-    if params.interval.is_intraday() {
-        if let Some(ref filter) = params.session_filter {
-            let (start_time, end_time) = filter.time_range();
-            bars.retain(|b| {
-                let t = b.datetime.time();
-                t >= start_time && t < end_time
-            });
-            // Also filter signal dates so they don't reference out-of-session bars
-            if let Some(ref mut dates) = entry_dates {
-                dates.retain(|dt| {
-                    let t = dt.time();
-                    t >= start_time && t < end_time
-                });
-            }
-            if let Some(ref mut dates) = exit_dates {
-                dates.retain(|dt| {
-                    let t = dt.time();
-                    t >= start_time && t < end_time
-                });
-            }
-        }
-    }
+    let (entry_dates, exit_dates) = stock_sim::build_stock_signal_filters(params, &ohlcv_df)?;
 
     // Compute raw indicator data for charting from signals
     let mut indicator_data: Vec<IndicatorData> = vec![];
