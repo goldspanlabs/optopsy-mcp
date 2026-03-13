@@ -423,25 +423,30 @@ pub fn filter_session(
     }
 
     let (start_time, end_time) = filter.time_range();
-    let start_us = i64::from(start_time.num_seconds_from_midnight()) * 1_000_000;
-    let end_us = i64::from(end_time.num_seconds_from_midnight()) * 1_000_000;
 
-    let filtered = df
+    // Use hour/minute comparisons instead of raw time units to be
+    // independent of Polars internal Time representation.
+    // Build start/end filter using separate hour and minute comparisons.
+    // time >= start: (hour > start_h) OR (hour == start_h AND minute >= start_m)
+    // time < end:    (hour < end_h)   OR (hour == end_h   AND minute < end_m)
+    let sh = lit(i64::from(start_time.hour()));
+    let sm = lit(i64::from(start_time.minute()));
+    let eh = lit(i64::from(end_time.hour()));
+    let em = lit(i64::from(end_time.minute()));
+
+    let hour = col("datetime").dt().hour().cast(DataType::Int64);
+    let minute = col("datetime").dt().minute().cast(DataType::Int64);
+
+    let ge_start = hour
         .clone()
-        .lazy()
-        .filter(
-            col("datetime")
-                .dt()
-                .time()
-                .gt_eq(lit(start_us).cast(DataType::Time))
-                .and(
-                    col("datetime")
-                        .dt()
-                        .time()
-                        .lt(lit(end_us).cast(DataType::Time)),
-                ),
-        )
-        .collect()?;
+        .gt(sh.clone())
+        .or(hour.clone().eq(sh).and(minute.clone().gt_eq(sm)));
+    let lt_end = hour
+        .clone()
+        .lt(eh.clone())
+        .or(hour.eq(eh).and(minute.lt(em)));
+
+    let filtered = df.clone().lazy().filter(ge_start.and(lt_end)).collect()?;
 
     Ok(filtered)
 }
@@ -1971,5 +1976,39 @@ mod tests {
             let t = b.datetime.time();
             assert!(t >= start && t < end, "bar at {t} outside premarket");
         }
+    }
+
+    #[test]
+    fn filter_session_regular_hours() {
+        let df = load_fixture_df();
+        let before = df.height();
+
+        let filtered = filter_session(
+            &df,
+            Some(&crate::engine::types::SessionFilter::RegularHours),
+        )
+        .unwrap();
+
+        assert!(filtered.height() > 0, "should have regular hours bars");
+        assert!(filtered.height() < before, "filter should reduce row count");
+
+        // Verify all rows are within 09:30-16:00
+        let bars = bars_from_df(&filtered).unwrap();
+        let start = chrono::NaiveTime::from_hms_opt(9, 30, 0).unwrap();
+        let end = chrono::NaiveTime::from_hms_opt(16, 0, 0).unwrap();
+        for b in &bars {
+            let t = b.datetime.time();
+            assert!(
+                t >= start && t < end,
+                "bar at {t} outside regular hours [09:30, 16:00)"
+            );
+        }
+    }
+
+    #[test]
+    fn filter_session_none_is_passthrough() {
+        let df = load_fixture_df();
+        let filtered = filter_session(&df, None).unwrap();
+        assert_eq!(filtered.height(), df.height());
     }
 }

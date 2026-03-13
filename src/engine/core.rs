@@ -34,22 +34,32 @@ fn load_ohlcv_closes(
 
     let ohlcv_path = params.ohlcv_path.as_ref()?;
     let df = load_ohlcv(ohlcv_path).ok()?;
-    let closes = df.column("close").ok()?.f64().ok()?;
 
     let mut closes_map = std::collections::BTreeMap::new();
 
     // Intraday path: "datetime" Datetime column → extract date portion.
-    // Later entries (sorted chronologically) overwrite earlier ones, giving last-close-per-day.
-    if let Ok(dt_ca) = df
-        .column("datetime")
-        .and_then(|c| Ok(c.datetime()?.clone()))
-    {
+    // Sort by datetime so later entries overwrite earlier ones, giving last-close-per-day.
+    if df.column("datetime").is_ok() {
+        let sorted = df
+            .clone()
+            .lazy()
+            .sort(
+                ["datetime"],
+                polars::prelude::SortMultipleOptions::default(),
+            )
+            .collect()
+            .ok()?;
+        let closes = sorted.column("close").ok()?.f64().ok()?;
+        let dt_ca = sorted
+            .column("datetime")
+            .and_then(|c| Ok(c.datetime()?.clone()))
+            .ok()?;
         let micros_per_sec: i64 = match dt_ca.time_unit() {
             polars::prelude::TimeUnit::Microseconds => 1_000_000,
             polars::prelude::TimeUnit::Milliseconds => 1_000,
             polars::prelude::TimeUnit::Nanoseconds => 1_000_000_000,
         };
-        for i in 0..df.height() {
+        for i in 0..sorted.height() {
             let Some(raw) = dt_ca.phys.get(i) else {
                 continue;
             };
@@ -67,6 +77,7 @@ fn load_ohlcv_closes(
         }
     } else {
         // Daily path: "date" Date column
+        let closes = df.column("close").ok()?.f64().ok()?;
         let dates = df.column("date").ok()?.date().ok()?;
         for i in 0..df.height() {
             let Some(days) = dates.phys.get(i) else {

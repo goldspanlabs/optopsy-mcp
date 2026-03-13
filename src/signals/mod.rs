@@ -82,8 +82,9 @@ pub fn active_dates_multi<S: std::hash::BuildHasher>(
             let df = cross_dfs.get(&upper).ok_or_else(|| {
                 anyhow::anyhow!("CrossSymbol references '{upper}' but no OHLCV data loaded for it")
             })?;
-            // The inner signal may itself contain CrossSymbol or combinators
-            active_dates_multi(signal, df, cross_dfs, date_col)
+            // Detect the correct date/datetime column for this cross-symbol DataFrame
+            let cross_date_col = crate::engine::stock_sim::detect_date_col(df);
+            active_dates_multi(signal, df, cross_dfs, cross_date_col)
         }
         SignalSpec::And { left, right } => {
             let left_dates = active_dates_multi(left, primary_df, cross_dfs, date_col)?;
@@ -145,7 +146,9 @@ pub fn active_datetimes_multi<S: std::hash::BuildHasher>(
             let df = cross_dfs.get(&upper).ok_or_else(|| {
                 anyhow::anyhow!("CrossSymbol references '{upper}' but no OHLCV data loaded for it")
             })?;
-            active_datetimes_multi(signal, df, cross_dfs, date_col)
+            // Detect the correct date/datetime column for this cross-symbol DataFrame
+            let cross_date_col = crate::engine::stock_sim::detect_date_col(df);
+            active_datetimes_multi(signal, df, cross_dfs, cross_date_col)
         }
         SignalSpec::And { left, right } => {
             let left_dts = active_datetimes_multi(left, primary_df, cross_dfs, date_col)?;
