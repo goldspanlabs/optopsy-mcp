@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 set -e
 
+export RUSTFLAGS="-Dwarnings"
+
 echo "==> pre-push: cargo fmt --check"
 cargo fmt --check
 
+echo "==> pre-push: cargo clippy --all-targets"
+cargo clippy --all-targets
+
 echo "==> pre-push: cargo build"
 cargo build
-
-echo "==> pre-push: cargo clippy"
-cargo clippy -- -D warnings
 
 echo "==> pre-push: cargo test"
 cargo test
