@@ -504,8 +504,15 @@ pub fn resample_ohlcv(
                  Provide intraday (datetime) data instead."
             ));
         }
-        // Already at minimum granularity — no downsampling needed
-        return Ok(df.clone());
+        // Already at minimum granularity — no downsampling needed.
+        // Sort by datetime for consistency with other intraday resamples so
+        // downstream consumers can assume chronological order.
+        use polars::prelude::{IntoLazy, SortMultipleOptions};
+        return Ok(df
+            .clone()
+            .lazy()
+            .sort(["datetime"], SortMultipleOptions::default())
+            .collect()?);
     }
     if !has_datetime_col && interval == Interval::Daily {
         // Daily input, daily target → no-op

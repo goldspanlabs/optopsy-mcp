@@ -26,13 +26,11 @@ pub fn execute(
 
     let ohlcv_df = stock_sim::load_ohlcv_df(ohlcv_path, params.start_date, params.end_date)?;
 
-    // Apply session filter to the DataFrame BEFORE resampling so that
-    // out-of-session rows don't pollute aggregated OHLC values.
-    let ohlcv_df = if params.interval.is_intraday() {
-        stock_sim::filter_session(&ohlcv_df, params.session_filter.as_ref())?
-    } else {
-        ohlcv_df
-    };
+    // Apply session filter BEFORE resampling so that out-of-session rows don't
+    // pollute aggregated OHLC values. This applies whenever the *source* data is
+    // intraday (has a Datetime column), regardless of target interval — e.g.
+    // resampling 1-min data to daily should still exclude pre/post-market bars.
+    let ohlcv_df = stock_sim::filter_session(&ohlcv_df, params.session_filter.as_ref())?;
 
     let ohlcv_df = stock_sim::resample_ohlcv(&ohlcv_df, params.interval)?;
     let bars = stock_sim::bars_from_df(&ohlcv_df)?;

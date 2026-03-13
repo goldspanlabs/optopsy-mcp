@@ -39,7 +39,12 @@ fn load_ohlcv_closes(
 
     // Intraday path: "datetime" Datetime column → extract date portion.
     // Sort by datetime so later entries overwrite earlier ones, giving last-close-per-day.
-    if df.column("datetime").is_ok() {
+    // Only take this branch when the column is actually a Datetime dtype.
+    let has_datetime = df
+        .column("datetime")
+        .ok()
+        .is_some_and(|c| matches!(c.dtype(), polars::prelude::DataType::Datetime(_, _)));
+    if has_datetime {
         let sorted = df
             .clone()
             .lazy()
