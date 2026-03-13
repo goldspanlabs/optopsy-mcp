@@ -296,8 +296,7 @@ fn check_exit(
     // For intraday data, time-based exits should use exit signals instead.
     if !params.interval.is_intraday() {
         if let Some(max_days) = params.max_hold_days {
-            let days_held =
-                (bar.datetime.date() - pos.entry_datetime.date()).num_days();
+            let days_held = (bar.datetime.date() - pos.entry_datetime.date()).num_days();
             if days_held >= i64::from(max_days) {
                 return Some(ExitDecision {
                     exit_type: ExitType::MaxHold,
@@ -2050,11 +2049,8 @@ mod tests {
     fn filter_session_after_hours() {
         let df = load_fixture_df();
         let before = df.height();
-        let filtered = filter_session(
-            &df,
-            Some(&crate::engine::types::SessionFilter::AfterHours),
-        )
-        .unwrap();
+        let filtered =
+            filter_session(&df, Some(&crate::engine::types::SessionFilter::AfterHours)).unwrap();
 
         // After hours = 16:00-20:00
         if filtered.height() > 0 {
@@ -2103,8 +2099,7 @@ mod tests {
             NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
             NaiveDate::from_ymd_opt(2024, 1, 3).unwrap(),
         ];
-        let date_col =
-            DateChunked::from_naive_date(PlSmallStr::from("date"), dates).into_column();
+        let date_col = DateChunked::from_naive_date(PlSmallStr::from("date"), dates).into_column();
         let df = polars::prelude::df! {
             "open" => &[100.0, 101.0],
             "high" => &[102.0, 103.0],
@@ -2130,11 +2125,11 @@ mod tests {
     #[test]
     fn detect_date_col_with_datetime() {
         use polars::prelude::*;
-        let datetimes = vec![chrono::NaiveDateTime::parse_from_str(
-            "2024-01-02 09:30:00",
-            "%Y-%m-%d %H:%M:%S",
-        )
-        .unwrap()];
+        let datetimes =
+            vec![
+                chrono::NaiveDateTime::parse_from_str("2024-01-02 09:30:00", "%Y-%m-%d %H:%M:%S")
+                    .unwrap(),
+            ];
         let dt_chunked: DatetimeChunked =
             DatetimeChunked::new(PlSmallStr::from("datetime"), &datetimes);
         let df = DataFrame::new(
@@ -2152,14 +2147,10 @@ mod tests {
     fn detect_date_col_with_date_only() {
         use polars::prelude::*;
         let dates = vec![NaiveDate::from_ymd_opt(2024, 1, 2).unwrap()];
-        let date_col =
-            DateChunked::from_naive_date(PlSmallStr::from("date"), dates).into_column();
+        let date_col = DateChunked::from_naive_date(PlSmallStr::from("date"), dates).into_column();
         let df = DataFrame::new(
             1,
-            vec![
-                date_col,
-                Series::new("close".into(), &[100.0]).into(),
-            ],
+            vec![date_col, Series::new("close".into(), &[100.0]).into()],
         )
         .unwrap();
         assert_eq!(detect_date_col(&df), "date");
@@ -2170,13 +2161,12 @@ mod tests {
         use polars::prelude::*;
         // DataFrame with BOTH "date" and "datetime" columns
         let dates = vec![NaiveDate::from_ymd_opt(2024, 1, 2).unwrap()];
-        let date_col =
-            DateChunked::from_naive_date(PlSmallStr::from("date"), dates).into_column();
-        let datetimes = vec![chrono::NaiveDateTime::parse_from_str(
-            "2024-01-02 09:30:00",
-            "%Y-%m-%d %H:%M:%S",
-        )
-        .unwrap()];
+        let date_col = DateChunked::from_naive_date(PlSmallStr::from("date"), dates).into_column();
+        let datetimes =
+            vec![
+                chrono::NaiveDateTime::parse_from_str("2024-01-02 09:30:00", "%Y-%m-%d %H:%M:%S")
+                    .unwrap(),
+            ];
         let dt_chunked: DatetimeChunked =
             DatetimeChunked::new(PlSmallStr::from("datetime"), &datetimes);
         let df = DataFrame::new(
@@ -2196,8 +2186,7 @@ mod tests {
         use polars::prelude::*;
         // A "datetime" column that is String type, not Datetime — should fall back to "date"
         let dates = vec![NaiveDate::from_ymd_opt(2024, 1, 2).unwrap()];
-        let date_col =
-            DateChunked::from_naive_date(PlSmallStr::from("date"), dates).into_column();
+        let date_col = DateChunked::from_naive_date(PlSmallStr::from("date"), dates).into_column();
         let df = DataFrame::new(
             1,
             vec![
@@ -2264,7 +2253,10 @@ mod tests {
             .and_then(|_| volume_as_i64(&resampled).ok())
             .map(|v| v.into_iter().flatten().sum())
             .unwrap_or(0);
-        assert_eq!(filtered_vol, resampled_vol, "volume mismatch after session filter + resample");
+        assert_eq!(
+            filtered_vol, resampled_vol,
+            "volume mismatch after session filter + resample"
+        );
     }
 
     // ── Intraday position sizing ────────────────────────────────────────

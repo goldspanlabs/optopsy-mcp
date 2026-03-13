@@ -113,10 +113,12 @@ pub fn execute(
 
     // Intraday path: "datetime" Datetime column → format with time
     if let Ok(dt_col_ref) = output_df.column("datetime") {
-        if matches!(dt_col_ref.dtype(), polars::prelude::DataType::Datetime(_, _)) {
+        if matches!(
+            dt_col_ref.dtype(),
+            polars::prelude::DataType::Datetime(_, _)
+        ) {
             for i in 0..rows {
-                let ndt =
-                    crate::engine::price_table::extract_datetime_from_column(dt_col_ref, i)?;
+                let ndt = crate::engine::price_table::extract_datetime_from_column(dt_col_ref, i)?;
                 let date = if ndt.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
                     ndt.format("%Y-%m-%d").to_string()
                 } else {

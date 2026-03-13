@@ -375,8 +375,7 @@ fn load_underlying_prices(path: &std::path::Path) -> Vec<tools::response_types::
             else {
                 continue;
             };
-            let Ok(ndt) =
-                crate::engine::price_table::extract_datetime_from_column(dt_col_ref, i)
+            let Ok(ndt) = crate::engine::price_table::extract_datetime_from_column(dt_col_ref, i)
             else {
                 continue;
             };
