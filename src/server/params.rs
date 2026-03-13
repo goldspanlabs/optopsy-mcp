@@ -45,6 +45,18 @@ fn is_stock_mode(mode: &Option<String>) -> bool {
     mode.as_deref() == Some("stock")
 }
 
+/// Validate that `mode`, when provided, is one of `"stock"` or `"options"`.
+/// Unknown values would silently fall back to options-mode, which is confusing.
+#[allow(clippy::ref_option, clippy::trivially_copy_pass_by_ref)]
+fn validate_mode(value: &Option<String>, _ctx: &()) -> garde::Result {
+    match value.as_deref() {
+        None | Some("stock" | "options") => Ok(()),
+        Some(other) => Err(garde::Error::new(format!(
+            "mode must be \"stock\" or \"options\" (got \"{other}\")"
+        ))),
+    }
+}
+
 /// Validate `strategy` based on `mode`: required (non-empty) in options mode, ignored in stock mode.
 #[allow(clippy::ref_option)]
 fn validate_strategy_for_mode(
@@ -119,7 +131,7 @@ pub struct BacktestBaseParams {
     /// Stock mode ignores options-specific fields (strategy, `leg_deltas`, `entry_dte`, `exit_dte`,
     /// `min_bid_ask`, selector, `expiration_filter`, `net_premium`/delta filters).
     #[serde(default)]
-    #[garde(skip)]
+    #[garde(custom(validate_mode))]
     pub mode: Option<String>,
     /// The option strategy name (e.g. `short_put`, `iron_condor`, `short_strangle`).
     /// Call `list_strategies` to see all 32 options. Required for options mode, ignored for stock mode.

@@ -304,11 +304,19 @@ impl OptopsyServer {
         let start_date = base
             .start_date
             .as_deref()
-            .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+            .map(|s| {
+                chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                    .map_err(|_| format!("Invalid start_date \"{s}\": expected YYYY-MM-DD"))
+            })
+            .transpose()?;
         let end_date = base
             .end_date
             .as_deref()
-            .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+            .map(|s| {
+                chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                    .map_err(|_| format!("Invalid end_date \"{s}\": expected YYYY-MM-DD"))
+            })
+            .transpose()?;
 
         let interval = base.interval.unwrap_or_default();
         let side = base.side.unwrap_or(crate::engine::types::Side::Long);
@@ -1025,12 +1033,20 @@ impl OptopsyServer {
                     .sim_params
                     .start_date
                     .as_deref()
-                    .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+                    .map(|s| {
+                        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                            .map_err(|_| format!("Invalid start_date \"{s}\": expected YYYY-MM-DD"))
+                    })
+                    .transpose()?;
                 let end_date = params
                     .sim_params
                     .end_date
                     .as_deref()
-                    .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+                    .map(|s| {
+                        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                            .map_err(|_| format!("Invalid end_date \"{s}\": expected YYYY-MM-DD"))
+                    })
+                    .transpose()?;
 
                 let intervals = stock_dims
                     .intervals

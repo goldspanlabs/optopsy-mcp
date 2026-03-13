@@ -5,6 +5,7 @@
 //! across windows, and aggregate computation.
 
 use optopsy_mcp::engine::walk_forward::run_walk_forward;
+use chrono::Datelike;
 
 mod common;
 use common::{backtest_params, delta, make_multi_strike_df};
@@ -206,4 +207,194 @@ fn walk_forward_multi_leg_strategy() {
             assert!(e.to_string().contains("No valid"), "Unexpected error: {e}");
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Stock walk-forward tests
+// ---------------------------------------------------------------------------
+
+/// Build 60 weekday bars of synthetic OHLCV data for stock walk-forward tests.
+/// Returns (`TempDir`, `path_string`, `Vec<Bar>`).
+fn make_stock_wf_fixture() -> (
+    tempfile::TempDir,
+    String,
+    Vec<optopsy_mcp::engine::stock_sim::Bar>,
+) {
+    use chrono::NaiveDate;
+    use polars::prelude::*;
+
+    let start = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+    let mut dates = Vec::new();
+    let mut closes: Vec<f64> = Vec::new();
+    let mut price = 100.0_f64;
+    let mut d = start;
+    while dates.len() < 60 {
+        if d.weekday() != chrono::Weekday::Sat && d.weekday() != chrono::Weekday::Sun {
+            dates.push(d);
+            closes.push(price);
+            price += 0.3;
+        }
+        d += chrono::Duration::days(1);
+    }
+
+    let n = dates.len();
+    let mut df = df! {
+        "open"     => closes.clone(),
+        "high"     => closes.iter().map(|c| c + 1.0).collect::<Vec<_>>(),
+        "low"      => closes.iter().map(|c| c - 1.0).collect::<Vec<_>>(),
+        "close"    => closes.clone(),
+        "adjclose" => closes.clone(),
+        "volume"   => vec![1_000_000i64; n],
+    }
+    .unwrap();
+    df.with_column(
+        DateChunked::from_naive_date(PlSmallStr::from("date"), dates.clone()).into_column(),
+    )
+    .unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ohlcv.parquet");
+    let file = std::fs::File::create(&path).unwrap();
+    ParquetWriter::new(file).finish(&mut df).unwrap();
+    let path_str = path.to_string_lossy().to_string();
+
+    let bars = optopsy_mcp::engine::stock_sim::parse_ohlcv_bars(&path_str, None, None).unwrap();
+    (dir, path_str, bars)
+}
+
+#[test]
+fn stock_walk_forward_produces_windows_and_aggregate() {
+    use optopsy_mcp::engine::stock_sim::StockBacktestParams;
+    use optopsy_mcp::engine::types::{Interval, Side, Slippage};
+    use optopsy_mcp::engine::walk_forward::run_walk_forward_stock;
+    use std::collections::HashSet;
+
+    let (_dir, path, bars) = make_stock_wf_fixture();
+
+    // Entry every 5th bar so there are trades in each window.
+    let mut entry_dates: HashSet<chrono::NaiveDateTime> = HashSet::new();
+    for (i, bar) in bars.iter().enumerate() {
+        if i % 5 == 0 {
+            entry_dates.insert(bar.datetime);
+        }
+    }
+
+    let params = StockBacktestParams {
+        symbol: "TEST".to_string(),
+        side: Side::Long,
+        capital: 100_000.0,
+        quantity: 10,
+        sizing: None,
+        max_positions: 1,
+        slippage: Slippage::Mid,
+        commission: None,
+        stop_loss: None,
+        take_profit: None,
+        max_hold_days: Some(4),
+        min_days_between_entries: None,
+        entry_signal: None,
+        exit_signal: None,
+        ohlcv_path: Some(path),
+        cross_ohlcv_paths: std::collections::HashMap::new(),
+        start_date: None,
+        end_date: None,
+        interval: Interval::Daily,
+        session_filter: None,
+    };
+
+    // 60 bars ≈ 84 calendar days; train=30, test=10 → at least 2 windows.
+    let result = run_walk_forward_stock(&bars, &params, &Some(entry_dates), &None, 30, 10, None)
+        .unwrap();
+
+    assert!(
+        !result.windows.is_empty(),
+        "Expected at least 1 walk-forward window, got 0"
+    );
+    assert_eq!(result.aggregate.successful_windows, result.windows.len());
+
+    // Window numbers are sequential starting at 1.
+    for (i, w) in result.windows.iter().enumerate() {
+        assert_eq!(w.window_number, i + 1);
+        assert!(w.train_start < w.train_end);
+        assert!(w.test_start < w.test_end);
+    }
+}
+
+#[test]
+fn stock_walk_forward_rejects_insufficient_train_days() {
+    use optopsy_mcp::engine::stock_sim::StockBacktestParams;
+    use optopsy_mcp::engine::types::{Interval, Side, Slippage};
+    use optopsy_mcp::engine::walk_forward::run_walk_forward_stock;
+
+    let (_dir, path, bars) = make_stock_wf_fixture();
+
+    let params = StockBacktestParams {
+        symbol: "TEST".to_string(),
+        side: Side::Long,
+        capital: 100_000.0,
+        quantity: 10,
+        sizing: None,
+        max_positions: 1,
+        slippage: Slippage::Mid,
+        commission: None,
+        stop_loss: None,
+        take_profit: None,
+        max_hold_days: None,
+        min_days_between_entries: None,
+        entry_signal: None,
+        exit_signal: None,
+        ohlcv_path: Some(path),
+        cross_ohlcv_paths: std::collections::HashMap::new(),
+        start_date: None,
+        end_date: None,
+        interval: Interval::Daily,
+        session_filter: None,
+    };
+
+    // train_days = 0 → should fail validation.
+    let err = run_walk_forward_stock(&bars, &params, &None, &None, 0, 10, None).unwrap_err();
+    assert!(
+        err.to_string().contains("train_days"),
+        "Expected train_days error, got: {err}"
+    );
+}
+
+#[test]
+fn stock_walk_forward_rejects_small_step_days() {
+    use optopsy_mcp::engine::stock_sim::StockBacktestParams;
+    use optopsy_mcp::engine::types::{Interval, Side, Slippage};
+    use optopsy_mcp::engine::walk_forward::run_walk_forward_stock;
+
+    let (_dir, path, bars) = make_stock_wf_fixture();
+
+    let params = StockBacktestParams {
+        symbol: "TEST".to_string(),
+        side: Side::Long,
+        capital: 100_000.0,
+        quantity: 10,
+        sizing: None,
+        max_positions: 1,
+        slippage: Slippage::Mid,
+        commission: None,
+        stop_loss: None,
+        take_profit: None,
+        max_hold_days: None,
+        min_days_between_entries: None,
+        entry_signal: None,
+        exit_signal: None,
+        ohlcv_path: Some(path),
+        cross_ohlcv_paths: std::collections::HashMap::new(),
+        start_date: None,
+        end_date: None,
+        interval: Interval::Daily,
+        session_filter: None,
+    };
+
+    // step_days = 2 < 5 → should fail validation.
+    let err =
+        run_walk_forward_stock(&bars, &params, &None, &None, 20, 10, Some(2)).unwrap_err();
+    assert!(
+        err.to_string().contains("step_days"),
+        "Expected step_days error, got: {err}"
+    );
 }

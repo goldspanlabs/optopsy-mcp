@@ -866,3 +866,68 @@ fn date_range_limits_bars_used() {
 
     assert_eq!(result.equity_curve.len(), filtered_bars.len());
 }
+
+// ─── min_days_between_entries cooldown ───────────────────────────────────────
+
+/// Verify that `min_days_between_entries` prevents entries that fire within the
+/// cooldown window. Signal fires on day 1 and day 2; with a 5-day cooldown the
+/// day-2 signal should be skipped, producing only 1 trade.
+#[test]
+fn min_days_between_entries_skips_too_soon() {
+    let (dates, opens, highs, lows, closes) = trending_up_data();
+    let (_dir, path) = write_ohlcv(&dates, &opens, &highs, &lows, &closes);
+
+    let bars = parse_ohlcv_bars(&path, None, None).unwrap();
+    assert!(bars.len() >= 3, "need at least 3 bars");
+
+    // Fire entry signals on the first two consecutive trading days.
+    let mut entry_dates = std::collections::HashSet::new();
+    entry_dates.insert(bars[0].datetime);
+    entry_dates.insert(bars[1].datetime);
+
+    // With max_positions=2, both entries would normally be accepted.
+    // The 5-day cooldown should prevent the second one.
+    let mut params = default_params();
+    params.max_positions = 2;
+    params.max_hold_days = Some(30);
+    params.min_days_between_entries = Some(5);
+
+    let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+
+    assert_eq!(
+        result.trade_count, 1,
+        "Expected only 1 trade due to 5-day cooldown, got {}",
+        result.trade_count
+    );
+}
+
+/// Verify that entries separated by exactly `min_days_between_entries` days ARE
+/// allowed (boundary is inclusive).
+#[test]
+fn min_days_between_entries_allows_after_cooldown() {
+    let (dates, opens, highs, lows, closes) = trending_up_data();
+    let (_dir, path) = write_ohlcv(&dates, &opens, &highs, &lows, &closes);
+
+    let bars = parse_ohlcv_bars(&path, None, None).unwrap();
+    assert!(bars.len() >= 6, "need at least 6 bars");
+
+    // Signal fires on bar 0 and bar 5 (5 trading days apart).
+    let mut entry_dates = std::collections::HashSet::new();
+    entry_dates.insert(bars[0].datetime);
+    entry_dates.insert(bars[5].datetime);
+
+    let day_gap = (bars[5].datetime.date() - bars[0].datetime.date()).num_days();
+
+    let mut params = default_params();
+    params.max_positions = 2;
+    params.max_hold_days = Some(3);
+    params.min_days_between_entries = Some(day_gap as i32);
+
+    let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+
+    assert!(
+        result.trade_count >= 2,
+        "Expected both entries to be accepted (gap={day_gap} days, cooldown={day_gap}), got {}",
+        result.trade_count
+    );
+}

@@ -9,6 +9,7 @@ use std::hash::BuildHasher;
 use anyhow::Result;
 use chrono::{NaiveDate, NaiveDateTime};
 use rand::seq::SliceRandom;
+use rand::prelude::IndexedRandom;
 use rand::SeedableRng;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -381,11 +382,11 @@ pub fn run_stock_permutation_test(
     let mut perm_metrics: Vec<PermMetrics> = Vec::with_capacity(perm_params.num_permutations);
 
     for i in 0..perm_params.num_permutations {
-        // Randomly select N datetimes from all bar datetimes
-        let mut pool = all_bar_datetimes.clone();
-        pool.shuffle(&mut rng);
-        let shuffled_entry_dates: HashSet<NaiveDateTime> =
-            pool.into_iter().take(signal_fire_count).collect();
+        // Sample N datetimes from the pool without cloning/shuffling the whole slice.
+        let shuffled_entry_dates: HashSet<NaiveDateTime> = all_bar_datetimes
+            .choose_multiple(&mut rng, signal_fire_count)
+            .copied()
+            .collect();
 
         match stock_sim::run_stock_backtest(
             bars,
