@@ -28,18 +28,34 @@ pub fn execute(
     let ohlcv_df = stock_sim::resample_ohlcv(&ohlcv_df, params.interval)?;
     let mut bars = stock_sim::bars_from_df(&ohlcv_df)?;
 
-    // Apply session filter for intraday data
-    if let Some(ref filter) = params.session_filter {
-        let (start_time, end_time) = filter.time_range();
-        bars.retain(|b| {
-            let t = b.datetime.time();
-            t >= start_time && t < end_time
-        });
-    }
-
     // Build signal date filters from the same DataFrame (no double-read)
     let date_col = stock_sim::detect_date_col(&ohlcv_df);
-    let (entry_dates, exit_dates) = stock_sim::build_stock_signal_filters(params, &ohlcv_df)?;
+    let (mut entry_dates, mut exit_dates) =
+        stock_sim::build_stock_signal_filters(params, &ohlcv_df)?;
+
+    // Apply session filter for intraday data only
+    if params.interval.is_intraday() {
+        if let Some(ref filter) = params.session_filter {
+            let (start_time, end_time) = filter.time_range();
+            bars.retain(|b| {
+                let t = b.datetime.time();
+                t >= start_time && t < end_time
+            });
+            // Also filter signal dates so they don't reference out-of-session bars
+            if let Some(ref mut dates) = entry_dates {
+                dates.retain(|dt| {
+                    let t = dt.time();
+                    t >= start_time && t < end_time
+                });
+            }
+            if let Some(ref mut dates) = exit_dates {
+                dates.retain(|dt| {
+                    let t = dt.time();
+                    t >= start_time && t < end_time
+                });
+            }
+        }
+    }
 
     // Compute raw indicator data for charting from signals
     let mut indicator_data: Vec<IndicatorData> = vec![];

@@ -33,13 +33,27 @@ pub fn execute(
         let start_date = start
             .parse::<chrono::NaiveDate>()
             .with_context(|| format!("Invalid start_date: {start}"))?;
-        lazy = lazy.filter(col(date_col_name).gt_eq(lit(start_date)));
+        if date_col_name == "datetime" {
+            let start_dt = start_date.and_hms_opt(0, 0, 0).unwrap();
+            lazy = lazy.filter(col(date_col_name).gt_eq(lit(start_dt)));
+        } else {
+            lazy = lazy.filter(col(date_col_name).gt_eq(lit(start_date)));
+        }
     }
     if let Some(end) = end_date {
         let end_date = end
             .parse::<chrono::NaiveDate>()
             .with_context(|| format!("Invalid end_date: {end}"))?;
-        lazy = lazy.filter(col(date_col_name).lt_eq(lit(end_date)));
+        if date_col_name == "datetime" {
+            let end_next = end_date
+                .succ_opt()
+                .unwrap_or(end_date)
+                .and_hms_opt(0, 0, 0)
+                .unwrap();
+            lazy = lazy.filter(col(date_col_name).lt(lit(end_next)));
+        } else {
+            lazy = lazy.filter(col(date_col_name).lt_eq(lit(end_date)));
+        }
     }
 
     // Sort by date/datetime ascending

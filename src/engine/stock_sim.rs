@@ -96,7 +96,7 @@ pub fn run_stock_backtest(
 
     let signal_fire_count = entry_dates.as_ref().map_or(0, |dates| dates.len());
 
-    for bar in bars {
+    for (bar_idx, bar) in bars.iter().enumerate() {
         // ── 1. Check exits on open positions ────────────────────────────────
         let mut closed_ids = Vec::new();
         for pos in &positions {
@@ -137,11 +137,7 @@ pub fn run_stock_backtest(
                     return params.quantity;
                 }
                 let vol = super::sizing::vol_lookback(cfg).and_then(|lookback| {
-                    let idx = bars
-                        .iter()
-                        .position(|b| b.datetime == bar.datetime)
-                        .unwrap_or(0);
-                    let closes: Vec<f64> = bars[..=idx].iter().map(|b| b.close).collect();
+                    let closes: Vec<f64> = bars[..=bar_idx].iter().map(|b| b.close).collect();
                     super::sizing::compute_realized_vol(&closes, lookback, params.interval.bars_per_year())
                 });
                 super::sizing::compute_quantity(
@@ -422,7 +418,13 @@ pub fn resample_ohlcv(
 
     // --- Passthrough checks ---
     if interval == Interval::Min1 {
-        // Min1 is the smallest supported interval; no resampling possible
+        if !has_datetime_col {
+            return Err(anyhow::anyhow!(
+                "Cannot resample daily data to intraday interval ({interval}). \
+                 Provide intraday (datetime) data instead."
+            ));
+        }
+        // Already at minimum granularity — no downsampling needed
         return Ok(df.clone());
     }
     if !has_datetime_col && interval == Interval::Daily {
@@ -820,10 +822,26 @@ pub fn load_ohlcv_df(
         .filter(col("open").gt(lit(0.0)).and(col("close").gt(lit(0.0))));
 
     if let Some(start) = start_date {
-        lazy = lazy.filter(col(date_col_name).gt_eq(lit(start)));
+        if date_col_name == "datetime" {
+            // Promote NaiveDate to midnight NaiveDateTime for Datetime column comparison
+            let start_dt = start.and_hms_opt(0, 0, 0).unwrap();
+            lazy = lazy.filter(col(date_col_name).gt_eq(lit(start_dt)));
+        } else {
+            lazy = lazy.filter(col(date_col_name).gt_eq(lit(start)));
+        }
     }
     if let Some(end) = end_date {
-        lazy = lazy.filter(col(date_col_name).lt_eq(lit(end)));
+        if date_col_name == "datetime" {
+            // Use next day at midnight with < to include all bars on the end date
+            let end_next = end
+                .succ_opt()
+                .unwrap_or(end)
+                .and_hms_opt(0, 0, 0)
+                .unwrap();
+            lazy = lazy.filter(col(date_col_name).lt(lit(end_next)));
+        } else {
+            lazy = lazy.filter(col(date_col_name).lt_eq(lit(end)));
+        }
     }
 
     let df = lazy
