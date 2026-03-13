@@ -452,6 +452,26 @@ pub fn filter_session(
 }
 
 /// Resample OHLCV data to a different interval.
+/// Cast a `"volume"` column to `Int64`, accepting either `Int64` or `UInt64` input.
+///
+/// Yahoo-fetched daily Parquets commonly store volume as `UInt64`, while
+/// resampled output and some intraday sources use `Int64`. This helper
+/// normalizes both to `Int64` so downstream code doesn't need to branch.
+fn volume_as_i64(
+    df: &polars::prelude::DataFrame,
+) -> Result<polars::prelude::datatypes::Int64Chunked> {
+    use polars::prelude::*;
+    let vol = df.column("volume")?;
+    match vol.dtype() {
+        DataType::Int64 => Ok(vol.i64()?.clone()),
+        DataType::UInt64 => {
+            let casted = vol.cast(&DataType::Int64)?;
+            Ok(casted.i64()?.clone())
+        }
+        other => anyhow::bail!("Unexpected volume dtype: {other:?}, expected Int64 or UInt64"),
+    }
+}
+
 ///
 /// Supports both daily data (`"date"` Date column) and intraday data
 /// (`"datetime"` Datetime column). Groups rows by interval boundary and
@@ -538,7 +558,7 @@ fn resample_datetime(
     let highs = df.column("high")?.f64()?;
     let lows = df.column("low")?.f64()?;
     let closes = df.column("close")?.f64()?;
-    let volumes = df.column("volume")?.i64()?;
+    let volumes = volume_as_i64(&df)?;
     let has_adjclose = df.column("adjclose").is_ok();
     let adjcloses = if has_adjclose {
         Some(df.column("adjclose")?.f64()?)
@@ -725,7 +745,7 @@ fn resample_date(
     let highs = df.column("high")?.f64()?;
     let lows = df.column("low")?.f64()?;
     let closes = df.column("close")?.f64()?;
-    let volumes = df.column("volume")?.i64()?;
+    let volumes = volume_as_i64(df)?;
 
     let has_adjclose = df.column("adjclose").is_ok();
     let adjcloses = if has_adjclose {

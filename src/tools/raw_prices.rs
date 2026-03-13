@@ -95,7 +95,13 @@ pub fn execute(
     let highs = output_df.column("high")?.f64()?.clone();
     let lows = output_df.column("low")?.f64()?.clone();
     let closes = output_df.column("close")?.f64()?.clone();
-    let volumes = output_df.column("volume")?.u64()?.clone();
+    let vol_col = output_df.column("volume")?;
+    let volumes = if let polars::prelude::DataType::UInt64 = vol_col.dtype() {
+        vol_col.u64()?.clone()
+    } else {
+        let casted = vol_col.cast(&polars::prelude::DataType::UInt64)?;
+        casted.u64()?.clone()
+    };
 
     // Also try adjclose if available
     let adjcloses = output_df
