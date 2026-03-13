@@ -27,16 +27,16 @@ pub enum Interval {
     Weekly,
     Monthly,
     /// 1-minute bars
-    #[serde(rename = "1m", alias = "min1")]
+    #[serde(rename = "1m")]
     Min1,
     /// 5-minute bars
-    #[serde(rename = "5m", alias = "min5")]
+    #[serde(rename = "5m")]
     Min5,
     /// 30-minute bars
-    #[serde(rename = "30m", alias = "min30")]
+    #[serde(rename = "30m")]
     Min30,
     /// 1-hour bars
-    #[serde(rename = "1h", alias = "hour1")]
+    #[serde(rename = "1h")]
     Hour1,
 }
 
