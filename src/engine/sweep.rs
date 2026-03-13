@@ -653,17 +653,15 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
             params.base_params.end_date,
         )?;
 
-        // Determine OOS split on bars
-        let (train_bars, test_bars) = if params.out_of_sample_pct > 0.0 && all_bars.len() > 10 {
+        // Determine OOS split on bars. The test slice is fetched separately in the OOS pass
+        // below to avoid a redundant allocation here.
+        let train_bars: &[stock_sim::Bar] = if params.out_of_sample_pct > 0.0 && all_bars.len() > 10 {
             let split_idx =
                 ((1.0 - params.out_of_sample_pct) * all_bars.len() as f64).round() as usize;
             let split_idx = split_idx.clamp(1, all_bars.len() - 1);
-            (
-                all_bars[..split_idx].to_vec(),
-                Some(all_bars[split_idx..].to_vec()),
-            )
+            &all_bars[..split_idx]
         } else {
-            (all_bars, None)
+            &all_bars
         };
 
         for &idx in indices {
@@ -709,7 +707,7 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
             });
 
             match stock_sim::run_stock_backtest(
-                &train_bars,
+                train_bars,
                 &combo_params,
                 train_entry.as_ref(),
                 train_exit.as_ref(),
@@ -751,9 +749,6 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
                 }
             }
         }
-
-        // Store test bars info for OOS if available — handle after all combos in group
-        let _ = test_bars; // OOS handled below
     }
 
     // 4. Sort by Sharpe descending

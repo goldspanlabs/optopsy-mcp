@@ -511,18 +511,22 @@ pub struct StockCompareEntry {
 /// Compare multiple stock strategies side-by-side.
 ///
 /// Each entry carries its own `StockBacktestParams` (with entry/exit signals,
-/// interval, side, etc.). Data is prepared per unique (interval, `session_filter`)
-/// group to avoid redundant I/O.
+/// interval, side, etc.). Data is loaded individually per entry.
 pub fn compare_stock_strategies(entries: &[StockCompareEntry]) -> Result<Vec<CompareResult>> {
+    // Reject duplicate labels up front so callers get a clear error instead of silent skipping.
+    let mut seen_labels: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for entry in entries {
+        if !seen_labels.insert(entry.label.clone()) {
+            anyhow::bail!(
+                "Duplicate stock compare entry label '{}'; every entry must have a unique label",
+                entry.label
+            );
+        }
+    }
+
     let mut results = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for entry in entries {
-        if !seen.insert(entry.label.clone()) {
-            tracing::info!("Skipping duplicate stock entry: {}", entry.label);
-            continue;
-        }
-
         let ohlcv_path = entry
             .params
             .ohlcv_path
