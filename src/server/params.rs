@@ -271,13 +271,15 @@ pub struct RunStockBacktestParams {
     #[serde(default)]
     #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")), custom(validate_end_date_after_start(&self.start_date)))]
     pub end_date: Option<String>,
-    /// Bar interval: "daily" (default), "weekly", or "monthly".
-    /// Resamples OHLCV data before signal evaluation and simulation.
+    /// Bar interval: "daily" (default), "weekly", "monthly", or intraday presets
+    /// such as "1m", "5m", "30m", and "1h". Resamples OHLCV data before signal
+    /// evaluation and simulation.
     #[serde(default)]
     #[garde(skip)]
     pub interval: Option<Interval>,
-    /// Session filter for intraday data. Only applies when using intraday intervals.
-    /// Options: `Premarket` (04:00-09:30), `RegularHours` (09:30-16:00),
+    /// Session filter for intraday source data (datasets with a `datetime` column).
+    /// Applied before resampling, even when `interval` is "daily", "weekly", or
+    /// "monthly". Options: `Premarket` (04:00-09:30), `RegularHours` (09:30-16:00),
     /// `AfterHours` (16:00-20:00), `ExtendedHours` (04:00-20:00).
     #[serde(default)]
     #[garde(skip)]
