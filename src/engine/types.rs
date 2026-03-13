@@ -44,6 +44,8 @@ impl Interval {
     /// Approximate number of bars per trading year for annualization.
     ///
     /// Intraday counts assume a 6.5-hour regular session (390 minutes) × 252 trading days.
+    /// `Hour1` uses 7 bars/day because hour-truncated bucketing produces bars at hours
+    /// 9, 10, 11, 12, 13, 14, 15 for a 09:30–16:00 session.
     pub fn bars_per_year(self) -> f64 {
         match self {
             Self::Daily => 252.0,
@@ -52,7 +54,7 @@ impl Interval {
             Self::Min1 => 252.0 * 390.0,
             Self::Min5 => 252.0 * 78.0,
             Self::Min30 => 252.0 * 13.0,
-            Self::Hour1 => 252.0 * 6.5,
+            Self::Hour1 => 252.0 * 7.0,
         }
     }
 
