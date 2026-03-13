@@ -3,7 +3,7 @@
 //! Tests the full flow: write OHLCV parquet → parse bars → build signal filters →
 //! run simulation → verify trades, metrics, and AI-formatted response.
 
-use chrono::{Datelike, NaiveDate};
+use chrono::{Datelike, NaiveDate, NaiveDateTime};
 use optopsy_mcp::engine::stock_sim::{
     build_stock_signal_filters, load_ohlcv_df, parse_ohlcv_bars, run_stock_backtest,
     StockBacktestParams,
@@ -40,6 +40,7 @@ fn default_params() -> StockBacktestParams {
         start_date: None,
         end_date: None,
         interval: optopsy_mcp::engine::types::Interval::Daily,
+        session_filter: None,
     }
 }
 
@@ -210,8 +211,9 @@ fn full_pipeline_trending_up_long() {
 
     // Entry on day 0 with ConsecutiveUp (count=1 → fires when close > prev close)
     // In trending-up data, this fires on every bar after the first
-    let mut entry_dates = std::collections::HashSet::new();
-    entry_dates.insert(dates[0]);
+    let mut entry_dates: std::collections::HashSet<NaiveDateTime> =
+        std::collections::HashSet::new();
+    entry_dates.insert(dates[0].and_hms_opt(0, 0, 0).unwrap());
 
     let params = default_params();
     let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
@@ -233,8 +235,9 @@ fn full_pipeline_trending_down_short() {
 
     let bars = parse_ohlcv_bars(&path, None, None).unwrap();
 
-    let mut entry_dates = std::collections::HashSet::new();
-    entry_dates.insert(dates[0]);
+    let mut entry_dates: std::collections::HashSet<NaiveDateTime> =
+        std::collections::HashSet::new();
+    entry_dates.insert(dates[0].and_hms_opt(0, 0, 0).unwrap());
 
     let mut params = default_params();
     params.side = Side::Short;
@@ -256,8 +259,9 @@ fn full_pipeline_long_in_downtrend_loses() {
 
     let bars = parse_ohlcv_bars(&path, None, None).unwrap();
 
-    let mut entry_dates = std::collections::HashSet::new();
-    entry_dates.insert(dates[0]);
+    let mut entry_dates: std::collections::HashSet<NaiveDateTime> =
+        std::collections::HashSet::new();
+    entry_dates.insert(dates[0].and_hms_opt(0, 0, 0).unwrap());
 
     let params = default_params();
     let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
@@ -406,8 +410,9 @@ fn stop_loss_triggers_in_downtrend() {
 
     let bars = parse_ohlcv_bars(&path, None, None).unwrap();
 
-    let mut entry_dates = std::collections::HashSet::new();
-    entry_dates.insert(dates[0]);
+    let mut entry_dates: std::collections::HashSet<NaiveDateTime> =
+        std::collections::HashSet::new();
+    entry_dates.insert(dates[0].and_hms_opt(0, 0, 0).unwrap());
 
     let mut params = default_params();
     params.stop_loss = Some(0.02); // 2% stop loss — should trigger quickly in downtrend
@@ -434,8 +439,9 @@ fn take_profit_triggers_in_uptrend() {
 
     let bars = parse_ohlcv_bars(&path, None, None).unwrap();
 
-    let mut entry_dates = std::collections::HashSet::new();
-    entry_dates.insert(dates[0]);
+    let mut entry_dates: std::collections::HashSet<NaiveDateTime> =
+        std::collections::HashSet::new();
+    entry_dates.insert(dates[0].and_hms_opt(0, 0, 0).unwrap());
 
     let mut params = default_params();
     params.take_profit = Some(0.02); // 2% take profit — should trigger quickly in uptrend
@@ -458,8 +464,9 @@ fn max_hold_forces_exit() {
 
     let bars = parse_ohlcv_bars(&path, None, None).unwrap();
 
-    let mut entry_dates = std::collections::HashSet::new();
-    entry_dates.insert(dates[0]);
+    let mut entry_dates: std::collections::HashSet<NaiveDateTime> =
+        std::collections::HashSet::new();
+    entry_dates.insert(dates[0].and_hms_opt(0, 0, 0).unwrap());
 
     let mut params = default_params();
     params.max_hold_days = Some(5);
@@ -491,8 +498,9 @@ fn stop_loss_beats_max_hold_same_bar() {
     let (_dir, path) = write_ohlcv(&dates, &opens, &highs, &lows, &closes);
     let bars = parse_ohlcv_bars(&path, None, None).unwrap();
 
-    let mut entry_dates = std::collections::HashSet::new();
-    entry_dates.insert(dates[0]);
+    let mut entry_dates: std::collections::HashSet<NaiveDateTime> =
+        std::collections::HashSet::new();
+    entry_dates.insert(dates[0].and_hms_opt(0, 0, 0).unwrap());
 
     let mut params = default_params();
     params.stop_loss = Some(0.05); // 5% SL
@@ -518,8 +526,9 @@ fn mid_vs_spread_slippage_different_pnl() {
 
     let bars = parse_ohlcv_bars(&path, None, None).unwrap();
 
-    let mut entry_dates = std::collections::HashSet::new();
-    entry_dates.insert(dates[0]);
+    let mut entry_dates: std::collections::HashSet<NaiveDateTime> =
+        std::collections::HashSet::new();
+    entry_dates.insert(dates[0].and_hms_opt(0, 0, 0).unwrap());
 
     let mut params_mid = default_params();
     params_mid.slippage = Slippage::Mid;
@@ -550,8 +559,9 @@ fn per_leg_slippage_worse_than_mid() {
 
     let bars = parse_ohlcv_bars(&path, None, None).unwrap();
 
-    let mut entry_dates = std::collections::HashSet::new();
-    entry_dates.insert(dates[0]);
+    let mut entry_dates: std::collections::HashSet<NaiveDateTime> =
+        std::collections::HashSet::new();
+    entry_dates.insert(dates[0].and_hms_opt(0, 0, 0).unwrap());
 
     let mut params_mid = default_params();
     params_mid.slippage = Slippage::Mid;
@@ -576,8 +586,9 @@ fn commission_reduces_equity() {
 
     let bars = parse_ohlcv_bars(&path, None, None).unwrap();
 
-    let mut entry_dates = std::collections::HashSet::new();
-    entry_dates.insert(dates[0]);
+    let mut entry_dates: std::collections::HashSet<NaiveDateTime> =
+        std::collections::HashSet::new();
+    entry_dates.insert(dates[0].and_hms_opt(0, 0, 0).unwrap());
 
     let params_no_comm = default_params();
     let result_no_comm =
@@ -609,9 +620,10 @@ fn multiple_entries_with_max_positions() {
     let bars = parse_ohlcv_bars(&path, None, None).unwrap();
 
     // Signal fires on first 5 days
-    let mut entry_dates = std::collections::HashSet::new();
+    let mut entry_dates: std::collections::HashSet<NaiveDateTime> =
+        std::collections::HashSet::new();
     for date in dates.iter().take(5) {
-        entry_dates.insert(*date);
+        entry_dates.insert(date.and_hms_opt(0, 0, 0).unwrap());
     }
 
     // max_positions=1 → only 1 position opened
@@ -641,8 +653,9 @@ fn short_stop_loss_triggers_on_rally() {
 
     let bars = parse_ohlcv_bars(&path, None, None).unwrap();
 
-    let mut entry_dates = std::collections::HashSet::new();
-    entry_dates.insert(dates[0]);
+    let mut entry_dates: std::collections::HashSet<NaiveDateTime> =
+        std::collections::HashSet::new();
+    entry_dates.insert(dates[0].and_hms_opt(0, 0, 0).unwrap());
 
     let mut params = default_params();
     params.side = Side::Short;
@@ -669,8 +682,9 @@ fn short_take_profit_triggers_on_decline() {
 
     let bars = parse_ohlcv_bars(&path, None, None).unwrap();
 
-    let mut entry_dates = std::collections::HashSet::new();
-    entry_dates.insert(dates[0]);
+    let mut entry_dates: std::collections::HashSet<NaiveDateTime> =
+        std::collections::HashSet::new();
+    entry_dates.insert(dates[0].and_hms_opt(0, 0, 0).unwrap());
 
     let mut params = default_params();
     params.side = Side::Short;
@@ -767,8 +781,9 @@ fn equity_curve_monotonic_start_for_profitable_trend() {
 
     let bars = parse_ohlcv_bars(&path, None, None).unwrap();
 
-    let mut entry_dates = std::collections::HashSet::new();
-    entry_dates.insert(dates[0]);
+    let mut entry_dates: std::collections::HashSet<NaiveDateTime> =
+        std::collections::HashSet::new();
+    entry_dates.insert(dates[0].and_hms_opt(0, 0, 0).unwrap());
 
     let params = default_params();
     let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
@@ -791,10 +806,11 @@ fn metrics_populated_for_multi_trade_backtest() {
     let bars = parse_ohlcv_bars(&path, None, None).unwrap();
 
     // Entry on every 5th trading day
-    let mut entry_dates = std::collections::HashSet::new();
+    let mut entry_dates: std::collections::HashSet<NaiveDateTime> =
+        std::collections::HashSet::new();
     for (i, date) in dates.iter().enumerate() {
         if i % 5 == 0 {
-            entry_dates.insert(*date);
+            entry_dates.insert(date.and_hms_opt(0, 0, 0).unwrap());
         }
     }
 
@@ -840,8 +856,9 @@ fn date_range_limits_bars_used() {
     );
 
     // Run backtest on filtered subset
-    let mut entry_dates = std::collections::HashSet::new();
-    entry_dates.insert(start);
+    let mut entry_dates: std::collections::HashSet<NaiveDateTime> =
+        std::collections::HashSet::new();
+    entry_dates.insert(start.and_hms_opt(0, 0, 0).unwrap());
 
     let params = default_params();
     let result = run_stock_backtest(&filtered_bars, &params, Some(&entry_dates), None).unwrap();

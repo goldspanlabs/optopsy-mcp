@@ -46,12 +46,15 @@ struct TradeMetrics {
     expectancy: f64,
 }
 
-/// Calculate performance metrics from equity curve and trade log
+/// Calculate performance metrics from equity curve and trade log.
+///
+/// `bars_per_year` controls the annualization factor (e.g. 252 for daily, 252×390 for 1-min).
 #[allow(clippy::unnecessary_wraps)]
 pub fn calculate_metrics(
     equity_curve: &[EquityPoint],
     trade_log: &[TradeRecord],
     initial_capital: f64,
+    bars_per_year: f64,
 ) -> Result<PerformanceMetrics> {
     if initial_capital <= 0.0 {
         return Ok(DEFAULT_METRICS);
@@ -65,7 +68,7 @@ pub fn calculate_metrics(
         if equity_curve.len() < 2 {
             (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         } else {
-            compute_equity_metrics(equity_curve, initial_capital)
+            compute_equity_metrics(equity_curve, initial_capital, bars_per_year)
         };
 
     Ok(PerformanceMetrics {
@@ -92,6 +95,7 @@ pub fn calculate_metrics(
 fn compute_equity_metrics(
     equity_curve: &[EquityPoint],
     initial_capital: f64,
+    bars_per_year: f64,
 ) -> (f64, f64, f64, f64, f64, f64, f64) {
     let mut returns = Vec::new();
     let mut prev_equity = initial_capital;
@@ -110,8 +114,7 @@ fn compute_equity_metrics(
     let std_return = std_dev(&returns);
     let downside_std = downside_deviation(&returns);
 
-    // Annualize (assume ~252 trading days)
-    let annualization = (252.0_f64).sqrt();
+    let annualization = bars_per_year.sqrt();
     // Use actual date span from equity curve for CAGR/Calmar.
     let first_dt = equity_curve
         .first()
@@ -355,7 +358,7 @@ mod tests {
     #[test]
     fn single_point_returns_zeros() {
         let curve = make_equity_curve(&[10000.0]);
-        let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
+        let m = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
         assert!((m.sharpe - 0.0).abs() < f64::EPSILON);
         assert!((m.max_drawdown - 0.0).abs() < f64::EPSILON);
     }
@@ -368,7 +371,7 @@ mod tests {
             make_trade(-50.0, 3),
             make_trade(150.0, 7),
         ];
-        let m = calculate_metrics(&curve, &trades, 10000.0).unwrap();
+        let m = calculate_metrics(&curve, &trades, 10000.0, 252.0).unwrap();
 
         // Trade-level win rate: 2 winners out of 3
         assert!((m.win_rate - 2.0 / 3.0).abs() < 1e-10);
@@ -383,7 +386,7 @@ mod tests {
         // mean = 1/30, std (sample) = 1/sqrt(75)
         // sharpe = mean/std * sqrt(252) = sqrt(21) ≈ 4.58257569...
         let curve = make_equity_curve(&[11000.0, 9900.0, 10890.0]);
-        let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
+        let m = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
         let expected_sharpe = 21.0_f64.sqrt();
         assert!(
             (m.sharpe - expected_sharpe).abs() < 1e-10,
@@ -399,7 +402,7 @@ mod tests {
         // negative returns: [-0.1], downside_dev = sqrt(0.01/(3-1)) = sqrt(0.005)
         // sortino = mean/downside_dev * sqrt(252) = (1/30)/sqrt(0.005)*sqrt(252) = sqrt(56)
         let curve = make_equity_curve(&[11000.0, 9900.0, 10890.0]);
-        let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
+        let m = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
         let expected_sortino = 56.0_f64.sqrt();
         assert!(
             (m.sortino - expected_sortino).abs() < 1e-10,
@@ -414,7 +417,7 @@ mod tests {
         // Returns [0.1, -0.1, 0.1], sorted: [-0.1, 0.1, 0.1]
         // VaR index = floor(0.05 * 3) = 0 → sorted[0] = -0.1 → VaR = 0.1
         let curve = make_equity_curve(&[11000.0, 9900.0, 10890.0]);
-        let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
+        let m = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
         assert!(
             (m.var_95 - 0.1).abs() < 1e-10,
             "VaR 95% {:.12} should equal 0.1",
@@ -426,7 +429,7 @@ mod tests {
     fn sortino_zero_when_no_negative_returns() {
         // All positive returns → downside deviation is 0 → Sortino is 0
         let curve = make_equity_curve(&[10100.0, 10200.0, 10300.0]);
-        let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
+        let m = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
         assert!(m.sharpe > 0.0, "Sharpe should be positive");
         assert!(
             (m.sortino - 0.0).abs() < f64::EPSILON,
@@ -439,7 +442,7 @@ mod tests {
     fn all_wins_profit_factor_capped() {
         let curve = make_equity_curve(&[10100.0, 10200.0, 10300.0]);
         let trades = vec![make_trade(100.0, 5), make_trade(200.0, 10)];
-        let m = calculate_metrics(&curve, &trades, 10000.0).unwrap();
+        let m = calculate_metrics(&curve, &trades, 10000.0, 252.0).unwrap();
         assert!((m.win_rate - 1.0).abs() < f64::EPSILON);
         assert!((m.profit_factor - MAX_PROFIT_FACTOR).abs() < f64::EPSILON);
         assert!(m.profit_factor.is_finite());
@@ -453,7 +456,7 @@ mod tests {
             make_trade(-100.0, 5),
             make_trade(-100.0, 5),
         ];
-        let m = calculate_metrics(&curve, &trades, 10000.0).unwrap();
+        let m = calculate_metrics(&curve, &trades, 10000.0, 252.0).unwrap();
         assert!((m.win_rate - 0.0).abs() < f64::EPSILON);
         assert!((m.profit_factor - 0.0).abs() < f64::EPSILON);
         assert!(m.max_drawdown > 0.0);
@@ -463,7 +466,7 @@ mod tests {
     fn max_drawdown_calculation() {
         // Peak at 10200, trough at 9800 → dd = 400/10200 ≈ 0.0392
         let curve = make_equity_curve(&[10000.0, 10200.0, 9800.0, 10100.0]);
-        let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
+        let m = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
         let expected_dd = (10200.0 - 9800.0) / 10200.0;
         assert!((m.max_drawdown - expected_dd).abs() < 1e-10);
     }
@@ -471,7 +474,7 @@ mod tests {
     #[test]
     fn flat_equity_zero_std() {
         let curve = make_equity_curve(&[10000.0, 10000.0, 10000.0, 10000.0]);
-        let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
+        let m = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
         assert!((m.sharpe - 0.0).abs() < f64::EPSILON); // std is 0
         assert!((m.max_drawdown - 0.0).abs() < f64::EPSILON);
     }
@@ -482,7 +485,7 @@ mod tests {
             10000.0, 9900.0, 9950.0, 9850.0, 9800.0, 9750.0, 9700.0, 9650.0, 9600.0, 9550.0,
             9500.0, 9450.0, 9400.0, 9350.0, 9300.0, 9250.0, 9200.0, 9150.0, 9100.0, 9050.0, 9000.0,
         ]);
-        let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
+        let m = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
         assert!(m.var_95 > 0.0);
     }
 
@@ -494,7 +497,7 @@ mod tests {
             values.push(10000.0 + f64::from(i) * 2.76); // end at ~11008
         }
         let curve = make_equity_curve(&values);
-        let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
+        let m = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
         let total_ret = (curve.last().unwrap().equity - 10000.0) / 10000.0;
         assert!(
             (m.cagr - total_ret).abs() < 1e-10,
@@ -512,7 +515,7 @@ mod tests {
             values.push(10000.0 + f64::from(i) * 50.0);
         }
         let curve = make_equity_curve(&values);
-        let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
+        let m = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
         assert_eq!(m.cagr, 0.0, "CAGR should be 0 for short backtests");
         assert_eq!(m.calmar, 0.0, "Calmar should be 0 for short backtests");
         // total_return_pct should still be populated
@@ -530,7 +533,7 @@ mod tests {
         // Add a dip for drawdown
         values[63] = 9500.0;
         let curve = make_equity_curve(&values);
-        let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
+        let m = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
         // Calmar should be CAGR / max_drawdown
         if m.max_drawdown > 0.0 {
             assert!((m.calmar - m.cagr / m.max_drawdown).abs() < 1e-10);
@@ -546,7 +549,7 @@ mod tests {
             make_trade(-50.0, 2),
         ];
         let curve = make_equity_curve(&[10000.0, 10200.0, 10100.0, 10250.0, 10200.0]);
-        let m = calculate_metrics(&curve, &trades, 10000.0).unwrap();
+        let m = calculate_metrics(&curve, &trades, 10000.0, 252.0).unwrap();
 
         // win_rate = 2/4 = 0.5, avg_winner = 175, avg_loser = -75
         assert!((m.win_rate - 0.5).abs() < 1e-10);
@@ -567,7 +570,7 @@ mod tests {
             make_trade(-10.0, 1),
         ];
         let curve = make_equity_curve(&[10000.0, 10100.0]);
-        let m = calculate_metrics(&curve, &trades, 10000.0).unwrap();
+        let m = calculate_metrics(&curve, &trades, 10000.0, 252.0).unwrap();
         assert_eq!(m.max_consecutive_losses, 3);
     }
 
@@ -579,7 +582,7 @@ mod tests {
             make_trade(-30.0, 2),
         ];
         let curve = make_equity_curve(&[10000.0, 9920.0]);
-        let m = calculate_metrics(&curve, &trades, 10000.0).unwrap();
+        let m = calculate_metrics(&curve, &trades, 10000.0, 252.0).unwrap();
         // Zero-PnL breaks the streak, so max consecutive losses is 1, not 2
         assert_eq!(m.max_consecutive_losses, 1);
         // 0 winners, 2 losers, 1 scratch — win_rate = 0/3
@@ -596,14 +599,14 @@ mod tests {
             make_trade(75.0, 30),
         ];
         let curve = make_equity_curve(&[10000.0, 10100.0]);
-        let m = calculate_metrics(&curve, &trades, 10000.0).unwrap();
+        let m = calculate_metrics(&curve, &trades, 10000.0, 252.0).unwrap();
         assert!((m.avg_days_held - 20.0).abs() < 1e-10);
     }
 
     #[test]
     fn total_return_pct() {
         let curve = make_equity_curve(&[10000.0, 10500.0, 11000.0]);
-        let m = calculate_metrics(&curve, &[], 10000.0).unwrap();
+        let m = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
         assert!((m.total_return_pct - 10.0).abs() < 1e-10);
     }
 }

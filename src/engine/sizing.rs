@@ -262,8 +262,8 @@ pub fn max_loss_per_share(entry_price: f64, stop_loss: Option<f64>) -> f64 {
 
 /// Compute annualized realized volatility from a slice of close prices.
 ///
-/// Uses log returns → std dev → annualize (× √252).
-pub fn compute_realized_vol(closes: &[f64], lookback: usize) -> Option<f64> {
+/// Uses log returns → std dev → annualize (× √`bars_per_year`).
+pub fn compute_realized_vol(closes: &[f64], lookback: usize, bars_per_year: f64) -> Option<f64> {
     let n = closes.len().min(lookback);
     if n < 2 {
         return None;
@@ -289,7 +289,7 @@ pub fn compute_realized_vol(closes: &[f64], lookback: usize) -> Option<f64> {
     let variance = log_returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>()
         / (log_returns.len() - 1) as f64;
     let daily_vol = variance.sqrt();
-    let annualized = daily_vol * (252.0_f64).sqrt();
+    let annualized = daily_vol * bars_per_year.sqrt();
 
     if annualized.is_finite() && annualized > 0.0 {
         Some(annualized)
@@ -358,14 +358,14 @@ mod tests {
     fn vol_basic() {
         // Constant prices → zero vol
         let closes = vec![100.0; 30];
-        let vol = compute_realized_vol(&closes, 30);
+        let vol = compute_realized_vol(&closes, 30, 252.0);
         assert!(vol.is_none() || vol.unwrap().abs() < 1e-10);
     }
 
     #[test]
     fn vol_too_few_points() {
-        assert!(compute_realized_vol(&[100.0], 10).is_none());
-        assert!(compute_realized_vol(&[], 10).is_none());
+        assert!(compute_realized_vol(&[100.0], 10, 252.0).is_none());
+        assert!(compute_realized_vol(&[], 10, 252.0).is_none());
     }
 
     #[test]
@@ -373,7 +373,7 @@ mod tests {
         let closes: Vec<f64> = (0..60)
             .map(|i| 100.0 + (f64::from(i) * 0.1).sin() * 5.0)
             .collect();
-        let vol = compute_realized_vol(&closes, 60);
+        let vol = compute_realized_vol(&closes, 60, 252.0);
         assert!(vol.is_some());
         assert!(vol.unwrap() > 0.0);
     }

@@ -16,6 +16,7 @@ use crate::engine::types::EPOCH_DAYS_CE_OFFSET;
 
 /// Extract price bars from an in-memory `DataFrame` with optional date range, row limit,
 /// and interval resampling.
+#[allow(clippy::too_many_lines)]
 pub fn execute(
     df: &DataFrame,
     symbol: &str,
@@ -24,6 +25,7 @@ pub fn execute(
     limit: Option<usize>,
     interval: crate::engine::types::Interval,
 ) -> Result<RawPricesResponse> {
+    let date_col_name = crate::engine::stock_sim::detect_date_col(df);
     let mut lazy = df.clone().lazy();
 
     // Apply optional date filters
@@ -31,26 +33,36 @@ pub fn execute(
         let start_date = start
             .parse::<chrono::NaiveDate>()
             .with_context(|| format!("Invalid start_date: {start}"))?;
-        lazy = lazy.filter(col("date").gt_eq(lit(start_date)));
+        if date_col_name == "datetime" {
+            let start_dt = start_date.and_hms_opt(0, 0, 0).unwrap();
+            lazy = lazy.filter(col(date_col_name).gt_eq(lit(start_dt)));
+        } else {
+            lazy = lazy.filter(col(date_col_name).gt_eq(lit(start_date)));
+        }
     }
     if let Some(end) = end_date {
         let end_date = end
             .parse::<chrono::NaiveDate>()
             .with_context(|| format!("Invalid end_date: {end}"))?;
-        lazy = lazy.filter(col("date").lt_eq(lit(end_date)));
+        if date_col_name == "datetime" {
+            let end_next = end_date
+                .succ_opt()
+                .unwrap_or(end_date)
+                .and_hms_opt(0, 0, 0)
+                .unwrap();
+            lazy = lazy.filter(col(date_col_name).lt(lit(end_next)));
+        } else {
+            lazy = lazy.filter(col(date_col_name).lt_eq(lit(end_date)));
+        }
     }
 
-    // Sort by date ascending
-    lazy = lazy.sort(["date"], SortMultipleOptions::default());
+    // Sort by date/datetime ascending
+    lazy = lazy.sort([date_col_name], SortMultipleOptions::default());
 
     let filtered = lazy.collect()?;
 
-    // Apply interval resampling if needed
-    let filtered = if interval == crate::engine::types::Interval::Daily {
-        filtered
-    } else {
-        crate::engine::stock_sim::resample_ohlcv(&filtered, interval)?
-    };
+    // Apply interval resampling (passthrough for same-interval / Min1)
+    let filtered = crate::engine::stock_sim::resample_ohlcv(&filtered, interval)?;
 
     let total_rows = filtered.height();
 
@@ -79,12 +91,17 @@ pub fn execute(
     let rows = output_df.height();
 
     // Extract columns into PriceBar structs
-    let dates = output_df.column("date")?.date()?.clone();
     let opens = output_df.column("open")?.f64()?.clone();
     let highs = output_df.column("high")?.f64()?.clone();
     let lows = output_df.column("low")?.f64()?.clone();
     let closes = output_df.column("close")?.f64()?.clone();
-    let volumes = output_df.column("volume")?.u64()?.clone();
+    let vol_col = output_df.column("volume")?;
+    let volumes = if let polars::prelude::DataType::UInt64 = vol_col.dtype() {
+        vol_col.u64()?.clone()
+    } else {
+        let casted = vol_col.cast(&polars::prelude::DataType::UInt64)?;
+        casted.u64()?.clone()
+    };
 
     // Also try adjclose if available
     let adjcloses = output_df
@@ -93,6 +110,56 @@ pub fn execute(
         .and_then(|c| c.f64().ok().cloned());
 
     let mut bars: Vec<PriceBar> = Vec::with_capacity(rows);
+
+    // Intraday path: "datetime" Datetime column → format with time
+    if let Ok(dt_col) = output_df.column("datetime") {
+        if let Ok(dt_ca) = dt_col.datetime() {
+            let micros_per_sec: i64 = match dt_ca.time_unit() {
+                TimeUnit::Microseconds => 1_000_000,
+                TimeUnit::Milliseconds => 1_000,
+                TimeUnit::Nanoseconds => 1_000_000_000,
+            };
+            for i in 0..rows {
+                let raw = dt_ca.phys.get(i).ok_or_else(|| {
+                    anyhow::anyhow!("Null datetime at row {i}; OHLCV data may be corrupted")
+                })?;
+                let secs = raw.div_euclid(micros_per_sec);
+                let subsec = raw.rem_euclid(micros_per_sec);
+                let nsecs = match dt_ca.time_unit() {
+                    TimeUnit::Microseconds => (subsec * 1_000) as u32,
+                    TimeUnit::Milliseconds => (subsec * 1_000_000) as u32,
+                    TimeUnit::Nanoseconds => subsec as u32,
+                };
+                let ndt = chrono::DateTime::from_timestamp(secs, nsecs)
+                    .map(|dt| dt.naive_utc())
+                    .ok_or_else(|| anyhow::anyhow!("Invalid datetime at row {i}"))?;
+                let date = if ndt.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
+                    ndt.format("%Y-%m-%d").to_string()
+                } else {
+                    ndt.format("%Y-%m-%dT%H:%M:%S").to_string()
+                };
+                bars.push(PriceBar {
+                    date,
+                    open: opens.get(i).unwrap_or(0.0),
+                    high: highs.get(i).unwrap_or(0.0),
+                    low: lows.get(i).unwrap_or(0.0),
+                    close: closes.get(i).unwrap_or(0.0),
+                    adjclose: adjcloses.as_ref().and_then(|ac| ac.get(i)),
+                    volume: volumes.get(i).unwrap_or(0),
+                });
+            }
+            let date_range = DateRange {
+                start: bars.first().map(|b| b.date.clone()),
+                end: bars.last().map(|b| b.date.clone()),
+            };
+            return Ok(ai_format::format_raw_prices(
+                symbol, total_rows, rows, sampled, date_range, bars,
+            ));
+        }
+    }
+
+    // Daily path: "date" Date column
+    let dates = output_df.column("date")?.date()?.clone();
     for i in 0..rows {
         let days_since_epoch = dates
             .phys

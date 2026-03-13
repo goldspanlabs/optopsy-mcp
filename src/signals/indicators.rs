@@ -16,7 +16,7 @@ use super::spec::SignalSpec;
 use super::volatility::{compute_atr, compute_bollinger_bands, compute_keltner_channel};
 use super::volume::{compute_cmf, compute_typical_price};
 
-use crate::engine::price_table::extract_date_from_column;
+use crate::engine::price_table::{extract_date_from_column, extract_datetime_from_column};
 use polars::prelude::*;
 use rust_ti::candle_indicators::bulk as cti;
 use rust_ti::momentum_indicators::bulk as mti;
@@ -292,13 +292,24 @@ fn dispatch_indicator_call(
 fn extract_date_strings(df: &DataFrame, date_col: &str) -> Result<Vec<String>, PolarsError> {
     let col = df.column(date_col)?;
     let n = df.height();
+    let is_datetime = date_col == "datetime";
     let mut dates = Vec::with_capacity(n);
     for i in 0..n {
-        match extract_date_from_column(col, i) {
-            Ok(d) => dates.push(d.format("%Y-%m-%d").to_string()),
-            Err(_) => {
-                // Sentinel: build_series filters out points with empty dates
-                dates.push(String::new());
+        if is_datetime {
+            match extract_datetime_from_column(col, i) {
+                Ok(dt) => {
+                    if dt.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
+                        dates.push(dt.format("%Y-%m-%d").to_string());
+                    } else {
+                        dates.push(dt.format("%Y-%m-%dT%H:%M:%S").to_string());
+                    }
+                }
+                Err(_) => dates.push(String::new()),
+            }
+        } else {
+            match extract_date_from_column(col, i) {
+                Ok(d) => dates.push(d.format("%Y-%m-%d").to_string()),
+                Err(_) => dates.push(String::new()),
             }
         }
     }

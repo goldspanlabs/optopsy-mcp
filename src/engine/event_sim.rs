@@ -524,7 +524,7 @@ pub fn run_event_loop(
                         let vol = super::sizing::vol_lookback(cfg).and_then(|lookback| {
                             let closes = ohlcv_closes?;
                             let vals: Vec<f64> = closes.range(..=today).map(|(_, &v)| v).collect();
-                            super::sizing::compute_realized_vol(&vals, lookback)
+                            super::sizing::compute_realized_vol(&vals, lookback, 252.0)
                         });
                         Some(super::sizing::compute_quantity(
                             cfg,

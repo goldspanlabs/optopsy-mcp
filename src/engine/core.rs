@@ -35,22 +35,69 @@ fn load_ohlcv_closes(
     let ohlcv_path = params.ohlcv_path.as_ref()?;
     let df = load_ohlcv(ohlcv_path).ok()?;
 
-    let dates = df.column("date").ok()?.date().ok()?;
-    let closes = df.column("close").ok()?.f64().ok()?;
-
     let mut closes_map = std::collections::BTreeMap::new();
-    for i in 0..df.height() {
-        let Some(days) = dates.phys.get(i) else {
-            continue;
+
+    // Intraday path: "datetime" Datetime column → extract date portion.
+    // Sort by datetime so later entries overwrite earlier ones, giving last-close-per-day.
+    // Only take this branch when the column is actually a Datetime dtype.
+    let has_datetime = df
+        .column("datetime")
+        .ok()
+        .is_some_and(|c| matches!(c.dtype(), polars::prelude::DataType::Datetime(_, _)));
+    if has_datetime {
+        let sorted = df
+            .clone()
+            .lazy()
+            .sort(
+                ["datetime"],
+                polars::prelude::SortMultipleOptions::default(),
+            )
+            .collect()
+            .ok()?;
+        let closes = sorted.column("close").ok()?.f64().ok()?;
+        let dt_ca = sorted
+            .column("datetime")
+            .and_then(|c| Ok(c.datetime()?.clone()))
+            .ok()?;
+        let micros_per_sec: i64 = match dt_ca.time_unit() {
+            polars::prelude::TimeUnit::Microseconds => 1_000_000,
+            polars::prelude::TimeUnit::Milliseconds => 1_000,
+            polars::prelude::TimeUnit::Nanoseconds => 1_000_000_000,
         };
-        let Some(date) = NaiveDate::from_num_days_from_ce_opt(days + EPOCH_DAYS_CE_OFFSET) else {
-            continue;
-        };
-        let Some(close) = closes.get(i) else {
-            continue;
-        };
-        if close > 0.0 {
-            closes_map.insert(date, close);
+        for i in 0..sorted.height() {
+            let Some(raw) = dt_ca.phys.get(i) else {
+                continue;
+            };
+            let secs = raw.div_euclid(micros_per_sec);
+            let Some(chrono_dt) = chrono::DateTime::from_timestamp(secs, 0) else {
+                continue;
+            };
+            let date = chrono_dt.naive_utc().date();
+            let Some(close) = closes.get(i) else {
+                continue;
+            };
+            if close > 0.0 {
+                closes_map.insert(date, close);
+            }
+        }
+    } else {
+        // Daily path: "date" Date column
+        let closes = df.column("close").ok()?.f64().ok()?;
+        let dates = df.column("date").ok()?.date().ok()?;
+        for i in 0..df.height() {
+            let Some(days) = dates.phys.get(i) else {
+                continue;
+            };
+            let Some(date) = NaiveDate::from_num_days_from_ce_opt(days + EPOCH_DAYS_CE_OFFSET)
+            else {
+                continue;
+            };
+            let Some(close) = closes.get(i) else {
+                continue;
+            };
+            if close > 0.0 {
+                closes_map.insert(date, close);
+            }
         }
     }
 
@@ -306,7 +353,8 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
         run_event_loop_path(df, params, &strategy_def, &entry_dates, &exit_dates)?
     };
 
-    let perf_metrics = metrics::calculate_metrics(&equity_curve, &trade_log, params.capital)?;
+    let perf_metrics =
+        metrics::calculate_metrics(&equity_curve, &trade_log, params.capital, 252.0)?;
 
     let total_pnl: f64 = trade_log.iter().map(|t| t.pnl).sum();
     tracing::info!(
