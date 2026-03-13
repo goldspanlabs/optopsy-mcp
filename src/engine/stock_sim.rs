@@ -470,7 +470,7 @@ fn resample_datetime(
     let highs = df.column("high")?.f64()?;
     let lows = df.column("low")?.f64()?;
     let closes = df.column("close")?.f64()?;
-    let volumes = df.column("volume")?.u64()?;
+    let volumes = df.column("volume")?.i64()?;
     let has_adjclose = df.column("adjclose").is_ok();
     let adjcloses = if has_adjclose {
         Some(df.column("adjclose")?.f64()?)
@@ -553,7 +553,7 @@ fn resample_datetime(
     let mut out_lows: Vec<f64> = Vec::with_capacity(groups.len());
     let mut out_closes: Vec<f64> = Vec::with_capacity(groups.len());
     let mut out_adjcloses: Vec<f64> = Vec::with_capacity(groups.len());
-    let mut out_volumes: Vec<u64> = Vec::with_capacity(groups.len());
+    let mut out_volumes: Vec<i64> = Vec::with_capacity(groups.len());
 
     for (gi, g) in groups.iter().enumerate() {
         let last = g.end - 1;
@@ -566,7 +566,7 @@ fn resample_datetime(
 
         let mut max_high = f64::NEG_INFINITY;
         let mut min_low = f64::INFINITY;
-        let mut vol_sum: u64 = 0;
+        let mut vol_sum: i64 = 0;
         for j in g.start..g.end {
             let h = highs.get(j).unwrap_or(f64::NAN);
             let l = lows.get(j).unwrap_or(f64::NAN);
@@ -666,7 +666,7 @@ fn resample_date(
     let highs = df.column("high")?.f64()?;
     let lows = df.column("low")?.f64()?;
     let closes = df.column("close")?.f64()?;
-    let volumes = df.column("volume")?.u64()?;
+    let volumes = df.column("volume")?.i64()?;
 
     let has_adjclose = df.column("adjclose").is_ok();
     let adjcloses = if has_adjclose {
@@ -716,7 +716,7 @@ fn resample_date(
     let mut out_lows: Vec<f64> = Vec::with_capacity(groups.len());
     let mut out_closes: Vec<f64> = Vec::with_capacity(groups.len());
     let mut out_adjcloses: Vec<f64> = Vec::with_capacity(groups.len());
-    let mut out_volumes: Vec<u64> = Vec::with_capacity(groups.len());
+    let mut out_volumes: Vec<i64> = Vec::with_capacity(groups.len());
 
     for (gi, g) in groups.iter().enumerate() {
         let last = g.end - 1;
@@ -734,7 +734,7 @@ fn resample_date(
 
         let mut max_high = f64::NEG_INFINITY;
         let mut min_low = f64::INFINITY;
-        let mut vol_sum: u64 = 0;
+        let mut vol_sum: i64 = 0;
         for j in g.start..g.end {
             let h = highs.get(j).unwrap_or(f64::NAN);
             let l = lows.get(j).unwrap_or(f64::NAN);
@@ -1420,7 +1420,7 @@ mod tests {
             "low" =>     &[ 99.0, 100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0, 108.0],
             "close" =>   &[101.0, 102.0, 104.0, 105.0, 106.0, 107.0, 108.0, 109.0, 110.0, 111.0],
             "adjclose" => &[101.0, 102.0, 104.0, 105.0, 106.0, 107.0, 108.0, 109.0, 110.0, 111.0],
-            "volume" =>  &[1000_u64, 1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900],
+            "volume" =>  &[1000_i64, 1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900],
         }
         .unwrap()
         .hstack(&[date_col])
@@ -1447,7 +1447,7 @@ mod tests {
         let highs = result.column("high").unwrap().f64().unwrap();
         let lows = result.column("low").unwrap().f64().unwrap();
         let closes = result.column("close").unwrap().f64().unwrap();
-        let volumes = result.column("volume").unwrap().u64().unwrap();
+        let volumes = result.column("volume").unwrap().i64().unwrap();
 
         // Week 1: open=100 (first), high=107 (max), low=99 (min), close=106 (last)
         assert!((opens.get(0).unwrap() - 100.0).abs() < 1e-6);
@@ -1507,7 +1507,7 @@ mod tests {
             "high" => &[102.0, 103.0, 104.0, 105.0, 106.0],
             "low" => &[99.0, 100.0, 101.0, 102.0, 103.0],
             "close" => &[101.0, 102.0, 103.0, 104.0, 105.0],
-            "volume" => &[1000_u64, 1100, 1200, 1300, 1400],
+            "volume" => &[1000_i64, 1100, 1200, 1300, 1400],
         }
         .unwrap()
         .hstack(&[date_col])
@@ -1519,7 +1519,7 @@ mod tests {
         // Dec 30 + Dec 31 + Jan 2 + Jan 3 → ISO week 1 → 1 bar
         // Jan 6 → ISO week 2 → 1 bar
         assert_eq!(result.height(), 2);
-        let volumes = result.column("volume").unwrap().u64().unwrap();
+        let volumes = result.column("volume").unwrap().i64().unwrap();
         assert_eq!(volumes.get(0).unwrap(), 1000 + 1100 + 1200 + 1300);
         assert_eq!(volumes.get(1).unwrap(), 1400);
     }
@@ -1534,7 +1534,7 @@ mod tests {
             "high" => Vec::<f64>::new(),
             "low" => Vec::<f64>::new(),
             "close" => Vec::<f64>::new(),
-            "volume" => Vec::<u64>::new(),
+            "volume" => Vec::<i64>::new(),
         }
         .unwrap()
         .hstack(&[date_col])
@@ -1559,7 +1559,7 @@ mod tests {
             "high" => &[102.0, 103.0],
             "low" => &[99.0, 100.0],
             "close" => &[101.0, 102.0],
-            "volume" => &[1000_u64, 1100],
+            "volume" => &[1000_i64, 1100],
         }
         .unwrap()
         .hstack(&[date_col])
@@ -1587,7 +1587,7 @@ mod tests {
             "high" => &[102.0, 112.0],
             "low" => &[99.0, 109.0],
             "close" => &[101.0, 111.0],
-            "volume" => &[1000_u64, 2000],
+            "volume" => &[1000_i64, 2000],
         }
         .unwrap()
         .hstack(&[date_col])
@@ -1640,7 +1640,7 @@ mod tests {
                            106.5, 107.5, 108.5, 109.5, 110.5, 111.5],
             "adjclose" => &[100.5, 101.5, 102.5, 103.5, 104.5, 105.5,
                            106.5, 107.5, 108.5, 109.5, 110.5, 111.5],
-            "volume" =>  &[1000_u64, 1100, 1200, 1300, 1400, 1500,
+            "volume" =>  &[1000_i64, 1100, 1200, 1300, 1400, 1500,
                            1600, 1700, 1800, 1900, 2000, 2100],
         }
         .unwrap()
@@ -1677,7 +1677,7 @@ mod tests {
         let closes = result.column("close").unwrap().f64().unwrap();
         let highs = result.column("high").unwrap().f64().unwrap();
         let lows = result.column("low").unwrap().f64().unwrap();
-        let volumes = result.column("volume").unwrap().u64().unwrap();
+        let volumes = result.column("volume").unwrap().i64().unwrap();
 
         // Group 1 (09:30-09:34): open=100, high=max(101..105)=105, low=min(99..103)=99, close=104.5
         assert!((opens.get(0).unwrap() - 100.0).abs() < 1e-6);
@@ -1713,8 +1713,8 @@ mod tests {
         // All 12 bars are in the 09:xx hour → 1 group
         assert_eq!(result.height(), 1);
 
-        let volumes = result.column("volume").unwrap().u64().unwrap();
-        let expected_vol: u64 = (1000..=2100).step_by(100).sum();
+        let volumes = result.column("volume").unwrap().i64().unwrap();
+        let expected_vol: i64 = (1000..=2100).step_by(100).sum();
         assert_eq!(volumes.get(0).unwrap(), expected_vol);
     }
 
@@ -1765,5 +1765,106 @@ mod tests {
         let bars = bars_from_df(&daily).unwrap();
         assert_eq!(bars.len(), 1);
         assert!((bars[0].open - 100.0).abs() < 1e-6);
+    }
+
+    // --- Real fixture tests (SPY 1-min Parquet) ---
+
+    fn load_fixture_df() -> polars::prelude::DataFrame {
+        use polars::prelude::*;
+        LazyFrame::scan_parquet("tests/fixtures/SPY_1min_sample.parquet".into(), ScanArgsParquet::default())
+            .expect("scan parquet")
+            .collect()
+            .expect("collect")
+    }
+
+    #[test]
+    fn fixture_bars_from_df_reads_intraday() {
+        let df = load_fixture_df();
+        let bars = bars_from_df(&df).unwrap();
+        assert!(bars.len() > 1000, "expected many bars, got {}", bars.len());
+        // Bars should have sub-day precision
+        assert_ne!(bars[0].datetime.time(), chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn fixture_resample_1m_to_5m() {
+        let df = load_fixture_df();
+        let result = resample_ohlcv(&df, Interval::Min5).unwrap();
+        // 10269 1-min bars → ~2054 5-min bars
+        assert!(result.height() > 2000 && result.height() < 2200,
+            "unexpected 5m bar count: {}", result.height());
+        assert!(result.column("datetime").is_ok());
+    }
+
+    #[test]
+    fn fixture_resample_1m_to_hourly() {
+        let df = load_fixture_df();
+        let result = resample_ohlcv(&df, Interval::Hour1).unwrap();
+        assert!(result.height() > 100 && result.height() < 200,
+            "unexpected hourly bar count: {}", result.height());
+        assert!(result.column("datetime").is_ok());
+    }
+
+    #[test]
+    fn fixture_resample_1m_to_daily() {
+        let df = load_fixture_df();
+        let result = resample_ohlcv(&df, Interval::Daily).unwrap();
+        // Multi-day dataset → several daily bars
+        assert!(result.height() >= 2, "expected multiple daily bars, got {}", result.height());
+        assert!(result.column("date").is_ok());
+
+        // OHLCV invariants: high >= open, high >= close, low <= open, low <= close
+        let opens = result.column("open").unwrap().f64().unwrap();
+        let highs = result.column("high").unwrap().f64().unwrap();
+        let lows = result.column("low").unwrap().f64().unwrap();
+        let closes = result.column("close").unwrap().f64().unwrap();
+        for i in 0..result.height() {
+            let (o, h, l, c) = (
+                opens.get(i).unwrap(), highs.get(i).unwrap(),
+                lows.get(i).unwrap(), closes.get(i).unwrap(),
+            );
+            assert!(h >= o && h >= c, "high < open or close at row {i}");
+            assert!(l <= o && l <= c, "low > open or close at row {i}");
+        }
+    }
+
+    #[test]
+    fn fixture_resample_to_daily_feeds_bars_from_df() {
+        let df = load_fixture_df();
+        let daily = resample_ohlcv(&df, Interval::Daily).unwrap();
+        let bars = bars_from_df(&daily).unwrap();
+        assert!(bars.len() >= 2);
+        // Daily bars should be at midnight
+        assert_eq!(bars[0].datetime.time(), chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn fixture_resample_to_weekly() {
+        let df = load_fixture_df();
+        let result = resample_ohlcv(&df, Interval::Weekly).unwrap();
+        assert!(result.height() >= 1);
+        assert!(result.column("date").is_ok());
+
+        // Volume should sum correctly — total should match source
+        let src_vol: i64 = df.column("volume").unwrap().i64().unwrap().into_iter().flatten().sum();
+        let dst_vol: i64 = result.column("volume").unwrap().i64().unwrap().into_iter().flatten().sum();
+        assert_eq!(src_vol, dst_vol, "volume mismatch after weekly resample");
+    }
+
+    #[test]
+    fn fixture_session_filter_premarket() {
+        let df = load_fixture_df();
+        let mut bars = bars_from_df(&df).unwrap();
+        let before = bars.len();
+        let (start, end) = crate::engine::types::SessionFilter::Premarket.time_range();
+        bars.retain(|b| { let t = b.datetime.time(); t >= start && t < end });
+        // Premarket = 04:00-09:30 — fixture starts at 04:00 so should have premarket bars
+        assert!(!bars.is_empty(), "no premarket bars found");
+        assert!(bars.len() < before, "filter should reduce bar count");
+        // All bars within premarket window
+        for b in &bars {
+            let t = b.datetime.time();
+            assert!(t >= start && t < end, "bar at {t} outside premarket");
+        }
     }
 }
