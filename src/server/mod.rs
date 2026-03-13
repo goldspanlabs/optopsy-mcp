@@ -324,7 +324,9 @@ fn load_underlying_prices(path: &std::path::Path) -> Vec<tools::response_types::
     let Ok(schema) = lf.clone().collect_schema() else {
         return vec![];
     };
-    let has_datetime = schema.contains("datetime");
+    let has_datetime = schema
+        .get("datetime")
+        .is_some_and(|dt| matches!(dt, polars::prelude::DataType::Datetime(_, _)));
     let date_col_name = if has_datetime { "datetime" } else { "date" };
 
     let Ok(df) = lf

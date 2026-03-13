@@ -417,8 +417,12 @@ pub fn filter_session(
         return Ok(df.clone());
     };
 
-    // Only applies to DataFrames with a datetime column
-    if df.column("datetime").is_err() {
+    // Only applies to DataFrames with a Datetime-typed "datetime" column
+    let has_datetime = df
+        .column("datetime")
+        .ok()
+        .is_some_and(|c| matches!(c.dtype(), DataType::Datetime(_, _)));
+    if !has_datetime {
         return Ok(df.clone());
     }
 
@@ -887,9 +891,13 @@ pub fn load_ohlcv_df(
     let args = ScanArgsParquet::default();
     let mut lazy_base = LazyFrame::scan_parquet(ohlcv_path.into(), args)?;
 
-    // Inspect schema to determine whether this file uses "datetime" or "date"
+    // Inspect schema to determine whether this file uses "datetime" or "date".
+    // Only treat "datetime" as the time column when it is actually a Datetime dtype.
     let schema = lazy_base.collect_schema()?;
-    let date_col_name = if schema.contains("datetime") {
+    let date_col_name = if schema
+        .get("datetime")
+        .is_some_and(|dt| matches!(dt, DataType::Datetime(_, _)))
+    {
         "datetime"
     } else {
         "date"
@@ -1054,13 +1062,15 @@ type DateTimeFilter = Option<HashSet<NaiveDateTime>>;
 
 /// Detect the date/datetime column name present in the `DataFrame`.
 ///
-/// Returns `"datetime"` if present, otherwise falls back to `"date"`.
+/// Returns `"datetime"` only if the column exists **and** has a `Datetime` dtype,
+/// otherwise falls back to `"date"`.
 pub fn detect_date_col(df: &polars::prelude::DataFrame) -> &'static str {
-    if df.column("datetime").is_ok() {
-        "datetime"
-    } else {
-        "date"
+    if let Ok(col) = df.column("datetime") {
+        if matches!(col.dtype(), polars::prelude::DataType::Datetime(_, _)) {
+            return "datetime";
+        }
     }
+    "date"
 }
 
 /// Convert a `HashSet<NaiveDate>` to `HashSet<NaiveDateTime>` (midnight).
