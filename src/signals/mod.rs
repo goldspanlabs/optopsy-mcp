@@ -888,12 +888,7 @@ mod tests {
             NaiveDateTime::parse_from_str("2024-01-03 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap();
         let dt_jan3_0931 =
             NaiveDateTime::parse_from_str("2024-01-03 09:31:00", "%Y-%m-%d %H:%M:%S").unwrap();
-        assert_eq!(
-            result.len(),
-            2,
-            "expected 2 intraday bars, got {:?}",
-            result
-        );
+        assert_eq!(result.len(), 2, "expected 2 intraday bars, got {result:?}");
         assert!(result.contains(&dt_jan3_0930));
         assert!(result.contains(&dt_jan3_0931));
     }
@@ -930,11 +925,7 @@ mod tests {
 
         let result = active_datetimes_multi(&spec, &intraday_df, &cross_dfs, "datetime").unwrap();
         // Should have: Jan 3 09:31 (from primary) + Jan 4 00:00 (from VIX daily)
-        assert!(
-            result.len() >= 2,
-            "expected at least 2 entries, got {:?}",
-            result
-        );
+        assert!(result.len() >= 2, "expected at least 2 entries, got {result:?}");
         let dt_jan3_0931 =
             NaiveDateTime::parse_from_str("2024-01-03 09:31:00", "%Y-%m-%d %H:%M:%S").unwrap();
         assert!(result.contains(&dt_jan3_0931));

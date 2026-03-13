@@ -2251,8 +2251,7 @@ mod tests {
             .column("volume")
             .ok()
             .and_then(|_| volume_as_i64(&resampled).ok())
-            .map(|v| v.into_iter().flatten().sum())
-            .unwrap_or(0);
+            .map_or(0, |v| v.into_iter().flatten().sum());
         assert_eq!(
             filtered_vol, resampled_vol,
             "volume mismatch after session filter + resample"
