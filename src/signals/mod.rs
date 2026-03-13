@@ -194,7 +194,7 @@ fn intersect_mixed_granularity(
         (true, false) => {
             // Left is daily, right is intraday: keep right's timestamps whose date is in left
             let active_dates: HashSet<chrono::NaiveDate> =
-                left.iter().map(|dt| dt.date()).collect();
+                left.iter().map(NaiveDateTime::date).collect();
             right
                 .iter()
                 .filter(|dt| active_dates.contains(&dt.date()))
@@ -204,7 +204,7 @@ fn intersect_mixed_granularity(
         (false, true) => {
             // Right is daily, left is intraday: keep left's timestamps whose date is in right
             let active_dates: HashSet<chrono::NaiveDate> =
-                right.iter().map(|dt| dt.date()).collect();
+                right.iter().map(NaiveDateTime::date).collect();
             left.iter()
                 .filter(|dt| active_dates.contains(&dt.date()))
                 .copied()
