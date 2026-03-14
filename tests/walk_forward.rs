@@ -4,8 +4,8 @@
 //! that produce actual trades, validating window generation, backtest execution
 //! across windows, and aggregate computation.
 
-use optopsy_mcp::engine::walk_forward::run_walk_forward;
 use chrono::Datelike;
+use optopsy_mcp::engine::walk_forward::run_walk_forward;
 
 mod common;
 use common::{backtest_params, delta, make_multi_strike_df};
@@ -303,8 +303,8 @@ fn stock_walk_forward_produces_windows_and_aggregate() {
     };
 
     // 60 bars ≈ 84 calendar days; train=30, test=10 → at least 2 windows.
-    let result = run_walk_forward_stock(&bars, &params, &Some(entry_dates), &None, 30, 10, None)
-        .unwrap();
+    let result =
+        run_walk_forward_stock(&bars, &params, &Some(entry_dates), &None, 30, 10, None).unwrap();
 
     assert!(
         !result.windows.is_empty(),
@@ -391,8 +391,7 @@ fn stock_walk_forward_rejects_small_step_days() {
     };
 
     // step_days = 2 < 5 → should fail validation.
-    let err =
-        run_walk_forward_stock(&bars, &params, &None, &None, 20, 10, Some(2)).unwrap_err();
+    let err = run_walk_forward_stock(&bars, &params, &None, &None, 20, 10, Some(2)).unwrap_err();
     assert!(
         err.to_string().contains("step_days"),
         "Expected step_days error, got: {err}"

@@ -165,7 +165,8 @@ impl OptopsyServer {
 
         let mut paths = HashMap::new();
         for sym in all_symbols {
-            validate_path_segment(&sym).map_err(|e| format!("Invalid cross-symbol \"{sym}\": {e}"))?;
+            validate_path_segment(&sym)
+                .map_err(|e| format!("Invalid cross-symbol \"{sym}\": {e}"))?;
             let path = self.ensure_ohlcv(&sym).await?;
             paths.insert(sym, path);
         }
@@ -1386,8 +1387,9 @@ impl OptopsyServer {
                             if let std::collections::hash_map::Entry::Vacant(e) =
                                 cross_paths.entry(sym)
                             {
-                                validate_path_segment(e.key())
-                                    .map_err(|err| format!("Invalid cross-symbol \"{}\": {err}", e.key()))?;
+                                validate_path_segment(e.key()).map_err(|err| {
+                                    format!("Invalid cross-symbol \"{}\": {err}", e.key())
+                                })?;
                                 let path = self.ensure_ohlcv(e.key()).await?;
                                 e.insert(path);
                             }

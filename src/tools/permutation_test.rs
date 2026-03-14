@@ -57,5 +57,7 @@ pub fn execute_stock(
         permutations = output.num_completed,
         "Stock permutation test finished"
     );
-    Ok(ai_format::format_permutation_test_stock(output, label, params))
+    Ok(ai_format::format_permutation_test_stock(
+        output, label, params,
+    ))
 }

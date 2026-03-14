@@ -4,9 +4,9 @@
 //! that produce actual trades, validating end-to-end correctness of shuffled
 //! reruns and p-value computation.
 
+use chrono::Datelike;
 use optopsy_mcp::engine::core::run_backtest;
 use optopsy_mcp::engine::permutation::{run_permutation_test, PermutationParams};
-use chrono::Datelike;
 
 mod common;
 use common::{backtest_params, delta, make_multi_strike_df};
@@ -272,7 +272,11 @@ fn permutation_test_multi_leg_strategy() {
 
 /// Build a tiny synthetic OHLCV parquet for stock permutation tests.
 /// Returns (`TempDir`, path, `Vec<Bar>`).
-fn make_stock_perm_fixture() -> (tempfile::TempDir, String, Vec<optopsy_mcp::engine::stock_sim::Bar>) {
+fn make_stock_perm_fixture() -> (
+    tempfile::TempDir,
+    String,
+    Vec<optopsy_mcp::engine::stock_sim::Bar>,
+) {
     use chrono::NaiveDate;
     use polars::prelude::*;
 
@@ -362,14 +366,9 @@ fn stock_permutation_test_produces_metric_results() {
         seed: Some(42),
     };
 
-    let output = run_stock_permutation_test(
-        &bars,
-        &params,
-        &Some(entry_dates),
-        &None,
-        &perm_params,
-    )
-    .unwrap();
+    let output =
+        run_stock_permutation_test(&bars, &params, &Some(entry_dates), &None, &perm_params)
+            .unwrap();
 
     assert_eq!(output.num_permutations, 20);
     assert!(

@@ -656,7 +656,8 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
 
         // Determine OOS split on bars. The test slice is fetched separately in the OOS pass
         // below to avoid a redundant allocation here.
-        let train_bars: &[stock_sim::Bar] = if params.out_of_sample_pct > 0.0 && all_bars.len() > 10 {
+        let train_bars: &[stock_sim::Bar] = if params.out_of_sample_pct > 0.0 && all_bars.len() > 10
+        {
             let split_idx =
                 ((1.0 - params.out_of_sample_pct) * all_bars.len() as f64).round() as usize;
             let split_idx = split_idx.clamp(1, all_bars.len() - 1);

@@ -8,8 +8,8 @@ use std::hash::BuildHasher;
 
 use anyhow::Result;
 use chrono::{NaiveDate, NaiveDateTime};
-use rand::seq::SliceRandom;
 use rand::prelude::IndexedRandom;
+use rand::seq::SliceRandom;
 use rand::SeedableRng;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

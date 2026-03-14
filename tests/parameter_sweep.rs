@@ -950,10 +950,8 @@ fn make_stock_sweep_fixture() -> (tempfile::TempDir, String) {
         "volume"   => vec![1_000_000i64; n],
     }
     .unwrap();
-    df.with_column(
-        DateChunked::from_naive_date(PlSmallStr::from("date"), dates).into_column(),
-    )
-    .unwrap();
+    df.with_column(DateChunked::from_naive_date(PlSmallStr::from("date"), dates).into_column())
+        .unwrap();
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("ohlcv.parquet");
@@ -1015,7 +1013,11 @@ fn stock_sweep_single_entry_signal_produces_results() {
 
     let output = run_stock_sweep(&sweep_params).unwrap();
 
-    assert_eq!(output.combinations_run, 1, "Expected 1 combo, got {}", output.combinations_run);
+    assert_eq!(
+        output.combinations_run, 1,
+        "Expected 1 combo, got {}",
+        output.combinations_run
+    );
     assert_eq!(output.ranked_results.len(), 1);
     assert_eq!(output.mode.as_deref(), Some("stock"));
 }
