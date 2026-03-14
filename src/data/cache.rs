@@ -76,11 +76,10 @@ impl CachedStore {
         Ok(Self::new(cache_dir, "options".to_string(), bucket))
     }
 
-    /// Resolve the cache path for a symbol under an arbitrary category.
+    /// Build the parquet file path for a symbol under a category.
     ///
-    /// The symbol is uppercased in the filename for consistency.
-    /// Returns an error if `category` or `symbol` contain path separators or `..` segments.
-    pub fn cache_path(&self, symbol: &str, category: &str) -> Result<PathBuf> {
+    /// Validates path segments and returns `{cache_dir}/{category}/{SYMBOL}.parquet`.
+    fn build_parquet_path(&self, symbol: &str, category: &str) -> Result<PathBuf> {
         validate_path_segment(category).with_context(|| format!("Invalid category: {category}"))?;
         validate_path_segment(symbol).with_context(|| format!("Invalid symbol: {symbol}"))?;
         Ok(self
@@ -89,22 +88,19 @@ impl CachedStore {
             .join(format!("{}.parquet", symbol.to_uppercase())))
     }
 
+    /// Resolve the cache path for a symbol under an arbitrary category.
+    pub fn cache_path(&self, symbol: &str, category: &str) -> Result<PathBuf> {
+        self.build_parquet_path(symbol, category)
+    }
+
     /// Resolve the local path for a given symbol.
     fn local_path(&self, symbol: &str) -> Result<PathBuf> {
-        validate_path_segment(symbol).with_context(|| format!("Invalid symbol: {symbol}"))?;
-        Ok(self
-            .cache_dir
-            .join(&self.category)
-            .join(format!("{}.parquet", symbol.to_uppercase())))
+        self.build_parquet_path(symbol, &self.category)
     }
 
     /// Ensure a file exists locally under the given category, fetching from S3 if needed.
     pub async fn ensure_local_for(&self, symbol: &str, category: &str) -> Result<PathBuf> {
-        let upper = symbol.to_uppercase();
-        let path = self
-            .cache_dir
-            .join(category)
-            .join(format!("{upper}.parquet"));
+        let path = self.build_parquet_path(symbol, category)?;
 
         if path.exists() {
             tracing::info!(%symbol, path = %path.display(), "Cache hit (local parquet)");
@@ -113,7 +109,7 @@ impl CachedStore {
 
         // Try S3 fetch
         if let Some(bucket) = &self.bucket {
-            let key = format!("{category}/{upper}.parquet");
+            let key = format!("{category}/{}.parquet", symbol.to_uppercase());
             tracing::info!(%symbol, %key, "Fetching from S3");
 
             let response = bucket

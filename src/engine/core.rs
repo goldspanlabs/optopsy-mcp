@@ -105,33 +105,44 @@ fn load_ohlcv(ohlcv_path: &str) -> Result<DataFrame> {
 /// Maximum recursion depth when resolving nested/saved signal specs.
 const MAX_SIGNAL_DEPTH: usize = 8;
 
+/// Walk a `SignalSpec` tree (including nested And/Or and Saved refs) and return `true`
+/// if any leaf formula satisfies `predicate`. Resolves `Saved` specs best-effort via
+/// disk load, with depth guard.
+fn traverse_signal_spec(
+    spec: &signals::registry::SignalSpec,
+    predicate: &dyn Fn(&str) -> bool,
+) -> bool {
+    fn inner(
+        spec: &signals::registry::SignalSpec,
+        pred: &dyn Fn(&str) -> bool,
+        depth: usize,
+    ) -> bool {
+        use signals::registry::SignalSpec;
+        if depth > MAX_SIGNAL_DEPTH {
+            return false;
+        }
+        match spec {
+            SignalSpec::Formula { formula } => pred(formula),
+            SignalSpec::CrossSymbol { signal, .. } => inner(signal, pred, depth + 1),
+            SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
+                inner(left, pred, depth + 1) || inner(right, pred, depth + 1)
+            }
+            SignalSpec::Saved { name } => signals::storage::load_signal(name)
+                .map(|s| inner(&s, pred, depth + 1))
+                .unwrap_or(false),
+        }
+    }
+    inner(spec, predicate, 0)
+}
+
 /// Check whether a `SignalSpec` (including nested And/Or) contains any IV-based signal.
-/// Resolves `Saved` specs best-effort via disk load, with depth guard.
 fn contains_iv_signal(spec: &signals::registry::SignalSpec) -> bool {
-    contains_iv_inner(spec, 0)
+    traverse_signal_spec(spec, &formula_references_iv)
 }
 
 /// Check whether a `SignalSpec` tree contains any non-IV leaf signal.
-/// Resolves `Saved` specs best-effort via disk load, with depth guard.
 fn contains_non_iv_signal(spec: &signals::registry::SignalSpec) -> bool {
-    contains_non_iv_inner(spec, 0)
-}
-
-fn contains_iv_inner(spec: &signals::registry::SignalSpec, depth: usize) -> bool {
-    use signals::registry::SignalSpec;
-    if depth > MAX_SIGNAL_DEPTH {
-        return false;
-    }
-    match spec {
-        SignalSpec::Formula { formula } => formula_references_iv(formula),
-        SignalSpec::CrossSymbol { signal, .. } => contains_iv_inner(signal, depth + 1),
-        SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
-            contains_iv_inner(left, depth + 1) || contains_iv_inner(right, depth + 1)
-        }
-        SignalSpec::Saved { name } => signals::storage::load_signal(name)
-            .map(|s| contains_iv_inner(&s, depth + 1))
-            .unwrap_or(false),
-    }
+    traverse_signal_spec(spec, &|f| !formula_references_iv(f))
 }
 
 /// Check if a formula string references the `iv` column.
@@ -153,23 +164,6 @@ fn formula_references_iv(formula: &str) -> bool {
         }
     }
     false
-}
-
-fn contains_non_iv_inner(spec: &signals::registry::SignalSpec, depth: usize) -> bool {
-    use signals::registry::SignalSpec;
-    if depth > MAX_SIGNAL_DEPTH {
-        return false;
-    }
-    match spec {
-        SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
-            contains_non_iv_inner(left, depth + 1) || contains_non_iv_inner(right, depth + 1)
-        }
-        SignalSpec::Saved { name } => signals::storage::load_signal(name)
-            .map(|s| contains_non_iv_inner(&s, depth + 1))
-            .unwrap_or(false),
-        SignalSpec::Formula { formula } => !formula_references_iv(formula),
-        SignalSpec::CrossSymbol { signal, .. } => contains_non_iv_inner(signal, depth + 1),
-    }
 }
 
 /// Build entry/exit date filters from signal specs, loading OHLCV at most once.
@@ -395,6 +389,40 @@ fn run_event_loop_path(
     Ok((trade_log, equity_curve, quality))
 }
 
+/// Build `BacktestParams` from a `CompareEntry` and `SimParams`.
+fn build_backtest_params(entry: &CompareEntry, sim: &SimParams) -> BacktestParams {
+    BacktestParams {
+        strategy: entry.name.clone(),
+        leg_deltas: entry.leg_deltas.clone(),
+        entry_dte: entry.entry_dte.clone(),
+        exit_dte: entry.exit_dte,
+        slippage: entry.slippage.clone(),
+        commission: entry.commission.clone(),
+        min_bid_ask: default_min_bid_ask(),
+        stop_loss: sim.stop_loss,
+        take_profit: sim.take_profit,
+        max_hold_days: sim.max_hold_days,
+        capital: sim.capital,
+        quantity: sim.quantity,
+        sizing: sim.sizing.clone(),
+        multiplier: sim.multiplier,
+        max_positions: sim.max_positions,
+        selector: sim.selector.clone(),
+        adjustment_rules: vec![],
+        entry_signal: sim.entry_signal.clone(),
+        exit_signal: sim.exit_signal.clone(),
+        ohlcv_path: sim.ohlcv_path.clone(),
+        cross_ohlcv_paths: sim.cross_ohlcv_paths.clone(),
+        min_net_premium: None,
+        max_net_premium: None,
+        min_net_delta: None,
+        max_net_delta: None,
+        min_days_between_entries: sim.min_days_between_entries,
+        expiration_filter: ExpirationFilter::Any,
+        exit_net_delta: sim.exit_net_delta,
+    }
+}
+
 /// Compare multiple strategies.
 ///
 /// Auto-generates descriptive labels when multiple entries share the same strategy
@@ -422,36 +450,7 @@ pub fn compare_strategies(
         // Store the entry as-is so `name` remains the strategy identifier
         labeled_entries.push(entry.clone());
 
-        let backtest_params = BacktestParams {
-            strategy: entry.name.clone(),
-            leg_deltas: entry.leg_deltas.clone(),
-            entry_dte: entry.entry_dte.clone(),
-            exit_dte: entry.exit_dte,
-            slippage: entry.slippage.clone(),
-            commission: entry.commission.clone(),
-            min_bid_ask: default_min_bid_ask(),
-            stop_loss: params.sim_params.stop_loss,
-            take_profit: params.sim_params.take_profit,
-            max_hold_days: params.sim_params.max_hold_days,
-            capital: params.sim_params.capital,
-            quantity: params.sim_params.quantity,
-            sizing: params.sim_params.sizing.clone(),
-            multiplier: params.sim_params.multiplier,
-            max_positions: params.sim_params.max_positions,
-            selector: params.sim_params.selector.clone(),
-            adjustment_rules: vec![],
-            entry_signal: params.sim_params.entry_signal.clone(),
-            exit_signal: params.sim_params.exit_signal.clone(),
-            ohlcv_path: params.sim_params.ohlcv_path.clone(),
-            cross_ohlcv_paths: params.sim_params.cross_ohlcv_paths.clone(),
-            min_net_premium: None,
-            max_net_premium: None,
-            min_net_delta: None,
-            max_net_delta: None,
-            min_days_between_entries: params.sim_params.min_days_between_entries,
-            expiration_filter: ExpirationFilter::Any,
-            exit_net_delta: params.sim_params.exit_net_delta,
-        };
+        let backtest_params = build_backtest_params(entry, &params.sim_params);
 
         match run_backtest(df, &backtest_params) {
             Ok(bt) => {
@@ -1355,23 +1354,23 @@ mod tests {
     }
 
     #[test]
-    fn contains_iv_inner_detects_formula_iv() {
+    fn contains_iv_signal_detects_formula_iv() {
         let spec = signals::registry::SignalSpec::Formula {
             formula: "iv_rank(iv, 252) > 50".into(),
         };
-        assert!(contains_iv_inner(&spec, 0));
+        assert!(contains_iv_signal(&spec));
     }
 
     #[test]
-    fn contains_iv_inner_false_for_non_iv_formula() {
+    fn contains_iv_signal_false_for_non_iv_formula() {
         let spec = signals::registry::SignalSpec::Formula {
             formula: "rsi(close, 14) < 30".into(),
         };
-        assert!(!contains_iv_inner(&spec, 0));
+        assert!(!contains_iv_signal(&spec));
     }
 
     #[test]
-    fn contains_iv_inner_nested_and() {
+    fn contains_iv_signal_nested_and() {
         let spec = signals::registry::SignalSpec::And {
             left: Box::new(signals::registry::SignalSpec::Formula {
                 formula: "rsi(close, 14) < 30".into(),
@@ -1380,7 +1379,7 @@ mod tests {
                 formula: "iv_rank(iv, 252) > 50".into(),
             }),
         };
-        assert!(contains_iv_inner(&spec, 0));
-        assert!(contains_non_iv_inner(&spec, 0));
+        assert!(contains_iv_signal(&spec));
+        assert!(contains_non_iv_signal(&spec));
     }
 }

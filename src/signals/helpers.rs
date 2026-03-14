@@ -47,6 +47,19 @@ pub struct IndicatorData {
     pub total_points: Option<usize>,
 }
 
+/// Extend a collection of `IndicatorData` with new entries, deduplicating by name.
+///
+/// Uses a `HashSet` for O(1) lookups instead of O(n) linear scan per insertion.
+pub fn extend_indicators_deduped(target: &mut Vec<IndicatorData>, new: Vec<IndicatorData>) {
+    use std::collections::HashSet;
+    let mut seen: HashSet<String> = target.iter().map(|ind| ind.name.clone()).collect();
+    for ind in new {
+        if seen.insert(ind.name.clone()) {
+            target.push(ind);
+        }
+    }
+}
+
 /// Extract a column from a `DataFrame` as a `Vec<f64>`.
 /// Returns an error if the column doesn't exist or can't be cast to f64.
 /// Null values are preserved as `f64::NAN` to maintain row alignment.
