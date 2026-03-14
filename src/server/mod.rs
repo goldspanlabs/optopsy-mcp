@@ -40,6 +40,12 @@ use sanitize::{SanitizedJson, SanitizedResult};
 /// Loaded data: `HashMap<Symbol, DataFrame>` for multi-symbol support.
 type LoadedData = HashMap<String, DataFrame>;
 
+/// Resolved stock backtest parameters with symbol, ready for execution.
+struct StockResolvedParams {
+    symbol: String,
+    params: crate::engine::stock_sim::StockBacktestParams,
+}
+
 /// MCP server for options backtesting, holding loaded data and the tool router.
 #[derive(Clone)]
 pub struct OptopsyServer {
@@ -159,6 +165,8 @@ impl OptopsyServer {
 
         let mut paths = HashMap::new();
         for sym in all_symbols {
+            validate_path_segment(&sym)
+                .map_err(|e| format!("Invalid cross-symbol \"{sym}\": {e}"))?;
             let path = self.ensure_ohlcv(&sym).await?;
             paths.insert(sym, path);
         }
@@ -198,7 +206,18 @@ impl OptopsyServer {
             min_days_between_entries,
             expiration_filter,
             exit_net_delta,
+            // Stock-mode fields — ignored in this options-only path
+            mode: _,
+            side: _,
+            interval: _,
+            session_filter: _,
+            start_date: _,
+            end_date: _,
         } = base;
+
+        // This function is only called for options mode; validation guarantees strategy is Some.
+        let strategy = strategy
+            .ok_or_else(|| "strategy is required for options-mode backtests".to_string())?;
 
         let (symbol, df) = self.ensure_data_loaded(symbol_param.as_deref()).await?;
 
@@ -257,6 +276,88 @@ impl OptopsyServer {
             .map_err(|e| format!("Validation error: {e}"))?;
 
         Ok((symbol, df, backtest_params))
+    }
+
+    /// Resolve stock-mode backtest parameters from `BacktestBaseParams`.
+    ///
+    /// Ensures OHLCV data is available, builds `StockBacktestParams`, and prepares
+    /// bars + signal filters. Returns everything needed to run a stock backtest.
+    async fn resolve_stock_backtest_params(
+        &self,
+        base: BacktestBaseParams,
+    ) -> Result<StockResolvedParams, String> {
+        // entry_signal is required for stock mode — without it no trades will ever open.
+        if base.entry_signal.is_none() {
+            return Err(
+                "entry_signal is required for stock mode; provide a SignalSpec to drive trade entries".to_string()
+            );
+        }
+
+        let symbol = base
+            .symbol
+            .as_deref()
+            .ok_or("symbol is required for stock mode")?
+            .to_uppercase();
+        validate_path_segment(&symbol).map_err(|e| format!("Invalid symbol: {e}"))?;
+
+        let ohlcv_path = self.ensure_ohlcv(&symbol).await?;
+
+        let cross_ohlcv_paths = self
+            .resolve_cross_ohlcv_paths(
+                base.entry_signal.as_ref(),
+                base.exit_signal.as_ref(),
+                &[],
+                &[],
+            )
+            .await?;
+
+        let start_date = base
+            .start_date
+            .as_deref()
+            .map(|s| {
+                chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                    .map_err(|_| format!("Invalid start_date \"{s}\": expected YYYY-MM-DD"))
+            })
+            .transpose()?;
+        let end_date = base
+            .end_date
+            .as_deref()
+            .map(|s| {
+                chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                    .map_err(|_| format!("Invalid end_date \"{s}\": expected YYYY-MM-DD"))
+            })
+            .transpose()?;
+
+        let interval = base.interval.unwrap_or_default();
+        let side = base.side.unwrap_or(crate::engine::types::Side::Long);
+
+        let stock_params = crate::engine::stock_sim::StockBacktestParams {
+            symbol: symbol.clone(),
+            side,
+            capital: base.capital,
+            quantity: base.quantity,
+            sizing: base.sizing,
+            max_positions: base.max_positions,
+            slippage: base.slippage,
+            commission: base.commission,
+            stop_loss: base.stop_loss,
+            take_profit: base.take_profit,
+            max_hold_days: base.max_hold_days,
+            min_days_between_entries: base.min_days_between_entries,
+            entry_signal: base.entry_signal,
+            exit_signal: base.exit_signal,
+            ohlcv_path: Some(ohlcv_path),
+            cross_ohlcv_paths,
+            start_date,
+            end_date,
+            interval,
+            session_filter: base.session_filter,
+        };
+
+        Ok(StockResolvedParams {
+            symbol,
+            params: stock_params,
+        })
     }
 
     /// Resolve a symbol from the loaded data.
@@ -600,7 +701,7 @@ impl OptopsyServer {
                     .map_err(|e| validation_err("run_options_backtest", e))?;
 
                 tracing::info!(
-                    strategy = params.base.strategy.as_str(),
+                    strategy = params.base.strategy.as_deref().unwrap_or(""),
                     symbol = params.base.symbol.as_deref().unwrap_or("auto"),
                     entry_dte_target = params.base.entry_dte.target,
                     entry_dte_min = params.base.entry_dte.min,
@@ -739,11 +840,19 @@ impl OptopsyServer {
                 let start_date = params
                     .start_date
                     .as_deref()
-                    .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+                    .map(|s| {
+                        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                            .map_err(|_| format!("Invalid start_date \"{s}\": expected YYYY-MM-DD"))
+                    })
+                    .transpose()?;
                 let end_date = params
                     .end_date
                     .as_deref()
-                    .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+                    .map(|s| {
+                        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                            .map_err(|_| format!("Invalid end_date \"{s}\": expected YYYY-MM-DD"))
+                    })
+                    .transpose()?;
 
                 let stock_params = crate::engine::stock_sim::StockBacktestParams {
                     symbol,
@@ -757,6 +866,7 @@ impl OptopsyServer {
                     stop_loss: params.stop_loss,
                     take_profit: params.take_profit,
                     max_hold_days: params.max_hold_days,
+                    min_days_between_entries: params.min_days_between_entries,
                     entry_signal: Some(params.entry_signal),
                     exit_signal: params.exit_signal,
                     ohlcv_path: Some(ohlcv_path),
@@ -799,35 +909,76 @@ impl OptopsyServer {
                     .validate()
                     .map_err(|e| validation_err("permutation_test", e))?;
 
+                let is_stock = params.base.mode.as_deref() == Some("stock");
+                let num_permutations = params.num_permutations;
+                let seed = params.seed;
+
                 tracing::info!(
-                    strategy = params.base.strategy.as_str(),
+                    strategy = params.base.strategy.as_deref().unwrap_or(""),
                     symbol = params.base.symbol.as_deref().unwrap_or("auto"),
-                    num_permutations = params.num_permutations,
+                    mode = if is_stock { "stock" } else { "options" },
+                    num_permutations,
                     "Permutation test request received"
                 );
 
-                let (_symbol, df, backtest_params) =
-                    self.resolve_backtest_params(params.base).await?;
-
                 let perm_params = crate::engine::permutation::PermutationParams {
-                    num_permutations: params.num_permutations,
-                    seed: params.seed,
+                    num_permutations,
+                    seed,
                 };
 
-                tokio::task::spawn_blocking(move || {
-                    let (entry_dates, exit_dates) =
-                        crate::engine::core::build_signal_filters(&backtest_params, &df)?;
-                    tools::permutation_test::execute(
-                        &df,
-                        &backtest_params,
-                        &perm_params,
-                        &entry_dates,
-                        exit_dates.as_ref(),
-                    )
-                })
-                .await
-                .map_err(|e| format!("Permutation test task panicked: {e}"))?
-                .map_err(|e| format!("Error: {e}"))
+                if is_stock {
+                    let resolved = self.resolve_stock_backtest_params(params.base).await?;
+                    let label = resolved.symbol.clone();
+
+                    tokio::task::spawn_blocking(move || {
+                        let ohlcv_path = resolved
+                            .params
+                            .ohlcv_path
+                            .as_deref()
+                            .ok_or_else(|| anyhow::anyhow!("ohlcv_path is required"))?;
+                        let (bars, ohlcv_df) = crate::engine::stock_sim::prepare_stock_data(
+                            ohlcv_path,
+                            resolved.params.interval,
+                            resolved.params.session_filter.as_ref(),
+                            resolved.params.start_date,
+                            resolved.params.end_date,
+                        )?;
+                        let (entry_dates, exit_dates) =
+                            crate::engine::stock_sim::build_stock_signal_filters(
+                                &resolved.params,
+                                &ohlcv_df,
+                            )?;
+                        tools::permutation_test::execute_stock(
+                            &bars,
+                            &resolved.params,
+                            &entry_dates,
+                            &exit_dates,
+                            &perm_params,
+                            &label,
+                        )
+                    })
+                    .await
+                    .map_err(|e| format!("Permutation test task panicked: {e}"))?
+                    .map_err(|e| format!("Error: {e}"))
+                } else {
+                    let (_symbol, df, backtest_params) =
+                        self.resolve_backtest_params(params.base).await?;
+
+                    tokio::task::spawn_blocking(move || {
+                        let (entry_dates, exit_dates) =
+                            crate::engine::core::build_signal_filters(&backtest_params, &df)?;
+                        tools::permutation_test::execute(
+                            &df,
+                            &backtest_params,
+                            &perm_params,
+                            &entry_dates,
+                            exit_dates.as_ref(),
+                        )
+                    })
+                    .await
+                    .map_err(|e| format!("Permutation test task panicked: {e}"))?
+                    .map_err(|e| format!("Error: {e}"))
+                }
             }
             .await,
         )
@@ -863,91 +1014,215 @@ impl OptopsyServer {
                 .validate()
                 .map_err(|e| validation_err("parameter_sweep", e))?;
 
-            // Validate: singular and plural signal fields are mutually exclusive
-            if params.sim_params.entry_signal.is_some()
-                && !params.sim_params.entry_signals.is_empty()
-            {
-                return Err(
-                    "Cannot use both `entry_signal` (singular) and `entry_signals` (plural). \
-                     Use `entry_signals` for sweeping multiple signals, or `entry_signal` for a fixed signal."
-                        .to_string(),
-                );
-            }
-            if params.sim_params.exit_signal.is_some()
-                && !params.sim_params.exit_signals.is_empty()
-            {
-                return Err(
-                    "Cannot use both `exit_signal` (singular) and `exit_signals` (plural). \
-                     Use `exit_signals` for sweeping multiple signals, or `exit_signal` for a fixed signal."
-                        .to_string(),
-                );
-            }
+            let is_stock = params.mode.as_deref() == Some("stock");
 
-            let (symbol, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
+            tracing::info!(
+                mode = if is_stock { "stock" } else { "options" },
+                symbol = params.symbol.as_deref().unwrap_or("auto"),
+                "Parameter sweep request received"
+            );
 
-            let strategies = resolve_sweep_strategies(params.strategies, params.direction)?;
+            if is_stock {
+                // ── Stock mode ──────────────────────────────────────────
+                let stock_dims = params.stock_sweep.ok_or_else(|| {
+                    "stock_sweep is required when mode is \"stock\"".to_string()
+                })?;
 
-            // Auto-fetch OHLCV data if any signals are requested or any strategy has a stock leg
-            let any_stock_leg = strategies.iter().any(|s| {
-                crate::strategies::find_strategy(&s.name)
-                    .is_some_and(|def| def.has_stock_leg)
-            });
-            let needs_ohlcv = params.sim_params.entry_signal.is_some()
-                || params.sim_params.exit_signal.is_some()
-                || !params.sim_params.entry_signals.is_empty()
-                || !params.sim_params.exit_signals.is_empty()
-                || any_stock_leg;
-            let ohlcv_path = if needs_ohlcv {
-                Some(self.ensure_ohlcv(&symbol).await?)
-            } else {
-                None
-            };
+                let symbol = params
+                    .symbol
+                    .as_deref()
+                    .ok_or("symbol is required for stock mode")?
+                    .to_uppercase();
+                validate_path_segment(&symbol).map_err(|e| format!("Invalid symbol: {e}"))?;
+                let ohlcv_path = self.ensure_ohlcv(&symbol).await?;
 
-            let cross_ohlcv_paths = self
-                .resolve_cross_ohlcv_paths(
-                    params.sim_params.entry_signal.as_ref(),
-                    params.sim_params.exit_signal.as_ref(),
-                    &params.sim_params.entry_signals,
-                    &params.sim_params.exit_signals,
-                )
-                .await?;
+                // Resolve cross-symbol OHLCV paths from all entry/exit signals
+                let exit_sigs_ref = stock_dims.exit_signals.as_deref().unwrap_or(&[]);
+                let cross_ohlcv_paths = self
+                    .resolve_cross_ohlcv_paths(
+                        None,
+                        None,
+                        &stock_dims.entry_signals,
+                        exit_sigs_ref,
+                    )
+                    .await?;
 
-            let sweep_params = crate::engine::sweep::SweepParams {
-                strategies,
-                sweep: crate::engine::sweep::SweepDimensions {
-                    entry_dte_targets: params.sweep.entry_dte_targets,
-                    exit_dtes: params.sweep.exit_dtes,
-                    slippage_models: params.sweep.slippage_models,
-                },
-                sim_params: SimParams {
+                let start_date = params
+                    .sim_params
+                    .start_date
+                    .as_deref()
+                    .map(|s| {
+                        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                            .map_err(|_| format!("Invalid start_date \"{s}\": expected YYYY-MM-DD"))
+                    })
+                    .transpose()?;
+                let end_date = params
+                    .sim_params
+                    .end_date
+                    .as_deref()
+                    .map(|s| {
+                        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                            .map_err(|_| format!("Invalid end_date \"{s}\": expected YYYY-MM-DD"))
+                    })
+                    .transpose()?;
+
+                let intervals = stock_dims
+                    .intervals
+                    .unwrap_or_else(|| vec![crate::engine::types::Interval::default()]);
+                let sides = stock_dims
+                    .sides
+                    .unwrap_or_else(|| vec![crate::engine::types::Side::Long]);
+                let session_filters: Vec<Option<crate::engine::types::SessionFilter>> =
+                    stock_dims
+                        .session_filters
+                        .map_or_else(|| vec![None], |sfs| sfs.into_iter().map(Some).collect());
+                let stop_losses: Vec<Option<f64>> = stock_dims
+                    .stop_losses
+                    .map_or_else(|| vec![params.sim_params.stop_loss], |sls| sls.into_iter().map(Some).collect());
+                let take_profits: Vec<Option<f64>> = stock_dims
+                    .take_profits
+                    .map_or_else(|| vec![params.sim_params.take_profit], |tps| tps.into_iter().map(Some).collect());
+                let exit_signals: Vec<crate::signals::registry::SignalSpec> =
+                    stock_dims.exit_signals.unwrap_or_default();
+
+                let base_params = crate::engine::stock_sim::StockBacktestParams {
+                    symbol: symbol.clone(),
+                    side: crate::engine::types::Side::Long, // overridden per combo
                     capital: params.sim_params.capital,
                     quantity: params.sim_params.quantity,
-                    multiplier: params.sim_params.multiplier,
-                    max_positions: params.sim_params.max_positions,
-                    selector: params.sim_params.selector,
-                    stop_loss: params.sim_params.stop_loss,
-                    take_profit: params.sim_params.take_profit,
-                    max_hold_days: params.sim_params.max_hold_days,
-                    entry_signal: params.sim_params.entry_signal,
-                    exit_signal: params.sim_params.exit_signal,
-                    ohlcv_path,
-                    cross_ohlcv_paths,
-                    min_days_between_entries: params.sim_params.min_days_between_entries,
                     sizing: params.sim_params.sizing,
-                    exit_net_delta: params.sim_params.exit_net_delta,
-                },
-                out_of_sample_pct: params.out_of_sample_pct / 100.0,
-                direction: params.direction,
-                entry_signals: params.sim_params.entry_signals,
-                exit_signals: params.sim_params.exit_signals,
-                num_permutations: params.num_permutations,
-                permutation_seed: params.permutation_seed,
-            };
+                    max_positions: params.sim_params.max_positions,
+                    slippage: crate::engine::types::Slippage::Mid, // overridden per combo
+                    commission: None,
+                    stop_loss: None,       // overridden per combo
+                    take_profit: None,     // overridden per combo
+                    max_hold_days: params.sim_params.max_hold_days,
+                    min_days_between_entries: params.sim_params.min_days_between_entries,
+                    entry_signal: None,    // overridden per combo
+                    exit_signal: None,     // overridden per combo
+                    ohlcv_path: Some(ohlcv_path),
+                    cross_ohlcv_paths,
+                    start_date,
+                    end_date,
+                    interval: crate::engine::types::Interval::default(), // overridden per combo
+                    session_filter: None,  // overridden per combo
+                };
 
-            tokio::task::spawn_blocking(move || tools::sweep::execute(&df, &sweep_params))
-                .await
-                .map_err(|e| format!("Sweep task panicked: {e}"))?
-                .map_err(|e| format!("Error: {e}"))
+                let oos_pct = params.out_of_sample_pct / 100.0;
+                let num_perms = params.num_permutations;
+                let perm_seed = params.permutation_seed;
+
+                let sweep_params = crate::engine::sweep::StockSweepParams {
+                    entry_signals: stock_dims.entry_signals,
+                    exit_signals,
+                    intervals,
+                    sides,
+                    session_filters,
+                    stop_losses,
+                    take_profits,
+                    slippage_models: stock_dims.slippage_models,
+                    base_params,
+                    out_of_sample_pct: oos_pct,
+                    num_permutations: num_perms,
+                    permutation_seed: perm_seed,
+                };
+
+                tokio::task::spawn_blocking(move || tools::sweep::execute_stock(&sweep_params))
+                    .await
+                    .map_err(|e| format!("Stock sweep task panicked: {e}"))?
+                    .map_err(|e| format!("Error: {e}"))
+            } else {
+                // ── Options mode ────────────────────────────────────────
+                // Validate: singular and plural signal fields are mutually exclusive
+                if params.sim_params.entry_signal.is_some()
+                    && !params.sim_params.entry_signals.is_empty()
+                {
+                    return Err(
+                        "Cannot use both `entry_signal` (singular) and `entry_signals` (plural). \
+                         Use `entry_signals` for sweeping multiple signals, or `entry_signal` for a fixed signal."
+                            .to_string(),
+                    );
+                }
+                if params.sim_params.exit_signal.is_some()
+                    && !params.sim_params.exit_signals.is_empty()
+                {
+                    return Err(
+                        "Cannot use both `exit_signal` (singular) and `exit_signals` (plural). \
+                         Use `exit_signals` for sweeping multiple signals, or `exit_signal` for a fixed signal."
+                            .to_string(),
+                    );
+                }
+
+                let (symbol, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
+
+                let strategies = resolve_sweep_strategies(params.strategies, params.direction)?;
+
+                // Auto-fetch OHLCV data if any signals are requested or any strategy has a stock leg
+                let any_stock_leg = strategies.iter().any(|s| {
+                    crate::strategies::find_strategy(&s.name)
+                        .is_some_and(|def| def.has_stock_leg)
+                });
+                let needs_ohlcv = params.sim_params.entry_signal.is_some()
+                    || params.sim_params.exit_signal.is_some()
+                    || !params.sim_params.entry_signals.is_empty()
+                    || !params.sim_params.exit_signals.is_empty()
+                    || any_stock_leg;
+                let ohlcv_path = if needs_ohlcv {
+                    Some(self.ensure_ohlcv(&symbol).await?)
+                } else {
+                    None
+                };
+
+                let cross_ohlcv_paths = self
+                    .resolve_cross_ohlcv_paths(
+                        params.sim_params.entry_signal.as_ref(),
+                        params.sim_params.exit_signal.as_ref(),
+                        &params.sim_params.entry_signals,
+                        &params.sim_params.exit_signals,
+                    )
+                    .await?;
+
+                // Options mode: sweep dimensions are required (validated upstream)
+                let sweep_dims = params.sweep.ok_or_else(|| {
+                    "sweep dimensions are required when mode is \"options\" (or omitted)".to_string()
+                })?;
+                let sweep_params = crate::engine::sweep::SweepParams {
+                    strategies,
+                    sweep: crate::engine::sweep::SweepDimensions {
+                        entry_dte_targets: sweep_dims.entry_dte_targets,
+                        exit_dtes: sweep_dims.exit_dtes,
+                        slippage_models: sweep_dims.slippage_models,
+                    },
+                    sim_params: SimParams {
+                        capital: params.sim_params.capital,
+                        quantity: params.sim_params.quantity,
+                        multiplier: params.sim_params.multiplier,
+                        max_positions: params.sim_params.max_positions,
+                        selector: params.sim_params.selector,
+                        stop_loss: params.sim_params.stop_loss,
+                        take_profit: params.sim_params.take_profit,
+                        max_hold_days: params.sim_params.max_hold_days,
+                        entry_signal: params.sim_params.entry_signal,
+                        exit_signal: params.sim_params.exit_signal,
+                        ohlcv_path,
+                        cross_ohlcv_paths,
+                        min_days_between_entries: params.sim_params.min_days_between_entries,
+                        sizing: params.sim_params.sizing,
+                        exit_net_delta: params.sim_params.exit_net_delta,
+                    },
+                    out_of_sample_pct: params.out_of_sample_pct / 100.0,
+                    direction: params.direction,
+                    entry_signals: params.sim_params.entry_signals,
+                    exit_signals: params.sim_params.exit_signals,
+                    num_permutations: params.num_permutations,
+                    permutation_seed: params.permutation_seed,
+                };
+
+                tokio::task::spawn_blocking(move || tools::sweep::execute(&df, &sweep_params))
+                    .await
+                    .map_err(|e| format!("Sweep task panicked: {e}"))?
+                    .map_err(|e| format!("Error: {e}"))
+            }
         }.await)
     }
 
@@ -980,34 +1255,75 @@ impl OptopsyServer {
                     .validate()
                     .map_err(|e| validation_err("walk_forward", e))?;
 
-                tracing::info!(
-                    strategy = params.base.strategy.as_str(),
-                    symbol = params.base.symbol.as_deref().unwrap_or("auto"),
-                    train_days = params.train_days,
-                    test_days = params.test_days,
-                    step_days = ?params.step_days,
-                    "Walk-forward request received"
-                );
-
-                let (_symbol, df, backtest_params) =
-                    self.resolve_backtest_params(params.base).await?;
-
                 let train_days = params.train_days;
                 let test_days = params.test_days;
                 let step_days = params.step_days;
+                let is_stock = params.base.mode.as_deref() == Some("stock");
 
-                tokio::task::spawn_blocking(move || {
-                    tools::walk_forward::execute(
-                        &df,
-                        &backtest_params,
-                        train_days,
-                        test_days,
-                        step_days,
-                    )
-                })
-                .await
-                .map_err(|e| format!("Walk-forward task panicked: {e}"))?
-                .map_err(|e| format!("Error: {e}"))
+                tracing::info!(
+                    strategy = params.base.strategy.as_deref().unwrap_or(""),
+                    symbol = params.base.symbol.as_deref().unwrap_or("auto"),
+                    mode = if is_stock { "stock" } else { "options" },
+                    train_days,
+                    test_days,
+                    step_days = ?step_days,
+                    "Walk-forward request received"
+                );
+
+                if is_stock {
+                    let resolved = self.resolve_stock_backtest_params(params.base).await?;
+                    let label = resolved.symbol.clone();
+
+                    tokio::task::spawn_blocking(move || {
+                        // Prepare bars and signal filters
+                        let ohlcv_path = resolved
+                            .params
+                            .ohlcv_path
+                            .as_deref()
+                            .ok_or_else(|| anyhow::anyhow!("ohlcv_path is required"))?;
+                        let (bars, ohlcv_df) = crate::engine::stock_sim::prepare_stock_data(
+                            ohlcv_path,
+                            resolved.params.interval,
+                            resolved.params.session_filter.as_ref(),
+                            resolved.params.start_date,
+                            resolved.params.end_date,
+                        )?;
+                        let (entry_dates, exit_dates) =
+                            crate::engine::stock_sim::build_stock_signal_filters(
+                                &resolved.params,
+                                &ohlcv_df,
+                            )?;
+                        tools::walk_forward::execute_stock(
+                            &bars,
+                            &resolved.params,
+                            &entry_dates,
+                            &exit_dates,
+                            &label,
+                            train_days,
+                            test_days,
+                            step_days,
+                        )
+                    })
+                    .await
+                    .map_err(|e| format!("Walk-forward task panicked: {e}"))?
+                    .map_err(|e| format!("Error: {e}"))
+                } else {
+                    let (_symbol, df, backtest_params) =
+                        self.resolve_backtest_params(params.base).await?;
+
+                    tokio::task::spawn_blocking(move || {
+                        tools::walk_forward::execute(
+                            &df,
+                            &backtest_params,
+                            train_days,
+                            test_days,
+                            step_days,
+                        )
+                    })
+                    .await
+                    .map_err(|e| format!("Walk-forward task panicked: {e}"))?
+                    .map_err(|e| format!("Error: {e}"))
+                }
             }
             .await,
         )
@@ -1039,62 +1355,166 @@ impl OptopsyServer {
                     .validate()
                     .map_err(|e| validation_err("compare_strategies", e))?;
 
-                let (symbol, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
+                let is_stock = params.mode.as_deref() == Some("stock");
 
-                // Auto-fetch OHLCV data if signals are requested or any strategy has a stock leg
-                let any_stock_leg = params.strategies.iter().any(|s| {
-                    crate::strategies::find_strategy(&s.name).is_some_and(|def| def.has_stock_leg)
-                });
-                let ohlcv_path = if params.entry_signal.is_some()
-                    || params.exit_signal.is_some()
-                    || any_stock_leg
-                {
-                    Some(self.ensure_ohlcv(&symbol).await?)
-                } else {
-                    None
-                };
+                tracing::info!(
+                    mode = if is_stock { "stock" } else { "options" },
+                    symbol = params.symbol.as_deref().unwrap_or("auto"),
+                    "Compare strategies request received"
+                );
 
-                let cross_ohlcv_paths = self
-                    .resolve_cross_ohlcv_paths(
-                        params.entry_signal.as_ref(),
-                        params.exit_signal.as_ref(),
-                        &[],
-                        &[],
-                    )
-                    .await?;
+                if is_stock {
+                    // ── Stock mode ──────────────────────────────────────────
+                    let stock_entries = params.stock_entries.ok_or_else(|| {
+                        "stock_entries is required when mode is \"stock\" (min 2)".to_string()
+                    })?;
+                    if stock_entries.len() < 2 {
+                        return Err(
+                            "stock_entries requires at least 2 entries for comparison".to_string()
+                        );
+                    }
 
-                let mut sim_params = params.sim_params;
-                sim_params.entry_signal = params.entry_signal;
-                sim_params.exit_signal = params.exit_signal;
-                sim_params.ohlcv_path = ohlcv_path;
-                sim_params.cross_ohlcv_paths = cross_ohlcv_paths;
+                    let symbol = params
+                        .symbol
+                        .as_deref()
+                        .ok_or("symbol is required for stock mode")?
+                        .to_uppercase();
+                    validate_path_segment(&symbol).map_err(|e| format!("Invalid symbol: {e}"))?;
+                    let ohlcv_path = self.ensure_ohlcv(&symbol).await?;
 
-                let compare_params = CompareParams {
-                    strategies: params
-                        .strategies
+                    // Collect all signals for cross-symbol resolution
+                    let all_sigs: Vec<&crate::signals::registry::SignalSpec> = stock_entries
+                        .iter()
+                        .map(|e| &e.entry_signal)
+                        .chain(stock_entries.iter().filter_map(|e| e.exit_signal.as_ref()))
+                        .collect();
+                    // Resolve cross symbols from the stock entry signals
+                    let mut cross_paths = std::collections::HashMap::new();
+                    for sig in &all_sigs {
+                        for sym in crate::signals::registry::collect_cross_symbols(sig) {
+                            if let std::collections::hash_map::Entry::Vacant(e) =
+                                cross_paths.entry(sym)
+                            {
+                                validate_path_segment(e.key()).map_err(|err| {
+                                    format!("Invalid cross-symbol \"{}\": {err}", e.key())
+                                })?;
+                                let path = self.ensure_ohlcv(e.key()).await?;
+                                e.insert(path);
+                            }
+                        }
+                    }
+
+                    // Build StockCompareEntry for each entry
+                    let entries: Vec<crate::engine::core::StockCompareEntry> = stock_entries
                         .into_iter()
-                        .map(|s| {
-                            let leg_deltas = resolve_leg_deltas(s.leg_deltas, &s.name)?;
-                            Ok(CompareEntry {
-                                name: s.name,
-                                leg_deltas,
-                                entry_dte: s.entry_dte,
-                                exit_dte: s.exit_dte,
-                                slippage: s.slippage,
-                                commission: s.commission,
-                            })
+                        .enumerate()
+                        .map(|(idx, e)| {
+                            let label = e.label.unwrap_or_else(|| {
+                                let sig_label = crate::engine::sweep_analysis::signal_spec_label(
+                                    &e.entry_signal,
+                                );
+                                format!("Entry {}: {sig_label}", idx + 1)
+                            });
+                            let side = e.side.unwrap_or(crate::engine::types::Side::Long);
+                            let interval = e.interval.unwrap_or_default();
+                            crate::engine::core::StockCompareEntry {
+                                label,
+                                params: crate::engine::stock_sim::StockBacktestParams {
+                                    symbol: symbol.clone(),
+                                    side,
+                                    capital: params.sim_params.capital,
+                                    quantity: params.sim_params.quantity,
+                                    sizing: params.sim_params.sizing.clone(),
+                                    max_positions: params.sim_params.max_positions,
+                                    slippage: e.slippage,
+                                    commission: e.commission,
+                                    stop_loss: e.stop_loss.or(params.sim_params.stop_loss),
+                                    take_profit: e.take_profit.or(params.sim_params.take_profit),
+                                    max_hold_days: params.sim_params.max_hold_days,
+                                    min_days_between_entries: params
+                                        .sim_params
+                                        .min_days_between_entries,
+                                    entry_signal: Some(e.entry_signal),
+                                    exit_signal: e.exit_signal,
+                                    ohlcv_path: Some(ohlcv_path.clone()),
+                                    cross_ohlcv_paths: cross_paths.clone(),
+                                    start_date: None,
+                                    end_date: None,
+                                    interval,
+                                    session_filter: e.session_filter,
+                                },
+                            }
                         })
-                        .collect::<Result<Vec<_>, String>>()?,
-                    sim_params,
-                };
-                compare_params
-                    .validate()
-                    .map_err(|e| validation_err("compare_strategies", e))?;
+                        .collect();
 
-                tokio::task::spawn_blocking(move || tools::compare::execute(&df, &compare_params))
+                    tokio::task::spawn_blocking(move || tools::compare::execute_stock(&entries))
+                        .await
+                        .map_err(|e| format!("Stock compare task panicked: {e}"))?
+                        .map_err(|e| format!("Error: {e}"))
+                } else {
+                    // ── Options mode ────────────────────────────────────────
+                    let strategies = params.strategies.ok_or_else(|| {
+                        "strategies is required when mode is \"options\" (or omitted)".to_string()
+                    })?;
+
+                    let (symbol, df) = self.ensure_data_loaded(params.symbol.as_deref()).await?;
+
+                    let any_stock_leg = strategies.iter().any(|s| {
+                        crate::strategies::find_strategy(&s.name)
+                            .is_some_and(|def| def.has_stock_leg)
+                    });
+                    let ohlcv_path = if params.entry_signal.is_some()
+                        || params.exit_signal.is_some()
+                        || any_stock_leg
+                    {
+                        Some(self.ensure_ohlcv(&symbol).await?)
+                    } else {
+                        None
+                    };
+
+                    let cross_ohlcv_paths = self
+                        .resolve_cross_ohlcv_paths(
+                            params.entry_signal.as_ref(),
+                            params.exit_signal.as_ref(),
+                            &[],
+                            &[],
+                        )
+                        .await?;
+
+                    let mut sim_params = params.sim_params;
+                    sim_params.entry_signal = params.entry_signal;
+                    sim_params.exit_signal = params.exit_signal;
+                    sim_params.ohlcv_path = ohlcv_path;
+                    sim_params.cross_ohlcv_paths = cross_ohlcv_paths;
+
+                    let compare_params = CompareParams {
+                        strategies: strategies
+                            .into_iter()
+                            .map(|s| {
+                                let leg_deltas = resolve_leg_deltas(s.leg_deltas, &s.name)?;
+                                Ok(CompareEntry {
+                                    name: s.name,
+                                    leg_deltas,
+                                    entry_dte: s.entry_dte,
+                                    exit_dte: s.exit_dte,
+                                    slippage: s.slippage,
+                                    commission: s.commission,
+                                })
+                            })
+                            .collect::<Result<Vec<_>, String>>()?,
+                        sim_params,
+                    };
+                    compare_params
+                        .validate()
+                        .map_err(|e| validation_err("compare_strategies", e))?;
+
+                    tokio::task::spawn_blocking(move || {
+                        tools::compare::execute(&df, &compare_params)
+                    })
                     .await
                     .map_err(|e| format!("Compare task panicked: {e}"))?
                     .map_err(|e| format!("Error: {e}"))
+                }
             }
             .await,
         )

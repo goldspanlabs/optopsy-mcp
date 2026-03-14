@@ -97,6 +97,8 @@ pub struct StabilityScore {
 /// Complete output of a parameter sweep: ranked results, sensitivity, stability, and OOS data.
 #[derive(Debug, Clone)]
 pub struct SweepOutput {
+    /// `Some("stock")` when produced by stock-mode sweep; `None` for options.
+    pub mode: Option<String>,
     pub combinations_total: usize,
     pub combinations_run: usize,
     /// Pre-filter skips (delta ordering violations, deduplication).

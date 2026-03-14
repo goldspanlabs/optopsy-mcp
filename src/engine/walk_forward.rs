@@ -1,9 +1,12 @@
+use std::collections::HashSet;
+
 use anyhow::{bail, Result};
 use chrono::{Days, NaiveDate, NaiveDateTime};
 use polars::prelude::*;
 
 use crate::data::parquet::QUOTE_DATETIME_COL;
 use crate::engine::core::run_backtest;
+use crate::engine::stock_sim::{self, Bar, StockBacktestParams};
 use crate::engine::types::BacktestParams;
 
 /// Result of a single walk-forward window (train + test).
@@ -202,7 +205,10 @@ pub fn run_walk_forward(
     Ok(WalkForwardResult { windows, aggregate })
 }
 
-fn compute_aggregate(windows: &[WindowResult], failed_windows: usize) -> WalkForwardAggregate {
+pub(crate) fn compute_aggregate(
+    windows: &[WindowResult],
+    failed_windows: usize,
+) -> WalkForwardAggregate {
     let n = windows.len() as f64;
     let test_sharpes: Vec<f64> = windows.iter().map(|w| w.test_sharpe).collect();
     let test_pnls: Vec<f64> = windows.iter().map(|w| w.test_pnl).collect();
@@ -238,6 +244,125 @@ fn compute_aggregate(windows: &[WindowResult], failed_windows: usize) -> WalkFor
         avg_train_test_sharpe_decay,
         total_test_pnl,
     }
+}
+
+/// Run walk-forward analysis on stock OHLCV bars with signal-based entry/exit.
+#[allow(clippy::implicit_hasher)]
+pub fn run_walk_forward_stock(
+    bars: &[Bar],
+    params: &StockBacktestParams,
+    entry_dates: &Option<HashSet<NaiveDateTime>>,
+    exit_dates: &Option<HashSet<NaiveDateTime>>,
+    train_days: i32,
+    test_days: i32,
+    step_days: Option<i32>,
+) -> Result<WalkForwardResult> {
+    if train_days < 1 {
+        bail!("train_days must be >= 1");
+    }
+    if test_days < 1 {
+        bail!("test_days must be >= 1");
+    }
+    let step = step_days.unwrap_or(test_days);
+    if step < 5 {
+        if step_days.is_some() {
+            bail!("step_days ({step}) must be >= 5 to avoid generating an excessive number of windows");
+        }
+        bail!("test_days ({step}) is used as step size when step_days is omitted, and must be >= 5 to avoid generating an excessive number of windows");
+    }
+
+    let (min_date, max_date) = stock_sim::bar_date_range(bars)
+        .ok_or_else(|| anyhow::anyhow!("No bars for walk-forward analysis"))?;
+
+    let total_days_inclusive = (max_date - min_date).num_days() + 1;
+    if total_days_inclusive < i64::from(train_days + test_days) {
+        bail!(
+            "Data spans {} days but walk-forward requires at least {} (train_days={} + test_days={})",
+            total_days_inclusive,
+            train_days + test_days,
+            train_days,
+            test_days
+        );
+    }
+
+    let mut windows = Vec::new();
+    let mut failed_count = 0usize;
+    let mut cursor = min_date + Days::new(train_days as u64);
+
+    while cursor + Days::new(test_days as u64) <= max_date + Days::new(1) {
+        let train_start = cursor - Days::new(train_days as u64);
+        let train_end = cursor;
+        let test_start = cursor;
+        let test_end = cursor + Days::new(test_days as u64);
+
+        let train_bars = stock_sim::slice_bars_by_date_range(bars, train_start, train_end);
+        let test_bars = stock_sim::slice_bars_by_date_range(bars, test_start, test_end);
+
+        if train_bars.is_empty() || test_bars.is_empty() {
+            failed_count += 1;
+            cursor = cursor + Days::new(step as u64);
+            continue;
+        }
+
+        // Slice signal dates to the window range
+        let train_entry = entry_dates
+            .as_ref()
+            .map(|d| stock_sim::filter_datetime_set(d, train_start, train_end));
+        let train_exit = exit_dates
+            .as_ref()
+            .map(|d| stock_sim::filter_datetime_set(d, train_start, train_end));
+        let test_entry = entry_dates
+            .as_ref()
+            .map(|d| stock_sim::filter_datetime_set(d, test_start, test_end));
+        let test_exit = exit_dates
+            .as_ref()
+            .map(|d| stock_sim::filter_datetime_set(d, test_start, test_end));
+
+        let train_result = stock_sim::run_stock_backtest(
+            &train_bars,
+            params,
+            train_entry.as_ref(),
+            train_exit.as_ref(),
+        );
+        let test_result = stock_sim::run_stock_backtest(
+            &test_bars,
+            params,
+            test_entry.as_ref(),
+            test_exit.as_ref(),
+        );
+
+        match (train_result, test_result) {
+            (Ok(train_r), Ok(test_r)) => {
+                windows.push(WindowResult {
+                    window_number: windows.len() + 1,
+                    train_start,
+                    train_end,
+                    test_start,
+                    test_end,
+                    train_sharpe: train_r.metrics.sharpe,
+                    test_sharpe: test_r.metrics.sharpe,
+                    train_pnl: train_r.total_pnl,
+                    test_pnl: test_r.total_pnl,
+                    train_trades: train_r.trade_count,
+                    test_trades: test_r.trade_count,
+                    train_win_rate: train_r.metrics.win_rate,
+                    test_win_rate: test_r.metrics.win_rate,
+                });
+            }
+            _ => {
+                failed_count += 1;
+            }
+        }
+
+        cursor = cursor + Days::new(step as u64);
+    }
+
+    if windows.is_empty() {
+        bail!("No valid walk-forward windows could be generated from the data");
+    }
+
+    let aggregate = compute_aggregate(&windows, failed_count);
+    Ok(WalkForwardResult { windows, aggregate })
 }
 
 #[cfg(test)]

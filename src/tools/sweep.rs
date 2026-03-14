@@ -7,7 +7,7 @@
 use anyhow::Result;
 use polars::prelude::*;
 
-use crate::engine::sweep::SweepParams;
+use crate::engine::sweep::{StockSweepParams, SweepParams};
 
 use super::ai_format;
 use super::response_types::SweepResponse;
@@ -15,5 +15,18 @@ use super::response_types::SweepResponse;
 /// Execute the parameter sweep engine and format ranked results with sensitivity analysis.
 pub fn execute(df: &DataFrame, params: &SweepParams) -> Result<SweepResponse> {
     let output = crate::engine::sweep::run_sweep(df, params)?;
+    Ok(ai_format::format_sweep(output))
+}
+
+/// Execute a stock-mode parameter sweep and format results.
+pub fn execute_stock(params: &StockSweepParams) -> Result<SweepResponse> {
+    let start = std::time::Instant::now();
+    let output = crate::engine::sweep::run_stock_sweep(params)?;
+    let elapsed = start.elapsed();
+    tracing::info!(
+        elapsed_ms = elapsed.as_millis(),
+        combinations = output.combinations_run,
+        "Stock parameter sweep finished"
+    );
     Ok(ai_format::format_sweep(output))
 }

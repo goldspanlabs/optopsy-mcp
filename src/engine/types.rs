@@ -19,7 +19,7 @@ use crate::signals::registry::SignalSpec;
 pub const EPOCH_DAYS_CE_OFFSET: i32 = 719_163;
 
 /// Bar interval for OHLCV resampling.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Interval {
     #[default]
@@ -79,7 +79,7 @@ impl std::fmt::Display for Interval {
 }
 
 /// Trading session time-of-day filter for intraday data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum SessionFilter {
     /// Pre-market session: 04:00 – 09:30 ET
     Premarket,

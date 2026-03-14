@@ -3,7 +3,7 @@
 //! These tests exercise the full sweep pipeline with real data frames
 //! that produce actual trades, validating end-to-end correctness.
 
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate};
 use optopsy_mcp::engine::core::run_backtest;
 use optopsy_mcp::engine::sweep::{run_sweep, SweepDimensions, SweepParams, SweepStrategyEntry};
 use optopsy_mcp::engine::types::{
@@ -914,4 +914,183 @@ fn sweep_multiple_comparisons_bonferroni_more_conservative_than_bh() {
         }
     }
     // If only 0 or 1 results, multiple_comparisons may be None — that's fine
+}
+
+// ---------------------------------------------------------------------------
+// Stock sweep tests
+// ---------------------------------------------------------------------------
+
+/// Build 40 weekday bars of OHLCV data for stock sweep tests.
+/// Returns (`TempDir`, `path_string`).
+fn make_stock_sweep_fixture() -> (tempfile::TempDir, String) {
+    use chrono::NaiveDate;
+    use polars::prelude::*;
+
+    let start = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+    let mut dates = Vec::new();
+    let mut closes: Vec<f64> = Vec::new();
+    let mut price = 100.0_f64;
+    let mut d = start;
+    while dates.len() < 40 {
+        if d.weekday() != chrono::Weekday::Sat && d.weekday() != chrono::Weekday::Sun {
+            dates.push(d);
+            closes.push(price);
+            price += 0.3;
+        }
+        d += chrono::Duration::days(1);
+    }
+
+    let n = dates.len();
+    let mut df = df! {
+        "open"     => closes.clone(),
+        "high"     => closes.iter().map(|c| c + 1.0).collect::<Vec<_>>(),
+        "low"      => closes.iter().map(|c| c - 1.0).collect::<Vec<_>>(),
+        "close"    => closes.clone(),
+        "adjclose" => closes.clone(),
+        "volume"   => vec![1_000_000i64; n],
+    }
+    .unwrap();
+    df.with_column(DateChunked::from_naive_date(PlSmallStr::from("date"), dates).into_column())
+        .unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ohlcv.parquet");
+    let file = std::fs::File::create(&path).unwrap();
+    ParquetWriter::new(file).finish(&mut df).unwrap();
+    (dir, path.to_string_lossy().to_string())
+}
+
+#[test]
+fn stock_sweep_single_entry_signal_produces_results() {
+    use optopsy_mcp::engine::stock_sim::StockBacktestParams;
+    use optopsy_mcp::engine::sweep::{run_stock_sweep, StockSweepParams};
+    use optopsy_mcp::engine::types::{Interval, Side, Slippage};
+
+    let (_dir, path) = make_stock_sweep_fixture();
+
+    // Formula signal: always-true so every bar fires → guaranteed trades.
+    let entry_signal = SignalSpec::Formula {
+        formula: "close > 0".to_string(),
+    };
+
+    let base_params = StockBacktestParams {
+        symbol: "TEST".to_string(),
+        side: Side::Long,
+        capital: 100_000.0,
+        quantity: 5,
+        sizing: None,
+        max_positions: 1,
+        slippage: Slippage::Mid,
+        commission: None,
+        stop_loss: None,
+        take_profit: None,
+        max_hold_days: Some(5),
+        min_days_between_entries: None,
+        entry_signal: None,
+        exit_signal: None,
+        ohlcv_path: Some(path),
+        cross_ohlcv_paths: std::collections::HashMap::new(),
+        start_date: None,
+        end_date: None,
+        interval: Interval::Daily,
+        session_filter: None,
+    };
+
+    let sweep_params = StockSweepParams {
+        entry_signals: vec![entry_signal],
+        exit_signals: vec![],
+        intervals: vec![Interval::Daily],
+        sides: vec![Side::Long],
+        session_filters: vec![None],
+        stop_losses: vec![None],
+        take_profits: vec![None],
+        slippage_models: vec![Slippage::Mid],
+        base_params,
+        out_of_sample_pct: 0.0,
+        num_permutations: None,
+        permutation_seed: None,
+    };
+
+    let output = run_stock_sweep(&sweep_params).unwrap();
+
+    assert_eq!(
+        output.combinations_run, 1,
+        "Expected 1 combo, got {}",
+        output.combinations_run
+    );
+    assert_eq!(output.ranked_results.len(), 1);
+    assert_eq!(output.mode.as_deref(), Some("stock"));
+}
+
+#[test]
+fn stock_sweep_cartesian_product_generates_all_combos() {
+    use optopsy_mcp::engine::stock_sim::StockBacktestParams;
+    use optopsy_mcp::engine::sweep::{run_stock_sweep, StockSweepParams};
+    use optopsy_mcp::engine::types::{Interval, Side, Slippage};
+
+    let (_dir, path) = make_stock_sweep_fixture();
+
+    let entry_a = SignalSpec::Formula {
+        formula: "close > 0".to_string(),
+    };
+    let entry_b = SignalSpec::Formula {
+        formula: "close > 50".to_string(),
+    };
+
+    let base_params = StockBacktestParams {
+        symbol: "TEST".to_string(),
+        side: Side::Long,
+        capital: 100_000.0,
+        quantity: 5,
+        sizing: None,
+        max_positions: 1,
+        slippage: Slippage::Mid,
+        commission: None,
+        stop_loss: None,
+        take_profit: None,
+        max_hold_days: Some(5),
+        min_days_between_entries: None,
+        entry_signal: None,
+        exit_signal: None,
+        ohlcv_path: Some(path),
+        cross_ohlcv_paths: std::collections::HashMap::new(),
+        start_date: None,
+        end_date: None,
+        interval: Interval::Daily,
+        session_filter: None,
+    };
+
+    // 2 entry signals × 2 slippage models = 4 combos.
+    let sweep_params = StockSweepParams {
+        entry_signals: vec![entry_a, entry_b],
+        exit_signals: vec![],
+        intervals: vec![Interval::Daily],
+        sides: vec![Side::Long],
+        session_filters: vec![None],
+        stop_losses: vec![None],
+        take_profits: vec![None],
+        slippage_models: vec![Slippage::Mid, Slippage::Spread],
+        base_params,
+        out_of_sample_pct: 0.0,
+        num_permutations: None,
+        permutation_seed: None,
+    };
+
+    let output = run_stock_sweep(&sweep_params).unwrap();
+
+    assert_eq!(
+        output.combinations_run, 4,
+        "Expected 4 combos (2 signals × 2 slippage), got {}",
+        output.combinations_run
+    );
+    // Results should be sorted by Sharpe descending.
+    let sharpes: Vec<f64> = output.ranked_results.iter().map(|r| r.sharpe).collect();
+    for w in sharpes.windows(2) {
+        assert!(
+            w[0] >= w[1],
+            "Results should be sorted by Sharpe descending: {:.4} < {:.4}",
+            w[0],
+            w[1]
+        );
+    }
 }

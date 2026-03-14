@@ -219,6 +219,9 @@ pub struct CompareStrategyEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CompareResponse {
     pub summary: String,
+    /// `"stock"` when produced by stock-mode compare; absent for options mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
     /// The strategies and parameters that were compared (for reference in follow-up questions)
     pub strategies_compared: Vec<CompareStrategyEntry>,
     pub ranking_by_sharpe: Vec<String>,
@@ -417,6 +420,9 @@ pub struct ConstructSignalResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PermutationTestResponse {
     pub summary: String,
+    /// `"stock"` when produced by stock-mode permutation test; absent for options mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
     pub assessment: String,
     pub key_findings: Vec<String>,
     pub parameters: BacktestParamsSummary,
@@ -476,6 +482,9 @@ pub struct WalkForwardAggregate {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WalkForwardResponse {
     pub summary: String,
+    /// `"stock"` when produced by stock-mode walk-forward; absent for options mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
     pub windows: Vec<WalkForwardWindowResult>,
     pub aggregate: WalkForwardAggregate,
     pub key_findings: Vec<String>,
@@ -495,6 +504,9 @@ pub struct MultipleComparisonsCorrection {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SweepResponse {
     pub summary: String,
+    /// `"stock"` when produced by stock-mode sweep; absent for options mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
     pub combinations_total: usize,
     pub combinations_run: usize,
     /// Pre-filter skips (delta ordering, deduplication)

@@ -8,10 +8,13 @@ use std::collections::HashSet;
 use std::hash::BuildHasher;
 
 use anyhow::Result;
-use chrono::NaiveDate;
+use chrono::{NaiveDate, NaiveDateTime};
 use polars::prelude::*;
 
-use crate::engine::permutation::{run_permutation_test, PermutationParams};
+use crate::engine::permutation::{
+    run_permutation_test, run_stock_permutation_test, PermutationParams,
+};
+use crate::engine::stock_sim::{Bar, StockBacktestParams};
 use crate::engine::types::BacktestParams;
 
 use super::ai_format;
@@ -34,4 +37,27 @@ pub fn execute<S1: BuildHasher, S2: BuildHasher>(
         "Permutation test finished"
     );
     Ok(ai_format::format_permutation_test(output, params))
+}
+
+/// Execute a stock-mode permutation test on OHLCV bars.
+#[allow(clippy::implicit_hasher)]
+pub fn execute_stock(
+    bars: &[Bar],
+    params: &StockBacktestParams,
+    entry_dates: &Option<HashSet<NaiveDateTime>>,
+    exit_dates: &Option<HashSet<NaiveDateTime>>,
+    perm_params: &PermutationParams,
+    label: &str,
+) -> Result<PermutationTestResponse> {
+    let start = std::time::Instant::now();
+    let output = run_stock_permutation_test(bars, params, entry_dates, exit_dates, perm_params)?;
+    let elapsed = start.elapsed();
+    tracing::info!(
+        elapsed_ms = elapsed.as_millis(),
+        permutations = output.num_completed,
+        "Stock permutation test finished"
+    );
+    Ok(ai_format::format_permutation_test_stock(
+        output, label, params,
+    ))
 }

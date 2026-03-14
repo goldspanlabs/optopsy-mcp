@@ -7,7 +7,8 @@ use std::collections::{BTreeMap, HashSet};
 use std::hash::BuildHasher;
 
 use anyhow::Result;
-use chrono::NaiveDate;
+use chrono::{NaiveDate, NaiveDateTime};
+use rand::prelude::IndexedRandom;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
 use schemars::JsonSchema;
@@ -15,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use super::event_sim;
 use super::metrics;
+use super::stock_sim::{self, Bar, StockBacktestParams};
 use super::types::{BacktestParams, BacktestResult, EntryCandidate};
 use super::vectorized_sim;
 use crate::strategies;
@@ -57,12 +59,12 @@ pub struct PermutationOutput {
 }
 
 /// Collected metric values from a single permutation run.
-struct PermMetrics {
-    sharpe: f64,
-    total_pnl: f64,
-    win_rate: f64,
-    profit_factor: f64,
-    cagr: f64,
+pub struct PermMetrics {
+    pub sharpe: f64,
+    pub total_pnl: f64,
+    pub win_rate: f64,
+    pub profit_factor: f64,
+    pub cagr: f64,
 }
 
 /// Run permutation test: real backtest + N shuffled reruns.
@@ -234,11 +236,11 @@ fn run_shuffled_permutations<S: BuildHasher>(
     Ok(perm_metrics)
 }
 
-fn extract_field(metrics: &[PermMetrics], f: fn(&PermMetrics) -> f64) -> Vec<f64> {
+pub(crate) fn extract_field(metrics: &[PermMetrics], f: fn(&PermMetrics) -> f64) -> Vec<f64> {
     metrics.iter().map(f).collect()
 }
 
-fn compute_metric_result(
+pub(crate) fn compute_metric_result(
     name: &str,
     real_value: f64,
     permuted_values: &[f64],
@@ -336,6 +338,115 @@ fn build_histogram(sorted: &[f64], num_buckets: usize) -> Vec<HistogramBucket> {
     }
 
     buckets
+}
+
+// ---------------------------------------------------------------------------
+// Stock permutation test
+// ---------------------------------------------------------------------------
+
+/// Run a stock permutation test: real backtest + N shuffled entry date reruns.
+///
+/// Instead of shuffling entry candidates (options-specific), this shuffles which
+/// dates fire the entry signal. For each permutation, N random bar datetimes are
+/// chosen (where N = real signal fire count) and passed as entry dates.
+#[allow(clippy::implicit_hasher)]
+pub fn run_stock_permutation_test(
+    bars: &[Bar],
+    params: &StockBacktestParams,
+    entry_dates: &Option<HashSet<NaiveDateTime>>,
+    exit_dates: &Option<HashSet<NaiveDateTime>>,
+    perm_params: &PermutationParams,
+) -> Result<PermutationOutput> {
+    // Run real backtest
+    let real_result =
+        stock_sim::run_stock_backtest(bars, params, entry_dates.as_ref(), exit_dates.as_ref())?;
+
+    let signal_fire_count = entry_dates.as_ref().map_or(0, HashSet::len);
+    if signal_fire_count == 0 {
+        return Ok(PermutationOutput {
+            num_permutations: perm_params.num_permutations,
+            num_completed: 0,
+            real_result,
+            metric_results: vec![],
+        });
+    }
+
+    // Collect all bar datetimes as the pool for random selection
+    let all_bar_datetimes: Vec<NaiveDateTime> = bars.iter().map(|b| b.datetime).collect();
+
+    let mut rng = match perm_params.seed {
+        Some(seed) => rand::rngs::StdRng::seed_from_u64(seed),
+        None => rand::rngs::StdRng::from_os_rng(),
+    };
+
+    let mut perm_metrics: Vec<PermMetrics> = Vec::with_capacity(perm_params.num_permutations);
+
+    for i in 0..perm_params.num_permutations {
+        // Sample N datetimes from the pool without cloning/shuffling the whole slice.
+        let shuffled_entry_dates: HashSet<NaiveDateTime> = all_bar_datetimes
+            .choose_multiple(&mut rng, signal_fire_count)
+            .copied()
+            .collect();
+
+        match stock_sim::run_stock_backtest(
+            bars,
+            params,
+            Some(&shuffled_entry_dates),
+            exit_dates.as_ref(),
+        ) {
+            Ok(result) => {
+                let total_pnl: f64 = result.trade_log.iter().map(|t| t.pnl).sum();
+                perm_metrics.push(PermMetrics {
+                    sharpe: result.metrics.sharpe,
+                    total_pnl,
+                    win_rate: result.metrics.win_rate,
+                    profit_factor: result.metrics.profit_factor,
+                    cagr: result.metrics.cagr,
+                });
+            }
+            Err(e) => {
+                tracing::warn!(permutation = i, error = %e, "Stock permutation failed, skipping");
+            }
+        }
+    }
+
+    let num_completed = perm_metrics.len();
+    let real_total_pnl: f64 = real_result.trade_log.iter().map(|t| t.pnl).sum();
+
+    let metric_results = vec![
+        compute_metric_result(
+            "sharpe",
+            real_result.metrics.sharpe,
+            &extract_field(&perm_metrics, |m| m.sharpe),
+        ),
+        compute_metric_result(
+            "total_pnl",
+            real_total_pnl,
+            &extract_field(&perm_metrics, |m| m.total_pnl),
+        ),
+        compute_metric_result(
+            "win_rate",
+            real_result.metrics.win_rate,
+            &extract_field(&perm_metrics, |m| m.win_rate),
+        ),
+        compute_metric_result(
+            "profit_factor",
+            real_result.metrics.profit_factor,
+            &extract_field(&perm_metrics, |m| m.profit_factor),
+        ),
+        compute_metric_result(
+            "cagr",
+            real_result.metrics.cagr,
+            &extract_field(&perm_metrics, |m| m.cagr),
+        ),
+    ];
+
+    Ok(PermutationOutput {
+        num_permutations: perm_params.num_permutations,
+        num_completed,
+        real_result,
+        metric_results,
+    })
 }
 
 #[cfg(test)]

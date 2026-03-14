@@ -4,6 +4,7 @@
 //! that produce actual trades, validating end-to-end correctness of shuffled
 //! reruns and p-value computation.
 
+use chrono::Datelike;
 use optopsy_mcp::engine::core::run_backtest;
 use optopsy_mcp::engine::permutation::{run_permutation_test, PermutationParams};
 
@@ -263,4 +264,168 @@ fn permutation_test_multi_leg_strategy() {
         }
     }
     // Err is also acceptable — spread may not match in synthetic data
+}
+
+// ---------------------------------------------------------------------------
+// Stock permutation test
+// ---------------------------------------------------------------------------
+
+/// Build a tiny synthetic OHLCV parquet for stock permutation tests.
+/// Returns (`TempDir`, path, `Vec<Bar>`).
+fn make_stock_perm_fixture() -> (
+    tempfile::TempDir,
+    String,
+    Vec<optopsy_mcp::engine::stock_sim::Bar>,
+) {
+    use chrono::NaiveDate;
+    use polars::prelude::*;
+
+    let start = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+    let mut dates = Vec::new();
+    let mut closes: Vec<f64> = Vec::new();
+
+    // 30 weekday bars with a gentle uptrend
+    let mut price = 100.0_f64;
+    let mut d = start;
+    while dates.len() < 30 {
+        if d.weekday() != chrono::Weekday::Sat && d.weekday() != chrono::Weekday::Sun {
+            dates.push(d);
+            closes.push(price);
+            price += 0.5;
+        }
+        d += chrono::Duration::days(1);
+    }
+
+    let n = dates.len();
+    let mut df = df! {
+        "open"     => closes.clone(),
+        "high"     => closes.iter().map(|c| c + 1.0).collect::<Vec<_>>(),
+        "low"      => closes.iter().map(|c| c - 1.0).collect::<Vec<_>>(),
+        "close"    => closes.clone(),
+        "adjclose" => closes.clone(),
+        "volume"   => vec![1_000_000i64; n],
+    }
+    .unwrap();
+    df.with_column(
+        DateChunked::from_naive_date(PlSmallStr::from("date"), dates.clone()).into_column(),
+    )
+    .unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ohlcv.parquet");
+    let file = std::fs::File::create(&path).unwrap();
+    ParquetWriter::new(file).finish(&mut df).unwrap();
+    let path_str = path.to_string_lossy().to_string();
+
+    let bars = optopsy_mcp::engine::stock_sim::parse_ohlcv_bars(&path_str, None, None).unwrap();
+    (dir, path_str, bars)
+}
+
+#[test]
+fn stock_permutation_test_produces_metric_results() {
+    use optopsy_mcp::engine::permutation::{run_stock_permutation_test, PermutationParams};
+    use optopsy_mcp::engine::stock_sim::StockBacktestParams;
+    use optopsy_mcp::engine::types::{Interval, Side, Slippage};
+    use std::collections::HashSet;
+
+    let (_dir, path, bars) = make_stock_perm_fixture();
+
+    // Fire entry signal on every 5th bar so we get a few trades.
+    let mut entry_dates: HashSet<chrono::NaiveDateTime> = HashSet::new();
+    for (i, bar) in bars.iter().enumerate() {
+        if i % 5 == 0 {
+            entry_dates.insert(bar.datetime);
+        }
+    }
+
+    let params = StockBacktestParams {
+        symbol: "TEST".to_string(),
+        side: Side::Long,
+        capital: 100_000.0,
+        quantity: 10,
+        sizing: None,
+        max_positions: 1,
+        slippage: Slippage::Mid,
+        commission: None,
+        stop_loss: None,
+        take_profit: None,
+        max_hold_days: Some(4),
+        min_days_between_entries: None,
+        entry_signal: None,
+        exit_signal: None,
+        ohlcv_path: Some(path.clone()),
+        cross_ohlcv_paths: std::collections::HashMap::new(),
+        start_date: None,
+        end_date: None,
+        interval: Interval::Daily,
+        session_filter: None,
+    };
+
+    let perm_params = PermutationParams {
+        num_permutations: 20,
+        seed: Some(42),
+    };
+
+    let output =
+        run_stock_permutation_test(&bars, &params, &Some(entry_dates), &None, &perm_params)
+            .unwrap();
+
+    assert_eq!(output.num_permutations, 20);
+    assert!(
+        output.num_completed > 0,
+        "Expected at least one permutation to complete"
+    );
+    assert_eq!(output.metric_results.len(), 5, "Expected 5 metrics");
+
+    for m in &output.metric_results {
+        assert!(
+            (0.0..=1.0).contains(&m.p_value),
+            "{}: p_value {} out of [0,1]",
+            m.metric_name,
+            m.p_value,
+        );
+    }
+}
+
+#[test]
+fn stock_permutation_test_zero_signal_fires_returns_zero_completed() {
+    use optopsy_mcp::engine::permutation::{run_stock_permutation_test, PermutationParams};
+    use optopsy_mcp::engine::stock_sim::StockBacktestParams;
+    use optopsy_mcp::engine::types::{Interval, Side, Slippage};
+
+    let (_dir, path, bars) = make_stock_perm_fixture();
+
+    let params = StockBacktestParams {
+        symbol: "TEST".to_string(),
+        side: Side::Long,
+        capital: 100_000.0,
+        quantity: 10,
+        sizing: None,
+        max_positions: 1,
+        slippage: Slippage::Mid,
+        commission: None,
+        stop_loss: None,
+        take_profit: None,
+        max_hold_days: None,
+        min_days_between_entries: None,
+        entry_signal: None,
+        exit_signal: None,
+        ohlcv_path: Some(path),
+        cross_ohlcv_paths: std::collections::HashMap::new(),
+        start_date: None,
+        end_date: None,
+        interval: Interval::Daily,
+        session_filter: None,
+    };
+
+    let perm_params = PermutationParams {
+        num_permutations: 10,
+        seed: Some(1),
+    };
+
+    // No entry dates → signal_fire_count = 0 → early return with num_completed = 0.
+    let output = run_stock_permutation_test(&bars, &params, &None, &None, &perm_params).unwrap();
+
+    assert_eq!(output.num_completed, 0);
+    assert!(output.metric_results.is_empty());
 }

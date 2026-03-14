@@ -7,6 +7,7 @@
 use anyhow::Result;
 use polars::prelude::*;
 
+use crate::engine::core::StockCompareEntry;
 use crate::engine::types::CompareParams;
 
 use super::ai_format;
@@ -16,4 +17,17 @@ use super::response_types::CompareResponse;
 pub fn execute(df: &DataFrame, params: &CompareParams) -> Result<CompareResponse> {
     let (results, labeled_entries) = crate::engine::core::compare_strategies(df, params)?;
     Ok(ai_format::format_compare(results, &labeled_entries))
+}
+
+/// Run stock backtests for all entries and return a ranked comparison response.
+pub fn execute_stock(entries: &[StockCompareEntry]) -> Result<CompareResponse> {
+    let start = std::time::Instant::now();
+    let results = crate::engine::core::compare_stock_strategies(entries)?;
+    let elapsed = start.elapsed();
+    tracing::info!(
+        elapsed_ms = elapsed.as_millis(),
+        entries = entries.len(),
+        "Stock compare finished"
+    );
+    Ok(ai_format::format_stock_compare(results, entries))
 }
