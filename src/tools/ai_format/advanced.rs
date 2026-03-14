@@ -169,13 +169,18 @@ pub fn format_sweep(output: SweepOutput) -> SweepResponse {
 }
 
 /// Format walk-forward analysis results with per-window details and aggregate statistics.
+///
+/// `label` identifies the strategy or signal (e.g. strategy name or stock signal description).
+/// `mode` controls the response mode field (`None` for options, `Some("stock")` for stock).
 pub fn format_walk_forward(
     result: &WalkForwardResult,
-    params: &BacktestParams,
+    label: &str,
+    mode: Option<&str>,
     train_days: i32,
     test_days: i32,
     step_days: Option<i32>,
 ) -> WalkForwardResponse {
+    let is_stock = mode.is_some();
     let agg = &result.aggregate;
     let step = step_days.unwrap_or(test_days);
 
@@ -189,14 +194,14 @@ pub fn format_walk_forward(
         format!("{} windows", agg.successful_windows)
     };
 
+    let prefix = if is_stock {
+        "Stock walk-forward analysis"
+    } else {
+        "Walk-forward analysis"
+    };
     let summary = format!(
-        "Walk-forward analysis for {} across {} (train={}d, test={}d, step={}d): \
+        "{prefix} for {label} across {window_desc} (train={train_days}d, test={test_days}d, step={step}d): \
          avg test Sharpe {:.2} (±{:.2}), {:.0}% profitable windows, total test P&L {}",
-        params.strategy,
-        window_desc,
-        train_days,
-        test_days,
-        step,
         agg.avg_test_sharpe,
         agg.std_test_sharpe,
         agg.pct_profitable_windows,
@@ -225,27 +230,45 @@ pub fn format_walk_forward(
 
     let key_findings = walk_forward_findings(agg);
 
+    let param_kind = if is_stock {
+        "signal parameters"
+    } else {
+        "strategy parameters"
+    };
     let mut suggested_next_steps = vec![];
     if agg.avg_train_test_sharpe_decay > 0.5 {
-        suggested_next_steps
-            .push("Consider simplifying strategy parameters to reduce overfitting".to_string());
+        suggested_next_steps.push(format!(
+            "Consider simplifying {param_kind} to reduce overfitting"
+        ));
     }
     if agg.pct_profitable_windows < 50.0 {
-        suggested_next_steps
-            .push("Try different strategy parameters or a different strategy entirely".to_string());
+        if is_stock {
+            suggested_next_steps.push("Try different signals or parameters".to_string());
+        } else {
+            suggested_next_steps.push(
+                "Try different strategy parameters or a different strategy entirely".to_string(),
+            );
+        }
     }
-    suggested_next_steps.push(
-        "Use `parameter_sweep` to find optimal parameters, then validate with `walk_forward`"
-            .to_string(),
-    );
-    suggested_next_steps.push(
-        "Try different train/test window sizes to check robustness of the walk-forward results"
-            .to_string(),
-    );
+    if is_stock {
+        suggested_next_steps.push(
+            "Use `parameter_sweep` with `mode: \"stock\"` to find optimal signal parameters, then validate with `walk_forward`"
+                .to_string(),
+        );
+    } else {
+        suggested_next_steps.push(
+            "Use `parameter_sweep` to find optimal parameters, then validate with `walk_forward`"
+                .to_string(),
+        );
+        suggested_next_steps.push(
+            "Try different train/test window sizes to check robustness of the walk-forward results"
+                .to_string(),
+        );
+    }
 
     WalkForwardResponse {
         summary,
-        mode: None,
+        mode: mode.map(ToString::to_string),
         windows,
         aggregate: WalkForwardAggregate {
             successful_windows: agg.successful_windows,
@@ -267,250 +290,19 @@ pub fn format_permutation_test(
     output: PermutationOutput,
     params: &BacktestParams,
 ) -> PermutationTestResponse {
-    let real = &output.real_result;
-    let real_total_pnl: f64 = real.trade_log.iter().map(|t| t.pnl).sum();
-
-    let sharpe_p = output
-        .metric_results
-        .iter()
-        .find(|m| m.metric_name == "sharpe")
-        .map_or(1.0, |m| m.p_value);
-    let pnl_p = output
-        .metric_results
-        .iter()
-        .find(|m| m.metric_name == "total_pnl")
-        .map_or(1.0, |m| m.p_value);
-    let is_significant = sharpe_p < P_SIGNIFICANT && pnl_p < P_SIGNIFICANT;
-
-    let sig_label = if is_significant {
-        "statistically significant"
-    } else {
-        "NOT statistically significant"
-    };
-    let pnl_str = format_pnl(real_total_pnl);
-
-    let summary = format!(
-        "Permutation test for {} ({} permutations, {} completed): results are {sig_label}. \
-         Real Sharpe {:.2} (p={sharpe_p:.3}), real PnL {pnl_str} (p={pnl_p:.3}).",
-        params.strategy, output.num_permutations, output.num_completed, real.metrics.sharpe,
-    );
-
-    let assessment = if is_significant {
-        let sig = interpret_p_value(sharpe_p.max(pnl_p));
-        format!("The strategy shows a {sig} edge over random entry timing (Sharpe p={sharpe_p:.3}, PnL p={pnl_p:.3})")
-    } else {
-        format!(
-            "The strategy does NOT show a significant edge over random entry timing \
-                 (Sharpe p={sharpe_p:.3}, PnL p={pnl_p:.3}). Results could be due to chance."
-        )
-    };
-
-    let key_findings: Vec<String> = output
-        .metric_results
-        .iter()
-        .map(|m| {
-            let sig = interpret_p_value(m.p_value);
-            format!(
-                "{}: real={:.4}, permuted mean={:.4} (±{:.4}), p={:.3} ({sig})",
-                m.metric_name, m.real_value, m.mean_permuted, m.std_permuted, m.p_value,
-            )
-        })
-        .collect();
-
-    let suggested_next_steps = if is_significant {
-        vec![
-            format!(
-                "[NEXT] Run parameter_sweep to optimize {} parameters further",
-                params.strategy
-            ),
-            "[VALIDATE] Run with more permutations (500-1000) for tighter p-value estimates"
-                .to_string(),
-        ]
-    } else {
-        vec![
-            "[ITERATE] Try different delta targets, DTE ranges, or entry signals to find a significant edge".to_string(),
-            "[COMPARE] Use compare_strategies to test alternative strategies".to_string(),
-        ]
-    };
-
-    PermutationTestResponse {
-        summary,
-        mode: None,
-        assessment,
-        key_findings,
-        parameters: build_params_summary(params),
-        num_permutations: output.num_permutations,
-        num_completed: output.num_completed,
-        real_metrics: real.metrics.clone(),
-        real_trade_count: real.trade_count,
-        real_total_pnl,
-        metric_tests: output.metric_results,
-        is_significant,
-        suggested_next_steps,
-    }
+    format_permutation_test_inner(output, &params.strategy, None, build_params_summary(params))
 }
 
 // ---------------------------------------------------------------------------
 // Stock-mode format helpers
 // ---------------------------------------------------------------------------
 
-/// Format walk-forward results for stock mode (uses a label string instead of `BacktestParams`).
-pub fn format_walk_forward_stock(
-    result: &WalkForwardResult,
-    label: &str,
-    train_days: i32,
-    test_days: i32,
-    step_days: Option<i32>,
-) -> WalkForwardResponse {
-    let agg = &result.aggregate;
-    let step = step_days.unwrap_or(test_days);
-
-    let attempted_windows = agg.successful_windows + agg.failed_windows;
-    let window_desc = if agg.failed_windows > 0 {
-        format!(
-            "{} of {} attempted windows ({} failed)",
-            agg.successful_windows, attempted_windows, agg.failed_windows
-        )
-    } else {
-        format!("{} windows", agg.successful_windows)
-    };
-
-    let summary = format!(
-        "Stock walk-forward analysis for {label} across {window_desc} (train={train_days}d, test={test_days}d, step={step}d): \
-         avg test Sharpe {:.2} (±{:.2}), {:.0}% profitable windows, total test P&L {}",
-        agg.avg_test_sharpe,
-        agg.std_test_sharpe,
-        agg.pct_profitable_windows,
-        format_pnl(agg.total_test_pnl),
-    );
-
-    let windows: Vec<WalkForwardWindowResult> = result
-        .windows
-        .iter()
-        .map(|w| WalkForwardWindowResult {
-            window_number: w.window_number,
-            train_start: w.train_start.to_string(),
-            train_end: w.train_end.to_string(),
-            test_start: w.test_start.to_string(),
-            test_end: w.test_end.to_string(),
-            train_sharpe: w.train_sharpe,
-            test_sharpe: w.test_sharpe,
-            train_pnl: w.train_pnl,
-            test_pnl: w.test_pnl,
-            train_trades: w.train_trades,
-            test_trades: w.test_trades,
-            train_win_rate: w.train_win_rate,
-            test_win_rate: w.test_win_rate,
-        })
-        .collect();
-
-    let key_findings = walk_forward_findings(agg);
-
-    let mut suggested_next_steps = vec![];
-    if agg.avg_train_test_sharpe_decay > 0.5 {
-        suggested_next_steps
-            .push("Consider simplifying signal parameters to reduce overfitting".to_string());
-    }
-    if agg.pct_profitable_windows < 50.0 {
-        suggested_next_steps.push("Try different signals or parameters".to_string());
-    }
-    suggested_next_steps.push(
-        "Use `parameter_sweep` with `mode: \"stock\"` to find optimal signal parameters, then validate with `walk_forward`"
-            .to_string(),
-    );
-
-    WalkForwardResponse {
-        summary,
-        mode: Some("stock".to_string()),
-        windows,
-        aggregate: WalkForwardAggregate {
-            successful_windows: agg.successful_windows,
-            failed_windows: agg.failed_windows,
-            avg_test_sharpe: agg.avg_test_sharpe,
-            std_test_sharpe: agg.std_test_sharpe,
-            avg_test_pnl: agg.avg_test_pnl,
-            pct_profitable_windows: agg.pct_profitable_windows,
-            avg_train_test_sharpe_decay: agg.avg_train_test_sharpe_decay,
-            total_test_pnl: agg.total_test_pnl,
-        },
-        key_findings,
-        suggested_next_steps,
-    }
-}
-
 /// Format permutation test results for stock mode.
-#[allow(clippy::too_many_lines)]
 pub fn format_permutation_test_stock(
     output: PermutationOutput,
     label: &str,
     params: &StockBacktestParams,
 ) -> PermutationTestResponse {
-    let real = &output.real_result;
-    let real_total_pnl: f64 = real.trade_log.iter().map(|t| t.pnl).sum();
-
-    let sharpe_p = output
-        .metric_results
-        .iter()
-        .find(|m| m.metric_name == "sharpe")
-        .map_or(1.0, |m| m.p_value);
-    let pnl_p = output
-        .metric_results
-        .iter()
-        .find(|m| m.metric_name == "total_pnl")
-        .map_or(1.0, |m| m.p_value);
-    let is_significant = sharpe_p < P_SIGNIFICANT && pnl_p < P_SIGNIFICANT;
-
-    let sig_label = if is_significant {
-        "statistically significant"
-    } else {
-        "NOT statistically significant"
-    };
-    let pnl_str = format_pnl(real_total_pnl);
-
-    let summary = format!(
-        "Stock permutation test for {label} ({} permutations, {} completed): results are {sig_label}. \
-         Real Sharpe {:.2} (p={sharpe_p:.3}), real PnL {pnl_str} (p={pnl_p:.3}).",
-        output.num_permutations, output.num_completed, real.metrics.sharpe,
-    );
-
-    let assessment = if is_significant {
-        let sig = interpret_p_value(sharpe_p.max(pnl_p));
-        format!("The strategy shows a {sig} edge over random entry timing (Sharpe p={sharpe_p:.3}, PnL p={pnl_p:.3})")
-    } else {
-        format!(
-            "The strategy does NOT show a significant edge over random entry timing \
-             (Sharpe p={sharpe_p:.3}, PnL p={pnl_p:.3}). Results could be due to chance."
-        )
-    };
-
-    let key_findings: Vec<String> = output
-        .metric_results
-        .iter()
-        .map(|m| {
-            let sig = interpret_p_value(m.p_value);
-            format!(
-                "{}: real={:.4}, permuted mean={:.4} (±{:.4}), p={:.3} ({sig})",
-                m.metric_name, m.real_value, m.mean_permuted, m.std_permuted, m.p_value,
-            )
-        })
-        .collect();
-
-    let suggested_next_steps = if is_significant {
-        vec![
-            format!(
-                "[NEXT] Run parameter_sweep with mode: \"stock\" to optimize {label} parameters further"
-            ),
-            "[VALIDATE] Run with more permutations (500-1000) for tighter p-value estimates"
-                .to_string(),
-        ]
-    } else {
-        vec![
-            "[ITERATE] Try different entry/exit signals to find a significant edge".to_string(),
-            "[COMPARE] Use compare_strategies with mode: \"stock\" to test alternative signal configs".to_string(),
-        ]
-    };
-
-    // Build params summary from actual StockBacktestParams for stock mode
     let entry_signal_json = params
         .entry_signal
         .as_ref()
@@ -551,9 +343,103 @@ pub fn format_permutation_test_stock(
         sizing: params.sizing.clone(),
     };
 
+    format_permutation_test_inner(output, label, Some("stock"), parameters)
+}
+
+/// Shared permutation test formatting logic.
+fn format_permutation_test_inner(
+    output: PermutationOutput,
+    label: &str,
+    mode: Option<&str>,
+    parameters: crate::tools::response_types::BacktestParamsSummary,
+) -> PermutationTestResponse {
+    let is_stock = mode.is_some();
+    let real = &output.real_result;
+    let real_total_pnl: f64 = real.trade_log.iter().map(|t| t.pnl).sum();
+
+    let sharpe_p = output
+        .metric_results
+        .iter()
+        .find(|m| m.metric_name == "sharpe")
+        .map_or(1.0, |m| m.p_value);
+    let pnl_p = output
+        .metric_results
+        .iter()
+        .find(|m| m.metric_name == "total_pnl")
+        .map_or(1.0, |m| m.p_value);
+    let is_significant = sharpe_p < P_SIGNIFICANT && pnl_p < P_SIGNIFICANT;
+
+    let sig_label = if is_significant {
+        "statistically significant"
+    } else {
+        "NOT statistically significant"
+    };
+    let pnl_str = format_pnl(real_total_pnl);
+
+    let prefix = if is_stock {
+        "Stock permutation test"
+    } else {
+        "Permutation test"
+    };
+    let summary = format!(
+        "{prefix} for {label} ({} permutations, {} completed): results are {sig_label}. \
+         Real Sharpe {:.2} (p={sharpe_p:.3}), real PnL {pnl_str} (p={pnl_p:.3}).",
+        output.num_permutations, output.num_completed, real.metrics.sharpe,
+    );
+
+    let assessment = if is_significant {
+        let sig = interpret_p_value(sharpe_p.max(pnl_p));
+        format!("The strategy shows a {sig} edge over random entry timing (Sharpe p={sharpe_p:.3}, PnL p={pnl_p:.3})")
+    } else {
+        format!(
+            "The strategy does NOT show a significant edge over random entry timing \
+             (Sharpe p={sharpe_p:.3}, PnL p={pnl_p:.3}). Results could be due to chance."
+        )
+    };
+
+    let key_findings: Vec<String> = output
+        .metric_results
+        .iter()
+        .map(|m| {
+            let sig = interpret_p_value(m.p_value);
+            format!(
+                "{}: real={:.4}, permuted mean={:.4} (±{:.4}), p={:.3} ({sig})",
+                m.metric_name, m.real_value, m.mean_permuted, m.std_permuted, m.p_value,
+            )
+        })
+        .collect();
+
+    let suggested_next_steps = if is_significant {
+        if is_stock {
+            vec![
+                format!(
+                    "[NEXT] Run parameter_sweep with mode: \"stock\" to optimize {label} parameters further"
+                ),
+                "[VALIDATE] Run with more permutations (500-1000) for tighter p-value estimates"
+                    .to_string(),
+            ]
+        } else {
+            vec![
+                format!("[NEXT] Run parameter_sweep to optimize {label} parameters further"),
+                "[VALIDATE] Run with more permutations (500-1000) for tighter p-value estimates"
+                    .to_string(),
+            ]
+        }
+    } else if is_stock {
+        vec![
+            "[ITERATE] Try different entry/exit signals to find a significant edge".to_string(),
+            "[COMPARE] Use compare_strategies with mode: \"stock\" to test alternative signal configs".to_string(),
+        ]
+    } else {
+        vec![
+            "[ITERATE] Try different delta targets, DTE ranges, or entry signals to find a significant edge".to_string(),
+            "[COMPARE] Use compare_strategies to test alternative strategies".to_string(),
+        ]
+    };
+
     PermutationTestResponse {
         summary,
-        mode: Some("stock".to_string()),
+        mode: mode.map(ToString::to_string),
         assessment,
         key_findings,
         parameters,

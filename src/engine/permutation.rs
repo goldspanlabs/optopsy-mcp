@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use super::event_sim;
 use super::metrics;
 use super::stock_sim::{self, Bar, StockBacktestParams};
-use super::types::{BacktestParams, BacktestResult, EntryCandidate};
+use super::types::{BacktestParams, BacktestResult, EntryCandidate, PerformanceMetrics};
 use super::vectorized_sim;
 use crate::strategies;
 
@@ -112,34 +112,7 @@ pub fn run_permutation_test<S1: BuildHasher, S2: BuildHasher>(
 
     let num_completed = perm_metrics.len();
     let real_total_pnl: f64 = real_result.trade_log.iter().map(|t| t.pnl).sum();
-
-    let metric_results = vec![
-        compute_metric_result(
-            "sharpe",
-            real_result.metrics.sharpe,
-            &extract_field(&perm_metrics, |m| m.sharpe),
-        ),
-        compute_metric_result(
-            "total_pnl",
-            real_total_pnl,
-            &extract_field(&perm_metrics, |m| m.total_pnl),
-        ),
-        compute_metric_result(
-            "win_rate",
-            real_result.metrics.win_rate,
-            &extract_field(&perm_metrics, |m| m.win_rate),
-        ),
-        compute_metric_result(
-            "profit_factor",
-            real_result.metrics.profit_factor,
-            &extract_field(&perm_metrics, |m| m.profit_factor),
-        ),
-        compute_metric_result(
-            "cagr",
-            real_result.metrics.cagr,
-            &extract_field(&perm_metrics, |m| m.cagr),
-        ),
-    ];
+    let metric_results = build_metric_results(&real_result.metrics, real_total_pnl, &perm_metrics);
 
     Ok(PermutationOutput {
         num_permutations: perm_params.num_permutations,
@@ -238,6 +211,41 @@ fn run_shuffled_permutations<S: BuildHasher>(
 
 pub(crate) fn extract_field(metrics: &[PermMetrics], f: fn(&PermMetrics) -> f64) -> Vec<f64> {
     metrics.iter().map(f).collect()
+}
+
+/// Build the standard 5-metric permutation results from real metrics and permuted metrics.
+fn build_metric_results(
+    real_metrics: &PerformanceMetrics,
+    real_total_pnl: f64,
+    perm_metrics: &[PermMetrics],
+) -> Vec<MetricPermutationResult> {
+    vec![
+        compute_metric_result(
+            "sharpe",
+            real_metrics.sharpe,
+            &extract_field(perm_metrics, |m| m.sharpe),
+        ),
+        compute_metric_result(
+            "total_pnl",
+            real_total_pnl,
+            &extract_field(perm_metrics, |m| m.total_pnl),
+        ),
+        compute_metric_result(
+            "win_rate",
+            real_metrics.win_rate,
+            &extract_field(perm_metrics, |m| m.win_rate),
+        ),
+        compute_metric_result(
+            "profit_factor",
+            real_metrics.profit_factor,
+            &extract_field(perm_metrics, |m| m.profit_factor),
+        ),
+        compute_metric_result(
+            "cagr",
+            real_metrics.cagr,
+            &extract_field(perm_metrics, |m| m.cagr),
+        ),
+    ]
 }
 
 pub(crate) fn compute_metric_result(
@@ -412,34 +420,7 @@ pub fn run_stock_permutation_test(
 
     let num_completed = perm_metrics.len();
     let real_total_pnl: f64 = real_result.trade_log.iter().map(|t| t.pnl).sum();
-
-    let metric_results = vec![
-        compute_metric_result(
-            "sharpe",
-            real_result.metrics.sharpe,
-            &extract_field(&perm_metrics, |m| m.sharpe),
-        ),
-        compute_metric_result(
-            "total_pnl",
-            real_total_pnl,
-            &extract_field(&perm_metrics, |m| m.total_pnl),
-        ),
-        compute_metric_result(
-            "win_rate",
-            real_result.metrics.win_rate,
-            &extract_field(&perm_metrics, |m| m.win_rate),
-        ),
-        compute_metric_result(
-            "profit_factor",
-            real_result.metrics.profit_factor,
-            &extract_field(&perm_metrics, |m| m.profit_factor),
-        ),
-        compute_metric_result(
-            "cagr",
-            real_result.metrics.cagr,
-            &extract_field(&perm_metrics, |m| m.cagr),
-        ),
-    ];
+    let metric_results = build_metric_results(&real_result.metrics, real_total_pnl, &perm_metrics);
 
     Ok(PermutationOutput {
         num_permutations: perm_params.num_permutations,

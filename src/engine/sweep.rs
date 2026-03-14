@@ -466,6 +466,41 @@ struct StockCombo {
     dim_keys: Vec<(String, String)>,
 }
 
+/// Filter an optional signal date set to the date range of the given bars.
+fn filter_signals_to_bar_range(
+    dates: Option<&HashSet<chrono::NaiveDateTime>>,
+    bars: &[stock_sim::Bar],
+) -> Option<HashSet<chrono::NaiveDateTime>> {
+    dates.map(|d| {
+        if let (Some(first), Some(last)) = (bars.first(), bars.last()) {
+            stock_sim::filter_datetime_set(
+                d,
+                first.datetime.date(),
+                last.datetime.date() + chrono::Duration::days(1),
+            )
+        } else {
+            HashSet::new()
+        }
+    })
+}
+
+/// Build a `StockBacktestParams` from a base and a combo, overriding signal/side/slippage fields.
+fn build_stock_params_for_combo(
+    base: &StockBacktestParams,
+    combo: &StockCombo,
+) -> StockBacktestParams {
+    let mut p = base.clone();
+    p.entry_signal = Some(combo.entry_signal.clone());
+    p.exit_signal.clone_from(&combo.exit_signal);
+    p.side = combo.side;
+    p.interval = combo.interval;
+    p.session_filter = combo.session_filter;
+    p.stop_loss = combo.stop_loss;
+    p.take_profit = combo.take_profit;
+    p.slippage = combo.slippage.clone();
+    p
+}
+
 /// Parameters for a stock sweep.
 pub struct StockSweepParams {
     pub entry_signals: Vec<SignalSpec>,
@@ -641,6 +676,7 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
 
     // 4. Run backtests grouped by data-prep key
     let mut results: Vec<SweepResult> = Vec::new();
+    let mut combo_indices: Vec<usize> = Vec::new();
     let mut failed: usize = 0;
 
     for indices in grouped.values() {
@@ -670,43 +706,15 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
             let combo = &combos[idx];
 
             // Build params for this combo
-            let mut combo_params = params.base_params.clone();
-            combo_params.entry_signal = Some(combo.entry_signal.clone());
-            combo_params.exit_signal.clone_from(&combo.exit_signal);
-            combo_params.side = combo.side;
-            combo_params.interval = combo.interval;
-            combo_params.session_filter = combo.session_filter;
-            combo_params.stop_loss = combo.stop_loss;
-            combo_params.take_profit = combo.take_profit;
-            combo_params.slippage = combo.slippage.clone();
+            let combo_params = build_stock_params_for_combo(&params.base_params, combo);
 
             // Build signal filters for train data
             let (entry_dates, exit_dates) =
                 stock_sim::build_stock_signal_filters(&combo_params, &ohlcv_df)?;
 
             // Filter signal dates to train window
-            let train_entry = entry_dates.as_ref().map(|dates| {
-                if let (Some(first), Some(last)) = (train_bars.first(), train_bars.last()) {
-                    stock_sim::filter_datetime_set(
-                        dates,
-                        first.datetime.date(),
-                        last.datetime.date() + chrono::Duration::days(1),
-                    )
-                } else {
-                    HashSet::new()
-                }
-            });
-            let train_exit = exit_dates.as_ref().map(|dates| {
-                if let (Some(first), Some(last)) = (train_bars.first(), train_bars.last()) {
-                    stock_sim::filter_datetime_set(
-                        dates,
-                        first.datetime.date(),
-                        last.datetime.date() + chrono::Duration::days(1),
-                    )
-                } else {
-                    HashSet::new()
-                }
-            });
+            let train_entry = filter_signals_to_bar_range(entry_dates.as_ref(), train_bars);
+            let train_exit = filter_signals_to_bar_range(exit_dates.as_ref(), train_bars);
 
             match stock_sim::run_stock_backtest(
                 train_bars,
@@ -716,6 +724,7 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
             ) {
                 Ok(bt) => {
                     let independent_periods = count_independent_entry_periods(&bt.trade_log);
+                    combo_indices.push(idx);
                     results.push(SweepResult {
                         label: combo.label.clone(),
                         strategy: "stock".to_string(),
@@ -753,12 +762,20 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
         }
     }
 
-    // 4. Sort by Sharpe descending
-    results.sort_by(|a, b| {
-        b.sharpe
-            .partial_cmp(&a.sharpe)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    // 4. Sort by Sharpe descending (keep combo_indices in sync)
+    {
+        let mut order: Vec<usize> = (0..results.len()).collect();
+        order.sort_by(|&a, &b| {
+            results[b]
+                .sharpe
+                .partial_cmp(&results[a].sharpe)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let sorted_results = order.iter().map(|&i| results[i].clone()).collect();
+        let sorted_indices = order.iter().map(|&i| combo_indices[i]).collect();
+        results = sorted_results;
+        combo_indices = sorted_indices;
+    }
 
     // 5. Compute dimension sensitivity (uses signal_dim_keys)
     let dimension_sensitivity = compute_sensitivity(&results);
@@ -767,10 +784,8 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
     let mut oos_results = Vec::new();
     if params.out_of_sample_pct > 0.0 {
         let top_n = results.len().min(3);
-        for r in results.iter().take(top_n) {
-            // Find the combo that produced this result
-            let combo = combos.iter().find(|c| c.label == r.label);
-            let Some(combo) = combo else { continue };
+        for (ri, r) in results.iter().take(top_n).enumerate() {
+            let combo = &combos[combo_indices[ri]];
 
             let (all_bars, oos_ohlcv_df) = stock_sim::prepare_stock_data(
                 ohlcv_path,
@@ -790,41 +805,13 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
             let split_idx = split_idx.clamp(1, all_bars.len() - 1);
             let test_bars = &all_bars[split_idx..];
 
-            let mut combo_params = params.base_params.clone();
-            combo_params.entry_signal = Some(combo.entry_signal.clone());
-            combo_params.exit_signal.clone_from(&combo.exit_signal);
-            combo_params.side = combo.side;
-            combo_params.interval = combo.interval;
-            combo_params.session_filter = combo.session_filter;
-            combo_params.stop_loss = combo.stop_loss;
-            combo_params.take_profit = combo.take_profit;
-            combo_params.slippage = combo.slippage.clone();
+            let combo_params = build_stock_params_for_combo(&params.base_params, combo);
 
             let (entry_dates, exit_dates) =
                 stock_sim::build_stock_signal_filters(&combo_params, &oos_ohlcv_df)?;
 
-            let test_entry = entry_dates.as_ref().map(|dates| {
-                if let (Some(first), Some(last)) = (test_bars.first(), test_bars.last()) {
-                    stock_sim::filter_datetime_set(
-                        dates,
-                        first.datetime.date(),
-                        last.datetime.date() + chrono::Duration::days(1),
-                    )
-                } else {
-                    HashSet::new()
-                }
-            });
-            let test_exit = exit_dates.as_ref().map(|dates| {
-                if let (Some(first), Some(last)) = (test_bars.first(), test_bars.last()) {
-                    stock_sim::filter_datetime_set(
-                        dates,
-                        first.datetime.date(),
-                        last.datetime.date() + chrono::Duration::days(1),
-                    )
-                } else {
-                    HashSet::new()
-                }
-            });
+            let test_entry = filter_signals_to_bar_range(entry_dates.as_ref(), test_bars);
+            let test_exit = filter_signals_to_bar_range(exit_dates.as_ref(), test_bars);
 
             match stock_sim::run_stock_backtest(
                 test_bars,
@@ -886,7 +873,7 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
 
     // 8. Optional permutation tests for multiple comparisons
     let multiple_comparisons =
-        run_stock_multiple_comparisons(ohlcv_path, &mut results, params, &combos);
+        run_stock_multiple_comparisons(ohlcv_path, &mut results, params, &combos, &combo_indices);
 
     Ok(SweepOutput {
         mode: Some("stock".to_string()),
@@ -917,6 +904,7 @@ fn run_stock_multiple_comparisons(
     results: &mut [SweepResult],
     params: &StockSweepParams,
     combos: &[StockCombo],
+    combo_indices: &[usize],
 ) -> Option<(
     super::multiple_comparisons::MultipleComparisonsResult,
     super::multiple_comparisons::MultipleComparisonsResult,
@@ -937,12 +925,8 @@ fn run_stock_multiple_comparisons(
         (Vec<stock_sim::Bar>, polars::prelude::DataFrame),
     > = std::collections::HashMap::new();
 
-    for result in results.iter_mut() {
-        let combo = combos.iter().find(|c| c.label == result.label);
-        let Some(combo) = combo else {
-            result.p_value = Some(1.0);
-            continue;
-        };
+    for (ri, result) in results.iter_mut().enumerate() {
+        let combo = &combos[combo_indices[ri]];
 
         let cache_key: DataPrepKey = (
             combo.interval,
@@ -971,15 +955,7 @@ fn run_stock_multiple_comparisons(
         };
         let (bars, ohlcv_df) = cached;
 
-        let mut combo_params = params.base_params.clone();
-        combo_params.entry_signal = Some(combo.entry_signal.clone());
-        combo_params.exit_signal.clone_from(&combo.exit_signal);
-        combo_params.side = combo.side;
-        combo_params.interval = combo.interval;
-        combo_params.session_filter = combo.session_filter;
-        combo_params.stop_loss = combo.stop_loss;
-        combo_params.take_profit = combo.take_profit;
-        combo_params.slippage = combo.slippage.clone();
+        let combo_params = build_stock_params_for_combo(&params.base_params, combo);
 
         let Ok((entry_dates, exit_dates)) =
             stock_sim::build_stock_signal_filters(&combo_params, ohlcv_df)
