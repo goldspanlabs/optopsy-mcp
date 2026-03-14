@@ -764,15 +764,14 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
 
     // 4. Sort by Sharpe descending (keep combo_indices in sync)
     {
-        let mut order: Vec<usize> = (0..results.len()).collect();
-        order.sort_by(|&a, &b| {
-            results[b]
-                .sharpe
-                .partial_cmp(&results[a].sharpe)
+        let mut paired: Vec<(SweepResult, usize)> =
+            results.into_iter().zip(combo_indices).collect();
+        paired.sort_by(|a, b| {
+            b.0.sharpe
+                .partial_cmp(&a.0.sharpe)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        let sorted_results = order.iter().map(|&i| results[i].clone()).collect();
-        let sorted_indices = order.iter().map(|&i| combo_indices[i]).collect();
+        let (sorted_results, sorted_indices) = paired.into_iter().unzip();
         results = sorted_results;
         combo_indices = sorted_indices;
     }
