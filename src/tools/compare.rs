@@ -29,6 +29,5 @@ pub fn execute_stock(entries: &[StockCompareEntry]) -> Result<CompareResponse> {
         entries = entries.len(),
         "Stock compare finished"
     );
-    let labels: Vec<String> = entries.iter().map(|e| e.label.clone()).collect();
-    Ok(ai_format::format_stock_compare(results, &labels))
+    Ok(ai_format::format_stock_compare(results, entries))
 }

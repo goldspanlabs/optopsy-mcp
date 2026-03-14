@@ -492,7 +492,7 @@ pub struct StockCompareEntry {
 pub struct CompareStrategiesParams {
     /// Backtest mode: `"stock"` for stock/equity comparisons, `"options"` (default) for options.
     #[serde(default)]
-    #[garde(skip)]
+    #[garde(custom(validate_mode))]
     pub mode: Option<String>,
     /// List of strategies with their parameters. Required for options mode.
     #[serde(default)]
@@ -723,7 +723,7 @@ fn default_stock_sweep_slippage() -> Vec<Slippage> {
 pub struct ParameterSweepParams {
     /// Backtest mode: `"stock"` for stock/equity sweeps, `"options"` (default) for options.
     #[serde(default)]
-    #[garde(skip)]
+    #[garde(custom(validate_mode))]
     pub mode: Option<String>,
     /// Strategies to sweep (optional if `direction` is provided). Options mode only.
     #[serde(default)]

@@ -165,6 +165,7 @@ impl OptopsyServer {
 
         let mut paths = HashMap::new();
         for sym in all_symbols {
+            validate_path_segment(&sym).map_err(|e| format!("Invalid cross-symbol \"{sym}\": {e}"))?;
             let path = self.ensure_ohlcv(&sym).await?;
             paths.insert(sym, path);
         }
@@ -283,6 +284,13 @@ impl OptopsyServer {
         &self,
         base: BacktestBaseParams,
     ) -> Result<StockResolvedParams, String> {
+        // entry_signal is required for stock mode — without it no trades will ever open.
+        if base.entry_signal.is_none() {
+            return Err(
+                "entry_signal is required for stock mode; provide a SignalSpec to drive trade entries".to_string()
+            );
+        }
+
         let symbol = base
             .symbol
             .as_deref()
@@ -1379,6 +1387,8 @@ impl OptopsyServer {
                             if let std::collections::hash_map::Entry::Vacant(e) =
                                 cross_paths.entry(sym)
                             {
+                                validate_path_segment(e.key())
+                                    .map_err(|err| format!("Invalid cross-symbol \"{}\": {err}", e.key()))?;
                                 let path = self.ensure_ohlcv(e.key()).await?;
                                 e.insert(path);
                             }

@@ -5,6 +5,7 @@
 //! p-value assessments, and recommended follow-up actions.
 
 use crate::engine::permutation::PermutationOutput;
+use crate::engine::stock_sim::StockBacktestParams;
 use crate::engine::sweep::SweepOutput;
 use crate::engine::types::BacktestParams;
 use crate::engine::walk_forward::WalkForwardResult;
@@ -442,6 +443,7 @@ pub fn format_walk_forward_stock(
 pub fn format_permutation_test_stock(
     output: PermutationOutput,
     label: &str,
+    params: &StockBacktestParams,
 ) -> PermutationTestResponse {
     let real = &output.real_result;
     let real_total_pnl: f64 = real.trade_log.iter().map(|t| t.pnl).sum();
@@ -508,7 +510,15 @@ pub fn format_permutation_test_stock(
         ]
     };
 
-    // Build a minimal params summary for stock mode
+    // Build params summary from actual StockBacktestParams for stock mode
+    let entry_signal_json = params
+        .entry_signal
+        .as_ref()
+        .and_then(|s| serde_json::to_value(s).ok());
+    let exit_signal_json = params
+        .exit_signal
+        .as_ref()
+        .and_then(|s| serde_json::to_value(s).ok());
     let parameters = crate::tools::response_types::BacktestParamsSummary {
         display_name: label.to_string(),
         strategy: "stock".to_string(),
@@ -519,26 +529,26 @@ pub fn format_permutation_test_stock(
             max: 0,
         },
         exit_dte: 0,
-        slippage: crate::engine::types::Slippage::Mid,
-        commission: None,
-        capital: 0.0,
-        quantity: 0,
+        slippage: params.slippage.clone(),
+        commission: params.commission.clone(),
+        capital: params.capital,
+        quantity: params.quantity,
         multiplier: 1,
-        max_positions: 0,
-        stop_loss: None,
-        take_profit: None,
-        max_hold_days: None,
+        max_positions: params.max_positions,
+        stop_loss: params.stop_loss,
+        take_profit: params.take_profit,
+        max_hold_days: params.max_hold_days,
         selector: crate::engine::types::TradeSelector::default(),
-        entry_signal: None,
-        exit_signal: None,
+        entry_signal: entry_signal_json,
+        exit_signal: exit_signal_json,
         min_net_premium: None,
         max_net_premium: None,
         min_net_delta: None,
         max_net_delta: None,
-        min_days_between_entries: None,
+        min_days_between_entries: params.min_days_between_entries,
         expiration_filter: crate::engine::types::ExpirationFilter::default(),
         exit_net_delta: None,
-        sizing: None,
+        sizing: params.sizing.clone(),
     };
 
     PermutationTestResponse {

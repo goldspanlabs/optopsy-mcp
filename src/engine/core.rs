@@ -511,7 +511,9 @@ pub struct StockCompareEntry {
 /// Compare multiple stock strategies side-by-side.
 ///
 /// Each entry carries its own `StockBacktestParams` (with entry/exit signals,
-/// interval, side, etc.). Data is loaded individually per entry.
+/// interval, side, etc.). Data is prepared once per unique `(ohlcv_path,
+/// interval, session_filter, start_date, end_date)` group to avoid redundant
+/// I/O for entries that share the same underlying data.
 pub fn compare_stock_strategies(entries: &[StockCompareEntry]) -> Result<Vec<CompareResult>> {
     // Reject duplicate labels up front so callers get a clear error instead of silent skipping.
     let mut seen_labels: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -524,6 +526,11 @@ pub fn compare_stock_strategies(entries: &[StockCompareEntry]) -> Result<Vec<Com
         }
     }
 
+    // Cache prepared (bars, ohlcv_df) by a canonical data-prep key to avoid
+    // re-reading and resampling the same parquet for each entry.
+    let mut data_cache: HashMap<String, (Vec<stock_sim::Bar>, polars::prelude::DataFrame)> =
+        HashMap::new();
+
     let mut results = Vec::new();
 
     for entry in entries {
@@ -532,18 +539,50 @@ pub fn compare_stock_strategies(entries: &[StockCompareEntry]) -> Result<Vec<Com
             .ohlcv_path
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("ohlcv_path is required for stock compare"))?;
-        let (bars, ohlcv_df) = stock_sim::prepare_stock_data(
+
+        // Build a string key that uniquely identifies the data-prep parameters.
+        let data_key = format!(
+            "{}|{}|{}|{}|{}",
             ohlcv_path,
             entry.params.interval,
-            entry.params.session_filter.as_ref(),
-            entry.params.start_date,
-            entry.params.end_date,
-        )?;
+            entry
+                .params
+                .session_filter
+                .as_ref()
+                .map(|s| format!("{s:?}"))
+                .unwrap_or_default(),
+            entry
+                .params
+                .start_date
+                .map(|d| d.to_string())
+                .unwrap_or_default(),
+            entry
+                .params
+                .end_date
+                .map(|d| d.to_string())
+                .unwrap_or_default(),
+        );
+
+        let (bars, ohlcv_df) = if let Some(cached) = data_cache.get(&data_key) {
+            (&cached.0, &cached.1)
+        } else {
+            let prepared = stock_sim::prepare_stock_data(
+                ohlcv_path,
+                entry.params.interval,
+                entry.params.session_filter.as_ref(),
+                entry.params.start_date,
+                entry.params.end_date,
+            )?;
+            data_cache.insert(data_key.clone(), prepared);
+            let cached = data_cache.get(&data_key).expect("just inserted");
+            (&cached.0, &cached.1)
+        };
+
         let (entry_dates, exit_dates) =
-            stock_sim::build_stock_signal_filters(&entry.params, &ohlcv_df)?;
+            stock_sim::build_stock_signal_filters(&entry.params, ohlcv_df)?;
 
         match stock_sim::run_stock_backtest(
-            &bars,
+            bars,
             &entry.params,
             entry_dates.as_ref(),
             exit_dates.as_ref(),
