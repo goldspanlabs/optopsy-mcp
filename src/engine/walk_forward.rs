@@ -118,8 +118,8 @@ fn date_range(df: &DataFrame) -> Result<(NaiveDate, NaiveDate)> {
 /// and delegates each window's backtest to the supplied closure.
 ///
 /// `run_window` receives `(train_start, train_end, test_start, test_end, window_number)`
-/// and returns `Ok(Some(WindowResult))` on success, `Ok(None)` to skip (empty data),
-/// or `Err` to count as a failure.
+/// and returns `Ok(Some(WindowResult))` on success, `Ok(None)` to count as a failed window,
+/// or `Err` to abort the entire walk-forward analysis.
 fn walk_forward_driver<F>(
     min_date: NaiveDate,
     max_date: NaiveDate,
@@ -172,9 +172,9 @@ where
             test_start,
             test_end,
             windows.len() + 1,
-        ) {
-            Ok(Some(w)) => windows.push(w),
-            Ok(None) | Err(_) => failed_count += 1,
+        )? {
+            Some(w) => windows.push(w),
+            None => failed_count += 1,
         }
 
         cursor = cursor + Days::new(step as u64);
@@ -205,6 +205,7 @@ pub fn run_walk_forward(
         test_days,
         step_days,
         |train_start, train_end, test_start, test_end, window_number| {
+            // slice_by_date_range errors (Polars infra) propagate via `?`
             let train_df = slice_by_date_range(df, train_start, train_end)?;
             let test_df = slice_by_date_range(df, test_start, test_end)?;
 
@@ -212,24 +213,25 @@ pub fn run_walk_forward(
                 return Ok(None);
             }
 
-            let train_r = run_backtest(&train_df, params)?;
-            let test_r = run_backtest(&test_df, params)?;
-
-            Ok(Some(WindowResult {
-                window_number,
-                train_start,
-                train_end,
-                test_start,
-                test_end,
-                train_sharpe: train_r.metrics.sharpe,
-                test_sharpe: test_r.metrics.sharpe,
-                train_pnl: train_r.total_pnl,
-                test_pnl: test_r.total_pnl,
-                train_trades: train_r.trade_count,
-                test_trades: test_r.trade_count,
-                train_win_rate: train_r.metrics.win_rate,
-                test_win_rate: test_r.metrics.win_rate,
-            }))
+            // Backtest failures are per-window — count as failed, don't abort
+            match (run_backtest(&train_df, params), run_backtest(&test_df, params)) {
+                (Ok(train_r), Ok(test_r)) => Ok(Some(WindowResult {
+                    window_number,
+                    train_start,
+                    train_end,
+                    test_start,
+                    test_end,
+                    train_sharpe: train_r.metrics.sharpe,
+                    test_sharpe: test_r.metrics.sharpe,
+                    train_pnl: train_r.total_pnl,
+                    test_pnl: test_r.total_pnl,
+                    train_trades: train_r.trade_count,
+                    test_trades: test_r.trade_count,
+                    train_win_rate: train_r.metrics.win_rate,
+                    test_win_rate: test_r.metrics.win_rate,
+                })),
+                _ => Ok(None),
+            }
         },
     )
 }
@@ -317,34 +319,38 @@ pub fn run_walk_forward_stock(
                 .as_ref()
                 .map(|d| stock_sim::filter_datetime_set(d, test_start, test_end));
 
+            // Backtest failures are per-window — count as failed, don't abort
             let train_r = stock_sim::run_stock_backtest(
                 &train_bars,
                 params,
                 train_entry.as_ref(),
                 train_exit.as_ref(),
-            )?;
+            );
             let test_r = stock_sim::run_stock_backtest(
                 &test_bars,
                 params,
                 test_entry.as_ref(),
                 test_exit.as_ref(),
-            )?;
+            );
 
-            Ok(Some(WindowResult {
-                window_number,
-                train_start,
-                train_end,
-                test_start,
-                test_end,
-                train_sharpe: train_r.metrics.sharpe,
-                test_sharpe: test_r.metrics.sharpe,
-                train_pnl: train_r.total_pnl,
-                test_pnl: test_r.total_pnl,
-                train_trades: train_r.trade_count,
-                test_trades: test_r.trade_count,
-                train_win_rate: train_r.metrics.win_rate,
-                test_win_rate: test_r.metrics.win_rate,
-            }))
+            match (train_r, test_r) {
+                (Ok(train_r), Ok(test_r)) => Ok(Some(WindowResult {
+                    window_number,
+                    train_start,
+                    train_end,
+                    test_start,
+                    test_end,
+                    train_sharpe: train_r.metrics.sharpe,
+                    test_sharpe: test_r.metrics.sharpe,
+                    train_pnl: train_r.total_pnl,
+                    test_pnl: test_r.total_pnl,
+                    train_trades: train_r.trade_count,
+                    test_trades: test_r.trade_count,
+                    train_win_rate: train_r.metrics.win_rate,
+                    test_win_rate: test_r.metrics.win_rate,
+                })),
+                _ => Ok(None),
+            }
         },
     )
 }
