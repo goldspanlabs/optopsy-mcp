@@ -105,6 +105,21 @@ Flag these common mistakes in reviews:
 - No secrets in code: API keys (`EODHD_API_KEY`, AWS credentials) must come from environment variables only.
 - MCP tool inputs are untrusted — all must be validated before use.
 
+## Tech Debt Prevention
+
+Flag changes that introduce or worsen technical debt:
+
+- **Dead code & unused imports** — unreachable branches, commented-out code, `#[allow(dead_code)]` without justification.
+- **Copy-paste duplication** — logic repeated across tool handlers or engine modules that should be extracted into a shared helper. Check `src/tools/` handlers for duplicated validation, data-loading, or formatting patterns.
+- **Stringly-typed interfaces** — strategy names, column names, or signal identifiers passed as raw strings when an enum or newtype would prevent typos and enable compiler checks.
+- **Oversized functions** — functions exceeding ~100 lines or with deep nesting (3+ levels). Suggest extraction of inner logic into well-named helpers.
+- **Leaky abstractions** — tool handlers reaching into engine internals (e.g., directly manipulating DataFrames instead of going through engine APIs), or engine code aware of MCP/serialization concerns.
+- **Missing or misleading error context** — bare `.unwrap()`, `.expect("failed")` without specifics, or `anyhow!("error")` without context about what failed and why. Prefer `.context("loading options data for {symbol}")` or descriptive `thiserror` variants.
+- **Hardcoded magic numbers** — unnamed numeric literals in business logic (thresholds, defaults, multipliers). These should be named constants or configurable parameters.
+- **Inconsistent patterns** — new code that solves the same problem differently from existing code without justification (e.g., a new tool that validates params differently, or a new engine path that computes metrics its own way instead of reusing `PerformanceMetrics`).
+- **Growing parameter lists** — functions taking 5+ parameters that should be grouped into a config/params struct.
+- **TODO/FIXME/HACK markers** — acceptable only with a linked issue or clear explanation. Flag any that are vague or open-ended.
+
 ## Response Format
 
 - All tool responses use types from `response_types.rs` deriving `Serialize + JsonSchema`.
