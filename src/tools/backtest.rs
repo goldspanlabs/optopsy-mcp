@@ -8,7 +8,7 @@ use anyhow::Result;
 use polars::prelude::*;
 
 use crate::engine::types::BacktestParams;
-use crate::signals::helpers::IndicatorData;
+use crate::signals::helpers::{extend_indicators_deduped, IndicatorData};
 
 use super::ai_format;
 use super::response_types::{BacktestResponse, UnderlyingPrice};
@@ -38,15 +38,10 @@ pub fn execute(
             ));
         }
         if let Some(ref spec) = params.exit_signal {
-            // Deduplicate: skip indicators already present from entry signal
-            for ind in crate::signals::indicators::compute_indicator_data(spec, ohlcv, "date") {
-                if !indicator_data
-                    .iter()
-                    .any(|existing| existing.name == ind.name)
-                {
-                    indicator_data.push(ind);
-                }
-            }
+            extend_indicators_deduped(
+                &mut indicator_data,
+                crate::signals::indicators::compute_indicator_data(spec, ohlcv, "date"),
+            );
         }
     }
 

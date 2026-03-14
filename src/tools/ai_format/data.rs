@@ -7,40 +7,8 @@
 use std::collections::HashMap;
 
 use crate::tools::response_types::{
-    DateRange, LoadDataResponse, PriceBar, RawPricesResponse, StrategiesResponse, StrategyInfo,
+    DateRange, PriceBar, RawPricesResponse, StrategiesResponse, StrategyInfo,
 };
-
-/// Format a data load result into a response with row count, date range, and next steps.
-pub fn format_load_data(
-    symbol: &str,
-    rows: usize,
-    symbols: Vec<String>,
-    date_range: DateRange,
-    columns: Vec<String>,
-) -> LoadDataResponse {
-    let symbol_list = if symbols.is_empty() {
-        "unknown".to_string()
-    } else {
-        symbols.join(", ")
-    };
-    let start = date_range.start.as_deref().unwrap_or("unknown");
-    let end = date_range.end.as_deref().unwrap_or("unknown");
-    let summary =
-        format!("Loaded {rows} rows of options data for {symbol_list} from {start} to {end}.",);
-
-    LoadDataResponse {
-        summary,
-        symbol: symbol.to_string(),
-        rows,
-        symbols,
-        date_range,
-        columns,
-        suggested_next_steps: vec![
-            "[NEXT] Call list_strategies() to browse available strategies and choose one to analyze".to_string(),
-            "[THEN] Call run_options_backtest({ strategy, symbol }) for full simulation".to_string(),
-        ],
-    }
-}
 
 /// Format the full strategy list into a categorized summary response.
 pub fn format_strategies(strategies: Vec<StrategyInfo>) -> StrategiesResponse {
@@ -157,60 +125,4 @@ mod tests {
         assert!(response.summary.contains('3'));
     }
 
-    #[test]
-    fn format_load_data_with_missing_dates() {
-        let response = format_load_data(
-            "SPY",
-            1000,
-            vec!["SPY".to_string()],
-            DateRange {
-                start: None,
-                end: None,
-            },
-            vec!["col1".to_string()],
-        );
-        assert_eq!(response.rows, 1000);
-        assert_eq!(response.symbol, "SPY");
-        assert!(response.summary.contains("unknown"));
-    }
-
-    #[test]
-    fn format_load_data_empty_symbols_shows_unknown() {
-        let response = format_load_data(
-            "QQQ",
-            500,
-            vec![],
-            DateRange {
-                start: Some("2024-01-01".to_string()),
-                end: Some("2024-12-31".to_string()),
-            },
-            vec!["col1".to_string()],
-        );
-        assert_eq!(response.symbol, "QQQ");
-        assert!(
-            response.summary.contains("unknown"),
-            "summary should fall back to 'unknown' when symbols is empty, got: {}",
-            response.summary
-        );
-        assert!(!response.summary.contains("for  from"));
-    }
-
-    #[test]
-    fn format_load_data_with_dates() {
-        let response = format_load_data(
-            "SPY",
-            5000,
-            vec!["SPY".to_string(), "QQQ".to_string()],
-            DateRange {
-                start: Some("2024-01-01".to_string()),
-                end: Some("2024-12-31".to_string()),
-            },
-            vec!["col1".to_string(), "col2".to_string()],
-        );
-        assert_eq!(response.rows, 5000);
-        assert_eq!(response.symbol, "SPY");
-        assert!(response.summary.contains("SPY, QQQ"));
-        assert!(response.summary.contains("2024-01-01"));
-        assert!(response.summary.contains("2024-12-31"));
-    }
 }

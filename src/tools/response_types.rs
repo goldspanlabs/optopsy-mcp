@@ -231,19 +231,6 @@ pub struct CompareResponse {
     pub suggested_next_steps: Vec<String>,
 }
 
-/// AI-enriched response for `load_data`
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct LoadDataResponse {
-    pub summary: String,
-    /// The symbol that was loaded (for reference in follow-up questions)
-    pub symbol: String,
-    pub rows: usize,
-    pub symbols: Vec<String>,
-    pub date_range: DateRange,
-    pub columns: Vec<String>,
-    pub suggested_next_steps: Vec<String>,
-}
-
 /// Start and end date strings for a data range.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DateRange {

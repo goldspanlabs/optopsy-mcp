@@ -103,7 +103,7 @@ pub fn format_backtest(
         params.strategy
     ));
 
-    let sizing_summary = build_sizing_summary(&result.trade_log, params);
+    let sizing_summary = compute_sizing_summary(&result.trade_log, params.sizing.as_ref(), params.capital);
     if let Some(ref ss) = sizing_summary {
         key_findings.push(format!(
             "Dynamic sizing ({}): position sizes ranged from {} to {} contracts (avg {:.1})",
@@ -153,11 +153,12 @@ pub fn format_backtest(
 }
 
 /// Build a sizing summary from the trade log when dynamic sizing is active.
-fn build_sizing_summary(
+fn compute_sizing_summary(
     trade_log: &[crate::engine::types::TradeRecord],
-    params: &BacktestParams,
+    sizing: Option<&crate::engine::types::SizingConfig>,
+    capital: f64,
 ) -> Option<SizingSummary> {
-    let cfg = params.sizing.as_ref()?;
+    let cfg = sizing?;
     let quantities: Vec<i32> = trade_log
         .iter()
         .filter_map(|t| t.computed_quantity)
@@ -174,33 +175,7 @@ fn build_sizing_summary(
         avg_quantity: (avg * 100.0).round() / 100.0,
         min_quantity: min,
         max_quantity: max,
-        final_equity: params.capital + total_pnl,
-    })
-}
-
-/// Build a sizing summary from the trade log for stock backtests.
-fn build_stock_sizing_summary(
-    trade_log: &[crate::engine::types::TradeRecord],
-    params: &StockBacktestParams,
-) -> Option<SizingSummary> {
-    let cfg = params.sizing.as_ref()?;
-    let quantities: Vec<i32> = trade_log
-        .iter()
-        .filter_map(|t| t.computed_quantity)
-        .collect();
-    if quantities.is_empty() {
-        return None;
-    }
-    let avg = f64::from(quantities.iter().copied().sum::<i32>()) / quantities.len() as f64;
-    let min = quantities.iter().copied().min().unwrap_or(0);
-    let max = quantities.iter().copied().max().unwrap_or(0);
-    let total_pnl: f64 = trade_log.iter().map(|t| t.pnl).sum();
-    Some(SizingSummary {
-        method: crate::engine::sizing::sizing_method_label(cfg),
-        avg_quantity: (avg * 100.0).round() / 100.0,
-        min_quantity: min,
-        max_quantity: max,
-        final_equity: params.capital + total_pnl,
+        final_equity: capital + total_pnl,
     })
 }
 
@@ -531,7 +506,7 @@ pub fn format_stock_backtest(
             .to_string(),
     );
 
-    let sizing_summary = build_stock_sizing_summary(&result.trade_log, params);
+    let sizing_summary = compute_sizing_summary(&result.trade_log, params.sizing.as_ref(), params.capital);
 
     // Surface any engine warnings as key findings too
     if !result.warnings.is_empty() {

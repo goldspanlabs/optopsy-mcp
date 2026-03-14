@@ -19,6 +19,11 @@ impl ParquetStore {
             path: PathBuf::from(path),
         }
     }
+
+    /// Convert the stored path to a `PlRefPath`-compatible string for `scan_parquet`.
+    fn scan_path(&self) -> String {
+        self.path.to_string_lossy().to_string()
+    }
 }
 
 /// Apply date-column normalization steps to a `LazyFrame`.
@@ -81,7 +86,7 @@ impl DataStore for ParquetStore {
         start_date: Option<NaiveDate>,
         end_date: Option<NaiveDate>,
     ) -> Result<DataFrame> {
-        let path_str = self.path.to_string_lossy().to_string();
+        let path_str = self.scan_path();
         let start_dt = start_date.and_then(|d| d.and_hms_opt(0, 0, 0));
         let end_dt = end_date.and_then(|d| d.and_hms_opt(23, 59, 59));
 
@@ -129,7 +134,7 @@ impl DataStore for ParquetStore {
     }
 
     fn list_symbols(&self) -> Result<Vec<String>> {
-        let path_str = self.path.to_string_lossy().to_string();
+        let path_str = self.scan_path();
         let df = LazyFrame::scan_parquet(path_str.as_str().into(), ScanArgsParquet::default())?
             .select([col("symbol")])
             .unique(None, UniqueKeepStrategy::First)
@@ -143,7 +148,7 @@ impl DataStore for ParquetStore {
     }
 
     fn date_range(&self, _symbol: &str) -> Result<(NaiveDate, NaiveDate)> {
-        let path_str = self.path.to_string_lossy().to_string();
+        let path_str = self.scan_path();
         let df = LazyFrame::scan_parquet(path_str.as_str().into(), ScanArgsParquet::default())?
             .collect()?;
 
