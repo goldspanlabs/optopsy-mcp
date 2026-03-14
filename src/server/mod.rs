@@ -840,11 +840,19 @@ impl OptopsyServer {
                 let start_date = params
                     .start_date
                     .as_deref()
-                    .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+                    .map(|s| {
+                        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                            .map_err(|_| format!("Invalid start_date \"{s}\": expected YYYY-MM-DD"))
+                    })
+                    .transpose()?;
                 let end_date = params
                     .end_date
                     .as_deref()
-                    .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+                    .map(|s| {
+                        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                            .map_err(|_| format!("Invalid end_date \"{s}\": expected YYYY-MM-DD"))
+                    })
+                    .transpose()?;
 
                 let stock_params = crate::engine::stock_sim::StockBacktestParams {
                     symbol,
