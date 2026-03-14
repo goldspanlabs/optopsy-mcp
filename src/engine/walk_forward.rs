@@ -114,14 +114,23 @@ fn date_range(df: &DataFrame) -> Result<(NaiveDate, NaiveDate)> {
     Ok((raw_to_date(min_raw)?, raw_to_date(max_raw)?))
 }
 
-/// Run walk-forward analysis: rolling train/test windows across the data.
-pub fn run_walk_forward(
-    df: &DataFrame,
-    params: &BacktestParams,
+/// Shared walk-forward driver: validates parameters, iterates rolling windows,
+/// and delegates each window's backtest to the supplied closure.
+///
+/// `run_window` receives `(train_start, train_end, test_start, test_end, window_number)`
+/// and returns `Ok(Some(WindowResult))` on success, `Ok(None)` to count as a failed window,
+/// or `Err` to abort the entire walk-forward analysis.
+fn walk_forward_driver<F>(
+    min_date: NaiveDate,
+    max_date: NaiveDate,
     train_days: i32,
     test_days: i32,
     step_days: Option<i32>,
-) -> Result<WalkForwardResult> {
+    mut run_window: F,
+) -> Result<WalkForwardResult>
+where
+    F: FnMut(NaiveDate, NaiveDate, NaiveDate, NaiveDate, usize) -> Result<Option<WindowResult>>,
+{
     if train_days < 1 {
         bail!("train_days must be >= 1");
     }
@@ -136,8 +145,6 @@ pub fn run_walk_forward(
         bail!("test_days ({step}) is used as step size when step_days is omitted, and must be >= 5 to avoid generating an excessive number of windows");
     }
 
-    let (min_date, max_date) = date_range(df)?;
-    // Use the inclusive day span (both endpoints counted) when validating data length.
     let total_days_inclusive = (max_date - min_date).num_days() + 1;
     if total_days_inclusive < i64::from(train_days + test_days) {
         bail!(
@@ -159,22 +166,60 @@ pub fn run_walk_forward(
         let test_start = cursor;
         let test_end = cursor + Days::new(test_days as u64);
 
-        let train_df = slice_by_date_range(df, train_start, train_end)?;
-        let test_df = slice_by_date_range(df, test_start, test_end)?;
-
-        if train_df.height() == 0 || test_df.height() == 0 {
-            failed_count += 1;
-            cursor = cursor + Days::new(step as u64);
-            continue;
+        match run_window(
+            train_start,
+            train_end,
+            test_start,
+            test_end,
+            windows.len() + 1,
+        )? {
+            Some(w) => windows.push(w),
+            None => failed_count += 1,
         }
 
-        let train_result = run_backtest(&train_df, params);
-        let test_result = run_backtest(&test_df, params);
+        cursor = cursor + Days::new(step as u64);
+    }
 
-        match (train_result, test_result) {
-            (Ok(train_r), Ok(test_r)) => {
-                windows.push(WindowResult {
-                    window_number: windows.len() + 1,
+    if windows.is_empty() {
+        bail!("No valid walk-forward windows could be generated from the data");
+    }
+
+    let aggregate = compute_aggregate(&windows, failed_count);
+    Ok(WalkForwardResult { windows, aggregate })
+}
+
+/// Run walk-forward analysis: rolling train/test windows across the data.
+pub fn run_walk_forward(
+    df: &DataFrame,
+    params: &BacktestParams,
+    train_days: i32,
+    test_days: i32,
+    step_days: Option<i32>,
+) -> Result<WalkForwardResult> {
+    let (min_date, max_date) = date_range(df)?;
+
+    walk_forward_driver(
+        min_date,
+        max_date,
+        train_days,
+        test_days,
+        step_days,
+        |train_start, train_end, test_start, test_end, window_number| {
+            // slice_by_date_range errors (Polars infra) propagate via `?`
+            let train_df = slice_by_date_range(df, train_start, train_end)?;
+            let test_df = slice_by_date_range(df, test_start, test_end)?;
+
+            if train_df.height() == 0 || test_df.height() == 0 {
+                return Ok(None);
+            }
+
+            // Backtest failures are per-window — count as failed, don't abort
+            match (
+                run_backtest(&train_df, params),
+                run_backtest(&test_df, params),
+            ) {
+                (Ok(train_r), Ok(test_r)) => Ok(Some(WindowResult {
+                    window_number,
                     train_start,
                     train_end,
                     test_start,
@@ -187,22 +232,11 @@ pub fn run_walk_forward(
                     test_trades: test_r.trade_count,
                     train_win_rate: train_r.metrics.win_rate,
                     test_win_rate: test_r.metrics.win_rate,
-                });
+                })),
+                _ => Ok(None),
             }
-            _ => {
-                failed_count += 1;
-            }
-        }
-
-        cursor = cursor + Days::new(step as u64);
-    }
-
-    if windows.is_empty() {
-        bail!("No valid walk-forward windows could be generated from the data");
-    }
-
-    let aggregate = compute_aggregate(&windows, failed_count);
-    Ok(WalkForwardResult { windows, aggregate })
+        },
+    )
 }
 
 pub(crate) fn compute_aggregate(
@@ -257,84 +291,54 @@ pub fn run_walk_forward_stock(
     test_days: i32,
     step_days: Option<i32>,
 ) -> Result<WalkForwardResult> {
-    if train_days < 1 {
-        bail!("train_days must be >= 1");
-    }
-    if test_days < 1 {
-        bail!("test_days must be >= 1");
-    }
-    let step = step_days.unwrap_or(test_days);
-    if step < 5 {
-        if step_days.is_some() {
-            bail!("step_days ({step}) must be >= 5 to avoid generating an excessive number of windows");
-        }
-        bail!("test_days ({step}) is used as step size when step_days is omitted, and must be >= 5 to avoid generating an excessive number of windows");
-    }
-
     let (min_date, max_date) = stock_sim::bar_date_range(bars)
         .ok_or_else(|| anyhow::anyhow!("No bars for walk-forward analysis"))?;
 
-    let total_days_inclusive = (max_date - min_date).num_days() + 1;
-    if total_days_inclusive < i64::from(train_days + test_days) {
-        bail!(
-            "Data spans {} days but walk-forward requires at least {} (train_days={} + test_days={})",
-            total_days_inclusive,
-            train_days + test_days,
-            train_days,
-            test_days
-        );
-    }
+    walk_forward_driver(
+        min_date,
+        max_date,
+        train_days,
+        test_days,
+        step_days,
+        |train_start, train_end, test_start, test_end, window_number| {
+            let train_bars = stock_sim::slice_bars_by_date_range(bars, train_start, train_end);
+            let test_bars = stock_sim::slice_bars_by_date_range(bars, test_start, test_end);
 
-    let mut windows = Vec::new();
-    let mut failed_count = 0usize;
-    let mut cursor = min_date + Days::new(train_days as u64);
+            if train_bars.is_empty() || test_bars.is_empty() {
+                return Ok(None);
+            }
 
-    while cursor + Days::new(test_days as u64) <= max_date + Days::new(1) {
-        let train_start = cursor - Days::new(train_days as u64);
-        let train_end = cursor;
-        let test_start = cursor;
-        let test_end = cursor + Days::new(test_days as u64);
+            // Slice signal dates to the window range
+            let train_entry = entry_dates
+                .as_ref()
+                .map(|d| stock_sim::filter_datetime_set(d, train_start, train_end));
+            let train_exit = exit_dates
+                .as_ref()
+                .map(|d| stock_sim::filter_datetime_set(d, train_start, train_end));
+            let test_entry = entry_dates
+                .as_ref()
+                .map(|d| stock_sim::filter_datetime_set(d, test_start, test_end));
+            let test_exit = exit_dates
+                .as_ref()
+                .map(|d| stock_sim::filter_datetime_set(d, test_start, test_end));
 
-        let train_bars = stock_sim::slice_bars_by_date_range(bars, train_start, train_end);
-        let test_bars = stock_sim::slice_bars_by_date_range(bars, test_start, test_end);
+            // Backtest failures are per-window — count as failed, don't abort
+            let train_r = stock_sim::run_stock_backtest(
+                &train_bars,
+                params,
+                train_entry.as_ref(),
+                train_exit.as_ref(),
+            );
+            let test_r = stock_sim::run_stock_backtest(
+                &test_bars,
+                params,
+                test_entry.as_ref(),
+                test_exit.as_ref(),
+            );
 
-        if train_bars.is_empty() || test_bars.is_empty() {
-            failed_count += 1;
-            cursor = cursor + Days::new(step as u64);
-            continue;
-        }
-
-        // Slice signal dates to the window range
-        let train_entry = entry_dates
-            .as_ref()
-            .map(|d| stock_sim::filter_datetime_set(d, train_start, train_end));
-        let train_exit = exit_dates
-            .as_ref()
-            .map(|d| stock_sim::filter_datetime_set(d, train_start, train_end));
-        let test_entry = entry_dates
-            .as_ref()
-            .map(|d| stock_sim::filter_datetime_set(d, test_start, test_end));
-        let test_exit = exit_dates
-            .as_ref()
-            .map(|d| stock_sim::filter_datetime_set(d, test_start, test_end));
-
-        let train_result = stock_sim::run_stock_backtest(
-            &train_bars,
-            params,
-            train_entry.as_ref(),
-            train_exit.as_ref(),
-        );
-        let test_result = stock_sim::run_stock_backtest(
-            &test_bars,
-            params,
-            test_entry.as_ref(),
-            test_exit.as_ref(),
-        );
-
-        match (train_result, test_result) {
-            (Ok(train_r), Ok(test_r)) => {
-                windows.push(WindowResult {
-                    window_number: windows.len() + 1,
+            match (train_r, test_r) {
+                (Ok(train_r), Ok(test_r)) => Ok(Some(WindowResult {
+                    window_number,
                     train_start,
                     train_end,
                     test_start,
@@ -347,22 +351,11 @@ pub fn run_walk_forward_stock(
                     test_trades: test_r.trade_count,
                     train_win_rate: train_r.metrics.win_rate,
                     test_win_rate: test_r.metrics.win_rate,
-                });
+                })),
+                _ => Ok(None),
             }
-            _ => {
-                failed_count += 1;
-            }
-        }
-
-        cursor = cursor + Days::new(step as u64);
-    }
-
-    if windows.is_empty() {
-        bail!("No valid walk-forward windows could be generated from the data");
-    }
-
-    let aggregate = compute_aggregate(&windows, failed_count);
-    Ok(WalkForwardResult { windows, aggregate })
+        },
+    )
 }
 
 #[cfg(test)]

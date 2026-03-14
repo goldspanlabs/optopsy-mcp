@@ -33,7 +33,12 @@ pub fn execute(
         "Walk-forward analysis finished"
     );
     Ok(ai_format::format_walk_forward(
-        &result, params, train_days, test_days, step_days,
+        &result,
+        &params.strategy,
+        None,
+        train_days,
+        test_days,
+        step_days,
     ))
 }
 
@@ -65,7 +70,12 @@ pub fn execute_stock(
         windows = result.windows.len(),
         "Stock walk-forward analysis finished"
     );
-    Ok(ai_format::format_walk_forward_stock(
-        &result, label, train_days, test_days, step_days,
+    Ok(ai_format::format_walk_forward(
+        &result,
+        label,
+        Some("stock"),
+        train_days,
+        test_days,
+        step_days,
     ))
 }
