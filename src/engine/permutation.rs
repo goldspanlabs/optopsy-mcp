@@ -236,11 +236,11 @@ fn run_shuffled_permutations<S: BuildHasher>(
     Ok(perm_metrics)
 }
 
-pub fn extract_field(metrics: &[PermMetrics], f: fn(&PermMetrics) -> f64) -> Vec<f64> {
+pub(crate) fn extract_field(metrics: &[PermMetrics], f: fn(&PermMetrics) -> f64) -> Vec<f64> {
     metrics.iter().map(f).collect()
 }
 
-pub fn compute_metric_result(
+pub(crate) fn compute_metric_result(
     name: &str,
     real_value: f64,
     permuted_values: &[f64],

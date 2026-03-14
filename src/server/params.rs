@@ -445,7 +445,7 @@ pub struct ServerCompareEntry {
 
 /// A single stock signal configuration for `compare_strategies` in stock mode.
 #[derive(Debug, Clone, Deserialize, JsonSchema, Validate)]
-pub struct StockCompareEntry {
+pub struct StockCompareEntryInput {
     /// Human-readable label for this entry (auto-generated if omitted)
     #[serde(default)]
     #[garde(skip)]
@@ -501,7 +501,7 @@ pub struct CompareStrategiesParams {
     /// List of stock signal configurations to compare. Required for stock mode (min 2 entries).
     #[serde(default)]
     #[garde(dive)]
-    pub stock_entries: Option<Vec<StockCompareEntry>>,
+    pub stock_entries: Option<Vec<StockCompareEntryInput>>,
     /// Shared simulation parameters
     #[garde(dive)]
     pub sim_params: SimParams,
