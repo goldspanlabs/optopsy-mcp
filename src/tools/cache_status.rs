@@ -55,7 +55,7 @@ pub fn execute(
                 "[NEXT] Call get_raw_prices({{ symbol: \"{upper}\" }}) — OHLCV data is auto-fetched"
             ),
             _ => format!(
-                "[NEXT] Call run_options_backtest({{ strategy: \"<name>\", symbol: \"{upper}\" }}) — data is auto-loaded"
+                "[NEXT] Populate the cache at {file_path} (or configure S3), then call run_options_backtest({{ strategy: \"<name>\", symbol: \"{upper}\" }})"
             ),
         }]
     };
