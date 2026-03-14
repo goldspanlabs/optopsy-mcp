@@ -18,6 +18,17 @@ CI enforces `RUSTFLAGS="-Dwarnings"` — **all warnings are errors**. Every PR m
 
 Flag any code that would produce warnings under these settings.
 
+## Pre-commit & Pre-push Verification
+
+Before committing or pushing any changes, always run the full local verification pipeline. Never skip hooks (`--no-verify`) or bypass any checks:
+
+1. **Format** — `cargo fmt` (apply) then `cargo fmt --check` (verify). Fix all formatting issues before committing.
+2. **Lint** — `RUSTFLAGS="-Dwarnings" cargo clippy --all-targets`. Resolve every warning — do not suppress with `#[allow(...)]` unless there is a documented justification.
+3. **Test** — `cargo test`. All tests must pass. Do not commit with known test failures.
+4. **Build** — `cargo build`. Ensure clean compilation with no warnings.
+
+Run these in order — formatting first (since clippy and tests depend on parseable code), then clippy (catches issues before test runtime), then tests, then build. If any step fails, fix the issue and restart from that step. Never skip pre-commit or pre-push hooks.
+
 ## Rust & Clippy Standards
 
 - Clippy pedantic is enabled (`pedantic = "warn"`). Allowed exceptions: `module_name_repetitions`, `must_use_candidate`, `missing_errors_doc`, `missing_panics_doc`, and numeric cast lints (`cast_possible_truncation`, `cast_sign_loss`, `cast_possible_wrap`, `cast_precision_loss`).
