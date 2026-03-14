@@ -205,7 +205,7 @@ pub fn run_walk_forward(
     Ok(WalkForwardResult { windows, aggregate })
 }
 
-pub fn compute_aggregate(windows: &[WindowResult], failed_windows: usize) -> WalkForwardAggregate {
+pub(crate) fn compute_aggregate(windows: &[WindowResult], failed_windows: usize) -> WalkForwardAggregate {
     let n = windows.len() as f64;
     let test_sharpes: Vec<f64> = windows.iter().map(|w| w.test_sharpe).collect();
     let test_pnls: Vec<f64> = windows.iter().map(|w| w.test_pnl).collect();

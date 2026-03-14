@@ -578,6 +578,7 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
                                             Slippage::Spread => "spread".to_string(),
                                             _ => format!("{slippage:?}"),
                                         };
+                                        parts.push(format!("Slip:{slip_str}"));
                                         dim_keys.push(("slippage".to_string(), slip_str));
                                     }
 
@@ -896,6 +897,14 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
     })
 }
 
+/// Cache key for `run_stock_multiple_comparisons`: unique per (interval, session, date-range).
+type DataPrepKey = (
+    Interval,
+    Option<SessionFilter>,
+    Option<chrono::NaiveDate>,
+    Option<chrono::NaiveDate>,
+);
+
 /// Run permutation tests for each stock sweep result and apply multiple comparisons correction.
 fn run_stock_multiple_comparisons(
     ohlcv_path: &str,
@@ -913,6 +922,15 @@ fn run_stock_multiple_comparisons(
         seed: params.permutation_seed,
     };
 
+    // Cache prepared (bars, df) by (interval, session_filter, start_date, end_date) key to
+    // avoid re-reading and re-resampling the same OHLCV parquet for every combo.
+    // The cache holds at most one entry per unique (interval, session, date-range) group,
+    // so memory usage is bounded by the number of distinct data-prep configurations.
+    let mut data_cache: std::collections::HashMap<
+        DataPrepKey,
+        (Vec<stock_sim::Bar>, polars::prelude::DataFrame),
+    > = std::collections::HashMap::new();
+
     for result in results.iter_mut() {
         let combo = combos.iter().find(|c| c.label == result.label);
         let Some(combo) = combo else {
@@ -920,16 +938,32 @@ fn run_stock_multiple_comparisons(
             continue;
         };
 
-        let Ok((bars, ohlcv_df)) = stock_sim::prepare_stock_data(
-            ohlcv_path,
+        let cache_key: DataPrepKey = (
             combo.interval,
-            combo.session_filter.as_ref(),
+            combo.session_filter,
             params.base_params.start_date,
             params.base_params.end_date,
-        ) else {
-            result.p_value = Some(1.0);
-            continue;
+        );
+
+        let entry = data_cache.entry(cache_key);
+        let cached = match entry {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                if let Ok(prepared) = stock_sim::prepare_stock_data(
+                    ohlcv_path,
+                    combo.interval,
+                    combo.session_filter.as_ref(),
+                    params.base_params.start_date,
+                    params.base_params.end_date,
+                ) {
+                    e.insert(prepared)
+                } else {
+                    result.p_value = Some(1.0);
+                    continue;
+                }
+            }
         };
+        let (bars, ohlcv_df) = cached;
 
         let mut combo_params = params.base_params.clone();
         combo_params.entry_signal = Some(combo.entry_signal.clone());
@@ -942,14 +976,14 @@ fn run_stock_multiple_comparisons(
         combo_params.slippage = combo.slippage.clone();
 
         let Ok((entry_dates, exit_dates)) =
-            stock_sim::build_stock_signal_filters(&combo_params, &ohlcv_df)
+            stock_sim::build_stock_signal_filters(&combo_params, ohlcv_df)
         else {
             result.p_value = Some(1.0);
             continue;
         };
 
         match crate::engine::permutation::run_stock_permutation_test(
-            &bars,
+            bars,
             &combo_params,
             &entry_dates,
             &exit_dates,
