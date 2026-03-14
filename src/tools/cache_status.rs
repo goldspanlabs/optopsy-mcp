@@ -39,16 +39,25 @@ pub fn execute(
     };
 
     let suggested_next_steps = if exists {
-        vec![
-            format!("[NEXT] Call run_options_backtest({{ strategy, symbol: \"{upper}\" }}) — data is auto-loaded from cache"),
-            "[TIP] Check last_updated to decide if data should be refreshed".to_string(),
-        ]
-    } else {
-        vec![
-            format!(
-                "[NEXT] Call run_options_backtest({{ symbol: \"{upper}\", ... }}) — data is auto-loaded from cache"
+        let mut steps = vec![match category {
+            "prices" => format!(
+                "[NEXT] Call get_raw_prices({{ symbol: \"{upper}\" }}) or run_stock_backtest({{ symbol: \"{upper}\", entry_signal: ... }})"
             ),
-        ]
+            _ => format!(
+                "[NEXT] Call run_options_backtest({{ strategy: \"<name>\", symbol: \"{upper}\" }})"
+            ),
+        }];
+        steps.push("[TIP] Check last_updated to decide if data should be refreshed".to_string());
+        steps
+    } else {
+        vec![match category {
+            "prices" => format!(
+                "[NEXT] Call get_raw_prices({{ symbol: \"{upper}\" }}) — OHLCV data is auto-fetched"
+            ),
+            _ => format!(
+                "[NEXT] Call run_options_backtest({{ strategy: \"<name>\", symbol: \"{upper}\" }}) — data is auto-loaded"
+            ),
+        }]
     };
 
     Ok(CheckCacheResponse {
