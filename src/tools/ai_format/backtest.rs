@@ -4,10 +4,10 @@
 //! responses with natural-language summaries, key findings, trade statistics,
 //! and actionable next-step suggestions.
 
+use crate::engine::core::StockCompareEntry;
 use crate::engine::stock_sim::StockBacktestParams;
 use crate::engine::types::{
     to_display_name, BacktestParams, BacktestResult, CompareEntry, CompareResult, DteRange,
-    Slippage,
 };
 use crate::signals::helpers::IndicatorData;
 use crate::tools::ai_helpers::{
@@ -306,7 +306,10 @@ pub fn format_compare(
 ///
 /// Stock entries don't have options-specific fields, so `strategies_compared`
 /// uses placeholder values for `leg_deltas`, `entry_dte`, `exit_dte`.
-pub fn format_stock_compare(results: Vec<CompareResult>, labels: &[String]) -> CompareResponse {
+pub fn format_stock_compare(
+    results: Vec<CompareResult>,
+    entries: &[StockCompareEntry],
+) -> CompareResponse {
     let mut sharpe_indices: Vec<usize> = (0..results.len()).collect();
     sharpe_indices.sort_by(|&a, &b| {
         results[b]
@@ -359,11 +362,12 @@ pub fn format_stock_compare(results: Vec<CompareResult>, labels: &[String]) -> C
         );
     }
 
-    let strategies_compared = labels
+    // Populate strategies_compared with actual slippage/commission from each entry's params.
+    let strategies_compared = entries
         .iter()
-        .map(|label| CompareStrategyEntry {
-            display_name: label.clone(),
-            name: label.clone(),
+        .map(|entry| CompareStrategyEntry {
+            display_name: entry.label.clone(),
+            name: entry.label.clone(),
             leg_deltas: vec![],
             entry_dte: DteRange {
                 target: 0,
@@ -371,8 +375,8 @@ pub fn format_stock_compare(results: Vec<CompareResult>, labels: &[String]) -> C
                 max: 0,
             },
             exit_dte: 0,
-            slippage: Slippage::Mid,
-            commission: None,
+            slippage: entry.params.slippage.clone(),
+            commission: entry.params.commission.clone(),
         })
         .collect();
 
@@ -556,7 +560,7 @@ pub fn format_stock_backtest(
 mod tests {
     use super::*;
     use crate::engine::types::{
-        CompareEntry, DteRange, EquityPoint, ExitType, PerformanceMetrics, TradeRecord,
+        CompareEntry, DteRange, EquityPoint, ExitType, PerformanceMetrics, Slippage, TradeRecord,
     };
     use crate::tools::ai_helpers::{assess_sharpe, compute_trade_summary};
     use chrono::NaiveDateTime;
@@ -586,7 +590,7 @@ mod tests {
                 max: 60,
             },
             exit_dte: 0,
-            slippage: crate::engine::types::Slippage::Mid,
+            slippage: Slippage::Mid,
             commission: None,
             min_bid_ask: 0.0,
             stop_loss: None,
@@ -830,7 +834,7 @@ mod tests {
                     max: 60,
                 },
                 exit_dte: 7,
-                slippage: crate::engine::types::Slippage::Mid,
+                slippage: Slippage::Mid,
                 commission: None,
             },
             CompareEntry {
@@ -842,7 +846,7 @@ mod tests {
                     max: 60,
                 },
                 exit_dte: 7,
-                slippage: crate::engine::types::Slippage::Mid,
+                slippage: Slippage::Mid,
                 commission: None,
             },
             CompareEntry {
@@ -854,7 +858,7 @@ mod tests {
                     max: 60,
                 },
                 exit_dte: 7,
-                slippage: crate::engine::types::Slippage::Mid,
+                slippage: Slippage::Mid,
                 commission: None,
             },
         ];
