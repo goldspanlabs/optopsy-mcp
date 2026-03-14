@@ -390,7 +390,7 @@ fn run_event_loop_path(
 }
 
 /// Build `BacktestParams` from a `CompareEntry` and `SimParams`.
-pub fn build_backtest_params(entry: &CompareEntry, sim: &SimParams) -> BacktestParams {
+fn build_backtest_params(entry: &CompareEntry, sim: &SimParams) -> BacktestParams {
     BacktestParams {
         strategy: entry.name.clone(),
         leg_deltas: entry.leg_deltas.clone(),

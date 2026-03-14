@@ -103,7 +103,8 @@ pub fn format_backtest(
         params.strategy
     ));
 
-    let sizing_summary = compute_sizing_summary(&result.trade_log, params.sizing.as_ref(), params.capital);
+    let sizing_summary =
+        compute_sizing_summary(&result.trade_log, params.sizing.as_ref(), params.capital);
     if let Some(ref ss) = sizing_summary {
         key_findings.push(format!(
             "Dynamic sizing ({}): position sizes ranged from {} to {} contracts (avg {:.1})",
@@ -506,7 +507,8 @@ pub fn format_stock_backtest(
             .to_string(),
     );
 
-    let sizing_summary = compute_sizing_summary(&result.trade_log, params.sizing.as_ref(), params.capital);
+    let sizing_summary =
+        compute_sizing_summary(&result.trade_log, params.sizing.as_ref(), params.capital);
 
     // Surface any engine warnings as key findings too
     if !result.warnings.is_empty() {

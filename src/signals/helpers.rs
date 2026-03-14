@@ -52,9 +52,9 @@ pub struct IndicatorData {
 /// Uses a `HashSet` for O(1) lookups instead of O(n) linear scan per insertion.
 pub fn extend_indicators_deduped(target: &mut Vec<IndicatorData>, new: Vec<IndicatorData>) {
     use std::collections::HashSet;
-    let seen: HashSet<String> = target.iter().map(|ind| ind.name.clone()).collect();
+    let mut seen: HashSet<String> = target.iter().map(|ind| ind.name.clone()).collect();
     for ind in new {
-        if !seen.contains(&ind.name) {
+        if seen.insert(ind.name.clone()) {
             target.push(ind);
         }
     }
