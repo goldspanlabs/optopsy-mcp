@@ -779,6 +779,11 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
                 params.base_params.end_date,
             )?;
 
+            if all_bars.len() < 2 {
+                // Not enough data for a train/test split; skip OOS for this combo.
+                continue;
+            }
+
             let split_idx =
                 ((1.0 - params.out_of_sample_pct) * all_bars.len() as f64).round() as usize;
             let split_idx = split_idx.clamp(1, all_bars.len() - 1);
