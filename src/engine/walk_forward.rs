@@ -214,7 +214,10 @@ pub fn run_walk_forward(
             }
 
             // Backtest failures are per-window — count as failed, don't abort
-            match (run_backtest(&train_df, params), run_backtest(&test_df, params)) {
+            match (
+                run_backtest(&train_df, params),
+                run_backtest(&test_df, params),
+            ) {
                 (Ok(train_r), Ok(test_r)) => Ok(Some(WindowResult {
                     window_number,
                     train_start,
