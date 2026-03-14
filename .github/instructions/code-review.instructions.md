@@ -49,8 +49,8 @@ Flag these common mistakes in reviews:
 ## Architecture Rules
 
 ### Tool Layer (`src/tools/`)
-- Every tool response must include AI formatting: `summary`, `key_findings`, `suggested_next_steps` via the `ai_format/` module.
-- Tool parameter structs must derive `Serialize + Deserialize + JsonSchema + Validate`.
+- Every tool response must include AI formatting: `summary` and `suggested_next_steps` via the `ai_format/` module. Responses that include an assessment must also provide `key_findings`.
+- Tool parameter structs must derive `Deserialize + JsonSchema + Validate`. Response types derive `Serialize` (and typically `JsonSchema`).
 - Tool handlers must call `.validate()` on params before processing.
 - Tool handlers acquire `data.write()` lock — flag any code that holds the lock longer than necessary or could deadlock.
 
@@ -65,7 +65,7 @@ Flag these common mistakes in reviews:
 - Multi-expiration strategies use `ExpirationCycle::Primary`/`Secondary` tags on legs.
 
 ### Signals (`src/signals/`)
-- 40+ built-in signals in `spec.rs`. Signal evaluation must be pure (no side effects, no state mutation).
+- 40+ built-in signals are registered in `registry.rs` as `SIGNAL_CATALOG` and surfaced via the `build_signal` tool. Signal evaluation must be pure (no side effects, no state mutation).
 - Entry signals are optional for options backtests, **required** for stock backtests.
 - OHLCV data is auto-fetched when signals are used — flag any code that manually fetches price data when signals are already configured.
 
@@ -79,7 +79,7 @@ Flag these common mistakes in reviews:
 - All user-facing parameter structs must derive `garde::Validate`.
 - Nested structs need `#[garde(dive)]` to validate recursively.
 - `SignalSpec` fields use `#[garde(skip)]` — signal validation happens separately.
-- `exit_dte` must be less than `entry_dte.min` — enforced by `validate_exit_dte_lt_max`.
+- `exit_dte` must be less than `entry_dte.min` — enforced by `validate_exit_dte_lt_entry_min`.
 - `TargetRange` requires `min ≤ max` — flag any construction that doesn't enforce this.
 
 ## Numeric Safety
@@ -99,8 +99,8 @@ Flag these common mistakes in reviews:
 
 ## Testing
 
-- Unit tests live in `src/**/tests.rs` modules; integration tests in `tests/`.
-- Use `tempfile::NamedTempFile` for test cache isolation — flag tests that write to the real cache directory.
+- Unit tests are typically inline `#[cfg(test)] mod tests` modules within `src/**.rs` files; integration tests live under `tests/`.
+- Use `tempfile::TempDir`/`tempfile::tempdir()` for test isolation — flag tests that write to real cache directories instead of a temporary one.
 - New tools and engine features must have corresponding tests.
 - DataFrame test assertions should use `polars::testing` utilities.
 
@@ -167,5 +167,5 @@ Flag changes that introduce or worsen technical debt:
 ## Response Format
 
 - All tool responses use types from `response_types.rs` deriving `Serialize + JsonSchema`.
-- Equity curves are sampled to ≤50 points via the AI format layer — flag any response that returns unbounded data arrays.
+- Large time-series or array fields in tool responses must be bounded/sampled via the existing API limits (e.g., price/indicator series) — flag any response that returns unbounded data arrays.
 - AI format enrichment (`ai_format/`) must not fail the tool — errors in formatting should degrade gracefully.
