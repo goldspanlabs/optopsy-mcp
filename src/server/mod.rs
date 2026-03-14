@@ -421,14 +421,19 @@ fn load_underlying_prices(path: &std::path::Path) -> Vec<tools::response_types::
         return vec![];
     };
 
-    // Detect whether this file uses "datetime" or "date" column
+    // Detect whether this file uses "datetime" or "date" column, and whether
+    // the date column stores a Datetime type (needs the intraday formatting path).
     let Ok(schema) = lf.clone().collect_schema() else {
         return vec![];
     };
-    let has_datetime = schema
+    let has_datetime_col = schema
         .get("datetime")
         .is_some_and(|dt| matches!(dt, polars::prelude::DataType::Datetime(_, _)));
-    let date_col_name = if has_datetime { "datetime" } else { "date" };
+    let date_col_is_datetime = schema
+        .get("date")
+        .is_some_and(|dt| matches!(dt, polars::prelude::DataType::Datetime(_, _)));
+    let has_datetime = has_datetime_col || date_col_is_datetime;
+    let date_col_name = if has_datetime_col { "datetime" } else { "date" };
 
     let Ok(df) = lf
         .select([
@@ -465,9 +470,9 @@ fn load_underlying_prices(path: &std::path::Path) -> Vec<tools::response_types::
 
     let mut prices = Vec::with_capacity(df.height());
 
-    // Intraday path: "datetime" Datetime column
+    // Datetime path: column is Datetime type (either "datetime" or "date" with Datetime dtype)
     if has_datetime {
-        let Ok(dt_col_ref) = df.column("datetime") else {
+        let Ok(dt_col_ref) = df.column(date_col_name) else {
             return vec![];
         };
         for i in 0..df.height() {
@@ -734,20 +739,20 @@ impl OptopsyServer {
                     }
                 }
 
-                // Try to load underlying OHLCV close prices from cache for chart overlay
-                let underlying_prices = match self.cache.ensure_local_for(&symbol, "prices").await {
-                    Ok(path) => {
-                        // Read on blocking thread since it's Polars I/O
-                        let prices = tokio::task::spawn_blocking(
+                // Load underlying OHLCV close prices for chart overlay, auto-fetching if needed
+                let ohlcv_path = self.ensure_ohlcv(&symbol).await.ok();
+                let underlying_prices = match ohlcv_path {
+                    Some(path_str) => {
+                        let path = std::path::PathBuf::from(path_str);
+                        tokio::task::spawn_blocking(
                             move || -> Vec<tools::response_types::UnderlyingPrice> {
                                 load_underlying_prices(&path)
                             },
                         )
                         .await
-                        .unwrap_or_default();
-                        prices
+                        .unwrap_or_default()
                     }
-                    Err(_) => vec![],
+                    None => vec![],
                 };
 
                 // Run backtest on a blocking thread — the engine performs synchronous
@@ -812,7 +817,7 @@ impl OptopsyServer {
                     "Stock backtest request received"
                 );
 
-                // Ensure OHLCV data is available
+                // Ensure OHLCV data is available (also used for chart overlay)
                 let ohlcv_path = self.ensure_ohlcv(&symbol).await?;
 
                 // Resolve cross-symbol OHLCV paths for signals
@@ -826,16 +831,12 @@ impl OptopsyServer {
                     .await?;
 
                 // Load underlying prices for chart overlay
-                let underlying_prices = match self.cache.ensure_local_for(&symbol, "prices").await {
-                    Ok(path) => {
-                        let prices =
-                            tokio::task::spawn_blocking(move || load_underlying_prices(&path))
-                                .await
-                                .unwrap_or_default();
-                        prices
-                    }
-                    Err(_) => vec![],
-                };
+                let prices_path = std::path::PathBuf::from(&ohlcv_path);
+                let underlying_prices = tokio::task::spawn_blocking(move || {
+                    load_underlying_prices(&prices_path)
+                })
+                .await
+                .unwrap_or_default();
 
                 let start_date = params
                     .start_date
