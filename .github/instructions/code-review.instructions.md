@@ -1,3 +1,7 @@
+---
+applyTo: "**/*.rs"
+---
+
 # Copilot Code Review Instructions
 
 ## Project Overview
