@@ -105,6 +105,39 @@ Flag these common mistakes in reviews:
 - No secrets in code: API keys (`EODHD_API_KEY`, AWS credentials) must come from environment variables only.
 - MCP tool inputs are untrusted — all must be validated before use.
 
+## Logic Correctness
+
+Scrutinize proposed changes for logical errors, especially in financial calculation paths:
+
+- **Off-by-one errors** — fence-post mistakes in date ranges, DTE calculations, window boundaries (walk-forward train/test splits), and loop indices over trade logs or equity curves.
+- **Boundary conditions** — empty DataFrames, zero-trade backtests, single-element collections, first/last day edge cases. Flag code that assumes non-empty inputs without checking.
+- **Comparison and ordering bugs** — reversed `>` vs `<` in P&L thresholds (stop loss, take profit), wrong sign on `Side::Short` multipliers, sorting ascending when descending is intended (e.g., ranking by Sharpe).
+- **State mutation ordering** — in the event loop (`event_sim.rs`, `stock_sim.rs`), position opens must happen after closes on the same date, equity must update before sizing calculations, and signal evaluation must precede entry checks.
+- **Filter composition** — verify AND vs OR semantics when combining delta filters, DTE filters, and signal conditions. A misplaced `.or()` vs `.and()` silently changes which trades qualify.
+- **Metric formula correctness** — Sharpe uses excess returns over risk-free, Sortino uses only downside deviation, CAGR requires annualization, max drawdown is peak-to-trough not trough-to-peak. Flag any deviation from standard financial definitions.
+- **Rounding and truncation** — integer division where float division is needed (`i32 / i32` losing precision), premature rounding of intermediate financial results, and `as i32` truncation of quantities that should be rounded.
+- **Early returns and short-circuits** — `?` or `return` that skip cleanup logic, position closing, or metric finalization. Ensure all code paths produce consistent output.
+
+## DRY Compliance
+
+Flag violations of Don't Repeat Yourself. This codebase has established shared utilities — new code must use them:
+
+- **Existing shared helpers that must be reused:**
+  - `ai_format/` — all tool responses must go through AI formatting, not build their own `summary`/`key_findings` inline.
+  - `ai_helpers.rs` — shared constants and helper functions for response enrichment.
+  - `filters.rs` — DTE filtering, delta filtering, `filter_valid_quotes()`. Do not re-implement quote filtering logic in tool or engine code.
+  - `metrics.rs` / `PerformanceMetrics` — single source for Sharpe, Sortino, CAGR, etc. Do not compute these ad-hoc.
+  - `pricing.rs` — slippage models. Do not inline spread calculations.
+  - `sizing.rs` — position sizing methods. Do not duplicate max-loss or quantity computation.
+  - `helpers.rs` in strategies — `call_leg`, `put_leg`, `strategy` builders. Do not construct `StrategyLeg` manually.
+  - `response_types.rs` — shared response structs. Do not define one-off response types in tool modules.
+
+- **Patterns to flag:**
+  - Two or more tool handlers with identical data-loading, validation, or error-handling boilerplate that should be extracted.
+  - Inline reimplementation of any logic that already exists in `src/engine/` (e.g., manually computing win rate instead of using `PerformanceMetrics`).
+  - Duplicated Polars filter chains — if the same `.filter().filter().filter()` pattern appears in multiple places, it should be a shared function in `filters.rs`.
+  - Copy-pasted match arms across signal builders — common signal construction patterns should use shared builder functions in `builders.rs`.
+
 ## Tech Debt Prevention
 
 Flag changes that introduce or worsen technical debt:
