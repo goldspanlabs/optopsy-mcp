@@ -214,8 +214,9 @@ impl OptopsyServer {
             end_date: _,
         } = base;
 
-        // This function is only called for options mode; validation ensures strategy is Some.
-        let strategy = strategy.unwrap_or_default();
+        // This function is only called for options mode; validation guarantees strategy is Some.
+        let strategy = strategy
+            .ok_or_else(|| "strategy is required for options-mode backtests".to_string())?;
 
         let (symbol, df) = self.ensure_data_loaded(symbol_param.as_deref()).await?;
 
@@ -1378,10 +1379,8 @@ impl OptopsyServer {
                         .map(|e| &e.entry_signal)
                         .chain(stock_entries.iter().filter_map(|e| e.exit_signal.as_ref()))
                         .collect();
-                    let cross_ohlcv_paths =
-                        self.resolve_cross_ohlcv_paths(None, None, &[], &[]).await?;
-                    // Also resolve cross symbols from the stock entry signals
-                    let mut cross_paths = cross_ohlcv_paths;
+                    // Resolve cross symbols from the stock entry signals
+                    let mut cross_paths = std::collections::HashMap::new();
                     for sig in &all_sigs {
                         for sym in crate::signals::registry::collect_cross_symbols(sig) {
                             if let std::collections::hash_map::Entry::Vacant(e) =
