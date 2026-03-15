@@ -168,7 +168,7 @@ pub fn format_distribution(
         let sym_upper = sym.to_uppercase();
         vec![
             format!(
-                "[NEXT] Call aggregate_prices(symbol=\"{sym_upper}\") to check for seasonal patterns"
+                "[NEXT] Call aggregate_prices(symbol=\"{sym_upper}\", group_by=\"month\") to check for seasonal patterns"
             ),
             format!(
                 "[THEN] Call rolling_metric(symbol=\"{sym_upper}\", metric=\"volatility\") to see how risk changes over time"
@@ -282,7 +282,7 @@ pub fn format_correlate(
         format!(
             "[NEXT] Call rolling_metric(symbol=\"{symbol_a_upper}\", metric=\"volatility\") to compare vol regimes"
         ),
-        "[THEN] Call regime_detect to see if correlation changes across market regimes".to_string(),
+        format!("[THEN] Call regime_detect(symbol=\"{symbol_a_upper}\") to see if correlation changes across market regimes"),
     ];
 
     let mut key_findings = vec![
@@ -421,8 +421,8 @@ pub fn format_regime_detect(
         .iter()
         .map(|r| {
             format!(
-                "{}: {:.1}% of bars, mean return={:.4}, vol={:.4}",
-                r.label, r.pct_of_total, r.mean_return, r.std_dev
+                "{}: {:.1}% of bars, mean return={:.4}, return std={:.4}, realized vol={:.4}",
+                r.label, r.pct_of_total, r.mean_return, r.std_dev, r.mean_vol
             )
         })
         .collect();
