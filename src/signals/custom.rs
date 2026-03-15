@@ -72,6 +72,14 @@
 //! - `consecutive_up(col)` — Count of consecutive rises
 //! - `consecutive_down(col)` — Count of consecutive falls
 //!
+//! **Functions (date/time)** — zero-argument, extract from bar date:
+//! - `day_of_week()` — Day of week (1=Mon..7=Sun, ISO 8601)
+//! - `month()` — Month (1-12)
+//! - `day_of_month()` — Day of month (1-31)
+//! - `hour()` — Hour (0-23, 0 for daily bars)
+//! - `minute()` — Minute (0-59, 0 for daily bars)
+//! - `week_of_year()` — ISO week number (1-53)
+//!
 //! **Functions (control flow)**:
 //! - `if(cond, then, else)` — Conditional expression
 //!
@@ -130,7 +138,18 @@ impl SignalFn for FormulaSignal {
         let expr = parse_formula(&self.formula)
             .map_err(|e| PolarsError::ComputeError(format!("Formula parse error: {e}").into()))?;
 
-        let result = df.clone().lazy().select([expr.alias("signal")]).collect()?;
+        // If formula uses date/time functions, inject a __dt column.
+        // Match "func(" to avoid false positives on substrings.
+        let needs_date = DATE_FUNCTIONS
+            .iter()
+            .any(|f| self.formula.contains(&format!("{f}(")));
+        let working_df = if needs_date {
+            inject_datetime_column(df)?
+        } else {
+            df.clone()
+        };
+
+        let result = working_df.lazy().select([expr.alias("signal")]).collect()?;
 
         let col = result.column("signal")?;
 
@@ -307,6 +326,50 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
 
 /// Columns valid for use in formula expressions.
 const VALID_COLUMNS: &[&str] = &["close", "open", "high", "low", "volume", "adjclose", "iv"];
+
+/// Zero-argument date/time functions that extract temporal components from bar dates.
+const DATE_FUNCTIONS: &[&str] = &[
+    "day_of_week",
+    "month",
+    "day_of_month",
+    "hour",
+    "minute",
+    "week_of_year",
+];
+
+/// Inject a `__dt` column (Datetime type) derived from whichever date column exists.
+/// This normalizes `Date` → `Datetime` so all `.dt()` accessors work uniformly.
+fn inject_datetime_column(df: &DataFrame) -> Result<DataFrame, PolarsError> {
+    // Try "datetime" first, fall back to "date"
+    let names = df.get_column_names();
+    let has = |n: &str| names.iter().any(|c| c.as_str() == n);
+    let col_name = if has("datetime") {
+        "datetime"
+    } else if has("date") {
+        "date"
+    } else {
+        return Err(PolarsError::ColumnNotFound(
+            "No 'date' or 'datetime' column found for date/time functions".into(),
+        ));
+    };
+
+    let dt_expr = match df.column(col_name)?.dtype() {
+        DataType::Date => col(col_name)
+            .cast(DataType::Datetime(TimeUnit::Microseconds, None))
+            .alias("__dt"),
+        DataType::Datetime(_, _) => col(col_name).alias("__dt"),
+        other => {
+            return Err(PolarsError::ComputeError(
+                format!(
+                    "Date column '{col_name}' has unsupported type {other:?} for date/time functions"
+                )
+                .into(),
+            ));
+        }
+    };
+
+    df.clone().lazy().with_column(dt_expr).collect()
+}
 
 struct Parser {
     tokens: Vec<Token>,
@@ -1845,6 +1908,45 @@ impl Parser {
                     |_: &Schema, _: &Field| Ok(Field::new("v".into(), DataType::Float64)),
                 ))
             }
+            // --- Date/time functions (zero-argument, operate on __dt column) ---
+
+            "day_of_week" => {
+                if !args.is_empty() {
+                    return Err("day_of_week() takes no arguments".to_string());
+                }
+                Ok(col("__dt").dt().weekday().cast(DataType::Float64))
+            }
+            "month" => {
+                if !args.is_empty() {
+                    return Err("month() takes no arguments".to_string());
+                }
+                Ok(col("__dt").dt().month().cast(DataType::Float64))
+            }
+            "day_of_month" => {
+                if !args.is_empty() {
+                    return Err("day_of_month() takes no arguments".to_string());
+                }
+                Ok(col("__dt").dt().day().cast(DataType::Float64))
+            }
+            "hour" => {
+                if !args.is_empty() {
+                    return Err("hour() takes no arguments".to_string());
+                }
+                Ok(col("__dt").dt().hour().cast(DataType::Float64))
+            }
+            "minute" => {
+                if !args.is_empty() {
+                    return Err("minute() takes no arguments".to_string());
+                }
+                Ok(col("__dt").dt().minute().cast(DataType::Float64))
+            }
+            "week_of_year" => {
+                if !args.is_empty() {
+                    return Err("week_of_year() takes no arguments".to_string());
+                }
+                Ok(col("__dt").dt().week().cast(DataType::Float64))
+            }
+
             other => Err(format!(
                 "Unknown function: '{other}'. Available: sma, ema, std, max, min, abs, change, \
                  pct_change, rsi, macd_hist, macd_signal, macd_line, roc, bbands_mid, bbands_upper, \
@@ -1853,7 +1955,8 @@ impl Parser {
                  supertrend, cmf, consecutive_up, consecutive_down, williams_r, cci, ppo, cmo, \
                  adx, plus_di, minus_di, psar, tsi, vpt, donchian_upper, donchian_mid, \
                  donchian_lower, ichimoku_tenkan, ichimoku_kijun, ichimoku_senkou_a, \
-                 ichimoku_senkou_b, envelope_upper, envelope_lower, ad, pvi, nvi, ulcer"
+                 ichimoku_senkou_b, envelope_upper, envelope_lower, ad, pvi, nvi, ulcer, \
+                 day_of_week, month, day_of_month, hour, minute, week_of_year"
             )),
         }
     }
@@ -3327,5 +3430,224 @@ mod tests {
         let calls = extract_indicator_calls("close > psar(high, low, 0.02, 0.2)");
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].func_name, "psar");
+    }
+
+    // ── Date/time function tests ─────────────────────────────────────────
+
+    #[test]
+    fn parse_date_functions() {
+        // Each date function should parse successfully
+        for func in &[
+            "day_of_week()",
+            "month()",
+            "day_of_month()",
+            "hour()",
+            "minute()",
+            "week_of_year()",
+        ] {
+            let formula = format!("{func} == 1");
+            assert!(
+                parse_formula(&formula).is_ok(),
+                "Failed to parse: {formula}"
+            );
+        }
+    }
+
+    #[test]
+    fn date_functions_reject_args() {
+        for func in &[
+            "day_of_week",
+            "month",
+            "day_of_month",
+            "hour",
+            "minute",
+            "week_of_year",
+        ] {
+            let formula = format!("{func}(close) == 1");
+            assert!(
+                parse_formula(&formula).is_err(),
+                "{func} should reject arguments"
+            );
+        }
+    }
+
+    #[test]
+    fn date_functions_combine_with_indicators() {
+        let formula = "day_of_week() == 1 and close > sma(close, 5)";
+        assert!(parse_formula(formula).is_ok());
+    }
+
+    #[test]
+    fn date_functions_with_lookback() {
+        // Lookback on date function result: day_of_week()[1]
+        let formula = "day_of_week()[1] == 5";
+        assert!(parse_formula(formula).is_ok());
+    }
+
+    fn test_df_with_dates() -> DataFrame {
+        use chrono::NaiveDate;
+        // Mon 2024-01-01, Tue 2024-01-02, Wed 2024-01-03, Thu 2024-01-04, Fri 2024-01-05
+        // Mon 2024-12-02, Tue 2024-12-03, Wed 2024-12-04, Thu 2024-12-05, Fri 2024-12-06
+        let dates = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 3).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 4).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 5).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 12, 2).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 12, 3).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 12, 4).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 12, 5).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 12, 6).unwrap(),
+        ];
+        df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), dates),
+            "close" => &[100.0, 102.0, 101.0, 105.0, 103.0, 107.0, 110.0, 108.0, 112.0, 115.0],
+            "open" => &[99.0, 101.0, 102.0, 101.0, 105.0, 103.0, 106.0, 110.0, 108.0, 112.0],
+            "high" => &[101.0, 103.0, 103.0, 106.0, 106.0, 108.0, 111.0, 111.0, 113.0, 116.0],
+            "low" => &[98.0, 100.0, 100.0, 100.0, 102.0, 102.0, 105.0, 107.0, 107.0, 111.0],
+            "volume" => &[1000u64, 1200, 900, 1500, 1100, 1800, 2000, 800, 1600, 2200],
+        }
+        .unwrap()
+    }
+
+    #[test]
+    fn day_of_week_monday_filter() {
+        let df = test_df_with_dates();
+        // 2024-01-01 = Monday (weekday=1), 2024-12-02 = Monday (weekday=1)
+        let signal = FormulaSignal::new("day_of_week() == 1".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert_eq!(bools.get(0), Some(true)); // Mon Jan 1
+        assert_eq!(bools.get(1), Some(false)); // Tue Jan 2
+        assert_eq!(bools.get(4), Some(false)); // Fri Jan 5
+        assert_eq!(bools.get(5), Some(true)); // Mon Dec 2
+    }
+
+    #[test]
+    fn month_december_filter() {
+        let df = test_df_with_dates();
+        let signal = FormulaSignal::new("month() == 12".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        // Indices 0-4 are January, 5-9 are December
+        for i in 0..5 {
+            assert_eq!(
+                bools.get(i),
+                Some(false),
+                "index {i} should be false (January)"
+            );
+        }
+        for i in 5..10 {
+            assert_eq!(
+                bools.get(i),
+                Some(true),
+                "index {i} should be true (December)"
+            );
+        }
+    }
+
+    #[test]
+    fn hour_zero_for_daily_bars() {
+        let df = test_df_with_dates();
+        // Daily bars promoted to midnight → hour == 0 for all
+        let signal = FormulaSignal::new("hour() == 0".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        for i in 0..10 {
+            assert_eq!(bools.get(i), Some(true), "index {i} should have hour=0");
+        }
+    }
+
+    #[test]
+    fn day_of_month_filter() {
+        let df = test_df_with_dates();
+        // Jan 1 → day_of_month=1
+        let signal = FormulaSignal::new("day_of_month() == 1".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert_eq!(bools.get(0), Some(true)); // Jan 1
+        assert_eq!(bools.get(1), Some(false)); // Jan 2
+    }
+
+    #[test]
+    fn week_of_year_filter() {
+        let df = test_df_with_dates();
+        // 2024-01-01 is ISO week 1
+        let signal = FormulaSignal::new("week_of_year() == 1".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert_eq!(bools.get(0), Some(true)); // Jan 1 = week 1
+        assert_eq!(bools.get(5), Some(false)); // Dec 2 ≠ week 1
+    }
+
+    #[test]
+    fn date_function_combined_with_price() {
+        let df = test_df_with_dates();
+        // Monday AND close > 100
+        let signal = FormulaSignal::new("day_of_week() == 1 and close > 100".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert_eq!(bools.get(0), Some(false)); // Mon, close=100 (not > 100)
+        assert_eq!(bools.get(5), Some(true)); // Mon Dec 2, close=107
+    }
+
+    #[test]
+    fn date_function_missing_date_column() {
+        // DataFrame without any date column should error
+        let df = test_df(); // no date column
+        let signal = FormulaSignal::new("day_of_week() == 1".to_string());
+        let result = signal.evaluate(&df);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn date_function_with_datetime_column() {
+        use chrono::{NaiveDate, NaiveDateTime};
+        // Test the Datetime pass-through branch (no Date→Datetime cast needed)
+        let datetimes = vec![
+            NaiveDateTime::new(
+                NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+                chrono::NaiveTime::from_hms_opt(9, 30, 0).unwrap(),
+            ),
+            NaiveDateTime::new(
+                NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+                chrono::NaiveTime::from_hms_opt(14, 0, 0).unwrap(),
+            ),
+            NaiveDateTime::new(
+                NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+                chrono::NaiveTime::from_hms_opt(9, 30, 0).unwrap(),
+            ),
+        ];
+        let dt_chunked: DatetimeChunked =
+            DatetimeChunked::new(PlSmallStr::from("datetime"), &datetimes);
+        let df = DataFrame::new(
+            3,
+            vec![
+                dt_chunked.into_column(),
+                Column::new("close".into(), &[100.0, 102.0, 101.0]),
+                Column::new("open".into(), &[99.0, 101.0, 100.0]),
+                Column::new("high".into(), &[101.0, 103.0, 102.0]),
+                Column::new("low".into(), &[98.0, 100.0, 99.0]),
+                Column::new("volume".into(), &[1000u64, 1200, 900]),
+            ],
+        )
+        .unwrap();
+
+        // hour() should return actual hours, not 0
+        let signal = FormulaSignal::new("hour() == 9".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert_eq!(bools.get(0), Some(true)); // 09:30
+        assert_eq!(bools.get(1), Some(false)); // 14:00
+        assert_eq!(bools.get(2), Some(true)); // 09:30
+
+        // minute() should return actual minutes
+        let signal = FormulaSignal::new("minute() == 30".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert_eq!(bools.get(0), Some(true)); // 09:30
+        assert_eq!(bools.get(1), Some(false)); // 14:00
+        assert_eq!(bools.get(2), Some(true)); // 09:30
     }
 }

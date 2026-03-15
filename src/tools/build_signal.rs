@@ -392,7 +392,7 @@ fn execute_catalog() -> BuildSignalResponse {
         suggested_next_steps: vec![
             "[NEXT] Call build_signal({ action: \"search\", prompt: \"<signal_name>\" }) to get the JSON spec for a signal".to_string(),
             "[THEN] Pass the signal JSON as entry_signal or exit_signal in run_options_backtest — OHLCV data is auto-fetched".to_string(),
-            format!("[INFO] {total} signals across {num_categories} categories: momentum, overlap, trend, volatility, volume, price, iv, utility, cross-symbol"),
+            format!("[INFO] {total} signals across {num_categories} categories: momentum, overlap, trend, volatility, volume, price, iv, datetime, utility, cross-symbol"),
         ],
     }
 }
@@ -559,6 +559,31 @@ fn formula_help() -> FormulaHelp {
                 "if(cond, then, else)".to_string(),
                 "Conditional: when(cond).then(then).otherwise(else)".to_string(),
             ),
+            // Date/time (zero-argument)
+            (
+                "day_of_week()".to_string(),
+                "Day of week: 1=Mon..7=Sun (ISO 8601)".to_string(),
+            ),
+            (
+                "month()".to_string(),
+                "Month: 1-12".to_string(),
+            ),
+            (
+                "day_of_month()".to_string(),
+                "Day of month: 1-31".to_string(),
+            ),
+            (
+                "hour()".to_string(),
+                "Hour: 0-23 (0 for daily bars)".to_string(),
+            ),
+            (
+                "minute()".to_string(),
+                "Minute: 0-59 (0 for daily bars)".to_string(),
+            ),
+            (
+                "week_of_year()".to_string(),
+                "ISO week number: 1-53".to_string(),
+            ),
         ]),
         operators: vec![
             "+".to_string(),
@@ -595,6 +620,8 @@ fn formula_help() -> FormulaHelp {
             "sma(close, 5)[1] > sma(close, 5)[2]".to_string(),
             "iv_rank(iv, 252) > 50".to_string(),
             "rank(iv, 252) < 10 and rsi(close, 14) < 30".to_string(),
+            "day_of_week() == 1 and close > sma(close, 20)".to_string(),
+            "month() >= 11 or month() <= 4".to_string(),
         ],
     }
 }
