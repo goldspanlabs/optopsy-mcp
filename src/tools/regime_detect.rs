@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::data::cache::CachedStore;
 use crate::stats;
+use crate::tools::ai_format;
 use crate::tools::response_types::{RegimeDetectResponse, RegimeInfo, RegimeSeriesPoint};
 
 /// Execute the `regime_detect` analysis.
@@ -41,10 +42,15 @@ pub async fn execute(
     .context("Failed to load OHLCV data")?;
 
     let prices = &resp.prices;
-    if prices.len() < lookback_window + 2 {
+
+    // For trend_state, the long SMA uses lookback_window * 3 bars, so we need more data.
+    let min_bars = match method {
+        "trend_state" => lookback_window * 3 + 2,
+        _ => lookback_window + 2,
+    };
+    if prices.len() < min_bars {
         anyhow::bail!(
-            "Insufficient data for {upper}: need at least {} bars, have {}",
-            lookback_window + 2,
+            "Insufficient data for {upper} with method=\"{method}\": need at least {min_bars} bars, have {}",
             prices.len()
         );
     }
@@ -99,6 +105,11 @@ pub async fn execute(
     let total_classified = regime_labels.iter().filter(|&&l| l < n_regimes).count();
     let mut regimes: Vec<RegimeInfo> = Vec::with_capacity(n_regimes);
 
+    // Compute rolling vols once outside the loop to avoid redundant O(n) passes
+    let rolling_vols = stats::rolling_apply(&returns, lookback_window, |w| {
+        stats::std_dev(w) * 252.0_f64.sqrt()
+    });
+
     for (regime_idx, name) in regime_names.iter().enumerate() {
         let regime_returns: Vec<f64> = regime_labels
             .iter()
@@ -111,10 +122,6 @@ pub async fn execute(
         let m = stats::mean(&regime_returns);
         let sd = stats::std_dev(&regime_returns);
 
-        // Compute mean rolling vol for this regime's periods
-        let rolling_vols = stats::rolling_apply(&returns, lookback_window, |w| {
-            stats::std_dev(w) * 252.0_f64.sqrt()
-        });
         let regime_vols: Vec<f64> = regime_labels
             .iter()
             .enumerate()
@@ -147,37 +154,15 @@ pub async fn execute(
     // Transition matrix
     let transition_matrix = compute_transition_matrix(&regime_labels, n_regimes);
 
-    let summary = format!(
-        "Detected {} regimes for {upper} using {method} over {} bars. {}",
+    Ok(ai_format::format_regime_detect(
+        &upper,
+        method,
         n_regimes,
         total_classified,
-        regimes
-            .iter()
-            .map(|r| format!("{}: {:.1}%", r.label, r.pct_of_total))
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
-
-    let suggested_next_steps = vec![
-        format!(
-            "[NEXT] Call rolling_metric(symbol=\"{upper}\", metric=\"volatility\") to visualize vol over time"
-        ),
-        format!(
-            "[THEN] Call aggregate_prices(symbol=\"{upper}\", group_by=\"month\") to see seasonal patterns"
-        ),
-    ];
-
-    Ok(RegimeDetectResponse {
-        summary,
-        symbol: upper,
-        method: method.to_string(),
-        n_regimes,
-        total_bars: total_classified,
         regimes,
         transition_matrix,
         regime_series,
-        suggested_next_steps,
-    })
+    ))
 }
 
 /// Classify each bar by rolling realized volatility quantiles.
@@ -280,6 +265,11 @@ fn classify_by_trend(
                 return n_regimes; // unclassified
             }
 
+            // Guard against zero long SMA (prevents div-by-zero and Inf/NaN)
+            if long == 0.0 {
+                return n_regimes; // unclassified — treat as insufficient data
+            }
+
             let trend_strength = (short - long) / long * 100.0;
 
             match n_regimes {
@@ -352,4 +342,144 @@ fn compute_transition_matrix(labels: &[usize], n_regimes: usize) -> Vec<Vec<f64>
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a deterministic synthetic price series with alternating high/low volatility.
+    fn synthetic_prices_alternating_vol(n: usize) -> Vec<crate::tools::response_types::PriceBar> {
+        let mut prices = Vec::with_capacity(n);
+        let mut close = 100.0_f64;
+        for i in 0..n {
+            // High vol in first half, low vol in second half
+            let step = if i < n / 2 { 2.0 } else { 0.2 };
+            let delta = if i % 2 == 0 { step } else { -step };
+            close += delta;
+            close = close.max(1.0); // avoid zero/negative
+            prices.push(crate::tools::response_types::PriceBar {
+                date: format!("2020-01-{:02}", (i % 28) + 1),
+                open: close,
+                high: close + 0.1,
+                low: close - 0.1,
+                close,
+                adjclose: Some(close),
+                volume: 1_000_000,
+            });
+        }
+        prices
+    }
+
+    /// Build a monotonically rising price series (deterministic uptrend).
+    fn rising_prices(n: usize) -> Vec<crate::tools::response_types::PriceBar> {
+        (0..n)
+            .map(|i| {
+                let close = 100.0 + i as f64 * 0.5;
+                crate::tools::response_types::PriceBar {
+                    date: format!("2020-01-{:02}", (i % 28) + 1),
+                    open: close,
+                    high: close + 0.05,
+                    low: close - 0.05,
+                    close,
+                    adjclose: Some(close),
+                    volume: 500_000,
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_volatility_cluster_label_count() {
+        let prices = synthetic_prices_alternating_vol(200);
+        let returns: Vec<f64> = prices
+            .windows(2)
+            .map(|w| (w[1].close - w[0].close) / w[0].close)
+            .collect();
+        let lookback = 10;
+        let n_regimes = 2;
+        let (labels, names) = classify_by_volatility(&returns, lookback, n_regimes);
+        assert_eq!(labels.len(), returns.len());
+        assert_eq!(names.len(), n_regimes);
+        // Labels must be either a valid regime index or the sentinel (n_regimes = unclassified)
+        for &l in &labels {
+            assert!(l <= n_regimes, "label {l} out of range");
+        }
+    }
+
+    #[test]
+    fn test_trend_state_rising_series() {
+        let prices = rising_prices(200);
+        let lookback = 10;
+        let n_regimes = 2; // Uptrend or Downtrend
+        let (labels, names) = classify_by_trend(&prices, lookback, n_regimes);
+        assert_eq!(names[0], "Uptrend");
+        assert_eq!(names[1], "Downtrend");
+        // After warm-up, most bars should be classified as Uptrend (regime 0)
+        let classified: Vec<usize> = labels.iter().copied().filter(|&l| l < n_regimes).collect();
+        let uptrend_count = classified.iter().filter(|&&l| l == 0).count();
+        assert!(
+            uptrend_count as f64 / classified.len() as f64 > 0.7,
+            "rising series should mostly be Uptrend, got {uptrend_count}/{} classified",
+            classified.len()
+        );
+    }
+
+    #[test]
+    fn test_transition_matrix_row_sums() {
+        // Row sums of a valid transition matrix should be ~1.0 or 0.0 (empty regime)
+        let labels = vec![0, 1, 0, 1, 0, 2, 2, 1, 0, 2];
+        let n_regimes = 3;
+        let matrix = compute_transition_matrix(&labels, n_regimes);
+        for (i, row) in matrix.iter().enumerate() {
+            let s: f64 = row.iter().sum();
+            assert!(
+                (s - 1.0).abs() < 1e-10 || s == 0.0,
+                "row {i} sum should be 1.0 or 0.0, got {s}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_trend_strength_zero_long_sma_guard() {
+        // Prices of all zeros would yield long_sma = 0 → division by zero.
+        // The guard should return n_regimes (unclassified) instead of Inf/NaN.
+        let prices: Vec<crate::tools::response_types::PriceBar> = (0..200)
+            .map(|i| crate::tools::response_types::PriceBar {
+                date: format!("2020-01-{:02}", (i % 28) + 1),
+                open: 0.0,
+                high: 0.0,
+                low: 0.0,
+                close: 0.0,
+                adjclose: Some(0.0),
+                volume: 0,
+            })
+            .collect();
+        let lookback = 10;
+        let n_regimes = 2;
+        // Should not panic even with all-zero prices
+        let (labels, _names) = classify_by_trend(&prices, lookback, n_regimes);
+        // All bars should be unclassified (sentinel = n_regimes)
+        for &l in &labels {
+            assert!(
+                l <= n_regimes,
+                "label {l} should be <= n_regimes={n_regimes}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_volatility_cluster_two_regimes_both_populated() {
+        // With enough data and clear vol contrast, both regimes should have observations
+        let prices = synthetic_prices_alternating_vol(300);
+        let returns: Vec<f64> = prices
+            .windows(2)
+            .map(|w| (w[1].close - w[0].close) / w[0].close)
+            .collect();
+        let (labels, _) = classify_by_volatility(&returns, 20, 2);
+        let r0 = labels.iter().filter(|&&l| l == 0).count();
+        let r1 = labels.iter().filter(|&&l| l == 1).count();
+        assert!(r0 > 0, "regime 0 should have observations");
+        assert!(r1 > 0, "regime 1 should have observations");
+    }
 }

@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::data::cache::CachedStore;
 use crate::stats;
+use crate::tools::ai_format;
 use crate::tools::response_types::{RollingMetricResponse, RollingPoint, RollingStats};
 
 /// Execute the `rolling_metric` analysis.
@@ -67,6 +68,15 @@ pub async fn execute(
         })
         .collect();
     let dates: Vec<String> = resp.prices[1..].iter().map(|p| p.date.clone()).collect();
+
+    // Validate window size before computing
+    if window > returns.len() {
+        anyhow::bail!(
+            "Rolling window ({window} days) exceeds available return data ({} observations) for {upper}. \
+             Reduce the window or increase the years of history.",
+            returns.len()
+        );
+    }
 
     // Load benchmark if needed
     let bench_returns = if let Some(bench_sym) = benchmark {
@@ -224,30 +234,14 @@ pub async fn execute(
         trend: trend.to_string(),
     };
 
-    let summary = format!(
-        "Rolling {window}-day {metric} for {upper}: current={current:.4}, mean={s_mean:.4}, \
-         range=[{s_min:.4}, {s_max:.4}], trend={trend}.",
-    );
-
-    let suggested_next_steps = vec![
-        format!(
-            "[NEXT] Call distribution(source={{\"type\":\"price_returns\",\"symbol\":\"{upper}\"}}) for return distribution"
-        ),
-        format!(
-            "[THEN] Call regime_detect(symbol=\"{upper}\") to identify market regimes"
-        ),
-    ];
-
-    Ok(RollingMetricResponse {
-        summary,
-        symbol: upper,
-        metric: metric.to_string(),
+    Ok(ai_format::format_rolling_metric(
+        &upper,
+        metric,
         window,
-        n_observations: valid_values.len(),
-        stats: rolling_stats,
+        valid_values.len(),
+        rolling_stats,
         series,
-        suggested_next_steps,
-    })
+    ))
 }
 
 /// Rolling paired computation (e.g., for beta, correlation) filtering NaN benchmark values.
@@ -273,4 +267,97 @@ where
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stats;
+
+    fn flat_returns(n: usize, r: f64) -> Vec<f64> {
+        vec![r; n]
+    }
+
+    #[test]
+    fn test_rolling_volatility_constant_returns() {
+        // Constant returns → zero volatility
+        let returns = flat_returns(100, 0.001);
+        let window = 21;
+        let vols = stats::rolling_apply(&returns, window, |w| stats::std_dev(w) * 252.0_f64.sqrt());
+        // After warm-up period, all values should be ~0
+        for &v in &vols[window - 1..] {
+            assert!(v < 1e-10, "constant returns should give zero vol, got {v}");
+        }
+    }
+
+    #[test]
+    fn test_rolling_apply_nan_prefix() {
+        // First (window-1) values should be NaN
+        let returns = flat_returns(50, 0.002);
+        let window = 10;
+        let result = stats::rolling_apply(&returns, window, stats::mean);
+        for (i, val) in result.iter().enumerate().take(window - 1) {
+            assert!(val.is_nan(), "index {i} should be NaN before warmup");
+        }
+        assert!(
+            result[window - 1].is_finite(),
+            "first complete window should be finite"
+        );
+    }
+
+    #[test]
+    fn test_rolling_paired_nan_bench_filtered() {
+        // Benchmark with NaN values: those pairs should be excluded
+        let asset = vec![0.01, 0.02, -0.01, 0.03, -0.02];
+        let bench = vec![0.01, f64::NAN, -0.01, 0.03, f64::NAN];
+        let window = 3;
+        let result = rolling_paired(&asset, &bench, window, |a, b| {
+            // If NaN filtering works, we only receive valid pairs
+            assert!(a.iter().all(|v| v.is_finite()));
+            assert!(b.iter().all(|v| v.is_finite()));
+            stats::pearson(a, b)
+        });
+        // Index 0 and 1: not enough window → NaN
+        assert!(result[0].is_nan());
+        assert!(result[1].is_nan());
+        // Index 2: window [0..=2], bench[1]=NaN → only 2 valid pairs (0 and 2)
+        // Should produce a finite or NaN result (but not panic)
+        let _ = result[2];
+    }
+
+    #[test]
+    fn test_rolling_max_drawdown_no_loss() {
+        // All positive returns → max drawdown = 0
+        let returns = flat_returns(50, 0.005);
+        let window = 21;
+        let result = stats::rolling_apply(&returns, window, |w| {
+            let mut equity = 1.0_f64;
+            let mut peak = 1.0_f64;
+            let mut max_dd = 0.0_f64;
+            for &r in w {
+                equity *= 1.0 + r;
+                peak = peak.max(equity);
+                max_dd = max_dd.max((peak - equity) / peak);
+            }
+            max_dd * 100.0
+        });
+        for &v in result.iter().skip(window - 1) {
+            assert!(
+                v < 1e-10,
+                "no-loss series should have zero drawdown, got {v}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_valid_values_excludes_nan() {
+        let series_values = [f64::NAN, f64::NAN, 0.5, 0.6, 0.7];
+        let valid: Vec<f64> = series_values
+            .iter()
+            .copied()
+            .filter(|v| v.is_finite())
+            .collect();
+        assert_eq!(valid.len(), 3);
+        assert!((valid[0] - 0.5).abs() < 1e-10);
+    }
 }
