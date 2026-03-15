@@ -34,6 +34,7 @@ pub fn median(data: &[f64]) -> f64 {
 }
 
 /// Percentile (0-100 scale) using linear interpolation. Returns 0.0 for empty slices.
+/// Clamps `pct` to [0.0, 100.0] to prevent out-of-bounds panics.
 pub fn percentile(data: &[f64], pct: f64) -> f64 {
     let mut sorted: Vec<f64> = data.iter().copied().filter(|x| x.is_finite()).collect();
     if sorted.is_empty() {
@@ -44,6 +45,7 @@ pub fn percentile(data: &[f64], pct: f64) -> f64 {
     if n == 1 {
         return sorted[0];
     }
+    let pct = pct.clamp(0.0, 100.0);
     let rank = (pct / 100.0) * (n - 1) as f64;
     let lower = rank.floor() as usize;
     let upper = rank.ceil() as usize;

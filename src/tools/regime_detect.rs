@@ -55,15 +55,19 @@ pub async fn execute(
         );
     }
 
-    // Compute daily returns, skipping bars where prior close is zero
-    let mut returns: Vec<f64> = Vec::with_capacity(prices.len());
-    let mut dates: Vec<String> = Vec::with_capacity(prices.len());
-    for w in prices.windows(2) {
-        if w[0].close != 0.0 {
-            returns.push((w[1].close - w[0].close) / w[0].close);
-            dates.push(w[1].date.clone());
-        }
-    }
+    // Compute daily returns; emit NaN for zero-close bars to preserve index alignment
+    // with SMA arrays (critical for classify_by_trend).
+    let returns: Vec<f64> = prices
+        .windows(2)
+        .map(|w| {
+            if w[0].close == 0.0 {
+                f64::NAN
+            } else {
+                (w[1].close - w[0].close) / w[0].close
+            }
+        })
+        .collect();
+    let dates: Vec<String> = prices[1..].iter().map(|p| p.date.clone()).collect();
 
     let (regime_labels, regime_names) = match method {
         "volatility_cluster" => classify_by_volatility(&returns, lookback_window, n_regimes),
@@ -239,14 +243,14 @@ fn classify_by_trend(
     let short_sma = stats::rolling_apply(&closes, short_window, stats::mean);
     let long_sma = stats::rolling_apply(&closes, long_window, stats::mean);
 
-    // Returns for strength measurement (skip zero-close bars)
+    // Returns for strength measurement; NaN for zero-close to preserve index alignment with SMAs
     let returns: Vec<f64> = closes
         .windows(2)
-        .filter_map(|w| {
+        .map(|w| {
             if w[0] == 0.0 {
-                None
+                f64::NAN
             } else {
-                Some((w[1] - w[0]) / w[0])
+                (w[1] - w[0]) / w[0]
             }
         })
         .collect();
