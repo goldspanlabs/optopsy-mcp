@@ -262,6 +262,8 @@ Single entry point for discovering built-in signals and creating/managing custom
 
 **Available formula functions:** `sma(col, n)`, `ema(col, n)`, `std(col, n)`, `max(col, n)`, `min(col, n)`, `abs(expr)`, `change(col, n)`, `pct_change(col, n)`
 
+**Available date/time functions (zero-argument):** `day_of_week()` (1=Mon..7=Sun), `month()` (1-12), `day_of_month()` (1-31), `hour()` (0-23), `minute()` (0-59), `week_of_year()` (1-53). These extract temporal components from the bar's date column. For daily bars, hour/minute return 0.
+
 ### Analysis Tools
 
 #### `run_options_backtest`

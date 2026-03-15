@@ -418,6 +418,35 @@ pub const SIGNAL_CATALOG: &[SignalInfo] = &[
         params: "column, period",
         formula_example: "iv_rank(iv, 252) > 50",
     },
+    // ── Datetime ─────────────────────────────────────────────────────
+    SignalInfo {
+        name: "Day of Week Filter",
+        category: "datetime",
+        description: "Filter by day of week (1=Mon..7=Sun, ISO 8601)",
+        params: "(none)",
+        formula_example: "day_of_week() == 1",
+    },
+    SignalInfo {
+        name: "Month Filter",
+        category: "datetime",
+        description: "Filter by month (1-12), useful for seasonal patterns",
+        params: "(none)",
+        formula_example: "month() >= 11 or month() <= 4",
+    },
+    SignalInfo {
+        name: "Week of Year",
+        category: "datetime",
+        description: "Filter by ISO week number (1-53)",
+        params: "(none)",
+        formula_example: "week_of_year() <= 10",
+    },
+    SignalInfo {
+        name: "Time Window",
+        category: "datetime",
+        description: "Filter by hour of day (0-23), useful for intraday patterns",
+        params: "(none)",
+        formula_example: "hour() >= 9 and hour() <= 15",
+    },
     // ── Utility ───────────────────────────────────────────────────────
     SignalInfo {
         name: "Conditional",
@@ -496,8 +525,8 @@ mod tests {
 
     #[test]
     fn catalog_has_all_signals() {
-        // 59 signals across 9 domain categories
-        assert_eq!(SIGNAL_CATALOG.len(), 59);
+        // 63 signals across 10 domain categories
+        assert_eq!(SIGNAL_CATALOG.len(), 63);
     }
 
     #[test]
@@ -660,6 +689,7 @@ mod tests {
             "volume",
             "price",
             "iv",
+            "datetime",
             "utility",
             "cross-symbol",
         ];
