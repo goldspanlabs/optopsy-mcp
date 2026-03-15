@@ -116,7 +116,14 @@ pub async fn execute(
             .iter()
             .enumerate()
             .filter(|(_, &l)| l == regime_idx)
-            .filter_map(|(i, _)| returns.get(i).copied())
+            .filter_map(|(i, _)| {
+                let r = returns.get(i).copied().unwrap_or(f64::NAN);
+                if r.is_finite() {
+                    Some(r)
+                } else {
+                    None
+                }
+            })
             .collect();
 
         let count = regime_returns.len();

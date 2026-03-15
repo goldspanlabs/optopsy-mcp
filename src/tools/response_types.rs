@@ -576,7 +576,7 @@ pub struct CorrelationSeries {
     /// Ticker symbol
     #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub symbol: String,
-    /// Price field: "close" (default), "open", "high", "low", "volume", "return"
+    /// Price field: "close", "open", "high", "low", "volume", "return" (default)
     #[serde(default = "default_corr_field")]
     #[garde(length(min = 1))]
     pub field: String,

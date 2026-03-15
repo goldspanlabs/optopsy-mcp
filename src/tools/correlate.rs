@@ -96,11 +96,11 @@ pub async fn execute(
                 let closes: Vec<f64> = raw.iter().map(|r| r.0).collect();
                 Ok(closes
                     .windows(2)
-                    .filter_map(|w| {
+                    .map(|w| {
                         if w[0] == 0.0 {
-                            None
+                            f64::NAN
                         } else {
-                            Some((w[1] - w[0]) / w[0] * 100.0)
+                            (w[1] - w[0]) / w[0] * 100.0
                         }
                     })
                     .collect())
@@ -146,8 +146,25 @@ pub async fn execute(
         }
     };
 
-    // Trim to common length (guards against edge-case length mismatches)
-    let n = field_a.len().min(field_b.len()).min(dates.len());
+    // Trim to common length, then filter to pairs where both values are finite
+    let common = field_a.len().min(field_b.len()).min(dates.len());
+    let mut fa_clean = Vec::with_capacity(common);
+    let mut fb_clean = Vec::with_capacity(common);
+    let mut dates_clean = Vec::with_capacity(common);
+    for i in 0..common {
+        if field_a[i].is_finite() && field_b[i].is_finite() {
+            fa_clean.push(field_a[i]);
+            fb_clean.push(field_b[i]);
+            dates_clean.push(dates[i].clone());
+        }
+    }
+    let n = fa_clean.len();
+    if n < 2 {
+        anyhow::bail!(
+            "Insufficient overlapping data after alignment: need at least 2 finite observations, got {n}"
+        );
+    }
+    let (field_a, field_b, dates) = (fa_clean, fb_clean, dates_clean);
     let fa = &field_a[..n];
     let fb = &field_b[..n];
 
@@ -249,15 +266,15 @@ mod tests {
         (0..n).map(|i| start + i as f64 * step).collect()
     }
 
-    /// Compute returns from a price series (skipping zero-close bars).
+    /// Compute returns from a price series (NaN for zero-close to preserve alignment).
     fn to_returns(prices: &[f64]) -> Vec<f64> {
         prices
             .windows(2)
-            .filter_map(|w| {
+            .map(|w| {
                 if w[0] == 0.0 {
-                    None
+                    f64::NAN
                 } else {
-                    Some((w[1] - w[0]) / w[0] * 100.0)
+                    (w[1] - w[0]) / w[0] * 100.0
                 }
             })
             .collect()
