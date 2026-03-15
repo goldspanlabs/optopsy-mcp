@@ -1,8 +1,8 @@
 //! Shared statistical primitives for analysis tools.
 //!
-//! All functions operate on `&[f64]` slices for zero-copy access from Polars columns.
+//! All functions operate on `&[f64]` slices for efficient access from Polars columns.
 //! Uses `statrs` only for CDF evaluations (t-distribution, chi-squared); all
-//! descriptive statistics are hand-rolled for simplicity and zero allocation overhead.
+//! descriptive statistics are hand-rolled for simplicity.
 
 pub mod correlation;
 pub mod descriptive;

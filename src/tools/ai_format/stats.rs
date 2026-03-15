@@ -29,18 +29,24 @@ pub fn format_aggregate_prices(
         .filter(|b| b.p_value.is_some_and(|p| p < 0.05))
         .collect();
 
-    let summary = if sig_buckets.is_empty() {
-        format!(
-            "Aggregated {metric} for {upper} by {group_by} across {total_bars} bars. \
-             No buckets show statistically significant deviations from zero (p<0.05).",
-        )
+    let summary = if metric == "return" {
+        // Return metric: include significance information
+        if sig_buckets.is_empty() {
+            format!(
+                "Aggregated {metric} for {upper} by {group_by} across {total_bars} bars. \
+                 No buckets show statistically significant deviations from zero (p<0.05).",
+            )
+        } else {
+            let sig_names: Vec<&str> = sig_buckets.iter().map(|b| b.label.as_str()).collect();
+            let sig_joined = sig_names.join(", ");
+            format!(
+                "Aggregated {metric} for {upper} by {group_by} across {total_bars} bars. \
+                 Statistically significant buckets (p<0.05): {sig_joined}.",
+            )
+        }
     } else {
-        let sig_names: Vec<&str> = sig_buckets.iter().map(|b| b.label.as_str()).collect();
-        let sig_joined = sig_names.join(", ");
-        format!(
-            "Aggregated {metric} for {upper} by {group_by} across {total_bars} bars. \
-             Statistically significant buckets (p<0.05): {sig_joined}.",
-        )
+        // Non-return metrics (volume, range): omit significance language
+        format!("Aggregated {metric} for {upper} by {group_by} across {total_bars} bars.",)
     };
 
     let suggested_next_steps = vec![
@@ -69,6 +75,7 @@ pub fn format_aggregate_prices(
 #[allow(clippy::too_many_arguments, clippy::similar_names)]
 pub fn format_distribution(
     source_label: String,
+    symbol: Option<&str>,
     n: usize,
     mean: f64,
     std_dev: f64,
@@ -95,26 +102,30 @@ pub fn format_distribution(
             }
         });
 
-    // Extract symbol from source label for next steps (best effort)
-    let symbol_hint = source_label
-        .split_whitespace()
-        .next()
-        .unwrap_or("symbol")
-        .to_uppercase();
-
     let summary = format!(
         "Distribution of {source_label}: {n} observations, mean={mean:.4}, std={std_dev:.4}, \
          skew={skewness:.3}, kurtosis={kurtosis:.3}. {normal_text}.",
     );
 
-    let suggested_next_steps = vec![
-        format!(
-            "[NEXT] Call aggregate_prices(symbol=\"{symbol_hint}\") to check for seasonal patterns"
-        ),
-        format!(
-            "[THEN] Call rolling_metric(symbol=\"{symbol_hint}\", metric=\"volatility\") to see how risk changes over time"
-        ),
-    ];
+    // Only emit symbol-based next steps when the source is price data (symbol is known).
+    let suggested_next_steps = if let Some(sym) = symbol {
+        let sym_upper = sym.to_uppercase();
+        vec![
+            format!(
+                "[NEXT] Call aggregate_prices(symbol=\"{sym_upper}\") to check for seasonal patterns"
+            ),
+            format!(
+                "[THEN] Call rolling_metric(symbol=\"{sym_upper}\", metric=\"volatility\") to see how risk changes over time"
+            ),
+        ]
+    } else {
+        vec![
+            "[NEXT] Call aggregate_prices with a price symbol to check for seasonal patterns"
+                .to_string(),
+            "[THEN] Call rolling_metric with a price symbol to see how risk changes over time"
+                .to_string(),
+        ]
+    };
 
     DistributionResponse {
         summary,

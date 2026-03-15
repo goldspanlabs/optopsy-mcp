@@ -16,7 +16,8 @@ pub async fn execute(
     source: &DistributionSource,
     n_bins: usize,
 ) -> Result<DistributionResponse> {
-    let (raw_values, source_label): (Vec<f64>, String) = match source {
+    let (raw_values, source_label, source_symbol): (Vec<f64>, String, Option<String>) = match source
+    {
         DistributionSource::PriceReturns { symbol, years } => {
             let upper = symbol.to_uppercase();
             let cutoff =
@@ -50,13 +51,13 @@ pub async fn execute(
                 })
                 .collect();
 
-            (returns, format!("{upper} daily returns (%)"))
+            (returns, format!("{upper} daily returns (%)"), Some(upper))
         }
         DistributionSource::TradePnl { values, label } => {
             if values.is_empty() {
                 anyhow::bail!("trade_pnl values array is empty");
             }
-            (values.clone(), label.clone())
+            (values.clone(), label.clone(), None)
         }
     };
 
@@ -137,6 +138,7 @@ pub async fn execute(
 
     Ok(ai_format::format_distribution(
         source_label,
+        source_symbol.as_deref(),
         n,
         m,
         sd,

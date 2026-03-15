@@ -140,7 +140,12 @@ pub async fn execute(
             0.0
         };
 
-        let p_value = stats::t_test_one_sample(values, 0.0).map(|r| r.p_value);
+        // One-sample t-test vs zero is meaningful only for return data
+        let p_value = if metric == "return" {
+            stats::t_test_one_sample(values, 0.0).map(|r| r.p_value)
+        } else {
+            None
+        };
 
         buckets.push(AggregateBucket {
             label: label.clone(),
