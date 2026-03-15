@@ -51,23 +51,56 @@ pub fn format_aggregate_prices(
 
     let mut key_findings = Vec::new();
     if metric == "return" {
-        if let Some(best) = buckets.iter().max_by(|a, b| a.mean.partial_cmp(&b.mean).unwrap_or(std::cmp::Ordering::Equal)) {
-            key_findings.push(format!("Highest mean {metric}: {} ({:.4})", best.label, best.mean));
+        if let Some(best) = buckets.iter().max_by(|a, b| {
+            a.mean
+                .partial_cmp(&b.mean)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }) {
+            key_findings.push(format!(
+                "Highest mean {metric}: {} ({:.4})",
+                best.label, best.mean
+            ));
         }
-        if let Some(worst) = buckets.iter().min_by(|a, b| a.mean.partial_cmp(&b.mean).unwrap_or(std::cmp::Ordering::Equal)) {
-            key_findings.push(format!("Lowest mean {metric}: {} ({:.4})", worst.label, worst.mean));
+        if let Some(worst) = buckets.iter().min_by(|a, b| {
+            a.mean
+                .partial_cmp(&b.mean)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }) {
+            key_findings.push(format!(
+                "Lowest mean {metric}: {} ({:.4})",
+                worst.label, worst.mean
+            ));
         }
         if sig_buckets.is_empty() {
-            key_findings.push("No statistically significant seasonal patterns detected".to_string());
+            key_findings
+                .push("No statistically significant seasonal patterns detected".to_string());
         } else {
-            key_findings.push(format!("{} of {} buckets show statistically significant deviations (p<0.05)", sig_buckets.len(), buckets.len()));
+            key_findings.push(format!(
+                "{} of {} buckets show statistically significant deviations (p<0.05)",
+                sig_buckets.len(),
+                buckets.len()
+            ));
         }
     } else {
-        if let Some(best) = buckets.iter().max_by(|a, b| a.mean.partial_cmp(&b.mean).unwrap_or(std::cmp::Ordering::Equal)) {
-            key_findings.push(format!("Highest mean {metric}: {} ({:.4})", best.label, best.mean));
+        if let Some(best) = buckets.iter().max_by(|a, b| {
+            a.mean
+                .partial_cmp(&b.mean)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }) {
+            key_findings.push(format!(
+                "Highest mean {metric}: {} ({:.4})",
+                best.label, best.mean
+            ));
         }
-        if let Some(worst) = buckets.iter().min_by(|a, b| a.mean.partial_cmp(&b.mean).unwrap_or(std::cmp::Ordering::Equal)) {
-            key_findings.push(format!("Lowest mean {metric}: {} ({:.4})", worst.label, worst.mean));
+        if let Some(worst) = buckets.iter().min_by(|a, b| {
+            a.mean
+                .partial_cmp(&b.mean)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }) {
+            key_findings.push(format!(
+                "Lowest mean {metric}: {} ({:.4})",
+                worst.label, worst.mean
+            ));
         }
     }
 
@@ -151,18 +184,41 @@ pub fn format_distribution(
     };
 
     let mut key_findings = vec![
-        format!("Mean={mean:.4}, Median={median:.4} — {}", if (mean - median).abs() / std_dev.max(1e-10) > 0.5 { "notable mean-median divergence (skewed)" } else { "mean and median are close (symmetric)" }),
-        format!("Skewness={skewness:.3}, Kurtosis={kurtosis:.3} — {}", if kurtosis > 1.0 { "fat tails present" } else if kurtosis < -0.5 { "thin tails" } else { "near-normal tail behavior" }),
+        format!(
+            "Mean={mean:.4}, Median={median:.4} — {}",
+            if (mean - median).abs() / std_dev.max(1e-10) > 0.5 {
+                "notable mean-median divergence (skewed)"
+            } else {
+                "mean and median are close (symmetric)"
+            }
+        ),
+        format!(
+            "Skewness={skewness:.3}, Kurtosis={kurtosis:.3} — {}",
+            if kurtosis > 1.0 {
+                "fat tails present"
+            } else if kurtosis < -0.5 {
+                "thin tails"
+            } else {
+                "near-normal tail behavior"
+            }
+        ),
     ];
     if let Some(ref nt) = normality {
         key_findings.push(format!(
             "Jarque-Bera p={:.4} — {}",
             nt.p_value,
-            if nt.is_normal { "consistent with normality" } else { "significantly non-normal" }
+            if nt.is_normal {
+                "consistent with normality"
+            } else {
+                "significantly non-normal"
+            }
         ));
     }
     if let Some(ref tr) = tail_ratio {
-        key_findings.push(format!("Tail ratio: {:.2} — {}", tr.ratio, tr.interpretation));
+        key_findings.push(format!(
+            "Tail ratio: {:.2} — {}",
+            tr.ratio, tr.interpretation
+        ));
     }
 
     DistributionResponse {
@@ -231,16 +287,28 @@ pub fn format_correlate(
 
     let mut key_findings = vec![
         format!("{strength} {direction} correlation (Pearson={pearson:.3})"),
-        format!("R²={r_squared:.3} — {:.1}% of variance explained", r_squared * 100.0),
+        format!(
+            "R²={r_squared:.3} — {:.1}% of variance explained",
+            r_squared * 100.0
+        ),
     ];
     if let Some(p) = p_value {
         key_findings.push(format!(
             "p-value={p:.4} — {}",
-            if p < 0.01 { "highly significant" } else if p < 0.05 { "significant" } else { "not significant" }
+            if p < 0.01 {
+                "highly significant"
+            } else if p < 0.05 {
+                "significant"
+            } else {
+                "not significant"
+            }
         ));
     }
     if (pearson - spearman).abs() > 0.15 {
-        key_findings.push(format!("Pearson-Spearman gap={:.3} — possible nonlinear relationship", (pearson - spearman).abs()));
+        key_findings.push(format!(
+            "Pearson-Spearman gap={:.3} — possible nonlinear relationship",
+            (pearson - spearman).abs()
+        ));
     }
 
     CorrelateResponse {
@@ -289,7 +357,14 @@ pub fn format_rolling_metric(
     ];
 
     let key_findings = vec![
-        format!("Current {metric}={current:.4} vs mean={s_mean:.4} — {}", if current > s_mean { "above average" } else { "below average" }),
+        format!(
+            "Current {metric}={current:.4} vs mean={s_mean:.4} — {}",
+            if current > s_mean {
+                "above average"
+            } else {
+                "below average"
+            }
+        ),
         format!("Range: [{s_min:.4}, {s_max:.4}], trend is {trend}"),
         format!("{window}-day rolling window over {n_observations} observations"),
     ];
@@ -342,10 +417,22 @@ pub fn format_regime_detect(
 
     let mut key_findings: Vec<String> = regimes
         .iter()
-        .map(|r| format!("{}: {:.1}% of bars, mean return={:.4}, vol={:.4}", r.label, r.pct_of_total, r.mean_return, r.std_dev))
+        .map(|r| {
+            format!(
+                "{}: {:.1}% of bars, mean return={:.4}, vol={:.4}",
+                r.label, r.pct_of_total, r.mean_return, r.std_dev
+            )
+        })
         .collect();
-    if let Some(dominant) = regimes.iter().max_by(|a, b| a.pct_of_total.partial_cmp(&b.pct_of_total).unwrap_or(std::cmp::Ordering::Equal)) {
-        key_findings.push(format!("Dominant regime: {} ({:.1}% of time)", dominant.label, dominant.pct_of_total));
+    if let Some(dominant) = regimes.iter().max_by(|a, b| {
+        a.pct_of_total
+            .partial_cmp(&b.pct_of_total)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    }) {
+        key_findings.push(format!(
+            "Dominant regime: {} ({:.1}% of time)",
+            dominant.label, dominant.pct_of_total
+        ));
     }
 
     RegimeDetectResponse {
