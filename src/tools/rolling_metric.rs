@@ -191,6 +191,14 @@ pub async fn execute(
         .copied()
         .filter(|v| v.is_finite())
         .collect();
+
+    if valid_values.is_empty() {
+        anyhow::bail!(
+            "Rolling {metric} for {upper} produced no finite values — \
+             check benchmark alignment or try increasing the years of history."
+        );
+    }
+
     let current = valid_values.last().copied().unwrap_or(0.0);
     let s_mean = stats::mean(&valid_values);
     let s_min = valid_values.iter().copied().fold(f64::INFINITY, f64::min);
@@ -245,25 +253,31 @@ pub async fn execute(
 }
 
 /// Rolling paired computation (e.g., for beta, correlation) filtering NaN benchmark values.
+///
+/// Uses pre-allocated scratch buffers (capacity = `window`) reused across iterations
+/// to avoid per-window heap allocations.
 fn rolling_paired<F>(asset: &[f64], bench: &[f64], window: usize, f: F) -> Vec<f64>
 where
     F: Fn(&[f64], &[f64]) -> f64,
 {
     let n = asset.len().min(bench.len());
     let mut result = vec![f64::NAN; n];
+    // Pre-allocate scratch buffers once; cleared and refilled each iteration.
+    let mut a_buf = Vec::with_capacity(window);
+    let mut b_buf = Vec::with_capacity(window);
     for i in (window - 1)..n {
         let start = i + 1 - window;
-        let a_win = &asset[start..=i];
-        let b_win = &bench[start..=i];
-        // Filter pairs where benchmark is NaN
-        let (a_valid, b_valid): (Vec<f64>, Vec<f64>) = a_win
-            .iter()
-            .zip(b_win.iter())
-            .filter(|(_, b)| b.is_finite())
-            .map(|(&a, &b)| (a, b))
-            .unzip();
-        if a_valid.len() >= 2 {
-            result[i] = f(&a_valid, &b_valid);
+        a_buf.clear();
+        b_buf.clear();
+        // Filter pairs where benchmark is non-finite
+        for (&a, &b) in asset[start..=i].iter().zip(bench[start..=i].iter()) {
+            if b.is_finite() {
+                a_buf.push(a);
+                b_buf.push(b);
+            }
+        }
+        if a_buf.len() >= 2 {
+            result[i] = f(&a_buf, &b_buf);
         }
     }
     result
