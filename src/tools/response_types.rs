@@ -763,6 +763,7 @@ pub struct RegimeDetectResponse {
     pub method: String,
     pub n_regimes: usize,
     pub total_bars: usize,
+    pub classified_bars: usize,
     pub regimes: Vec<RegimeInfo>,
     pub transition_matrix: Vec<Vec<f64>>,
     pub regime_series: Vec<RegimeSeriesPoint>,

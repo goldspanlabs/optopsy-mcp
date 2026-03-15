@@ -389,6 +389,7 @@ pub fn format_regime_detect(
     method: &str,
     n_regimes: usize,
     total_bars: usize,
+    classified_bars: usize,
     regimes: Vec<RegimeInfo>,
     transition_matrix: Vec<Vec<f64>>,
     regime_series: Vec<RegimeSeriesPoint>,
@@ -396,9 +397,10 @@ pub fn format_regime_detect(
     let upper = symbol.to_uppercase();
 
     let summary = format!(
-        "Detected {} regimes for {upper} using {method} over {} bars. {}",
+        "Detected {} regimes for {upper} using {method} over {} bars ({} classified). {}",
         n_regimes,
         total_bars,
+        classified_bars,
         regimes
             .iter()
             .map(|r| format!("{}: {:.1}%", r.label, r.pct_of_total))
@@ -441,6 +443,7 @@ pub fn format_regime_detect(
         method: method.to_string(),
         n_regimes,
         total_bars,
+        classified_bars,
         regimes,
         transition_matrix,
         regime_series,

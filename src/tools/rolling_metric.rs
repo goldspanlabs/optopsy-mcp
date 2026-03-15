@@ -55,19 +55,15 @@ pub async fn execute(
         anyhow::bail!("Insufficient price data for {upper}");
     }
 
-    // Compute daily returns
-    let returns: Vec<f64> = resp
-        .prices
-        .windows(2)
-        .map(|w| {
-            if w[0].close == 0.0 {
-                0.0
-            } else {
-                (w[1].close - w[0].close) / w[0].close
-            }
-        })
-        .collect();
-    let dates: Vec<String> = resp.prices[1..].iter().map(|p| p.date.clone()).collect();
+    // Compute daily returns, skipping bars where prior close is zero
+    let mut returns: Vec<f64> = Vec::with_capacity(resp.prices.len());
+    let mut dates: Vec<String> = Vec::with_capacity(resp.prices.len());
+    for w in resp.prices.windows(2) {
+        if w[0].close != 0.0 {
+            returns.push((w[1].close - w[0].close) / w[0].close);
+            dates.push(w[1].date.clone());
+        }
+    }
 
     // Validate window size before computing
     if window > returns.len() {

@@ -55,18 +55,15 @@ pub async fn execute(
         );
     }
 
-    // Compute daily returns
-    let returns: Vec<f64> = prices
-        .windows(2)
-        .map(|w| {
-            if w[0].close == 0.0 {
-                0.0
-            } else {
-                (w[1].close - w[0].close) / w[0].close
-            }
-        })
-        .collect();
-    let dates: Vec<String> = prices[1..].iter().map(|p| p.date.clone()).collect();
+    // Compute daily returns, skipping bars where prior close is zero
+    let mut returns: Vec<f64> = Vec::with_capacity(prices.len());
+    let mut dates: Vec<String> = Vec::with_capacity(prices.len());
+    for w in prices.windows(2) {
+        if w[0].close != 0.0 {
+            returns.push((w[1].close - w[0].close) / w[0].close);
+            dates.push(w[1].date.clone());
+        }
+    }
 
     let (regime_labels, regime_names) = match method {
         "volatility_cluster" => classify_by_volatility(&returns, lookback_window, n_regimes),
@@ -158,6 +155,7 @@ pub async fn execute(
         &upper,
         method,
         n_regimes,
+        prices.len(),
         total_classified,
         regimes,
         transition_matrix,
@@ -241,14 +239,14 @@ fn classify_by_trend(
     let short_sma = stats::rolling_apply(&closes, short_window, stats::mean);
     let long_sma = stats::rolling_apply(&closes, long_window, stats::mean);
 
-    // Returns for strength measurement
+    // Returns for strength measurement (skip zero-close bars)
     let returns: Vec<f64> = closes
         .windows(2)
-        .map(|w| {
+        .filter_map(|w| {
             if w[0] == 0.0 {
-                0.0
+                None
             } else {
-                (w[1] - w[0]) / w[0]
+                Some((w[1] - w[0]) / w[0])
             }
         })
         .collect();

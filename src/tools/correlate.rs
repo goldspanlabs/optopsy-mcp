@@ -96,7 +96,13 @@ pub async fn execute(
                 let closes: Vec<f64> = raw.iter().map(|r| r.0).collect();
                 Ok(closes
                     .windows(2)
-                    .map(|w| if w[0] == 0.0 { 0.0 } else { (w[1] - w[0]) / w[0] * 100.0 })
+                    .filter_map(|w| {
+                        if w[0] == 0.0 {
+                            None
+                        } else {
+                            Some((w[1] - w[0]) / w[0] * 100.0)
+                        }
+                    })
                     .collect())
             }
             _ => anyhow::bail!("Invalid field: \"{field}\". Must be one of: close, open, high, low, volume, return"),
@@ -146,23 +152,36 @@ pub async fn execute(
     let fb = &field_b[..n];
 
     // Compute full-period stats
-    let pearson = stats::pearson(fa, fb);
+    // Clamp pearson to [-1, 1] to guard against floating-point overshoot
+    let pearson = stats::pearson(fa, fb).clamp(-1.0, 1.0);
     let spearman = stats::spearman(fa, fb);
     let r_squared = pearson * pearson;
 
     // P-value for pearson (t-test approximation)
     let p_value = if n > 2 {
-        let t_stat = pearson * ((n as f64 - 2.0) / (1.0 - r_squared)).sqrt();
-        let dist = statrs::distribution::StudentsT::new(0.0, 1.0, (n - 2) as f64).ok();
-        dist.map(|d| {
-            use statrs::distribution::ContinuousCDF;
-            2.0 * (1.0 - d.cdf(t_stat.abs()))
-        })
+        let denom = (1.0 - r_squared).max(0.0);
+        if denom < f64::EPSILON {
+            // Perfect correlation: p-value is effectively 0
+            Some(0.0)
+        } else {
+            let t_stat = pearson * ((n as f64 - 2.0) / denom).sqrt();
+            let dist = statrs::distribution::StudentsT::new(0.0, 1.0, (n - 2) as f64).ok();
+            dist.map(|d| {
+                use statrs::distribution::ContinuousCDF;
+                2.0 * (1.0 - d.cdf(t_stat.abs()))
+            })
+        }
     } else {
         None
     };
 
     // Rolling correlation
+    if mode == "rolling" && n < window {
+        anyhow::bail!(
+            "Rolling window ({window}) exceeds available observations ({n}). \
+             Reduce the window or increase the years of history."
+        );
+    }
     let rolling_correlation = if mode == "rolling" && n >= window {
         let mut points = Vec::with_capacity(n - window + 1);
         for i in (window - 1)..n {
@@ -230,15 +249,15 @@ mod tests {
         (0..n).map(|i| start + i as f64 * step).collect()
     }
 
-    /// Compute returns from a price series.
+    /// Compute returns from a price series (skipping zero-close bars).
     fn to_returns(prices: &[f64]) -> Vec<f64> {
         prices
             .windows(2)
-            .map(|w| {
+            .filter_map(|w| {
                 if w[0] == 0.0 {
-                    0.0
+                    None
                 } else {
-                    (w[1] - w[0]) / w[0] * 100.0
+                    Some((w[1] - w[0]) / w[0] * 100.0)
                 }
             })
             .collect()

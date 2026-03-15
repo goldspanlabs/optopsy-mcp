@@ -4,7 +4,7 @@
 
 use statrs::distribution::{ChiSquared, ContinuousCDF, StudentsT};
 
-use super::descriptive::{mean, std_dev};
+use super::descriptive::mean;
 
 /// Result of a hypothesis test.
 #[derive(Debug, Clone)]
@@ -23,7 +23,8 @@ pub fn t_test_one_sample(data: &[f64], expected_mean: f64) -> Option<HypothesisR
         return None;
     }
     let m = mean(data);
-    let s = std_dev(data);
+    // t-test uses sample std dev (n-1 denominator)
+    let s = super::descriptive::std_dev(data);
     if s == 0.0 {
         return None;
     }
@@ -49,18 +50,28 @@ pub fn jarque_bera(data: &[f64]) -> Option<HypothesisResult> {
         return None;
     }
     let m = mean(data);
-    let s = std_dev(data);
-    if s == 0.0 {
+    let nf = n as f64;
+    // Population variance (n denominator) — JB requires biased estimators
+    let pop_var = data.iter().map(|x| (x - m).powi(2)).sum::<f64>() / nf;
+    if pop_var == 0.0 {
         return Some(HypothesisResult {
             statistic: 0.0,
             p_value: 1.0,
         });
     }
-    let nf = n as f64;
+    let pop_std = pop_var.sqrt();
     // Biased (population) skewness: m3 / sigma^3
-    let m3 = data.iter().map(|x| ((x - m) / s).powi(3)).sum::<f64>() / nf;
+    let m3 = data
+        .iter()
+        .map(|x| ((x - m) / pop_std).powi(3))
+        .sum::<f64>()
+        / nf;
     // Biased (population) excess kurtosis: m4 / sigma^4 - 3
-    let m4 = data.iter().map(|x| ((x - m) / s).powi(4)).sum::<f64>() / nf;
+    let m4 = data
+        .iter()
+        .map(|x| ((x - m) / pop_std).powi(4))
+        .sum::<f64>()
+        / nf;
     let excess_kurt = m4 - 3.0;
     let jb = (nf / 6.0) * (m3.powi(2) + excess_kurt.powi(2) / 4.0);
     let dist = ChiSquared::new(2.0).ok()?;
