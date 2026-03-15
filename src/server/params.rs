@@ -969,7 +969,7 @@ pub use crate::tools::response_types::DistributionSource;
 #[garde(context(()))]
 pub struct DistributionParams {
     /// Data source for the distribution
-    #[garde(skip)]
+    #[garde(dive)]
     pub source: DistributionSource,
     /// Number of histogram bins (default: 30)
     #[serde(default = "default_n_bins")]
@@ -984,10 +984,10 @@ pub use crate::tools::response_types::CorrelationSeries;
 #[garde(context(()))]
 pub struct CorrelateParams {
     /// First data series
-    #[garde(skip)]
+    #[garde(dive)]
     pub series_a: CorrelationSeries,
     /// Second data series
-    #[garde(skip)]
+    #[garde(dive)]
     pub series_b: CorrelationSeries,
     /// Correlation mode: "full" (default), "rolling"
     #[serde(default = "default_corr_mode")]

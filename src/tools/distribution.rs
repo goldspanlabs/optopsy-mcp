@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::data::cache::CachedStore;
 use crate::stats;
+use crate::tools::ai_format;
 use crate::tools::response_types::DistributionSource;
 use crate::tools::response_types::{DistributionResponse, HistogramBin, NormalityTest, TailRatio};
 
@@ -15,7 +16,7 @@ pub async fn execute(
     source: &DistributionSource,
     n_bins: usize,
 ) -> Result<DistributionResponse> {
-    let (values, source_label): (Vec<f64>, String) = match source {
+    let (raw_values, source_label): (Vec<f64>, String) = match source {
         DistributionSource::PriceReturns { symbol, years } => {
             let upper = symbol.to_uppercase();
             let cutoff =
@@ -58,6 +59,16 @@ pub async fn execute(
             (values.clone(), label.clone())
         }
     };
+
+    // Filter to finite values only — NaN/Inf propagates through all stats functions
+    let values: Vec<f64> = raw_values.into_iter().filter(|v| v.is_finite()).collect();
+    if values.len() < 2 {
+        anyhow::bail!(
+            "Insufficient finite observations in {source_label}: need at least 2, \
+             got {} (check for all-NaN or all-Inf input)",
+            values.len()
+        );
+    }
 
     let n = values.len();
     let m = stats::mean(&values);
@@ -124,46 +135,106 @@ pub async fn execute(
         None
     };
 
-    // Build summary
-    let normal_text = normality
-        .as_ref()
-        .map_or("normality test not available", |n| {
-            if n.is_normal {
-                "consistent with normal distribution"
-            } else {
-                "significantly non-normal"
-            }
-        });
-
-    let summary = format!(
-        "Distribution of {source_label}: {n} observations, mean={m:.4}, std={sd:.4}, \
-         skew={sk:.3}, kurtosis={kt:.3}. {normal_text}.",
-    );
-
-    let suggested_next_steps = vec![
-        "[NEXT] Call aggregate_prices to check for seasonal patterns".to_string(),
-        "[THEN] Call rolling_metric(metric=\"volatility\") to see how risk changes over time"
-            .to_string(),
-    ];
-
-    Ok(DistributionResponse {
-        summary,
-        source: source_label,
-        n_observations: n,
-        mean: m,
-        std_dev: sd,
-        median: md,
-        skewness: sk,
-        kurtosis: kt,
-        min: min_val,
-        max: max_val,
-        percentile_5: p5,
-        percentile_25: p25,
-        percentile_75: p75,
-        percentile_95: p95,
+    Ok(ai_format::format_distribution(
+        source_label,
+        n,
+        m,
+        sd,
+        md,
+        sk,
+        kt,
+        min_val,
+        max_val,
+        p5,
+        p25,
+        p75,
+        p95,
         histogram,
         normality,
         tail_ratio,
-        suggested_next_steps,
-    })
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::stats;
+
+    /// Build a synthetic normal-ish return series for testing.
+    fn synthetic_returns(n: usize) -> Vec<f64> {
+        // Simple deterministic series: sin-based with some variation
+        (0..n)
+            .map(|i| {
+                let x = i as f64 * 0.1;
+                x.sin() * 0.5 + (i % 7) as f64 * 0.1 - 0.3
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_finite_filter_removes_nan() {
+        let raw: Vec<f64> = vec![1.0, f64::NAN, 2.0, f64::INFINITY, 3.0, f64::NEG_INFINITY];
+        let filtered: Vec<f64> = raw.into_iter().filter(|v| v.is_finite()).collect();
+        assert_eq!(filtered, vec![1.0, 2.0, 3.0]);
+        assert_eq!(filtered.len(), 3);
+    }
+
+    #[test]
+    fn test_stats_on_known_data() {
+        let values = vec![1.0_f64, 2.0, 3.0, 4.0, 5.0];
+        let m = stats::mean(&values);
+        assert!((m - 3.0).abs() < 1e-10, "mean should be 3.0, got {m}");
+
+        let md = stats::median(&values);
+        assert!((md - 3.0).abs() < 1e-10, "median should be 3.0, got {md}");
+
+        let sd = stats::std_dev(&values);
+        // Population std dev ≈ 1.4142
+        assert!(sd > 1.0 && sd < 2.0, "std_dev out of range: {sd}");
+    }
+
+    #[test]
+    fn test_histogram_bin_count() {
+        let values = synthetic_returns(100);
+        let hist = stats::histogram(&values, 10);
+        assert_eq!(hist.len(), 10, "should have exactly 10 bins");
+        let total: usize = hist.iter().map(|b| b.count).sum();
+        assert_eq!(
+            total,
+            values.len(),
+            "bin counts should sum to total observations"
+        );
+    }
+
+    #[test]
+    fn test_percentiles_ordered() {
+        let values = synthetic_returns(200);
+        let p5 = stats::percentile(&values, 5.0);
+        let p25 = stats::percentile(&values, 25.0);
+        let p75 = stats::percentile(&values, 75.0);
+        let p95 = stats::percentile(&values, 95.0);
+        assert!(p5 <= p25, "p5={p5} should be <= p25={p25}");
+        assert!(p25 <= p75, "p25={p25} should be <= p75={p75}");
+        assert!(p75 <= p95, "p75={p75} should be <= p95={p95}");
+    }
+
+    #[test]
+    fn test_min_max_correct() {
+        let values = [-3.0_f64, -1.0, 0.0, 2.0, 5.0];
+        let min_val = values.iter().copied().fold(f64::INFINITY, f64::min);
+        let max_val = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        assert!((min_val - (-3.0)).abs() < 1e-10);
+        assert!((max_val - 5.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_tail_ratio_symmetric() {
+        // Standard normal-ish: ~5% each tail → ratio ≈ 1
+        let values: Vec<f64> = (-50..=50).map(|i| f64::from(i) * 0.04).collect();
+        let m = stats::mean(&values);
+        let sd = stats::std_dev(&values);
+        let left = values.iter().filter(|&&v| v < m - 2.0 * sd).count();
+        let right = values.iter().filter(|&&v| v > m + 2.0 * sd).count();
+        // For linear series, left == right (symmetric)
+        assert_eq!(left, right, "should be symmetric for uniform linear series");
+    }
 }

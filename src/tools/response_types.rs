@@ -3,6 +3,7 @@
 //! Every struct here derives `Serialize`, `Deserialize`, and `JsonSchema` so it can be
 //! serialized to JSON for the MCP wire format and introspected by schema-aware clients.
 
+use garde::Validate;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -537,36 +538,44 @@ fn default_corr_field() -> String {
 }
 
 /// Source for distribution analysis: either price returns or raw trade P&L values.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema, Validate)]
+#[garde(context(()))]
 #[serde(tag = "type")]
 pub enum DistributionSource {
     /// Compute returns from OHLCV price data
     #[serde(rename = "price_returns")]
     PriceReturns {
         /// Ticker symbol
+        #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
         symbol: String,
         /// Years of history (default: 5)
         #[serde(default = "default_analysis_years")]
+        #[garde(range(min = 1, max = 50))]
         years: u32,
     },
     /// Use pre-computed values (e.g., trade P&L array from a backtest)
     #[serde(rename = "trade_pnl")]
     TradePnl {
         /// Array of P&L values
+        #[garde(length(min = 1))]
         values: Vec<f64>,
         /// Label for this dataset
         #[serde(default = "default_pnl_label")]
+        #[garde(length(min = 1))]
         label: String,
     },
 }
 
 /// Series specification for correlation analysis.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema, Validate)]
+#[garde(context(()))]
 pub struct CorrelationSeries {
     /// Ticker symbol
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub symbol: String,
     /// Price field: "close" (default), "open", "high", "low", "volume", "return"
     #[serde(default = "default_corr_field")]
+    #[garde(length(min = 1))]
     pub field: String,
 }
 
@@ -578,14 +587,14 @@ pub struct AggregateBucket {
     /// Bucket label (e.g. "Monday", "January", "Q1", "2023")
     pub label: String,
     pub count: usize,
-    pub mean_return: f64,
-    pub median_return: f64,
+    pub mean: f64,
+    pub median: f64,
     pub std_dev: f64,
-    pub min_return: f64,
-    pub max_return: f64,
-    pub total_return: f64,
+    pub min: f64,
+    pub max: f64,
+    pub total: f64,
     pub positive_pct: f64,
-    /// One-sample t-test p-value vs zero (null: mean return = 0)
+    /// One-sample t-test p-value vs zero (null: mean = 0)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub p_value: Option<f64>,
 }

@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use crate::data::cache::CachedStore;
 use crate::stats;
+use crate::tools::ai_format;
 use crate::tools::response_types::{AggregateBucket, AggregatePricesResponse, DateRange};
 
 /// Execute the `aggregate_prices` analysis.
@@ -144,12 +145,12 @@ pub async fn execute(
         buckets.push(AggregateBucket {
             label: label.clone(),
             count,
-            mean_return: m,
-            median_return: md,
+            mean: m,
+            median: md,
             std_dev: sd,
-            min_return: min_val,
-            max_return: max_val,
-            total_return: total,
+            min: min_val,
+            max: max_val,
+            total,
             positive_pct,
             p_value,
         });
@@ -165,45 +166,9 @@ pub async fn execute(
         }
     }
 
-    // Build summary
-    let sig_buckets: Vec<&AggregateBucket> = buckets
-        .iter()
-        .filter(|b| b.p_value.is_some_and(|p| p < 0.05))
-        .collect();
-    let summary = if sig_buckets.is_empty() {
-        format!(
-            "Aggregated {metric} for {upper} by {group_by} across {total_bars} bars. \
-             No buckets show statistically significant deviations from zero (p<0.05).",
-        )
-    } else {
-        let sig_names: Vec<&str> = sig_buckets.iter().map(|b| b.label.as_str()).collect();
-        let sig_joined = sig_names.join(", ");
-        format!(
-            "Aggregated {metric} for {upper} by {group_by} across {total_bars} bars. \
-             Statistically significant buckets (p<0.05): {sig_joined}.",
-        )
-    };
-
-    let suggested_next_steps = vec![
-        format!(
-            "[NEXT] Call distribution(source={{\"type\":\"price_returns\",\"symbol\":\"{upper}\"}}) to analyze return distribution shape"
-        ),
-        format!(
-            "[THEN] Call regime_detect(symbol=\"{upper}\") to identify market regimes"
-        ),
-    ];
-
-    Ok(AggregatePricesResponse {
-        summary,
-        symbol: upper,
-        group_by: group_by.to_string(),
-        metric: metric.to_string(),
-        total_bars,
-        date_range,
-        buckets,
-        warnings,
-        suggested_next_steps,
-    })
+    Ok(ai_format::format_aggregate_prices(
+        &upper, group_by, metric, total_bars, date_range, buckets, warnings,
+    ))
 }
 
 /// Sort bucket keys in natural order for the given grouping.
