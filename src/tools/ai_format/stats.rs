@@ -12,7 +12,7 @@ use crate::tools::response_types::{
 };
 
 /// Format the result of an `aggregate_prices` analysis.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub fn format_aggregate_prices(
     symbol: &str,
     group_by: &str,
@@ -104,7 +104,12 @@ pub fn format_aggregate_prices(
         }
     }
 
-    let suggested_next_steps = vec![
+    let encode_hint = match group_by {
+        "day_of_week" => Some("[TIP] Encode this pattern as a signal: build_signal(action=\"create\", formula=\"day_of_week() == N\") where N=1(Mon)..7(Sun)"),
+        "month" => Some("[TIP] Encode this pattern as a signal: build_signal(action=\"create\", formula=\"month() == N\") where N=1(Jan)..12(Dec)"),
+        _ => None,
+    };
+    let mut suggested_next_steps = vec![
         format!(
             "[NEXT] Call distribution(source={{\"type\":\"price_returns\",\"symbol\":\"{upper}\"}}) to analyze return distribution shape"
         ),
@@ -112,6 +117,9 @@ pub fn format_aggregate_prices(
             "[THEN] Call regime_detect(symbol=\"{upper}\") to identify market regimes"
         ),
     ];
+    if let Some(hint) = encode_hint {
+        suggested_next_steps.push(hint.to_string());
+    }
 
     AggregatePricesResponse {
         summary,

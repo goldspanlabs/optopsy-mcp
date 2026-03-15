@@ -603,6 +603,9 @@ impl OptopsyServer {
     ///   - Lookback: `close[1]` (previous bar), `close[5]` (5 bars ago)
     ///   - Functions: `sma(col, N)`, `ema(col, N)`, `std(col, N)`, `max(col, N)`,
     ///     `min(col, N)`, `abs(expr)`, `change(col, N)`, `pct_change(col, N)`
+    ///   - Date/time (zero-arg): `day_of_week()` (1=Mon..7=Sun), `month()` (1-12),
+    ///     `day_of_month()` (1-31), `hour()` (0-23), `minute()` (0-59), `week_of_year()` (1-53).
+    ///     Use these to encode seasonal/day-of-week patterns found by `aggregate_prices`.
     ///   - Operators: `+`, `-`, `*`, `/`, `>`, `<`, `>=`, `<=`, `==`, `!=`
     ///   - Logical: `and`, `or`, `not`
     ///
