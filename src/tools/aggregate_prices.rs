@@ -111,65 +111,7 @@ pub async fn execute(
         bar_data.push((bucket_label, value));
     }
 
-    // Group by bucket label
-    let mut groups: std::collections::BTreeMap<String, Vec<f64>> =
-        std::collections::BTreeMap::new();
-    for (label, value) in &bar_data {
-        groups.entry(label.clone()).or_default().push(*value);
-    }
-
-    // Sort buckets naturally
-    let ordered_keys = sort_bucket_keys(group_by, &groups);
-
-    let mut buckets = Vec::with_capacity(ordered_keys.len());
-    let mut warnings = Vec::new();
-
-    for label in &ordered_keys {
-        let values = &groups[label];
-        let count = values.len();
-        let m = stats::mean(values);
-        let md = stats::median(values);
-        let sd = stats::std_dev(values);
-        let min_val = values.iter().copied().fold(f64::INFINITY, f64::min);
-        let max_val = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-        let total = values.iter().sum::<f64>();
-        let positive = values.iter().filter(|&&v| v > 0.0).count();
-        let positive_pct = if count > 0 {
-            positive as f64 / count as f64 * 100.0
-        } else {
-            0.0
-        };
-
-        // One-sample t-test vs zero is meaningful only for return data
-        let p_value = if metric == "return" {
-            stats::t_test_one_sample(values, 0.0).map(|r| r.p_value)
-        } else {
-            None
-        };
-
-        buckets.push(AggregateBucket {
-            label: label.clone(),
-            count,
-            mean: m,
-            median: md,
-            std_dev: sd,
-            min: min_val,
-            max: max_val,
-            total,
-            positive_pct,
-            p_value,
-        });
-    }
-
-    // Add warnings for small sample sizes
-    for b in &buckets {
-        if b.count < 20 {
-            warnings.push(format!(
-                "{}: only {} observations — interpret with caution",
-                b.label, b.count
-            ));
-        }
-    }
+    let (buckets, warnings) = build_buckets(group_by, metric, &bar_data);
 
     Ok(ai_format::format_aggregate_prices(
         &upper, group_by, metric, total_bars, date_range, buckets, warnings,
@@ -220,6 +162,71 @@ fn sort_bucket_keys(
     keys
 }
 
+/// Build buckets from pre-computed bar data (label, value) pairs.
+/// Extracted for testability — this is the pure aggregation logic used by `execute`.
+fn build_buckets(
+    group_by: &str,
+    metric: &str,
+    bar_data: &[(String, f64)],
+) -> (Vec<AggregateBucket>, Vec<String>) {
+    let mut groups: std::collections::BTreeMap<String, Vec<f64>> =
+        std::collections::BTreeMap::new();
+    for (label, value) in bar_data {
+        groups.entry(label.clone()).or_default().push(*value);
+    }
+
+    let ordered_keys = sort_bucket_keys(group_by, &groups);
+    let mut buckets = Vec::with_capacity(ordered_keys.len());
+    let mut warnings = Vec::new();
+
+    for label in &ordered_keys {
+        let values = &groups[label];
+        let count = values.len();
+        let m = stats::mean(values);
+        let md = stats::median(values);
+        let sd = stats::std_dev(values);
+        let min_val = values.iter().copied().fold(f64::INFINITY, f64::min);
+        let max_val = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let total = values.iter().sum::<f64>();
+        let positive = values.iter().filter(|&&v| v > 0.0).count();
+        let positive_pct = if count > 0 {
+            positive as f64 / count as f64 * 100.0
+        } else {
+            0.0
+        };
+
+        let p_value = if metric == "return" {
+            stats::t_test_one_sample(values, 0.0).map(|r| r.p_value)
+        } else {
+            None
+        };
+
+        buckets.push(AggregateBucket {
+            label: label.clone(),
+            count,
+            mean: m,
+            median: md,
+            std_dev: sd,
+            min: min_val,
+            max: max_val,
+            total,
+            positive_pct,
+            p_value,
+        });
+    }
+
+    for b in &buckets {
+        if b.count < 20 {
+            warnings.push(format!(
+                "{}: only {} observations — interpret with caution",
+                b.label, b.count
+            ));
+        }
+    }
+
+    (buckets, warnings)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,5 +249,126 @@ mod tests {
         groups.insert("December".to_string(), vec![3.0]);
         let keys = sort_bucket_keys("month", &groups);
         assert_eq!(keys, vec!["January", "March", "December"]);
+    }
+
+    #[test]
+    fn test_build_buckets_return_metric_stats() {
+        let bar_data = vec![
+            ("Monday".to_string(), 1.0),
+            ("Monday".to_string(), 2.0),
+            ("Monday".to_string(), 3.0),
+            ("Tuesday".to_string(), -1.0),
+            ("Tuesday".to_string(), -2.0),
+        ];
+        let (buckets, _) = build_buckets("day_of_week", "return", &bar_data);
+
+        assert_eq!(buckets.len(), 2);
+        assert_eq!(buckets[0].label, "Monday");
+        assert_eq!(buckets[0].count, 3);
+        assert!((buckets[0].mean - 2.0).abs() < 1e-10);
+        assert!((buckets[0].median - 2.0).abs() < 1e-10);
+        assert!((buckets[0].min - 1.0).abs() < 1e-10);
+        assert!((buckets[0].max - 3.0).abs() < 1e-10);
+        assert!((buckets[0].total - 6.0).abs() < 1e-10);
+        assert!((buckets[0].positive_pct - 100.0).abs() < 1e-10);
+
+        assert_eq!(buckets[1].label, "Tuesday");
+        assert_eq!(buckets[1].count, 2);
+        assert!((buckets[1].mean - (-1.5)).abs() < 1e-10);
+        assert!((buckets[1].positive_pct).abs() < 1e-10); // 0% positive
+    }
+
+    #[test]
+    fn test_build_buckets_volume_metric_no_p_value() {
+        let bar_data = vec![
+            ("Q1".to_string(), 1_000_000.0),
+            ("Q1".to_string(), 2_000_000.0),
+            ("Q2".to_string(), 500_000.0),
+        ];
+        let (buckets, _) = build_buckets("quarter", "volume", &bar_data);
+
+        assert_eq!(buckets.len(), 2);
+        // Volume metric should NOT produce p-values
+        assert!(buckets[0].p_value.is_none());
+        assert!(buckets[1].p_value.is_none());
+        assert!((buckets[0].mean - 1_500_000.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_build_buckets_return_metric_has_p_value() {
+        // Need enough observations for t-test (>= 2)
+        let bar_data: Vec<(String, f64)> = (0..30)
+            .map(|i| ("January".to_string(), 0.5 + (f64::from(i)) * 0.01))
+            .collect();
+        let (buckets, _) = build_buckets("month", "return", &bar_data);
+
+        assert_eq!(buckets.len(), 1);
+        assert!(buckets[0].p_value.is_some());
+        // All positive values, mean clearly > 0, p-value should be small
+        assert!(buckets[0].p_value.unwrap() < 0.05);
+    }
+
+    #[test]
+    fn test_build_buckets_small_sample_warning() {
+        let bar_data = vec![("2024".to_string(), 1.0), ("2024".to_string(), 2.0)];
+        let (buckets, warnings) = build_buckets("year", "return", &bar_data);
+
+        assert_eq!(buckets.len(), 1);
+        assert_eq!(buckets[0].count, 2);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("only 2 observations"));
+    }
+
+    #[test]
+    fn test_build_buckets_no_warning_large_sample() {
+        let bar_data: Vec<(String, f64)> = (0..25)
+            .map(|i| ("Monday".to_string(), f64::from(i) * 0.1))
+            .collect();
+        let (_, warnings) = build_buckets("day_of_week", "return", &bar_data);
+
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_build_buckets_range_metric() {
+        let bar_data = vec![
+            ("Monday".to_string(), 2.5),
+            ("Monday".to_string(), 3.5),
+            ("Tuesday".to_string(), 1.0),
+        ];
+        let (buckets, _) = build_buckets("day_of_week", "range", &bar_data);
+
+        assert_eq!(buckets.len(), 2);
+        assert!((buckets[0].mean - 3.0).abs() < 1e-10);
+        // Range metric should NOT produce p-values
+        assert!(buckets[0].p_value.is_none());
+    }
+
+    #[test]
+    fn test_build_buckets_quarter_ordering() {
+        let bar_data = vec![
+            ("Q3".to_string(), 1.0),
+            ("Q1".to_string(), 2.0),
+            ("Q4".to_string(), 3.0),
+            ("Q2".to_string(), 4.0),
+        ];
+        let (buckets, _) = build_buckets("quarter", "return", &bar_data);
+
+        let labels: Vec<&str> = buckets.iter().map(|b| b.label.as_str()).collect();
+        assert_eq!(labels, vec!["Q1", "Q2", "Q3", "Q4"]);
+    }
+
+    #[test]
+    fn test_build_buckets_positive_pct_mixed() {
+        let bar_data = vec![
+            ("Monday".to_string(), 1.0),
+            ("Monday".to_string(), -1.0),
+            ("Monday".to_string(), 0.5),
+            ("Monday".to_string(), -0.5),
+        ];
+        let (buckets, _) = build_buckets("day_of_week", "return", &bar_data);
+
+        assert_eq!(buckets[0].count, 4);
+        assert!((buckets[0].positive_pct - 50.0).abs() < 1e-10);
     }
 }
