@@ -518,3 +518,237 @@ pub struct SweepResponse {
     pub ranked_results: Vec<SweepResult>,
     pub suggested_next_steps: Vec<String>,
 }
+
+// ── Analysis tool shared types ──────────────────────────────────────────────
+
+/// Default years of history for analysis tools.
+fn default_analysis_years() -> u32 {
+    5
+}
+
+/// Default label for trade P&L source.
+fn default_pnl_label() -> String {
+    "Trade P&L".to_string()
+}
+
+/// Default correlation field.
+fn default_corr_field() -> String {
+    "return".to_string()
+}
+
+/// Source for distribution analysis: either price returns or raw trade P&L values.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(tag = "type")]
+pub enum DistributionSource {
+    /// Compute returns from OHLCV price data
+    #[serde(rename = "price_returns")]
+    PriceReturns {
+        /// Ticker symbol
+        symbol: String,
+        /// Years of history (default: 5)
+        #[serde(default = "default_analysis_years")]
+        years: u32,
+    },
+    /// Use pre-computed values (e.g., trade P&L array from a backtest)
+    #[serde(rename = "trade_pnl")]
+    TradePnl {
+        /// Array of P&L values
+        values: Vec<f64>,
+        /// Label for this dataset
+        #[serde(default = "default_pnl_label")]
+        label: String,
+    },
+}
+
+/// Series specification for correlation analysis.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct CorrelationSeries {
+    /// Ticker symbol
+    pub symbol: String,
+    /// Price field: "close" (default), "open", "high", "low", "volume", "return"
+    #[serde(default = "default_corr_field")]
+    pub field: String,
+}
+
+// ── Analysis tool response types ──────────────────────────────────────────────
+
+/// A single bucket of aggregated price statistics.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AggregateBucket {
+    /// Bucket label (e.g. "Monday", "January", "Q1", "2023")
+    pub label: String,
+    pub count: usize,
+    pub mean_return: f64,
+    pub median_return: f64,
+    pub std_dev: f64,
+    pub min_return: f64,
+    pub max_return: f64,
+    pub total_return: f64,
+    pub positive_pct: f64,
+    /// One-sample t-test p-value vs zero (null: mean return = 0)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p_value: Option<f64>,
+}
+
+/// Response for `aggregate_prices`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AggregatePricesResponse {
+    pub summary: String,
+    pub symbol: String,
+    pub group_by: String,
+    pub metric: String,
+    pub total_bars: usize,
+    pub date_range: DateRange,
+    pub buckets: Vec<AggregateBucket>,
+    pub warnings: Vec<String>,
+    pub suggested_next_steps: Vec<String>,
+}
+
+/// Normality test result for distribution analysis.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct NormalityTest {
+    pub test_name: String,
+    pub statistic: f64,
+    pub p_value: f64,
+    pub is_normal: bool,
+}
+
+/// Tail ratio for distribution analysis.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TailRatio {
+    /// Ratio of extreme left tail (< -2σ) to extreme right tail (> +2σ)
+    pub left_tail_pct: f64,
+    pub right_tail_pct: f64,
+    pub ratio: f64,
+    pub interpretation: String,
+}
+
+/// A histogram bin for serialization.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct HistogramBin {
+    pub lower: f64,
+    pub upper: f64,
+    pub count: usize,
+    pub frequency: f64,
+}
+
+/// Response for `distribution`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DistributionResponse {
+    pub summary: String,
+    pub source: String,
+    pub n_observations: usize,
+    pub mean: f64,
+    pub std_dev: f64,
+    pub median: f64,
+    pub skewness: f64,
+    pub kurtosis: f64,
+    pub min: f64,
+    pub max: f64,
+    pub percentile_5: f64,
+    pub percentile_25: f64,
+    pub percentile_75: f64,
+    pub percentile_95: f64,
+    pub histogram: Vec<HistogramBin>,
+    pub normality: Option<NormalityTest>,
+    pub tail_ratio: Option<TailRatio>,
+    pub suggested_next_steps: Vec<String>,
+}
+
+/// A point in a rolling correlation series.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RollingCorrelationPoint {
+    pub date: String,
+    pub correlation: f64,
+}
+
+/// A scatter point for correlation visualization.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ScatterPoint {
+    pub x: f64,
+    pub y: f64,
+    pub date: String,
+}
+
+/// Response for `correlate`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CorrelateResponse {
+    pub summary: String,
+    pub series_a: String,
+    pub series_b: String,
+    pub n_observations: usize,
+    pub pearson: f64,
+    pub spearman: f64,
+    pub r_squared: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p_value: Option<f64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rolling_correlation: Vec<RollingCorrelationPoint>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scatter: Vec<ScatterPoint>,
+    pub suggested_next_steps: Vec<String>,
+}
+
+/// A single point in a rolling metric series.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RollingPoint {
+    pub date: String,
+    pub value: f64,
+}
+
+/// Summary statistics for a rolling metric series.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RollingStats {
+    pub current: f64,
+    pub mean: f64,
+    pub min: f64,
+    pub max: f64,
+    pub std_dev: f64,
+    /// Trend direction: "rising", "falling", or "flat"
+    pub trend: String,
+}
+
+/// Response for `rolling_metric`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RollingMetricResponse {
+    pub summary: String,
+    pub symbol: String,
+    pub metric: String,
+    pub window: usize,
+    pub n_observations: usize,
+    pub stats: RollingStats,
+    pub series: Vec<RollingPoint>,
+    pub suggested_next_steps: Vec<String>,
+}
+
+/// Information about a detected market regime.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RegimeInfo {
+    pub label: String,
+    pub count: usize,
+    pub pct_of_total: f64,
+    pub mean_return: f64,
+    pub std_dev: f64,
+    pub mean_vol: f64,
+}
+
+/// A date-labeled regime assignment point.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RegimeSeriesPoint {
+    pub date: String,
+    pub regime: String,
+}
+
+/// Response for `regime_detect`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RegimeDetectResponse {
+    pub summary: String,
+    pub symbol: String,
+    pub method: String,
+    pub n_regimes: usize,
+    pub total_bars: usize,
+    pub regimes: Vec<RegimeInfo>,
+    pub transition_matrix: Vec<Vec<f64>>,
+    pub regime_series: Vec<RegimeSeriesPoint>,
+    pub suggested_next_steps: Vec<String>,
+}

@@ -25,15 +25,17 @@ use crate::engine::types::{
 use crate::signals::registry::{collect_cross_symbols, SignalSpec};
 use crate::tools;
 use crate::tools::response_types::{
-    BacktestResponse, BuildSignalResponse, CheckCacheResponse, CompareResponse,
-    PermutationTestResponse, RawPricesResponse, StatusResponse, StockBacktestResponse,
-    StrategiesResponse, SweepResponse, WalkForwardResponse,
+    AggregatePricesResponse, BacktestResponse, BuildSignalResponse, CheckCacheResponse,
+    CompareResponse, CorrelateResponse, DistributionResponse, PermutationTestResponse,
+    RawPricesResponse, RegimeDetectResponse, RollingMetricResponse, StatusResponse,
+    StockBacktestResponse, StrategiesResponse, SweepResponse, WalkForwardResponse,
 };
 use params::{
     resolve_leg_deltas, resolve_sweep_strategies, validate_category_read, validation_err,
-    BacktestBaseParams, BuildSignalParams, CheckCacheParams, CompareStrategiesParams,
-    GetRawPricesParams, ParameterSweepParams, PermutationTestParams, RunBacktestParams,
-    RunStockBacktestParams, WalkForwardParams,
+    AggregatePricesParams, BacktestBaseParams, BuildSignalParams, CheckCacheParams,
+    CompareStrategiesParams, CorrelateParams, DistributionParams, GetRawPricesParams,
+    ParameterSweepParams, PermutationTestParams, RegimeDetectParams, RollingMetricParams,
+    RunBacktestParams, RunStockBacktestParams, WalkForwardParams,
 };
 use sanitize::{SanitizedJson, SanitizedResult};
 
@@ -832,11 +834,10 @@ impl OptopsyServer {
 
                 // Load underlying prices for chart overlay
                 let prices_path = std::path::PathBuf::from(&ohlcv_path);
-                let underlying_prices = tokio::task::spawn_blocking(move || {
-                    load_underlying_prices(&prices_path)
-                })
-                .await
-                .unwrap_or_default();
+                let underlying_prices =
+                    tokio::task::spawn_blocking(move || load_underlying_prices(&prices_path))
+                        .await
+                        .unwrap_or_default();
 
                 let start_date = params
                     .start_date
@@ -1582,6 +1583,143 @@ impl OptopsyServer {
                     params.end_date.as_deref(),
                     params.limit,
                     params.interval.unwrap_or_default(),
+                )
+                .await
+                .map_err(|e| format!("Error: {e}"))
+            }
+            .await,
+        )
+    }
+
+    /// Aggregate OHLCV price statistics by time dimension (day-of-week, month, quarter, year).
+    /// Returns per-bucket descriptive stats with t-test p-values for significance.
+    ///
+    /// Use this to identify seasonal patterns, day-of-week effects, or time-based anomalies.
+    #[tool(name = "aggregate_prices", annotations(read_only_hint = true))]
+    async fn aggregate_prices(
+        &self,
+        Parameters(params): Parameters<AggregatePricesParams>,
+    ) -> SanitizedResult<AggregatePricesResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("aggregate_prices", e))?;
+                tools::aggregate_prices::execute(
+                    &self.cache,
+                    &params.symbol,
+                    params.years,
+                    &params.group_by,
+                    &params.metric,
+                    params.start_date.as_deref(),
+                    params.end_date.as_deref(),
+                )
+                .await
+                .map_err(|e| format!("Error: {e}"))
+            }
+            .await,
+        )
+    }
+
+    /// Analyze the statistical distribution of price returns or trade P&L values.
+    /// Returns descriptive stats, histogram, normality test, and tail analysis.
+    ///
+    /// Two modes: `price_returns` (auto-loads OHLCV) or `trade_pnl` (user-provided array).
+    #[tool(name = "distribution", annotations(read_only_hint = true))]
+    async fn distribution(
+        &self,
+        Parameters(params): Parameters<DistributionParams>,
+    ) -> SanitizedResult<DistributionResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("distribution", e))?;
+                tools::distribution::execute(&self.cache, &params.source, params.n_bins)
+                    .await
+                    .map_err(|e| format!("Error: {e}"))
+            }
+            .await,
+        )
+    }
+
+    /// Compute correlation between two price series (Pearson, Spearman, R²).
+    /// Supports full-period and rolling correlation modes with scatter data for visualization.
+    #[tool(name = "correlate", annotations(read_only_hint = true))]
+    async fn correlate(
+        &self,
+        Parameters(params): Parameters<CorrelateParams>,
+    ) -> SanitizedResult<CorrelateResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("correlate", e))?;
+                tools::correlate::execute(
+                    &self.cache,
+                    &params.series_a,
+                    &params.series_b,
+                    &params.mode,
+                    params.window,
+                    params.years,
+                )
+                .await
+                .map_err(|e| format!("Error: {e}"))
+            }
+            .await,
+        )
+    }
+
+    /// Compute a rolling metric over time (volatility, Sharpe, mean return, max drawdown, beta, correlation).
+    /// Returns a time series of the metric plus summary statistics and trend detection.
+    ///
+    /// Metrics `beta` and `correlation` require a `benchmark` symbol.
+    #[tool(name = "rolling_metric", annotations(read_only_hint = true))]
+    async fn rolling_metric(
+        &self,
+        Parameters(params): Parameters<RollingMetricParams>,
+    ) -> SanitizedResult<RollingMetricResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("rolling_metric", e))?;
+                tools::rolling_metric::execute(
+                    &self.cache,
+                    &params.symbol,
+                    &params.metric,
+                    params.window,
+                    params.benchmark.as_deref(),
+                    params.years,
+                )
+                .await
+                .map_err(|e| format!("Error: {e}"))
+            }
+            .await,
+        )
+    }
+
+    /// Detect market regimes using volatility clustering or trend state analysis.
+    /// Returns per-regime statistics, a transition probability matrix, and a time series of regime labels.
+    ///
+    /// Methods: `volatility_cluster` (quantile-based vol regimes) or `trend_state` (SMA crossover).
+    #[tool(name = "regime_detect", annotations(read_only_hint = true))]
+    async fn regime_detect(
+        &self,
+        Parameters(params): Parameters<RegimeDetectParams>,
+    ) -> SanitizedResult<RegimeDetectResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("regime_detect", e))?;
+                tools::regime_detect::execute(
+                    &self.cache,
+                    &params.symbol,
+                    &params.method,
+                    params.n_regimes,
+                    params.years,
+                    params.lookback_window,
                 )
                 .await
                 .map_err(|e| format!("Error: {e}"))
