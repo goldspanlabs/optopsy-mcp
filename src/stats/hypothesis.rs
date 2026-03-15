@@ -4,7 +4,7 @@
 
 use statrs::distribution::{ChiSquared, ContinuousCDF, StudentsT};
 
-use super::descriptive::{kurtosis, mean, skewness, std_dev};
+use super::descriptive::{mean, std_dev};
 
 /// Result of a hypothesis test.
 #[derive(Debug, Clone)]
@@ -40,15 +40,29 @@ pub fn t_test_one_sample(data: &[f64], expected_mean: f64) -> Option<HypothesisR
 /// Jarque-Bera test for normality. Tests whether sample data has the skewness
 /// and kurtosis matching a normal distribution.
 /// Returns `None` if data has fewer than 8 elements (unreliable below that).
+///
+/// Uses **biased** (population) skewness and excess kurtosis, as required by the
+/// JB statistic's chi-squared(2) null distribution.
 pub fn jarque_bera(data: &[f64]) -> Option<HypothesisResult> {
     let n = data.len();
     if n < 8 {
         return None;
     }
-    let s = skewness(data);
-    let k = kurtosis(data);
+    let m = mean(data);
+    let s = std_dev(data);
+    if s == 0.0 {
+        return Some(HypothesisResult {
+            statistic: 0.0,
+            p_value: 1.0,
+        });
+    }
     let nf = n as f64;
-    let jb = (nf / 6.0) * (s.powi(2) + k.powi(2) / 4.0);
+    // Biased (population) skewness: m3 / sigma^3
+    let m3 = data.iter().map(|x| ((x - m) / s).powi(3)).sum::<f64>() / nf;
+    // Biased (population) excess kurtosis: m4 / sigma^4 - 3
+    let m4 = data.iter().map(|x| ((x - m) / s).powi(4)).sum::<f64>() / nf;
+    let excess_kurt = m4 - 3.0;
+    let jb = (nf / 6.0) * (m3.powi(2) + excess_kurt.powi(2) / 4.0);
     let dist = ChiSquared::new(2.0).ok()?;
     let p_value = 1.0 - dist.cdf(jb);
     Some(HypothesisResult {
