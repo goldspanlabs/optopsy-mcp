@@ -89,7 +89,7 @@ mod tests {
     #[test]
     fn jarque_bera_normal_like() {
         // Roughly normal data should not reject (high p-value)
-        let data: Vec<f64> = (0..100).map(|i| (i as f64 - 50.0) / 20.0).collect();
+        let data: Vec<f64> = (0..100).map(|i| (f64::from(i) - 50.0) / 20.0).collect();
         let result = jarque_bera(&data).unwrap();
         // Uniform-ish data won't be perfectly normal, but JB should be moderate
         assert!(result.statistic >= 0.0);

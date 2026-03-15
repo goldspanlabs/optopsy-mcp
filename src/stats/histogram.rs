@@ -14,7 +14,7 @@ pub struct HistogramBucket {
 }
 
 /// Build a histogram with `n_bins` equal-width bins from the data.
-/// Filters out non-finite values. Returns empty vec for empty/all-NaN data or n_bins=0.
+/// Filters out non-finite values. Returns empty vec for empty/all-NaN data or `n_bins`=0.
 pub fn histogram(data: &[f64], n_bins: usize) -> Vec<HistogramBucket> {
     if n_bins == 0 {
         return vec![];

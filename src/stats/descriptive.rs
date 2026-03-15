@@ -26,8 +26,8 @@ pub fn median(data: &[f64]) -> f64 {
     }
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let mid = sorted.len() / 2;
-    if sorted.len() % 2 == 0 {
-        (sorted[mid - 1] + sorted[mid]) / 2.0
+    if sorted.len().is_multiple_of(2) {
+        f64::midpoint(sorted[mid - 1], sorted[mid])
     } else {
         sorted[mid]
     }
@@ -109,7 +109,7 @@ mod tests {
         assert_eq!(std_dev(&[5.0]), 0.0);
         // numpy: np.std([1,2,3,4,5], ddof=1) = 1.5811388300841898
         let s = std_dev(&[1.0, 2.0, 3.0, 4.0, 5.0]);
-        assert!((s - 1.5811388300841898).abs() < 1e-10);
+        assert!((s - 1.581_138_830_084_189_8).abs() < 1e-10);
     }
 
     #[test]
@@ -146,7 +146,10 @@ mod tests {
         // Uniform-like: excess kurtosis should be negative
         let data = [1.0, 2.0, 3.0, 4.0, 5.0];
         let k = kurtosis(&data);
-        assert!(k < 0.0, "Uniform-like data should have negative excess kurtosis, got {k}");
+        assert!(
+            k < 0.0,
+            "Uniform-like data should have negative excess kurtosis, got {k}"
+        );
     }
 
     #[test]
