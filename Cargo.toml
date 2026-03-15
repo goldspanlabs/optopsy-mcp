@@ -26,6 +26,7 @@ rust-s3 = { version = "0.37", default-features = false, features = ["tokio-rustl
 shellexpand = "3"
 yahoo_finance_api = "4.1"
 async-trait = "0.1"
+statrs = "0.18"
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
@@ -41,4 +42,5 @@ cast_precision_loss = "allow"
 
 [dev-dependencies]
 tempfile = "3.26.0"
+approx = "0.5"
 rmcp = { version = "0.17", features = ["client", "transport-async-rw"] }
