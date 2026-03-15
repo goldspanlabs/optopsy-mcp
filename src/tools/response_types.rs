@@ -612,6 +612,7 @@ pub struct AggregatePricesResponse {
     pub total_bars: usize,
     pub date_range: DateRange,
     pub buckets: Vec<AggregateBucket>,
+    pub key_findings: Vec<String>,
     pub warnings: Vec<String>,
     pub suggested_next_steps: Vec<String>,
 }
@@ -664,6 +665,7 @@ pub struct DistributionResponse {
     pub histogram: Vec<HistogramBin>,
     pub normality: Option<NormalityTest>,
     pub tail_ratio: Option<TailRatio>,
+    pub key_findings: Vec<String>,
     pub suggested_next_steps: Vec<String>,
 }
 
@@ -698,6 +700,7 @@ pub struct CorrelateResponse {
     pub rolling_correlation: Vec<RollingCorrelationPoint>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scatter: Vec<ScatterPoint>,
+    pub key_findings: Vec<String>,
     pub suggested_next_steps: Vec<String>,
 }
 
@@ -730,6 +733,7 @@ pub struct RollingMetricResponse {
     pub n_observations: usize,
     pub stats: RollingStats,
     pub series: Vec<RollingPoint>,
+    pub key_findings: Vec<String>,
     pub suggested_next_steps: Vec<String>,
 }
 
@@ -762,5 +766,6 @@ pub struct RegimeDetectResponse {
     pub regimes: Vec<RegimeInfo>,
     pub transition_matrix: Vec<Vec<f64>>,
     pub regime_series: Vec<RegimeSeriesPoint>,
+    pub key_findings: Vec<String>,
     pub suggested_next_steps: Vec<String>,
 }
