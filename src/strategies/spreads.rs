@@ -34,8 +34,8 @@ pub fn bull_put_spread() -> StrategyDef {
         "Spreads",
         "Sell higher strike put, buy lower strike put",
         vec![
-            put_leg(Side::Short, 1, default_atm_delta()),
             put_leg(Side::Long, 1, default_deep_otm_delta()),
+            put_leg(Side::Short, 1, default_atm_delta()),
         ],
     )
 }
@@ -46,8 +46,8 @@ pub fn bear_put_spread() -> StrategyDef {
         "Spreads",
         "Buy higher strike put, sell lower strike put",
         vec![
-            put_leg(Side::Long, 1, default_atm_delta()),
             put_leg(Side::Short, 1, default_deep_otm_delta()),
+            put_leg(Side::Long, 1, default_atm_delta()),
         ],
     )
 }

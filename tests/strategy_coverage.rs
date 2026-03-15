@@ -340,16 +340,16 @@ fn backtest_bear_call_spread() {
 
 #[test]
 fn backtest_bull_put_spread() {
-    // S Put@100 (δ0.40) + L Put@105 (δ0.55)
-    // +150 + (-200) = -50
-    assert_backtest("bull_put_spread", vec![delta(0.40), delta(0.55)], -50.0);
+    // Legs reordered for ascending strikes: L Put@100 (δ0.40) + S Put@105 (δ0.55)
+    // -150 + 200 = +50
+    assert_backtest("bull_put_spread", vec![delta(0.40), delta(0.55)], 50.0);
 }
 
 #[test]
 fn backtest_bear_put_spread() {
-    // L Put@100 (δ0.40) + S Put@105 (δ0.55)
-    // -150 + 200 = +50
-    assert_backtest("bear_put_spread", vec![delta(0.40), delta(0.55)], 50.0);
+    // Legs reordered for ascending strikes: S Put@100 (δ0.40) + L Put@105 (δ0.55)
+    // +150 + (-200) = -50
+    assert_backtest("bear_put_spread", vec![delta(0.40), delta(0.55)], -50.0);
 }
 
 #[test]

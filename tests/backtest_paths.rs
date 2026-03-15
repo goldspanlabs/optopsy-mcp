@@ -337,15 +337,15 @@ fn correctness_bull_call_spread() {
 
 #[test]
 fn correctness_bear_put_spread() {
-    // L Put@100 (δ0.40) + S Put@105 (δ0.55)
-    // L Put@100: cost=275, proceeds=125; S Put@105: cost=-475, proceeds=-275
-    // entry = 275 - 475 = -200, exit = 125 - 275 = -150, pnl = 50
+    // Legs reordered for ascending strikes: S Put@100 (δ0.40) + L Put@105 (δ0.55)
+    // S Put@100: cost=-275, proceeds=-125; L Put@105: cost=475, proceeds=275
+    // entry = -275 + 475 = 200, exit = -125 + 275 = 150, pnl = -50
     assert_correctness_both_paths(
         "bear_put_spread",
         vec![delta(0.40), delta(0.55)],
-        -200.0,
-        -150.0,
-        50.0,
+        200.0,
+        150.0,
+        -50.0,
     );
 }
 
