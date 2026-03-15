@@ -903,6 +903,163 @@ pub(crate) fn resolve_sweep_strategies(
     }
 }
 
+// ── Analysis tool parameter structs ──────────────────────────────────────────
+
+/// Default years of history to fetch.
+fn default_years() -> u32 {
+    5
+}
+
+/// Default number of histogram bins.
+fn default_n_bins() -> usize {
+    30
+}
+
+/// Default rolling window size.
+fn default_window() -> usize {
+    21
+}
+
+/// Default number of regimes.
+fn default_n_regimes() -> usize {
+    3
+}
+
+/// Default lookback window for regime detection.
+fn default_lookback_window() -> usize {
+    21
+}
+
+/// Parameters for the `aggregate_prices` tool.
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+#[garde(context(()))]
+pub struct AggregatePricesParams {
+    /// Ticker symbol (e.g. "SPY")
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
+    pub symbol: String,
+    /// Years of history (default: 5)
+    #[serde(default = "default_years")]
+    #[garde(range(min = 1, max = 50))]
+    pub years: u32,
+    /// Grouping dimension: `"day_of_week"`, `"month"`, `"quarter"`, `"year"`
+    #[garde(length(min = 1))]
+    pub group_by: String,
+    /// Metric to aggregate: "return" (default: close-to-close pct change), "range", "volume"
+    #[serde(default = "default_agg_metric")]
+    #[garde(length(min = 1))]
+    pub metric: String,
+    /// Start date filter (YYYY-MM-DD)
+    #[serde(default)]
+    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))]
+    pub start_date: Option<String>,
+    /// End date filter (YYYY-MM-DD)
+    #[serde(default)]
+    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")), custom(validate_end_date_after_start(&self.start_date)))]
+    pub end_date: Option<String>,
+}
+
+fn default_agg_metric() -> String {
+    "return".to_string()
+}
+
+pub use crate::tools::response_types::DistributionSource;
+
+/// Parameters for the `distribution` tool.
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+#[garde(context(()))]
+pub struct DistributionParams {
+    /// Data source for the distribution
+    #[garde(dive)]
+    pub source: DistributionSource,
+    /// Number of histogram bins (default: 30)
+    #[serde(default = "default_n_bins")]
+    #[garde(range(min = 5, max = 200))]
+    pub n_bins: usize,
+}
+
+pub use crate::tools::response_types::CorrelationSeries;
+
+/// Parameters for the `correlate` tool.
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+#[garde(context(()))]
+pub struct CorrelateParams {
+    /// First data series
+    #[garde(dive)]
+    pub series_a: CorrelationSeries,
+    /// Second data series
+    #[garde(dive)]
+    pub series_b: CorrelationSeries,
+    /// Correlation mode: "full" (default), "rolling"
+    #[serde(default = "default_corr_mode")]
+    #[garde(length(min = 1))]
+    pub mode: String,
+    /// Rolling window size (days, for mode="rolling")
+    #[serde(default = "default_window")]
+    #[garde(range(min = 5, max = 504))]
+    pub window: usize,
+    /// Years of history (default: 5)
+    #[serde(default = "default_years")]
+    #[garde(range(min = 1, max = 50))]
+    pub years: u32,
+}
+
+fn default_corr_mode() -> String {
+    "full".to_string()
+}
+
+/// Parameters for the `rolling_metric` tool.
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+#[garde(context(()))]
+pub struct RollingMetricParams {
+    /// Ticker symbol
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
+    pub symbol: String,
+    /// Metric to compute: `"volatility"`, `"sharpe"`, `"mean_return"`, `"max_drawdown"`, `"beta"`, `"correlation"`
+    #[garde(length(min = 1))]
+    pub metric: String,
+    /// Rolling window size in trading days (default: 21)
+    #[serde(default = "default_window")]
+    #[garde(range(min = 5, max = 504))]
+    pub window: usize,
+    /// Benchmark symbol (required for "beta" and "correlation" metrics)
+    #[serde(default)]
+    #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
+    pub benchmark: Option<String>,
+    /// Years of history (default: 5)
+    #[serde(default = "default_years")]
+    #[garde(range(min = 1, max = 50))]
+    pub years: u32,
+}
+
+/// Parameters for the `regime_detect` tool.
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+#[garde(context(()))]
+pub struct RegimeDetectParams {
+    /// Ticker symbol
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
+    pub symbol: String,
+    /// Detection method: `"volatility_cluster"` (default), `"trend_state"`
+    #[serde(default = "default_regime_method")]
+    #[garde(length(min = 1))]
+    pub method: String,
+    /// Number of regimes to detect (default: 3, range: 2-4)
+    #[serde(default = "default_n_regimes")]
+    #[garde(range(min = 2, max = 4))]
+    pub n_regimes: usize,
+    /// Years of history (default: 5)
+    #[serde(default = "default_years")]
+    #[garde(range(min = 1, max = 50))]
+    pub years: u32,
+    /// Lookback window for rolling volatility/trend calculation (default: 21 trading days)
+    #[serde(default = "default_lookback_window")]
+    #[garde(range(min = 5, max = 252))]
+    pub lookback_window: usize,
+}
+
+fn default_regime_method() -> String {
+    "volatility_cluster".to_string()
+}
+
 fn resolve_strategy_entries(
     strats: Vec<SweepStrategyInput>,
 ) -> Result<Vec<crate::engine::sweep::SweepStrategyEntry>, String> {
