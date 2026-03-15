@@ -116,7 +116,9 @@ pub async fn execute(
     let annualization = 252.0_f64.sqrt();
     let series_values: Vec<f64> = match metric {
         "volatility" => {
-            stats::rolling_apply(&returns, window, |w| stats::std_dev(w) * annualization)
+            stats::rolling_apply(&returns, window, |w| {
+                stats::std_dev(w) * annualization * 100.0 // annualized %
+            })
         }
         "sharpe" => stats::rolling_apply(&returns, window, |w| {
             let s = stats::std_dev(w);

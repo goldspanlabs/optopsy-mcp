@@ -104,6 +104,12 @@ pub async fn execute(
 
     // Per-regime statistics
     let total_classified = regime_labels.iter().filter(|&&l| l < n_regimes).count();
+    if total_classified == 0 {
+        anyhow::bail!(
+            "No bars were classified into regimes for {upper} — \
+             this usually means all returns are NaN or the data is insufficient for the chosen method."
+        );
+    }
     let mut regimes: Vec<RegimeInfo> = Vec::with_capacity(n_regimes);
 
     // Compute rolling vols once outside the loop to avoid redundant O(n) passes
