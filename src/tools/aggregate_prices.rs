@@ -10,13 +10,14 @@ use crate::tools::ai_format;
 use crate::tools::response_types::{AggregateBucket, AggregatePricesResponse, DateRange};
 
 /// Execute the `aggregate_prices` analysis.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 pub async fn execute(
     cache: &Arc<CachedStore>,
     symbol: &str,
     years: u32,
     group_by: &str,
     metric: &str,
+    interval: Option<crate::engine::types::Interval>,
     start_date: Option<&str>,
     end_date: Option<&str>,
 ) -> Result<AggregatePricesResponse> {
@@ -37,6 +38,30 @@ pub async fn execute(
         );
     }
 
+    // Resolve interval: auto-select Hour1 for hour_of_day if not specified
+    let resolved_interval = interval.unwrap_or_else(|| {
+        if group_by == "hour_of_day" {
+            crate::engine::types::Interval::Hour1
+        } else {
+            crate::engine::types::Interval::Daily
+        }
+    });
+
+    // Reject hour_of_day with daily-resolution intervals
+    if group_by == "hour_of_day"
+        && matches!(
+            resolved_interval,
+            crate::engine::types::Interval::Daily
+                | crate::engine::types::Interval::Weekly
+                | crate::engine::types::Interval::Monthly
+        )
+    {
+        anyhow::bail!(
+            "group_by=\"hour_of_day\" requires intraday data. \
+             Pass interval=\"1h\", \"30m\", \"5m\", or \"1m\"."
+        );
+    }
+
     let upper = symbol.to_uppercase();
     let resp = crate::tools::raw_prices::load_and_execute(
         cache,
@@ -44,7 +69,7 @@ pub async fn execute(
         start_date,
         end_date,
         None, // no limit
-        crate::engine::types::Interval::Daily,
+        resolved_interval,
     )
     .await
     .context("Failed to load OHLCV data")?;
@@ -91,10 +116,10 @@ pub async fn execute(
             "month" => date.format("%B").to_string(),
             "quarter" => format!("Q{}", ((date.month() - 1) / 3) + 1),
             "year" => date.format("%Y").to_string(),
-            "hour_of_day" => {
-                let h = hour.unwrap_or(0);
-                format!("{h:02}:00")
-            }
+            "hour_of_day" => match hour {
+                Some(h) => format!("{h:02}:00"),
+                None => continue, // skip bars without time (shouldn't happen after validation)
+            },
             _ => unreachable!(),
         };
 

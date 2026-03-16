@@ -1600,6 +1600,7 @@ impl OptopsyServer {
     /// Use this to identify seasonal patterns, day-of-week effects, intraday hour patterns, or time-based anomalies.
     /// The `"gap"` metric measures opening gaps — use with `"day_of_week"` to find
     /// which days have the largest/most consistent gaps, or `"hour_of_day"` for intraday gap analysis.
+    /// `group_by="hour_of_day"` requires intraday data — pass `interval="1h"` (or `"30m"`, `"5m"`, `"1m"`).
     #[tool(name = "aggregate_prices", annotations(read_only_hint = true))]
     async fn aggregate_prices(
         &self,
@@ -1616,6 +1617,7 @@ impl OptopsyServer {
                     params.years,
                     &params.group_by,
                     &params.metric,
+                    params.interval,
                     params.start_date.as_deref(),
                     params.end_date.as_deref(),
                 )

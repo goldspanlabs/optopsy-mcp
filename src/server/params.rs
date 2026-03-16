@@ -948,6 +948,11 @@ pub struct AggregatePricesParams {
     #[serde(default = "default_agg_metric")]
     #[garde(length(min = 1))]
     pub metric: String,
+    /// Bar interval. Defaults to "daily". Use "1h", "30m", "5m", or "1m" for intraday analysis.
+    /// Required when `group_by="hour_of_day"` — daily data has no time component.
+    #[serde(default)]
+    #[garde(skip)]
+    pub interval: Option<crate::engine::types::Interval>,
     /// Start date filter (YYYY-MM-DD)
     #[serde(default)]
     #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))]
