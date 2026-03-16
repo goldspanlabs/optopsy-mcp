@@ -979,6 +979,18 @@ pub struct DistributionParams {
 
 pub use crate::tools::response_types::CorrelationSeries;
 
+/// Lag range for cross-correlation analysis.
+#[derive(Debug, Clone, Deserialize, JsonSchema, Validate)]
+#[garde(context(()))]
+pub struct LagRange {
+    /// Minimum lag (negative = x leads y). Range: -60..0
+    #[garde(range(min = -60, max = 0))]
+    pub min: i32,
+    /// Maximum lag (positive = y leads x). Range: 0..60
+    #[garde(range(min = 0, max = 60))]
+    pub max: i32,
+}
+
 /// Parameters for the `correlate` tool.
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 #[garde(context(()))]
@@ -1001,6 +1013,11 @@ pub struct CorrelateParams {
     #[serde(default = "default_years")]
     #[garde(range(min = 1, max = 50))]
     pub years: u32,
+    /// Optional lag range for cross-correlation and Granger causality analysis.
+    /// When provided, computes a correlogram across the lag range and tests for lead/lag relationships.
+    #[serde(default)]
+    #[garde(dive)]
+    pub lag_range: Option<LagRange>,
 }
 
 fn default_corr_mode() -> String {
@@ -1038,7 +1055,7 @@ pub struct RegimeDetectParams {
     /// Ticker symbol
     #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub symbol: String,
-    /// Detection method: `"volatility_cluster"` (default), `"trend_state"`
+    /// Detection method: `"volatility_cluster"` (default), `"trend_state"`, or `"hmm"` (Gaussian HMM)
     #[serde(default = "default_regime_method")]
     #[garde(length(min = 1))]
     pub method: String,

@@ -18,7 +18,7 @@ pub async fn execute(
     years: u32,
     lookback_window: usize,
 ) -> Result<RegimeDetectResponse> {
-    let valid_methods = ["volatility_cluster", "trend_state"];
+    let valid_methods = ["volatility_cluster", "trend_state", "hmm"];
     if !valid_methods.contains(&method) {
         anyhow::bail!(
             "Invalid method: \"{method}\". Must be one of: {}",
@@ -46,6 +46,7 @@ pub async fn execute(
     // For trend_state, the long SMA uses lookback_window * 3 bars, so we need more data.
     let min_bars = match method {
         "trend_state" => lookback_window * 3 + 2,
+        "hmm" => 50, // HMM needs enough observations for EM convergence
         _ => lookback_window + 2,
     };
     if prices.len() < min_bars {
@@ -69,9 +70,16 @@ pub async fn execute(
         .collect();
     let dates: Vec<String> = prices[1..].iter().map(|p| p.date.clone()).collect();
 
-    let (regime_labels, regime_names) = match method {
-        "volatility_cluster" => classify_by_volatility(&returns, lookback_window, n_regimes),
-        "trend_state" => classify_by_trend(prices, lookback_window, n_regimes),
+    let (regime_labels, regime_names, hmm_params) = match method {
+        "volatility_cluster" => {
+            let (l, n) = classify_by_volatility(&returns, lookback_window, n_regimes);
+            (l, n, None)
+        }
+        "trend_state" => {
+            let (l, n) = classify_by_trend(prices, lookback_window, n_regimes);
+            (l, n, None)
+        }
+        "hmm" => classify_by_hmm(&returns, n_regimes),
         _ => unreachable!(),
     };
 
@@ -151,6 +159,13 @@ pub async fn execute(
             .collect();
         let mean_vol = stats::mean(&regime_vols);
 
+        let (em, es) = hmm_params.as_ref().map_or((None, None), |hmm| {
+            (
+                Some(hmm.means[regime_idx] * 100.0),
+                Some(hmm.variances[regime_idx].sqrt() * 100.0),
+            )
+        });
+
         regimes.push(RegimeInfo {
             label: name.clone(),
             count,
@@ -162,6 +177,8 @@ pub async fn execute(
             mean_return: m * 100.0, // Convert to percentage
             std_dev: sd * 100.0,
             mean_vol: mean_vol * 100.0,
+            emission_mean: em,
+            emission_std: es,
         });
     }
 
@@ -178,6 +195,107 @@ pub async fn execute(
         transition_matrix,
         regime_series,
     ))
+}
+
+/// Classify each bar using a Gaussian Hidden Markov Model.
+///
+/// Returns labels, regime names, and the fitted HMM (for emission params).
+fn classify_by_hmm(
+    returns: &[f64],
+    n_regimes: usize,
+) -> (
+    Vec<usize>,
+    Vec<String>,
+    Option<crate::engine::hmm::GaussianHmm>,
+) {
+    // Filter finite returns for HMM fitting
+    let valid_indices: Vec<usize> = returns
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.is_finite())
+        .map(|(i, _)| i)
+        .collect();
+    let valid_returns: Vec<f64> = valid_indices.iter().map(|&i| returns[i]).collect();
+
+    if valid_returns.len() < 10 {
+        // Not enough data for HMM; return all unclassified
+        let labels = vec![n_regimes; returns.len()];
+        let names = (0..n_regimes)
+            .map(|i| format!("Regime {}", i + 1))
+            .collect();
+        return (labels, names, None);
+    }
+
+    let hmm = crate::engine::hmm::fit(&valid_returns, n_regimes);
+    let decoded = crate::engine::hmm::viterbi(&hmm, &valid_returns);
+
+    // Map back to full return series (NaN bars get sentinel)
+    let mut labels = vec![n_regimes; returns.len()];
+    for (decoded_idx, &original_idx) in valid_indices.iter().enumerate() {
+        labels[original_idx] = decoded[decoded_idx];
+    }
+
+    // Generate names from fitted emission parameters (states sorted by ascending mean)
+    let names = derive_hmm_names(&hmm);
+
+    (labels, names, Some(hmm))
+}
+
+/// Derive descriptive regime names from fitted HMM emission parameters.
+///
+/// Names reflect both the mean (return direction) and volatility (emission std dev)
+/// derived from the actual fitted model, rather than hardcoded assumptions.
+fn derive_hmm_names(hmm: &crate::engine::hmm::GaussianHmm) -> Vec<String> {
+    let k = hmm.n_states;
+    // States are already sorted by ascending mean
+    let stds: Vec<f64> = hmm.variances.iter().map(|v| v.sqrt()).collect();
+
+    (0..k)
+        .map(|i| {
+            let mean_label = if k == 2 {
+                if i == 0 {
+                    "Bearish"
+                } else {
+                    "Bullish"
+                }
+            } else {
+                let frac = i as f64 / (k - 1).max(1) as f64;
+                if frac < 0.25 {
+                    "Strong Bear"
+                } else if frac < 0.5 {
+                    "Mild Bear"
+                } else if frac < 0.75 {
+                    "Mild Bull"
+                } else {
+                    "Strong Bull"
+                }
+            };
+
+            // Classify volatility relative to other states
+            let vol_label = if k <= 2 {
+                // With 2 states, compare directly
+                if stds[i] > stds[(i + 1) % k] {
+                    "High Vol"
+                } else {
+                    "Low Vol"
+                }
+            } else {
+                let min_std = stds.iter().copied().fold(f64::INFINITY, f64::min);
+                let max_std = stds.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                let range = (max_std - min_std).max(1e-15);
+                let relative = (stds[i] - min_std) / range;
+                if relative < 0.33 {
+                    "Low Vol"
+                } else if relative < 0.67 {
+                    "Med Vol"
+                } else {
+                    "High Vol"
+                }
+            };
+
+            format!("{mean_label} / {vol_label}")
+        })
+        .collect()
 }
 
 /// Classify each bar by rolling realized volatility quantiles.
@@ -496,5 +614,155 @@ mod tests {
         let r1 = labels.iter().filter(|&&l| l == 1).count();
         assert!(r0 > 0, "regime 0 should have observations");
         assert!(r1 > 0, "regime 1 should have observations");
+    }
+
+    #[test]
+    fn test_hmm_classify_alternating_vol() {
+        // HMM should detect two distinct regimes from high/low volatility data
+        let prices = synthetic_prices_alternating_vol(300);
+        let returns: Vec<f64> = prices
+            .windows(2)
+            .map(|w| (w[1].close - w[0].close) / w[0].close)
+            .collect();
+        let n_regimes = 2;
+        let (labels, names, hmm) = classify_by_hmm(&returns, n_regimes);
+
+        assert_eq!(labels.len(), returns.len());
+        assert_eq!(names.len(), n_regimes);
+
+        // HMM should have been fitted
+        let hmm = hmm.expect("HMM should be fitted");
+        assert_eq!(hmm.n_states, 2);
+        // Emission means should differ (low vol vs high vol regime)
+        assert!(
+            (hmm.means[0] - hmm.means[1]).abs() > 0.0 || hmm.variances[0] != hmm.variances[1],
+            "HMM states should have different parameters"
+        );
+
+        // Both regimes should have observations
+        let r0 = labels.iter().filter(|&&l| l == 0).count();
+        let r1 = labels.iter().filter(|&&l| l == 1).count();
+        assert!(r0 > 0, "HMM regime 0 should have observations");
+        assert!(r1 > 0, "HMM regime 1 should have observations");
+    }
+
+    #[test]
+    fn test_hmm_classify_three_regimes() {
+        let prices = synthetic_prices_alternating_vol(300);
+        let returns: Vec<f64> = prices
+            .windows(2)
+            .map(|w| (w[1].close - w[0].close) / w[0].close)
+            .collect();
+        let (labels, names, hmm) = classify_by_hmm(&returns, 3);
+
+        assert_eq!(names.len(), 3);
+        assert!(hmm.is_some());
+        // All labels should be valid (0, 1, 2, or sentinel=3)
+        for &l in &labels {
+            assert!(l <= 3, "label {l} out of range");
+        }
+    }
+
+    #[test]
+    fn test_hmm_insufficient_data_returns_unclassified() {
+        // With very few finite returns, HMM should gracefully handle
+        let returns = vec![f64::NAN; 5];
+        let (labels, _, hmm) = classify_by_hmm(&returns, 2);
+        assert!(hmm.is_none(), "HMM should not fit with all-NaN data");
+        // All should be unclassified (sentinel = 2)
+        for &l in &labels {
+            assert_eq!(l, 2, "should be unclassified sentinel");
+        }
+    }
+
+    #[test]
+    fn test_hmm_emission_params_populated() {
+        let prices = synthetic_prices_alternating_vol(300);
+        let returns: Vec<f64> = prices
+            .windows(2)
+            .map(|w| (w[1].close - w[0].close) / w[0].close)
+            .collect();
+        let (_, _, hmm) = classify_by_hmm(&returns, 2);
+        let hmm = hmm.expect("HMM should be fitted");
+
+        // Emission means should be finite and sorted (ascending)
+        assert!(hmm.means[0].is_finite());
+        assert!(hmm.means[1].is_finite());
+        assert!(
+            hmm.means[0] <= hmm.means[1],
+            "means should be sorted ascending"
+        );
+
+        // Variances should be positive and finite
+        assert!(hmm.variances[0] > 0.0 && hmm.variances[0].is_finite());
+        assert!(hmm.variances[1] > 0.0 && hmm.variances[1].is_finite());
+    }
+
+    #[test]
+    fn test_hmm_regime_names_correct() {
+        let prices = synthetic_prices_alternating_vol(200);
+        let returns: Vec<f64> = prices
+            .windows(2)
+            .map(|w| (w[1].close - w[0].close) / w[0].close)
+            .collect();
+
+        let (_, names_2, _) = classify_by_hmm(&returns, 2);
+        assert_eq!(names_2.len(), 2);
+        // Names are derived from fitted params: state 0 = lowest mean = Bearish
+        assert!(
+            names_2[0].contains("Bearish"),
+            "state 0 should be bearish: {}",
+            names_2[0]
+        );
+        assert!(
+            names_2[1].contains("Bullish"),
+            "state 1 should be bullish: {}",
+            names_2[1]
+        );
+        // Vol labels should be derived from actual emission variances
+        for name in &names_2 {
+            assert!(
+                name.contains("Vol"),
+                "names should include vol classification: {name}"
+            );
+        }
+
+        let (_, names_3, _) = classify_by_hmm(&returns, 3);
+        assert_eq!(names_3.len(), 3);
+        // First should be bearish, last should be bullish
+        assert!(names_3[0].contains("Bear"), "state 0: {}", names_3[0]);
+        assert!(names_3[2].contains("Bull"), "state 2: {}", names_3[2]);
+
+        let (_, names_4, _) = classify_by_hmm(&returns, 4);
+        assert_eq!(names_4.len(), 4);
+        assert!(
+            names_4[0].contains("Strong Bear"),
+            "state 0: {}",
+            names_4[0]
+        );
+        assert!(
+            names_4[3].contains("Strong Bull"),
+            "state 3: {}",
+            names_4[3]
+        );
+    }
+
+    #[test]
+    fn test_hmm_handles_nan_gaps() {
+        // Returns with NaN gaps should still classify non-NaN bars
+        let mut returns = vec![0.01; 100];
+        returns[20] = f64::NAN;
+        returns[50] = f64::NAN;
+        returns[80] = f64::NAN;
+
+        let (labels, _, hmm) = classify_by_hmm(&returns, 2);
+        assert!(hmm.is_some(), "should fit with enough finite data");
+        // NaN positions should be sentinel
+        assert_eq!(labels[20], 2);
+        assert_eq!(labels[50], 2);
+        assert_eq!(labels[80], 2);
+        // Non-NaN positions should be valid
+        assert!(labels[0] < 2);
+        assert!(labels[10] < 2);
     }
 }

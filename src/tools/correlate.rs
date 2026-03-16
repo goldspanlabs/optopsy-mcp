@@ -8,7 +8,10 @@ use crate::data::cache::CachedStore;
 use crate::stats;
 use crate::tools::ai_format;
 use crate::tools::response_types::CorrelationSeries;
-use crate::tools::response_types::{CorrelateResponse, RollingCorrelationPoint, ScatterPoint};
+use crate::tools::response_types::{
+    CorrelateResponse, GrangerResult, LagAnalysis, LagCorrelationPoint, RollingCorrelationPoint,
+    ScatterPoint,
+};
 
 /// Execute the correlate analysis.
 #[allow(clippy::too_many_lines, clippy::similar_names)]
@@ -19,6 +22,7 @@ pub async fn execute(
     mode: &str,
     window: usize,
     years: u32,
+    lag_range: Option<(i32, i32)>,
 ) -> Result<CorrelateResponse> {
     if mode != "full" && mode != "rolling" {
         anyhow::bail!("Invalid mode: \"{mode}\". Must be \"full\" or \"rolling\".");
@@ -227,6 +231,89 @@ pub async fn execute(
         subsample(all, 500)
     };
 
+    // Lead/lag analysis
+    let lag_analysis = if let Some((lag_min, lag_max)) = lag_range {
+        let mut correlogram = Vec::with_capacity((lag_max - lag_min + 1) as usize);
+        let mut best_lag = 0i32;
+        let mut best_corr = 0.0_f64;
+
+        for lag in lag_min..=lag_max {
+            let r = stats::lagged_pearson(fa, fb, lag);
+            // P-value for lagged correlation
+            let lag_abs = lag.unsigned_abs() as usize;
+            let effective_n = n.saturating_sub(lag_abs);
+            let lag_p = if effective_n > 2 {
+                let r_sq = r * r;
+                let denom = (1.0 - r_sq).max(0.0);
+                if denom < f64::EPSILON {
+                    Some(0.0)
+                } else {
+                    let t_stat = r * ((effective_n as f64 - 2.0) / denom).sqrt();
+                    statrs::distribution::StudentsT::new(0.0, 1.0, (effective_n - 2) as f64)
+                        .ok()
+                        .map(|d| {
+                            use statrs::distribution::ContinuousCDF;
+                            2.0 * (1.0 - d.cdf(t_stat.abs()))
+                        })
+                }
+            } else {
+                None
+            };
+
+            if r.abs() > best_corr.abs() {
+                best_corr = r;
+                best_lag = lag;
+            }
+            correlogram.push(LagCorrelationPoint {
+                lag,
+                pearson: r,
+                p_value: lag_p,
+            });
+        }
+
+        // Granger causality in both directions using optimal |lag| as order
+        let order = (best_lag.unsigned_abs() as usize).max(1);
+        let mut granger_tests = Vec::new();
+
+        // Test: does B Granger-cause A?
+        if let Some((f_stat, gp)) = stats::granger_f_test(fb, fa, order) {
+            granger_tests.push(GrangerResult {
+                direction: format!(
+                    "{} → {}",
+                    series_b.symbol.to_uppercase(),
+                    series_a.symbol.to_uppercase()
+                ),
+                f_statistic: f_stat,
+                p_value: gp,
+                lag_order: order,
+                is_significant: gp < 0.05,
+            });
+        }
+        // Test: does A Granger-cause B?
+        if let Some((f_stat, gp)) = stats::granger_f_test(fa, fb, order) {
+            granger_tests.push(GrangerResult {
+                direction: format!(
+                    "{} → {}",
+                    series_a.symbol.to_uppercase(),
+                    series_b.symbol.to_uppercase()
+                ),
+                f_statistic: f_stat,
+                p_value: gp,
+                lag_order: order,
+                is_significant: gp < 0.05,
+            });
+        }
+
+        Some(LagAnalysis {
+            correlogram,
+            optimal_lag: best_lag,
+            optimal_correlation: best_corr,
+            granger_tests,
+        })
+    } else {
+        None
+    };
+
     let label_a = format!("{} {}", series_a.symbol.to_uppercase(), series_a.field);
     let label_b = format!("{} {}", series_b.symbol.to_uppercase(), series_b.field);
     let symbol_a_upper = series_a.symbol.to_uppercase();
@@ -241,6 +328,7 @@ pub async fn execute(
         p_value,
         rolling_correlation,
         scatter,
+        lag_analysis,
         &symbol_a_upper,
     ))
 }
@@ -377,6 +465,68 @@ mod tests {
             result.len(),
             100,
             "should not change if already within limit"
+        );
+    }
+
+    #[test]
+    fn test_lag_analysis_correlogram_structure() {
+        // Verify the lag analysis produces correct correlogram entries
+        let n = 100i32;
+        let fa: Vec<f64> = (0..n).map(|i| (f64::from(i) * 0.2).sin()).collect();
+        // fb is fa shifted by 2 bars
+        let fb: Vec<f64> = (0..n).map(|i| ((f64::from(i) - 2.0) * 0.2).sin()).collect();
+
+        let lag_min = -5;
+        let lag_max = 5;
+        let mut correlogram = Vec::new();
+        let mut best_lag = 0i32;
+        let mut best_corr = 0.0_f64;
+
+        for lag in lag_min..=lag_max {
+            let r = stats::lagged_pearson(&fa, &fb, lag);
+            if r.abs() > best_corr.abs() {
+                best_corr = r;
+                best_lag = lag;
+            }
+            correlogram.push((lag, r));
+        }
+
+        // Should have 11 entries (-5 to 5 inclusive)
+        assert_eq!(correlogram.len(), 11);
+        // Peak should be at lag=-2 (fa leads fb by 2)
+        assert_eq!(best_lag, -2, "optimal lag should be -2, got {best_lag}");
+        assert!(
+            best_corr > 0.9,
+            "peak correlation should be high, got {best_corr}"
+        );
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    #[test]
+    fn test_lag_analysis_granger_integration() {
+        // Verify Granger test runs with a causal series (y depends on x lagged)
+        let n: usize = 200;
+        let mut seed: u64 = 999;
+        let mut noise = || -> f64 {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            (seed >> 11) as f64 / (1u64 << 53) as f64 * 0.02 - 0.01
+        };
+
+        let fa: Vec<f64> = (0..n).map(|i| (i as f64 * 0.1).sin() * 0.05).collect();
+        let mut fb = vec![0.0; n];
+        for t in 1..n {
+            fb[t] = 0.3 * fb[t - 1] + 0.6 * fa[t - 1] + noise();
+        }
+
+        // A→B should be detectable
+        let result = stats::granger_f_test(&fa, &fb, 2);
+        assert!(result.is_some(), "Granger test should produce result");
+        let (f_stat, p_val) = result.unwrap();
+        assert!(f_stat.is_finite(), "F-stat should be finite");
+        assert!(p_val.is_finite(), "p-value should be finite");
+        assert!(
+            p_val < 0.05,
+            "causal series should be significant, p={p_val}"
         );
     }
 }

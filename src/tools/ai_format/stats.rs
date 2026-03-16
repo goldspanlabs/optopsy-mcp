@@ -6,7 +6,7 @@
 
 use crate::tools::response_types::{
     AggregateBucket, AggregatePricesResponse, CorrelateResponse, DateRange, DistributionResponse,
-    HistogramBin, NormalityTest, RegimeDetectResponse, RegimeInfo, RegimeSeriesPoint,
+    HistogramBin, LagAnalysis, NormalityTest, RegimeDetectResponse, RegimeInfo, RegimeSeriesPoint,
     RollingCorrelationPoint, RollingMetricResponse, RollingPoint, RollingStats, ScatterPoint,
     TailRatio,
 };
@@ -253,7 +253,7 @@ pub fn format_distribution(
 }
 
 /// Format the result of a `correlate` analysis.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub fn format_correlate(
     label_a: String,
     label_b: String,
@@ -264,6 +264,7 @@ pub fn format_correlate(
     p_value: Option<f64>,
     rolling_correlation: Vec<RollingCorrelationPoint>,
     scatter: Vec<ScatterPoint>,
+    lag_analysis: Option<LagAnalysis>,
     symbol_a_upper: &str,
 ) -> CorrelateResponse {
     let strength = if pearson.abs() > 0.7 {
@@ -281,17 +282,33 @@ pub fn format_correlate(
         "negative"
     };
 
-    let summary = format!(
+    let mut summary = format!(
         "Correlation between {label_a} and {label_b}: Pearson={pearson:.3} ({strength} {direction}), \
          Spearman={spearman:.3}, R²={r_squared:.3} over {n} observations.",
     );
 
-    let suggested_next_steps = vec![
+    if let Some(ref la) = lag_analysis {
+        use std::fmt::Write;
+        let _ = write!(
+            summary,
+            " Lead/lag: optimal lag={} bars (r={:.3}).",
+            la.optimal_lag, la.optimal_correlation
+        );
+    }
+
+    let mut suggested_next_steps = vec![
         format!(
             "[NEXT] Call rolling_metric(symbol=\"{symbol_a_upper}\", metric=\"volatility\") to compare vol regimes"
         ),
         format!("[THEN] Call regime_detect(symbol=\"{symbol_a_upper}\") to see if correlation changes across market regimes"),
     ];
+
+    if lag_analysis.is_none() {
+        suggested_next_steps.push(
+            "[TIP] Add lag_range={\"min\":-10,\"max\":10} to detect lead/lag relationships"
+                .to_string(),
+        );
+    }
 
     let mut key_findings = vec![
         format!("{strength} {direction} correlation (Pearson={pearson:.3})"),
@@ -319,6 +336,38 @@ pub fn format_correlate(
         ));
     }
 
+    // Lead/lag findings
+    if let Some(ref la) = lag_analysis {
+        if la.optimal_lag != 0 {
+            let leader = if la.optimal_lag > 0 {
+                &label_b
+            } else {
+                &label_a
+            };
+            key_findings.push(format!(
+                "Lead/lag: {leader} leads by {} bars (r={:.3} at lag={})",
+                la.optimal_lag.abs(),
+                la.optimal_correlation,
+                la.optimal_lag
+            ));
+        } else {
+            key_findings.push("Lead/lag: strongest correlation at lag=0 (synchronous)".into());
+        }
+        for g in &la.granger_tests {
+            key_findings.push(format!(
+                "Granger: {} (F={:.2}, p={:.4}) — {}",
+                g.direction,
+                g.f_statistic,
+                g.p_value,
+                if g.is_significant {
+                    "significant"
+                } else {
+                    "not significant"
+                }
+            ));
+        }
+    }
+
     CorrelateResponse {
         summary,
         series_a: label_a,
@@ -330,6 +379,7 @@ pub fn format_correlate(
         p_value,
         rolling_correlation,
         scatter,
+        lag_analysis,
         key_findings,
         suggested_next_steps,
     }
@@ -428,10 +478,15 @@ pub fn format_regime_detect(
     let mut key_findings: Vec<String> = regimes
         .iter()
         .map(|r| {
-            format!(
+            let mut s = format!(
                 "{}: {:.1}% of bars, mean return={:.4}, return std={:.4}, realized vol={:.4}",
                 r.label, r.pct_of_total, r.mean_return, r.std_dev, r.mean_vol
-            )
+            );
+            if let (Some(em), Some(es)) = (r.emission_mean, r.emission_std) {
+                use std::fmt::Write;
+                let _ = write!(s, " [HMM emission: mu={em:.4}, sigma={es:.4}]");
+            }
+            s
         })
         .collect();
     if let Some(dominant) = regimes.iter().max_by(|a, b| {
