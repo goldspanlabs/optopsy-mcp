@@ -1,10 +1,11 @@
-//! Math and derived-feature functions: abs, change, pct_change, roc, rel_volume, zscore,
-//! range_pct, if.
+//! Math and derived-feature functions: `abs`, `change`, `pct_change`, `roc`, `rel_volume`, `zscore`,
+//! `range_pct`, `if`.
 
 use polars::prelude::*;
 
 use super::helpers::{extract_col_period, extract_three_cols, FuncArg};
 
+#[allow(clippy::needless_pass_by_value)]
 pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
     match name {
         "abs" => {

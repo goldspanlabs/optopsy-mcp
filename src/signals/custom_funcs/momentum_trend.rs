@@ -1,4 +1,4 @@
-//! Momentum and trend functions: williams_r, adx, plus_di, minus_di, psar, tsi, vpt.
+//! Momentum and trend functions: `williams_r`, `adx`, `plus_di`, `minus_di`, `psar`, `tsi`, `vpt`.
 
 // Multi-column map closures use conventional short names (s, c, h, l, v, n)
 #![allow(clippy::many_single_char_names)]
@@ -13,6 +13,7 @@ use super::helpers::{
 };
 use crate::signals::helpers::pad_series;
 
+#[allow(clippy::needless_pass_by_value, clippy::too_many_lines)]
 pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
     match name {
         "williams_r" => {

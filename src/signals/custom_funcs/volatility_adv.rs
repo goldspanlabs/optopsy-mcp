@@ -1,5 +1,5 @@
-//! Volatility and advanced functions: donchian, ichimoku, envelope, supertrend, aroon, ad,
-//! pvi, nvi, ulcer.
+//! Volatility and advanced functions: `donchian`, `ichimoku`, `envelope`, `supertrend`, `aroon`, `ad`,
+//! `pvi`, `nvi`, `ulcer`.
 
 // Multi-column map closures use conventional short names (s, c, h, l, v, n)
 #![allow(clippy::many_single_char_names)]
@@ -16,6 +16,7 @@ use super::helpers::{
 };
 use crate::signals::helpers::pad_series;
 
+#[allow(clippy::needless_pass_by_value, clippy::too_many_lines)]
 pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
     match name {
         "aroon_up" => build_aroon(name, args, AroonComponent::Up),
@@ -325,6 +326,7 @@ enum AroonComponent {
     Osc,
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn build_aroon(name: &str, args: Vec<FuncArg>, component: AroonComponent) -> Result<Expr, String> {
     let (high_expr, low_expr, period) = extract_three_cols_period_as_two_cols(&args, name)?;
     let series_name = name.to_string();

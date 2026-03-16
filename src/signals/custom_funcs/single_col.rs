@@ -1,5 +1,5 @@
-//! Single-column map functions: rsi, macd_hist, macd_signal, macd_line, rank, iv_rank,
-//! cci, ppo, cmo.
+//! Single-column map functions: `rsi`, `macd_hist`, `macd_signal`, `macd_line`, `rank`, `iv_rank`,
+//! `cci`, `ppo`, `cmo`.
 
 use polars::prelude::*;
 use rust_ti::momentum_indicators::bulk as mti;
@@ -11,6 +11,7 @@ use super::helpers::{
 };
 use crate::signals::helpers::pad_series;
 
+#[allow(clippy::needless_pass_by_value, clippy::too_many_lines)]
 pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
     match name {
         "rsi" => {

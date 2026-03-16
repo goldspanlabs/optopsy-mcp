@@ -1,9 +1,10 @@
-//! Rolling window functions: sma, ema, std, max, min, bbands_mid, bbands_upper, bbands_lower.
+//! Rolling window functions: `sma`, `ema`, `std`, `max`, `min`, `bbands_mid`, `bbands_upper`, `bbands_lower`.
 
 use polars::prelude::*;
 
 use super::helpers::{extract_col_period, FuncArg};
 
+#[allow(clippy::needless_pass_by_value)]
 pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
     match name {
         "sma" => {

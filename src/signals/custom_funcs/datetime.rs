@@ -1,4 +1,4 @@
-//! Date/time functions: day_of_week, month, day_of_month, hour, minute, week_of_year.
+//! Date/time functions: `day_of_week`, `month`, `day_of_month`, `hour`, `minute`, `week_of_year`.
 //!
 //! These are zero-argument functions that operate on the injected `__dt` column.
 
@@ -6,6 +6,7 @@ use polars::prelude::*;
 
 use super::helpers::FuncArg;
 
+#[allow(clippy::needless_pass_by_value)]
 pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
     match name {
         "day_of_week" => {

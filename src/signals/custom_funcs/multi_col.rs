@@ -1,4 +1,4 @@
-//! Multi-column functions: atr, stochastic, keltner_upper, keltner_lower, obv, mfi, tr, cmf.
+//! Multi-column functions: `atr`, `stochastic`, `keltner_upper`, `keltner_lower`, `obv`, `mfi`, `tr`, `cmf`.
 
 // Multi-column map closures use conventional short names (s, c, h, l, v, n)
 #![allow(clippy::many_single_char_names)]
@@ -13,6 +13,7 @@ use crate::signals::helpers::pad_series;
 use crate::signals::volatility::{compute_atr, compute_keltner_channel};
 use crate::signals::volume::{compute_cmf, compute_typical_price};
 
+#[allow(clippy::needless_pass_by_value, clippy::too_many_lines)]
 pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
     match name {
         "atr" => {

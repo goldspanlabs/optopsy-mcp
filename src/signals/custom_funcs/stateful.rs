@@ -1,9 +1,10 @@
-//! Stateful counting functions: consecutive_up, consecutive_down.
+//! Stateful counting functions: `consecutive_up`, `consecutive_down`.
 
 use polars::prelude::*;
 
 use super::helpers::{extract_single_col, FuncArg};
 
+#[allow(clippy::needless_pass_by_value)]
 pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
     match name {
         "consecutive_up" => {

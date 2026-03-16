@@ -344,7 +344,7 @@ fn compute_unrealized_pnl(
 }
 
 /// Run the event-driven simulation loop.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::implicit_hasher)]
 pub fn run_event_loop(
     ctx: &SimContext,
     candidates: &BTreeMap<NaiveDate, Vec<EntryCandidate>>,
