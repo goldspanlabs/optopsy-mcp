@@ -2092,21 +2092,19 @@ mod tests {
         let bools = result.bool().unwrap();
         // bar 1: gap up (open=101 > prev_close=100). low=100 <= 100 → filled=true
         assert_eq!(bools.get(1), Some(true));
-        // bar 4: open=105 > prev_close=105 → no gap (open == prev_close) → filled=false
+        // bar 4: open=105 == prev_close=105 → no gap (open equals prev_close) → filled=false
         assert_eq!(bools.get(4), Some(false));
     }
 
     #[test]
-    fn gap_negative_gap_down() {
-        // test_df data:
+    fn gap_size_no_negative_gaps_in_default_data() {
+        // test_df data has no gap-down bars (open is never below the previous close).
+        // Verify that gap_size() < 0 returns false for all inspected bars.
         // close: 100, 102, 101, 105, 103, 107, 110, 108, 112, 115
         // open:   99, 101, 102, 101, 105, 103, 106, 110, 108, 112
         // bar 3: open=101, prev_close=101 → gap = 0 (flat)
         // bar 5: open=103, prev_close=103 → gap = 0 (flat)
         // bar 8: open=108, prev_close=108 → gap = 0 (flat)
-        // Need a gap down: bar where open < prev_close
-        // bar 3: open=101 < prev_close=101? No, equal.
-        // Actually let's test gap_size < 0 for gap-down bars
         let df = test_df();
         let signal = FormulaSignal::new("gap_size() < 0".to_string());
         let result = signal.evaluate(&df).unwrap();

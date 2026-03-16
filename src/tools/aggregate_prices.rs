@@ -9,38 +9,45 @@ use crate::stats;
 use crate::tools::ai_format;
 use crate::tools::response_types::{AggregateBucket, AggregatePricesResponse, DateRange};
 
+/// Configuration for the `aggregate_prices` analysis.
+pub struct AggregateConfig<'a> {
+    pub symbol: &'a str,
+    pub years: u32,
+    pub group_by: &'a str,
+    pub metric: &'a str,
+    pub interval: Option<crate::engine::types::Interval>,
+    pub start_date: Option<&'a str>,
+    pub end_date: Option<&'a str>,
+}
+
 /// Execute the `aggregate_prices` analysis.
-#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+#[allow(clippy::too_many_lines)]
 pub async fn execute(
     cache: &Arc<CachedStore>,
-    symbol: &str,
-    years: u32,
-    group_by: &str,
-    metric: &str,
-    interval: Option<crate::engine::types::Interval>,
-    start_date: Option<&str>,
-    end_date: Option<&str>,
+    config: &AggregateConfig<'_>,
 ) -> Result<AggregatePricesResponse> {
     // Validate group_by
     let valid_groups = ["day_of_week", "month", "quarter", "year", "hour_of_day"];
-    if !valid_groups.contains(&group_by) {
+    if !valid_groups.contains(&config.group_by) {
         anyhow::bail!(
-            "Invalid group_by: \"{group_by}\". Must be one of: {}",
+            "Invalid group_by: \"{}\". Must be one of: {}",
+            config.group_by,
             valid_groups.join(", ")
         );
     }
     // Validate metric
     let valid_metrics = ["return", "range", "volume", "gap"];
-    if !valid_metrics.contains(&metric) {
+    if !valid_metrics.contains(&config.metric) {
         anyhow::bail!(
-            "Invalid metric: \"{metric}\". Must be one of: {}",
+            "Invalid metric: \"{}\". Must be one of: {}",
+            config.metric,
             valid_metrics.join(", ")
         );
     }
 
     // Resolve interval: auto-select Hour1 for hour_of_day if not specified
-    let resolved_interval = interval.unwrap_or_else(|| {
-        if group_by == "hour_of_day" {
+    let resolved_interval = config.interval.unwrap_or_else(|| {
+        if config.group_by == "hour_of_day" {
             crate::engine::types::Interval::Hour1
         } else {
             crate::engine::types::Interval::Daily
@@ -48,7 +55,7 @@ pub async fn execute(
     });
 
     // Reject hour_of_day with daily-resolution intervals
-    if group_by == "hour_of_day"
+    if config.group_by == "hour_of_day"
         && matches!(
             resolved_interval,
             crate::engine::types::Interval::Daily
@@ -62,12 +69,12 @@ pub async fn execute(
         );
     }
 
-    let upper = symbol.to_uppercase();
+    let upper = config.symbol.to_uppercase();
     let resp = crate::tools::raw_prices::load_and_execute(
         cache,
         &upper,
-        start_date,
-        end_date,
+        config.start_date,
+        config.end_date,
         None, // no limit
         resolved_interval,
     )
@@ -75,9 +82,9 @@ pub async fn execute(
     .context("Failed to load OHLCV data")?;
 
     // Filter by years if no explicit date range
-    let prices = if start_date.is_none() && end_date.is_none() && years < 50 {
+    let prices = if config.start_date.is_none() && config.end_date.is_none() && config.years < 50 {
         let cutoff =
-            chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
+            chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(config.years) * 365);
         let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
         resp.prices
             .into_iter()
@@ -111,7 +118,7 @@ pub async fn execute(
             anyhow::bail!("Invalid date: {date_str}");
         };
 
-        let bucket_label = match group_by {
+        let bucket_label = match config.group_by {
             "day_of_week" => date.format("%A").to_string(),
             "month" => date.format("%B").to_string(),
             "quarter" => format!("Q{}", ((date.month() - 1) / 3) + 1),
@@ -123,7 +130,7 @@ pub async fn execute(
             _ => unreachable!(),
         };
 
-        let value = match metric {
+        let value = match config.metric {
             "return" => {
                 if i == 0 {
                     continue; // skip first bar (no previous close)
@@ -156,10 +163,16 @@ pub async fn execute(
         bar_data.push((bucket_label, value));
     }
 
-    let (buckets, warnings) = build_buckets(group_by, metric, &bar_data);
+    let (buckets, warnings) = build_buckets(config.group_by, config.metric, &bar_data);
 
     Ok(ai_format::format_aggregate_prices(
-        &upper, group_by, metric, total_bars, date_range, buckets, warnings,
+        &upper,
+        config.group_by,
+        config.metric,
+        total_bars,
+        date_range,
+        buckets,
+        warnings,
     ))
 }
 

@@ -1613,13 +1613,15 @@ impl OptopsyServer {
                     .map_err(|e| validation_err("aggregate_prices", e))?;
                 tools::aggregate_prices::execute(
                     &self.cache,
-                    &params.symbol,
-                    params.years,
-                    &params.group_by,
-                    &params.metric,
-                    params.interval,
-                    params.start_date.as_deref(),
-                    params.end_date.as_deref(),
+                    &tools::aggregate_prices::AggregateConfig {
+                        symbol: &params.symbol,
+                        years: params.years,
+                        group_by: &params.group_by,
+                        metric: &params.metric,
+                        interval: params.interval,
+                        start_date: params.start_date.as_deref(),
+                        end_date: params.end_date.as_deref(),
+                    },
                 )
                 .await
                 .map_err(|e| format!("Error: {e}"))
