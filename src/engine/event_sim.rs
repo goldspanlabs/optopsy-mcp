@@ -4,11 +4,10 @@
 //! day-by-day event loop that opens, manages, and closes positions according
 //! to the configured exit rules, adjustment rules, and signal filters.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use anyhow::{bail, Result};
 use chrono::NaiveDate;
-use ordered_float::OrderedFloat;
 use polars::prelude::*;
 
 use super::adjustments::check_and_apply_adjustments;
@@ -334,48 +333,33 @@ fn sample_entry_spreads(
 fn compute_unrealized_pnl(
     positions: &[Position],
     today: NaiveDate,
-    price_table: &PriceTable,
-    last_known: &HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
-    slippage: &Slippage,
-    multiplier: i32,
-    ohlcv_closes: Option<&BTreeMap<NaiveDate, f64>>,
+    ctx: &SimContext,
+    last_known: &LastKnown,
 ) -> f64 {
     positions
         .iter()
         .filter(|p| matches!(p.status, PositionStatus::Open))
-        .map(|p| {
-            mark_to_market(
-                p,
-                today,
-                price_table,
-                last_known,
-                slippage,
-                multiplier,
-                ohlcv_closes,
-            )
-        })
+        .map(|p| mark_to_market(p, today, ctx, last_known))
         .sum()
 }
 
 /// Run the event-driven simulation loop.
-#[allow(
-    clippy::implicit_hasher,
-    clippy::too_many_lines,
-    clippy::too_many_arguments
-)]
+#[allow(clippy::too_many_lines)]
 pub fn run_event_loop(
-    price_table: &PriceTable,
+    ctx: &SimContext,
     candidates: &BTreeMap<NaiveDate, Vec<EntryCandidate>>,
     trading_days: &[NaiveDate],
-    params: &BacktestParams,
-    strategy_def: &StrategyDef,
     exit_dates: Option<&std::collections::HashSet<NaiveDate>>,
     date_index: &DateIndex,
-    ohlcv_closes: Option<&BTreeMap<NaiveDate, f64>>,
 ) -> (Vec<TradeRecord>, Vec<EquityPoint>, BacktestQualityStats) {
     // Capped reservoir sample for spread percentages to bound memory.
     // 10 000 samples is enough for an accurate median estimate.
     const MAX_SPREAD_SAMPLES: usize = 10_000;
+
+    let params = ctx.params;
+    let price_table = ctx.price_table;
+    let strategy_def = ctx.strategy_def;
+    let ohlcv_closes = ctx.ohlcv_closes;
 
     let mut positions: Vec<Position> = Vec::new();
     let mut trade_log: Vec<TradeRecord> = Vec::new();
@@ -402,8 +386,7 @@ pub fn run_event_loop(
     }
 
     // Last known prices for carry-forward on gaps
-    let mut last_known: HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot> =
-        HashMap::new();
+    let mut last_known: LastKnown = LastKnown::new();
 
     for &today in trading_days {
         // Phase 1: Check exits on open positions
@@ -419,16 +402,8 @@ pub fn run_event_loop(
                 .is_some_and(|dates| dates.contains(&today))
                 .then_some(ExitType::Signal);
 
-            let exit_type = signal_exit.or_else(|| {
-                check_exit_triggers(
-                    &positions[i],
-                    today,
-                    price_table,
-                    &last_known,
-                    params,
-                    ohlcv_closes,
-                )
-            });
+            let exit_type =
+                signal_exit.or_else(|| check_exit_triggers(&positions[i], today, ctx, &last_known));
 
             if let Some(exit_type) = exit_type {
                 // Capture equity before this trade's P&L for accurate sizing audit
@@ -436,12 +411,9 @@ pub fn run_event_loop(
                 let pnl = close_position(
                     &mut positions[i],
                     today,
-                    price_table,
+                    ctx,
                     &last_known,
-                    &params.slippage,
-                    &params.commission.clone().unwrap_or_default(),
                     exit_type.clone(),
-                    ohlcv_closes,
                 );
                 realized_equity += pnl;
 
@@ -466,16 +438,15 @@ pub fn run_event_loop(
 
         // Adjustment phase: check rules against remaining open positions
         if !params.adjustment_rules.is_empty() {
-            check_and_apply_adjustments(
-                &mut positions,
-                today,
-                price_table,
-                &last_known,
-                params,
-                &mut trade_log,
-                &mut trade_id,
-                &mut realized_equity,
-            );
+            let mut adj_state = SimState {
+                trade_log: std::mem::take(&mut trade_log),
+                trade_id,
+                realized_equity,
+            };
+            check_and_apply_adjustments(&mut positions, today, ctx, &last_known, &mut adj_state);
+            trade_log = adj_state.trade_log;
+            trade_id = adj_state.trade_id;
+            realized_equity = adj_state.realized_equity;
             positions.retain(|p| matches!(p.status, PositionStatus::Open));
         }
 
@@ -537,15 +508,9 @@ pub fn run_event_loop(
                         ))
                     });
 
-                    if let Some(position) = open_position(
-                        candidate,
-                        today,
-                        strategy_def,
-                        params,
-                        next_id,
-                        effective_qty,
-                        ohlcv_closes,
-                    ) {
+                    if let Some(position) =
+                        open_position(candidate, today, ctx, next_id, effective_qty)
+                    {
                         next_id += 1;
                         positions.push(position);
                         positions_opened += 1;
@@ -559,15 +524,7 @@ pub fn run_event_loop(
         update_last_known(price_table, date_index, today, &mut last_known);
 
         // Phase 3: Daily mark-to-market
-        let unrealized = compute_unrealized_pnl(
-            &positions,
-            today,
-            price_table,
-            &last_known,
-            &params.slippage,
-            params.multiplier,
-            ohlcv_closes,
-        );
+        let unrealized = compute_unrealized_pnl(&positions, today, ctx, &last_known);
 
         equity_curve.push(EquityPoint {
             datetime: today
@@ -592,11 +549,10 @@ pub fn run_event_loop(
 fn check_exit_triggers(
     position: &Position,
     today: NaiveDate,
-    price_table: &PriceTable,
-    last_known: &HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
-    params: &BacktestParams,
-    ohlcv_closes: Option<&BTreeMap<NaiveDate, f64>>,
+    ctx: &SimContext,
+    last_known: &LastKnown,
 ) -> Option<ExitType> {
+    let params = ctx.params;
     // Expiration check
     if today >= position.expiration {
         return Some(ExitType::Expiration);
@@ -620,15 +576,7 @@ fn check_exit_triggers(
     }
 
     // Stop loss / take profit checks based on current MTM
-    let mtm = mark_to_market(
-        position,
-        today,
-        price_table,
-        last_known,
-        &params.slippage,
-        params.multiplier,
-        ohlcv_closes,
-    );
+    let mtm = mark_to_market(position, today, ctx, last_known);
 
     if let Some(sl) = params.stop_loss {
         let loss_threshold = position.entry_cost.abs() * sl;
@@ -646,7 +594,7 @@ fn check_exit_triggers(
 
     // Net delta exit: exit when abs(net_delta) exceeds threshold
     if let Some(delta_thresh) = params.exit_net_delta {
-        let net_delta = compute_position_net_delta(position, today, price_table, last_known);
+        let net_delta = compute_position_net_delta(position, today, ctx, last_known);
         if net_delta.abs() > delta_thresh {
             return Some(ExitType::DeltaExit);
         }
@@ -659,6 +607,8 @@ fn check_exit_triggers(
 mod tests {
     use super::*;
     use crate::engine::price_table::build_date_index;
+    use ordered_float::OrderedFloat;
+    use std::collections::HashMap;
 
     fn make_price_table_simple() -> (PriceTable, Vec<NaiveDate>, DateIndex) {
         let mut table = PriceTable::with_hasher(rustc_hash::FxBuildHasher);
@@ -795,16 +745,15 @@ mod tests {
             exit_net_delta: None,
         };
 
-        let (_trade_log, equity_curve, _) = run_event_loop(
-            &table,
-            &candidates,
-            &days,
-            &params,
-            &strategy_def,
-            None,
-            &date_idx,
-            None,
-        );
+        let (_trade_log, equity_curve, _) = {
+            let ctx = SimContext {
+                price_table: &table,
+                params: &params,
+                strategy_def: &strategy_def,
+                ohlcv_closes: None,
+            };
+            run_event_loop(&ctx, &candidates, &days, None, &date_idx)
+        };
 
         assert_eq!(equity_curve.len(), 3, "Should have 3 equity points");
     }
@@ -906,16 +855,15 @@ mod tests {
             exit_net_delta: None,
         };
 
-        let (trade_log, _, _) = run_event_loop(
-            &table,
-            &candidates,
-            &days,
-            &params,
-            &strategy_def,
-            None,
-            &date_idx,
-            None,
-        );
+        let (trade_log, _, _) = {
+            let ctx = SimContext {
+                price_table: &table,
+                params: &params,
+                strategy_def: &strategy_def,
+                ohlcv_closes: None,
+            };
+            run_event_loop(&ctx, &candidates, &days, None, &date_idx)
+        };
 
         assert_eq!(trade_log.len(), 1);
         assert!(
@@ -1022,16 +970,15 @@ mod tests {
             exit_net_delta: None,
         };
 
-        let (trade_log, _, _) = run_event_loop(
-            &table,
-            &candidates,
-            &days,
-            &params,
-            &strategy_def,
-            None,
-            &date_idx,
-            None,
-        );
+        let (trade_log, _, _) = {
+            let ctx = SimContext {
+                price_table: &table,
+                params: &params,
+                strategy_def: &strategy_def,
+                ohlcv_closes: None,
+            };
+            run_event_loop(&ctx, &candidates, &days, None, &date_idx)
+        };
 
         assert_eq!(trade_log.len(), 1);
         assert!(
@@ -1133,16 +1080,15 @@ mod tests {
             exit_net_delta: None,
         };
 
-        let (trade_log, _, _) = run_event_loop(
-            &table,
-            &candidates,
-            &days,
-            &params,
-            &strategy_def,
-            None,
-            &date_idx,
-            None,
-        );
+        let (trade_log, _, _) = {
+            let ctx = SimContext {
+                price_table: &table,
+                params: &params,
+                strategy_def: &strategy_def,
+                ohlcv_closes: None,
+            };
+            run_event_loop(&ctx, &candidates, &days, None, &date_idx)
+        };
 
         assert_eq!(trade_log.len(), 0, "No trades should close in 2 days");
     }
@@ -1214,16 +1160,15 @@ mod tests {
             exit_net_delta: None,
         };
 
-        let (_, equity_curve, _) = run_event_loop(
-            &table,
-            &candidates,
-            &days,
-            &params,
-            &strategy_def,
-            None,
-            &date_idx,
-            None,
-        );
+        let (_, equity_curve, _) = {
+            let ctx = SimContext {
+                price_table: &table,
+                params: &params,
+                strategy_def: &strategy_def,
+                ohlcv_closes: None,
+            };
+            run_event_loop(&ctx, &candidates, &days, None, &date_idx)
+        };
 
         assert_eq!(
             equity_curve.len(),
@@ -1544,16 +1489,15 @@ mod tests {
             exit_net_delta: None,
         };
 
-        let (_, equity_curve, _) = run_event_loop(
-            &table,
-            &candidates,
-            &days,
-            &params,
-            &strategy_def,
-            None,
-            &date_idx,
-            None,
-        );
+        let (_, equity_curve, _) = {
+            let ctx = SimContext {
+                price_table: &table,
+                params: &params,
+                strategy_def: &strategy_def,
+                ohlcv_closes: None,
+            };
+            run_event_loop(&ctx, &candidates, &days, None, &date_idx)
+        };
 
         assert_eq!(equity_curve.len(), 5);
     }
@@ -1710,31 +1654,29 @@ mod tests {
             expiration_filter: ExpirationFilter::Any,
             exit_net_delta: None,
         };
-        let (trades_no_stagger, _, _) = run_event_loop(
-            &table,
-            &candidates,
-            &days,
-            &params_no_stagger,
-            &strategy_def,
-            None,
-            &date_idx,
-            None,
-        );
+        let (trades_no_stagger, _, _) = {
+            let ctx = SimContext {
+                price_table: &table,
+                params: &params_no_stagger,
+                strategy_def: &strategy_def,
+                ohlcv_closes: None,
+            };
+            run_event_loop(&ctx, &candidates, &days, None, &date_idx)
+        };
 
         let params_stagger = BacktestParams {
             min_days_between_entries: Some(3),
             ..params_no_stagger.clone()
         };
-        let (trades_stagger, _, _) = run_event_loop(
-            &table,
-            &candidates,
-            &days,
-            &params_stagger,
-            &strategy_def,
-            None,
-            &date_idx,
-            None,
-        );
+        let (trades_stagger, _, _) = {
+            let ctx = SimContext {
+                price_table: &table,
+                params: &params_stagger,
+                strategy_def: &strategy_def,
+                ohlcv_closes: None,
+            };
+            run_event_loop(&ctx, &candidates, &days, None, &date_idx)
+        };
 
         assert!(
             trades_no_stagger.len() > trades_stagger.len(),
@@ -2110,16 +2052,15 @@ mod tests {
             exit_net_delta: Some(0.50),
         };
 
-        let (trade_log, _, _) = run_event_loop(
-            &table,
-            &candidates,
-            &days,
-            &params,
-            &strategy_def,
-            None,
-            &date_idx,
-            None,
-        );
+        let (trade_log, _, _) = {
+            let ctx = SimContext {
+                price_table: &table,
+                params: &params,
+                strategy_def: &strategy_def,
+                ohlcv_closes: None,
+            };
+            run_event_loop(&ctx, &candidates, &days, None, &date_idx)
+        };
 
         assert_eq!(trade_log.len(), 1, "Should have exactly 1 trade");
         assert_eq!(
@@ -2214,16 +2155,15 @@ mod tests {
             exit_net_delta: Some(0.50),
         };
 
-        let (trade_log, _, _) = run_event_loop(
-            &table,
-            &candidates,
-            &days,
-            &params,
-            &strategy_def,
-            None,
-            &date_idx,
-            None,
-        );
+        let (trade_log, _, _) = {
+            let ctx = SimContext {
+                price_table: &table,
+                params: &params,
+                strategy_def: &strategy_def,
+                ohlcv_closes: None,
+            };
+            run_event_loop(&ctx, &candidates, &days, None, &date_idx)
+        };
 
         assert!(!trade_log.is_empty(), "Should have at least 1 closed trade");
         for trade in &trade_log {

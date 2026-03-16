@@ -6,6 +6,7 @@
 pub mod builders;
 pub mod combinators;
 pub mod custom;
+pub mod custom_funcs;
 pub mod helpers;
 pub mod indicators;
 pub mod momentum;

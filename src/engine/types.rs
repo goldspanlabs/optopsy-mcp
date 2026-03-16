@@ -963,7 +963,8 @@ pub struct SweepResult {
 // --- Event-driven simulation types (re-exported from sim_types) ---
 pub use super::sim_types::{
     AdjustmentAction, AdjustmentRule, AdjustmentTrigger, CandidateLeg, DateIndex, EntryCandidate,
-    Position, PositionLeg, PositionStatus, PriceKey, PriceTable, QuoteSnapshot,
+    LastKnown, Position, PositionLeg, PositionStatus, PriceKey, PriceTable, QuoteSnapshot,
+    SimContext, SimState,
 };
 
 #[cfg(test)]

@@ -10,9 +10,9 @@ use ordered_float::OrderedFloat;
 use rustc_hash::FxBuildHasher;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
-use super::types::{ExitType, OptionType, Side};
+use super::types::{BacktestParams, ExitType, OptionType, Side, StrategyDef, TradeRecord};
 
 /// Key for looking up option quotes: (`quote_date`, expiration, strike, `option_type`)
 pub type PriceKey = (NaiveDate, NaiveDate, OrderedFloat<f64>, OptionType);
@@ -133,4 +133,22 @@ pub struct AdjustmentRule {
     pub trigger: AdjustmentTrigger,
     /// Action to execute when the trigger fires.
     pub action: AdjustmentAction,
+}
+
+/// Last-known price cache, keyed by (`expiration`, `strike`, `option_type`).
+pub type LastKnown = HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>;
+
+/// Immutable simulation context shared across the event loop.
+pub struct SimContext<'a> {
+    pub price_table: &'a PriceTable,
+    pub params: &'a BacktestParams,
+    pub strategy_def: &'a StrategyDef,
+    pub ohlcv_closes: Option<&'a BTreeMap<NaiveDate, f64>>,
+}
+
+/// Mutable simulation state accumulated during the event loop.
+pub struct SimState {
+    pub trade_log: Vec<TradeRecord>,
+    pub trade_id: usize,
+    pub realized_equity: f64,
 }

@@ -375,15 +375,18 @@ fn run_event_loop_path(
     // Load OHLCV closes when dynamic sizing or stock-leg strategy needs price data
     let ohlcv_closes = load_ohlcv_closes(params, strategy_def);
 
-    let (trade_log, equity_curve, quality) = event_sim::run_event_loop(
-        &price_table,
-        &candidates,
-        &trading_days,
+    let ctx = crate::engine::sim_types::SimContext {
+        price_table: &price_table,
         params,
         strategy_def,
+        ohlcv_closes: ohlcv_closes.as_ref(),
+    };
+    let (trade_log, equity_curve, quality) = event_sim::run_event_loop(
+        &ctx,
+        &candidates,
+        &trading_days,
         exit_dates.as_ref(),
         &date_index,
-        ohlcv_closes.as_ref(),
     );
 
     Ok((trade_log, equity_curve, quality))

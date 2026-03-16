@@ -1,7 +1,7 @@
 //! Position lifecycle management: opening, closing, mark-to-market,
 //! candidate selection, delta computation, and last-known price caching.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use chrono::NaiveDate;
 use ordered_float::OrderedFloat;
@@ -14,16 +14,17 @@ use super::types::*;
 ///
 /// `effective_quantity` overrides `params.quantity` when dynamic sizing is active.
 /// Returns `None` if the strategy has a stock leg but no OHLCV price is available for the entry date.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn open_position(
     candidate: &EntryCandidate,
     date: NaiveDate,
-    strategy_def: &StrategyDef,
-    params: &BacktestParams,
+    ctx: &SimContext,
     id: usize,
     effective_quantity: Option<i32>,
-    ohlcv_closes: Option<&BTreeMap<NaiveDate, f64>>,
 ) -> Option<Position> {
+    let params = ctx.params;
+    let strategy_def = ctx.strategy_def;
+    let ohlcv_closes = ctx.ohlcv_closes;
+
     let qty = effective_quantity.unwrap_or(params.quantity);
     let mut legs = Vec::new();
     let mut entry_cost = 0.0;
@@ -84,17 +85,18 @@ pub(crate) fn open_position(
 
 /// Close a position, setting leg close prices from current market.
 /// Returns realized P&L for the position.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn close_position(
     position: &mut Position,
     date: NaiveDate,
-    price_table: &PriceTable,
-    last_known: &HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
-    slippage: &Slippage,
-    commission: &Commission,
+    ctx: &SimContext,
+    last_known: &LastKnown,
     exit_type: ExitType,
-    ohlcv_closes: Option<&BTreeMap<NaiveDate, f64>>,
 ) -> f64 {
+    let price_table = ctx.price_table;
+    let slippage = &ctx.params.slippage;
+    let commission = ctx.params.commission.clone().unwrap_or_default();
+    let ohlcv_closes = ctx.ohlcv_closes;
+
     let mut pnl = 0.0;
     let mut total_contracts = 0i32;
 
@@ -157,16 +159,17 @@ pub(crate) fn close_position(
 }
 
 /// Calculate unrealized P&L for a position at current market prices.
-#[allow(clippy::implicit_hasher, clippy::too_many_arguments)]
 pub fn mark_to_market(
     position: &Position,
     date: NaiveDate,
-    price_table: &PriceTable,
-    last_known: &HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
-    slippage: &Slippage,
-    multiplier: i32,
-    ohlcv_closes: Option<&BTreeMap<NaiveDate, f64>>,
+    ctx: &SimContext,
+    last_known: &LastKnown,
 ) -> f64 {
+    let price_table = ctx.price_table;
+    let slippage = &ctx.params.slippage;
+    let multiplier = ctx.params.multiplier;
+    let ohlcv_closes = ctx.ohlcv_closes;
+
     let mut mtm = 0.0;
 
     for leg in &position.legs {
@@ -232,8 +235,8 @@ pub fn mark_to_market(
 pub(crate) fn compute_position_net_delta(
     position: &Position,
     today: NaiveDate,
-    price_table: &PriceTable,
-    last_known: &HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
+    ctx: &SimContext,
+    last_known: &LastKnown,
 ) -> f64 {
     let mut net_delta = 0.0;
     for leg in &position.legs {
@@ -246,7 +249,7 @@ pub(crate) fn compute_position_net_delta(
             OrderedFloat(leg.strike),
             leg.option_type,
         );
-        let snap = price_table.get(&key).or_else(|| {
+        let snap = ctx.price_table.get(&key).or_else(|| {
             last_known.get(&(leg.expiration, OrderedFloat(leg.strike), leg.option_type))
         });
         if let Some(s) = snap {
@@ -297,23 +300,22 @@ pub(crate) fn select_candidate<'a>(
 }
 
 /// Look up the fill price for a leg from the price table or last-known cache.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn lookup_fill_price(
     leg_exp: NaiveDate,
     leg_strike: f64,
     leg_opt_type: OptionType,
     fill_side: Side,
     today: NaiveDate,
-    price_table: &PriceTable,
-    last_known: &HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSnapshot>,
-    slippage: &Slippage,
+    ctx: &SimContext,
+    last_known: &LastKnown,
 ) -> f64 {
     let key = (today, leg_exp, OrderedFloat(leg_strike), leg_opt_type);
-    let snap = price_table
+    let snap = ctx
+        .price_table
         .get(&key)
         .or_else(|| last_known.get(&(leg_exp, OrderedFloat(leg_strike), leg_opt_type)));
     snap.map_or(0.0, |s| {
-        pricing::fill_price(s.bid, s.ask, fill_side, slippage)
+        pricing::fill_price(s.bid, s.ask, fill_side, &ctx.params.slippage)
     })
 }
 
@@ -354,7 +356,6 @@ mod tests {
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
         let strike = 100.0;
 
-        // Day 1: entry day
         table.insert(
             (d1, exp, OrderedFloat(strike), OptionType::Call),
             QuoteSnapshot {
@@ -363,7 +364,6 @@ mod tests {
                 delta: 0.50,
             },
         );
-        // Day 2: mid-trade
         table.insert(
             (d2, exp, OrderedFloat(strike), OptionType::Call),
             QuoteSnapshot {
@@ -372,7 +372,6 @@ mod tests {
                 delta: 0.35,
             },
         );
-        // Day 3: near exit
         table.insert(
             (d3, exp, OrderedFloat(strike), OptionType::Call),
             QuoteSnapshot {
@@ -387,13 +386,65 @@ mod tests {
         (table, days, date_index)
     }
 
+    fn make_test_params(slippage: Slippage, multiplier: i32) -> BacktestParams {
+        BacktestParams {
+            strategy: "test".to_string(),
+            leg_deltas: vec![TargetRange {
+                target: 0.30,
+                min: 0.20,
+                max: 0.40,
+            }],
+            entry_dte: DteRange {
+                target: 45,
+                min: 10,
+                max: 60,
+            },
+            exit_dte: 5,
+            slippage,
+            commission: None,
+            min_bid_ask: 0.0,
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            capital: 100_000.0,
+            quantity: 1,
+            sizing: None,
+            multiplier,
+            max_positions: 5,
+            selector: TradeSelector::First,
+            adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
+            cross_ohlcv_paths: std::collections::HashMap::new(),
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: None,
+            max_net_delta: None,
+            min_days_between_entries: None,
+            expiration_filter: ExpirationFilter::Any,
+            exit_net_delta: None,
+        }
+    }
+
+    fn make_test_strategy_def() -> StrategyDef {
+        crate::strategies::find_strategy("long_call").unwrap()
+    }
+
     #[test]
     fn mark_to_market_long_call() {
         let (table, _, _) = make_price_table_simple();
         let d2 = NaiveDate::from_ymd_opt(2024, 1, 22).unwrap();
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
-        let last_known = HashMap::new();
-
+        let last_known = LastKnown::new();
+        let params = make_test_params(Slippage::Mid, 100);
+        let sd = make_test_strategy_def();
+        let ctx = SimContext {
+            price_table: &table,
+            params: &params,
+            strategy_def: &sd,
+            ohlcv_closes: None,
+        };
         let position = Position {
             id: 1,
             entry_date: NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
@@ -405,30 +456,19 @@ mod tests {
                 option_type: OptionType::Call,
                 strike: 100.0,
                 expiration: exp,
-                entry_price: 5.25, // mid of 5.0/5.50
+                entry_price: 5.25,
                 qty: 1,
                 closed: false,
                 close_price: None,
                 close_date: None,
             }],
-            entry_cost: 525.0, // 5.25 * 1 * 100
+            entry_cost: 525.0,
             quantity: 1,
             multiplier: 100,
             status: PositionStatus::Open,
             stock_entry_price: None,
         };
-
-        let mtm = mark_to_market(
-            &position,
-            d2,
-            &table,
-            &last_known,
-            &Slippage::Mid,
-            100,
-            None,
-        );
-        // Long call: entered at 5.25, current mid = 3.25
-        // MTM = (3.25 - 5.25) * 1.0 * 1 * 100 = -200.0
+        let mtm = mark_to_market(&position, d2, &ctx, &last_known);
         assert!((mtm - (-200.0)).abs() < 1e-10, "MTM was {mtm}");
     }
 
@@ -438,7 +478,6 @@ mod tests {
         let d1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
         let d2 = NaiveDate::from_ymd_opt(2024, 1, 22).unwrap();
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
-
         table.insert(
             (d1, exp, OrderedFloat(100.0), OptionType::Put),
             QuoteSnapshot {
@@ -455,8 +494,15 @@ mod tests {
                 delta: -0.30,
             },
         );
-
-        let last_known = HashMap::new();
+        let last_known = LastKnown::new();
+        let params = make_test_params(Slippage::Mid, 100);
+        let sd = make_test_strategy_def();
+        let ctx = SimContext {
+            price_table: &table,
+            params: &params,
+            strategy_def: &sd,
+            ohlcv_closes: None,
+        };
         let position = Position {
             id: 1,
             entry_date: d1,
@@ -468,30 +514,19 @@ mod tests {
                 option_type: OptionType::Put,
                 strike: 100.0,
                 expiration: exp,
-                entry_price: 4.25, // mid of 4.0/4.50
+                entry_price: 4.25,
                 qty: 1,
                 closed: false,
                 close_price: None,
                 close_date: None,
             }],
-            entry_cost: -425.0, // short receives premium
+            entry_cost: -425.0,
             quantity: 1,
             multiplier: 100,
             status: PositionStatus::Open,
             stock_entry_price: None,
         };
-
-        let mtm = mark_to_market(
-            &position,
-            d2,
-            &table,
-            &last_known,
-            &Slippage::Mid,
-            100,
-            None,
-        );
-        // Short put: sold at 4.25, current mid = 3.25 (to buy back)
-        // MTM = (3.25 - 4.25) * (-1.0) * 1 * 100 = +100.0
+        let mtm = mark_to_market(&position, d2, &ctx, &last_known);
         assert!((mtm - 100.0).abs() < 1e-10, "MTM was {mtm}");
     }
 
@@ -500,9 +535,15 @@ mod tests {
         let (table, _, _) = make_price_table_simple();
         let d3 = NaiveDate::from_ymd_opt(2024, 1, 29).unwrap();
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
-        let last_known = HashMap::new();
-        let commission = Commission::default();
-
+        let last_known = LastKnown::new();
+        let params = make_test_params(Slippage::Mid, 100);
+        let sd = make_test_strategy_def();
+        let ctx = SimContext {
+            price_table: &table,
+            params: &params,
+            strategy_def: &sd,
+            ohlcv_closes: None,
+        };
         let mut position = Position {
             id: 1,
             entry_date: NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
@@ -526,27 +567,12 @@ mod tests {
             status: PositionStatus::Open,
             stock_entry_price: None,
         };
-
-        let pnl = close_position(
-            &mut position,
-            d3,
-            &table,
-            &last_known,
-            &Slippage::Mid,
-            &commission,
-            ExitType::DteExit,
-            None,
-        );
-
+        let pnl = close_position(&mut position, d3, &ctx, &last_known, ExitType::DteExit);
         assert!(position.legs[0].closed);
         assert!(position.legs[0].close_price.is_some());
         assert_eq!(position.legs[0].close_date, Some(d3));
-        // Close at mid of 2.0/2.50 = 2.25
-        // PnL = (2.25 - 5.25) * 1.0 * 1 * 100 = -300
         assert!((pnl - (-300.0)).abs() < 1e-10, "PnL was {pnl}");
     }
-
-    // --- Stock leg tests ---
 
     fn make_ohlcv_closes() -> std::collections::BTreeMap<NaiveDate, f64> {
         let mut closes = std::collections::BTreeMap::new();
@@ -556,7 +582,6 @@ mod tests {
         closes
     }
 
-    /// Position with a stock leg for testing.
     fn make_stock_leg_position() -> Position {
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
         Position {
@@ -576,7 +601,6 @@ mod tests {
                 close_price: None,
                 close_date: None,
             }],
-            // entry_cost = stock cost + option credit = 100*100 + (-5.25*100) = 9475
             entry_cost: 9475.0,
             quantity: 1,
             multiplier: 100,
@@ -589,73 +613,56 @@ mod tests {
     fn mark_to_market_with_stock_leg() {
         let (table, _, _) = make_price_table_simple();
         let d2 = NaiveDate::from_ymd_opt(2024, 1, 22).unwrap();
-        let last_known = HashMap::new();
+        let last_known = LastKnown::new();
         let closes = make_ohlcv_closes();
         let position = make_stock_leg_position();
-
-        let mtm = mark_to_market(
-            &position,
-            d2,
-            &table,
-            &last_known,
-            &Slippage::Mid,
-            100,
-            Some(&closes),
-        );
-        // Option MTM (short call): (3.25 - 5.25) * (-1) * 1 * 100 = +200
-        // Stock MTM: (105.0 - 100.0) * 1 * 100 = +500
-        // Total = 700
+        let params = make_test_params(Slippage::Mid, 100);
+        let sd = make_test_strategy_def();
+        let ctx = SimContext {
+            price_table: &table,
+            params: &params,
+            strategy_def: &sd,
+            ohlcv_closes: Some(&closes),
+        };
+        let mtm = mark_to_market(&position, d2, &ctx, &last_known);
         assert!((mtm - 700.0).abs() < 1e-10, "MTM was {mtm}");
     }
 
     #[test]
     fn mark_to_market_stock_leg_carry_forward() {
-        // Date with no exact OHLCV match — should use range(..=date).next_back()
         let (table, _, _) = make_price_table_simple();
         let d2 = NaiveDate::from_ymd_opt(2024, 1, 22).unwrap();
-        let last_known = HashMap::new();
-
-        // OHLCV closes only has Jan 15, not Jan 22
+        let last_known = LastKnown::new();
         let mut closes = std::collections::BTreeMap::new();
         closes.insert(NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(), 100.0);
-
         let position = make_stock_leg_position();
-
-        let mtm = mark_to_market(
-            &position,
-            d2,
-            &table,
-            &last_known,
-            &Slippage::Mid,
-            100,
-            Some(&closes),
-        );
-        // Option MTM: +200 (same as above)
-        // Stock MTM: carry-forward uses 100.0 (last known) → (100.0 - 100.0) * 100 = 0
-        // Total = 200
+        let params = make_test_params(Slippage::Mid, 100);
+        let sd = make_test_strategy_def();
+        let ctx = SimContext {
+            price_table: &table,
+            params: &params,
+            strategy_def: &sd,
+            ohlcv_closes: Some(&closes),
+        };
+        let mtm = mark_to_market(&position, d2, &ctx, &last_known);
         assert!((mtm - 200.0).abs() < 1e-10, "MTM was {mtm}");
     }
 
     #[test]
     fn mark_to_market_stock_leg_no_ohlcv() {
-        // ohlcv_closes is None — stock MTM falls back to entry_price (0 contribution)
         let (table, _, _) = make_price_table_simple();
         let d2 = NaiveDate::from_ymd_opt(2024, 1, 22).unwrap();
-        let last_known = HashMap::new();
+        let last_known = LastKnown::new();
         let position = make_stock_leg_position();
-
-        let mtm = mark_to_market(
-            &position,
-            d2,
-            &table,
-            &last_known,
-            &Slippage::Mid,
-            100,
-            None,
-        );
-        // Option MTM: +200
-        // Stock MTM: no data → falls back to entry_price → (100-100)*100 = 0
-        // Total = 200
+        let params = make_test_params(Slippage::Mid, 100);
+        let sd = make_test_strategy_def();
+        let ctx = SimContext {
+            price_table: &table,
+            params: &params,
+            strategy_def: &sd,
+            ohlcv_closes: None,
+        };
+        let mtm = mark_to_market(&position, d2, &ctx, &last_known);
         assert!((mtm - 200.0).abs() < 1e-10, "MTM was {mtm}");
     }
 
@@ -663,56 +670,39 @@ mod tests {
     fn close_position_with_stock_leg() {
         let (table, _, _) = make_price_table_simple();
         let d3 = NaiveDate::from_ymd_opt(2024, 1, 29).unwrap();
-        let last_known = HashMap::new();
-        let commission = Commission::default();
+        let last_known = LastKnown::new();
         let closes = make_ohlcv_closes();
-
         let mut position = make_stock_leg_position();
-
-        let pnl = close_position(
-            &mut position,
-            d3,
-            &table,
-            &last_known,
-            &Slippage::Mid,
-            &commission,
-            ExitType::DteExit,
-            Some(&closes),
-        );
-        // Option P&L (short call): (2.25 - 5.25) * (-1) * 1 * 100 = +300
-        // Stock P&L: (110.0 - 100.0) * 1 * 100 = +1000
-        // Total = 1300
+        let params = make_test_params(Slippage::Mid, 100);
+        let sd = make_test_strategy_def();
+        let ctx = SimContext {
+            price_table: &table,
+            params: &params,
+            strategy_def: &sd,
+            ohlcv_closes: Some(&closes),
+        };
+        let pnl = close_position(&mut position, d3, &ctx, &last_known, ExitType::DteExit);
         assert!((pnl - 1300.0).abs() < 1e-10, "PnL was {pnl}");
     }
 
     #[test]
     fn close_position_stock_leg_carry_forward() {
-        // Exit date not in OHLCV — carry-forward to nearest earlier date
         let (table, _, _) = make_price_table_simple();
         let d3 = NaiveDate::from_ymd_opt(2024, 1, 29).unwrap();
-        let last_known = HashMap::new();
-        let commission = Commission::default();
-
+        let last_known = LastKnown::new();
         let mut closes = std::collections::BTreeMap::new();
         closes.insert(NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(), 100.0);
         closes.insert(NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(), 108.0);
-        // No entry for Jan 29 — should carry-forward Jan 22 price (108.0)
-
         let mut position = make_stock_leg_position();
-
-        let pnl = close_position(
-            &mut position,
-            d3,
-            &table,
-            &last_known,
-            &Slippage::Mid,
-            &commission,
-            ExitType::DteExit,
-            Some(&closes),
-        );
-        // Option P&L: +300
-        // Stock P&L: (108.0 - 100.0) * 100 = +800
-        // Total = 1100
+        let params = make_test_params(Slippage::Mid, 100);
+        let sd = make_test_strategy_def();
+        let ctx = SimContext {
+            price_table: &table,
+            params: &params,
+            strategy_def: &sd,
+            ohlcv_closes: Some(&closes),
+        };
+        let pnl = close_position(&mut position, d3, &ctx, &last_known, ExitType::DteExit);
         assert!((pnl - 1100.0).abs() < 1e-10, "PnL was {pnl}");
     }
 
@@ -720,6 +710,7 @@ mod tests {
     fn open_position_stock_leg_no_ohlcv_returns_none() {
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
         let d1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let table = PriceTable::with_hasher(rustc_hash::FxBuildHasher);
         let candidate = EntryCandidate {
             entry_date: d1,
             expiration: exp,
@@ -736,47 +727,15 @@ mod tests {
             net_delta: -0.50,
         };
         let strategy_def = crate::strategies::find_strategy("covered_call").unwrap();
-        let params = BacktestParams {
-            strategy: "covered_call".to_string(),
-            leg_deltas: vec![TargetRange {
-                target: 0.30,
-                min: 0.20,
-                max: 0.40,
-            }],
-            entry_dte: DteRange {
-                target: 45,
-                min: 10,
-                max: 60,
-            },
-            exit_dte: 5,
-            slippage: Slippage::Mid,
-            commission: None,
-            min_bid_ask: 0.0,
-            stop_loss: None,
-            take_profit: None,
-            max_hold_days: None,
-            capital: 100_000.0,
-            quantity: 1,
-            sizing: None,
-            multiplier: 100,
-            max_positions: 5,
-            selector: TradeSelector::First,
-            adjustment_rules: vec![],
-            entry_signal: None,
-            exit_signal: None,
-            ohlcv_path: None,
-            cross_ohlcv_paths: std::collections::HashMap::new(),
-            min_net_premium: None,
-            max_net_premium: None,
-            min_net_delta: None,
-            max_net_delta: None,
-            min_days_between_entries: None,
-            expiration_filter: ExpirationFilter::Any,
-            exit_net_delta: None,
+        let mut params = make_test_params(Slippage::Mid, 100);
+        params.strategy = "covered_call".to_string();
+        let ctx = SimContext {
+            price_table: &table,
+            params: &params,
+            strategy_def: &strategy_def,
+            ohlcv_closes: None,
         };
-
-        // No OHLCV data — should return None for stock-leg strategy
-        let result = open_position(&candidate, d1, &strategy_def, &params, 1, None, None);
+        let result = open_position(&candidate, d1, &ctx, 1, None);
         assert!(
             result.is_none(),
             "Should return None when no OHLCV data for stock-leg strategy"
@@ -787,6 +746,7 @@ mod tests {
     fn open_position_stock_leg_with_ohlcv() {
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
         let d1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let table = PriceTable::with_hasher(rustc_hash::FxBuildHasher);
         let candidate = EntryCandidate {
             entry_date: d1,
             expiration: exp,
@@ -803,66 +763,22 @@ mod tests {
             net_delta: -0.50,
         };
         let strategy_def = crate::strategies::find_strategy("covered_call").unwrap();
-        let params = BacktestParams {
-            strategy: "covered_call".to_string(),
-            leg_deltas: vec![TargetRange {
-                target: 0.30,
-                min: 0.20,
-                max: 0.40,
-            }],
-            entry_dte: DteRange {
-                target: 45,
-                min: 10,
-                max: 60,
-            },
-            exit_dte: 5,
-            slippage: Slippage::Mid,
-            commission: None,
-            min_bid_ask: 0.0,
-            stop_loss: None,
-            take_profit: None,
-            max_hold_days: None,
-            capital: 100_000.0,
-            quantity: 1,
-            sizing: None,
-            multiplier: 100,
-            max_positions: 5,
-            selector: TradeSelector::First,
-            adjustment_rules: vec![],
-            entry_signal: None,
-            exit_signal: None,
-            ohlcv_path: None,
-            cross_ohlcv_paths: std::collections::HashMap::new(),
-            min_net_premium: None,
-            max_net_premium: None,
-            min_net_delta: None,
-            max_net_delta: None,
-            min_days_between_entries: None,
-            expiration_filter: ExpirationFilter::Any,
-            exit_net_delta: None,
-        };
-
+        let mut params = make_test_params(Slippage::Mid, 100);
+        params.strategy = "covered_call".to_string();
         let closes = make_ohlcv_closes();
-        let result = open_position(
-            &candidate,
-            d1,
-            &strategy_def,
-            &params,
-            1,
-            None,
-            Some(&closes),
-        );
+        let ctx = SimContext {
+            price_table: &table,
+            params: &params,
+            strategy_def: &strategy_def,
+            ohlcv_closes: Some(&closes),
+        };
+        let result = open_position(&candidate, d1, &ctx, 1, None);
         assert!(
             result.is_some(),
             "Should return Some when OHLCV data available"
         );
-
         let pos = result.unwrap();
         assert_eq!(pos.stock_entry_price, Some(100.0));
-        // entry_cost = stock cost + option credit
-        // stock: 100.0 * 1 * 100 = 10000
-        // option (short call): 5.25 * (-1) * 1 * 100 = -525
-        // total = 9475
         assert!(
             (pos.entry_cost - 9475.0).abs() < 1e-10,
             "entry_cost was {}",
@@ -874,6 +790,7 @@ mod tests {
     fn open_position_no_stock_leg_ignores_ohlcv() {
         let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
         let d1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let table = PriceTable::with_hasher(rustc_hash::FxBuildHasher);
         let candidate = EntryCandidate {
             entry_date: d1,
             expiration: exp,
@@ -890,47 +807,15 @@ mod tests {
             net_delta: -0.50,
         };
         let strategy_def = crate::strategies::find_strategy("short_call").unwrap();
-        let params = BacktestParams {
-            strategy: "short_call".to_string(),
-            leg_deltas: vec![TargetRange {
-                target: 0.30,
-                min: 0.20,
-                max: 0.40,
-            }],
-            entry_dte: DteRange {
-                target: 45,
-                min: 10,
-                max: 60,
-            },
-            exit_dte: 5,
-            slippage: Slippage::Mid,
-            commission: None,
-            min_bid_ask: 0.0,
-            stop_loss: None,
-            take_profit: None,
-            max_hold_days: None,
-            capital: 100_000.0,
-            quantity: 1,
-            sizing: None,
-            multiplier: 100,
-            max_positions: 5,
-            selector: TradeSelector::First,
-            adjustment_rules: vec![],
-            entry_signal: None,
-            exit_signal: None,
-            ohlcv_path: None,
-            cross_ohlcv_paths: std::collections::HashMap::new(),
-            min_net_premium: None,
-            max_net_premium: None,
-            min_net_delta: None,
-            max_net_delta: None,
-            min_days_between_entries: None,
-            expiration_filter: ExpirationFilter::Any,
-            exit_net_delta: None,
+        let mut params = make_test_params(Slippage::Mid, 100);
+        params.strategy = "short_call".to_string();
+        let ctx = SimContext {
+            price_table: &table,
+            params: &params,
+            strategy_def: &strategy_def,
+            ohlcv_closes: None,
         };
-
-        // Non-stock-leg strategy returns Some even without OHLCV
-        let result = open_position(&candidate, d1, &strategy_def, &params, 1, None, None);
+        let result = open_position(&candidate, d1, &ctx, 1, None);
         assert!(
             result.is_some(),
             "Non-stock-leg strategy should always open"
