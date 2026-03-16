@@ -102,8 +102,12 @@ pub async fn execute(
     for i in 0..prices.len() {
         let date_str = &prices[i].date;
 
-        // Parse date — try datetime first (intraday), fall back to date-only (daily)
-        let (date, hour) = if let Ok(dt) = date_str.parse::<chrono::NaiveDateTime>() {
+        // Parse date — try datetime first (intraday), fall back to date-only (daily).
+        // raw_prices formats intraday timestamps as "%Y-%m-%dT%H:%M:%S", so try that explicitly.
+        let (date, hour) = if let Ok(dt) =
+            chrono::NaiveDateTime::parse_from_str(date_str, "%Y-%m-%dT%H:%M:%S")
+                .or_else(|_| chrono::NaiveDateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S"))
+        {
             (dt.date(), Some(dt.time().hour()))
         } else if let Ok(d) = date_str.parse::<chrono::NaiveDate>() {
             (d, None)
@@ -480,5 +484,62 @@ mod tests {
         assert_eq!(buckets[0].count, 2);
         assert_eq!(buckets[1].label, "10:00");
         assert_eq!(buckets[2].label, "14:00");
+    }
+
+    /// Parse a date string the same way `execute` does, returning `(NaiveDate, Option<hour>)`.
+    fn parse_bar_date(
+        date_str: &str,
+    ) -> Result<(chrono::NaiveDate, Option<u32>), Box<dyn std::error::Error>> {
+        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(date_str, "%Y-%m-%dT%H:%M:%S")
+            .or_else(|_| chrono::NaiveDateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S"))
+        {
+            Ok((dt.date(), Some(dt.time().hour())))
+        } else if let Ok(d) = date_str.parse::<chrono::NaiveDate>() {
+            Ok((d, None))
+        } else {
+            Err(format!("Invalid date: {date_str}").into())
+        }
+    }
+
+    #[test]
+    fn test_intraday_datetime_parsing_and_bucketing() {
+        // Simulates the full path: T-separated datetime strings → hour extraction → bucketing
+        let date_strings = [
+            "2024-01-02T09:30:00", // 09:00 bucket
+            "2024-01-02T09:45:00", // 09:00 bucket (same hour)
+            "2024-01-02T10:00:00", // 10:00 bucket
+            "2024-01-02T14:30:00", // 14:00 bucket
+        ];
+
+        let mut bar_data: Vec<(String, f64)> = Vec::new();
+        for (i, ds) in date_strings.iter().enumerate() {
+            let (_date, hour) = parse_bar_date(ds).unwrap();
+            let h = hour.expect("intraday strings should have hours");
+            let label = format!("{h:02}:00");
+            bar_data.push((label, (i as f64) * 0.1));
+        }
+
+        let (buckets, _) = build_buckets("hour_of_day", "return", &bar_data);
+        assert_eq!(buckets.len(), 3);
+        assert_eq!(buckets[0].label, "09:00");
+        assert_eq!(buckets[0].count, 2);
+        assert_eq!(buckets[1].label, "10:00");
+        assert_eq!(buckets[2].label, "14:00");
+    }
+
+    #[test]
+    fn test_midnight_bar_parsed_as_date_only_gets_hour_zero() {
+        // raw_prices formats midnight (00:00:00) as date-only "YYYY-MM-DD"
+        let (_date, hour) = parse_bar_date("2024-01-02").unwrap();
+        assert!(hour.is_none(), "date-only should have no hour");
+        // In execute(), hour.unwrap_or(0) maps this to "00:00"
+        let label = format!("{:02}:00", hour.unwrap_or(0));
+        assert_eq!(label, "00:00");
+    }
+
+    #[test]
+    fn test_space_separated_datetime_also_parses() {
+        let (_date, hour) = parse_bar_date("2024-01-02 14:30:00").unwrap();
+        assert_eq!(hour, Some(14));
     }
 }
