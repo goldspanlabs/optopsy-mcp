@@ -414,4 +414,44 @@ mod tests {
         assert_eq!(buckets[0].count, 4);
         assert!((buckets[0].positive_pct - 50.0).abs() < 1e-10);
     }
+
+    #[test]
+    fn test_build_buckets_gap_metric_stats() {
+        // Gap values: Monday has positive gaps, Tuesday has negative
+        let bar_data = vec![
+            ("Monday".to_string(), 0.5),
+            ("Monday".to_string(), 1.0),
+            ("Monday".to_string(), 0.3),
+            ("Tuesday".to_string(), -0.5),
+            ("Tuesday".to_string(), -1.0),
+        ];
+        let (buckets, _) = build_buckets("day_of_week", "gap", &bar_data);
+        assert_eq!(buckets.len(), 2);
+
+        // Monday: mean gap = 0.6
+        assert_eq!(buckets[0].label, "Monday");
+        assert!((buckets[0].mean - 0.6).abs() < 1e-10);
+        assert!((buckets[0].positive_pct - 100.0).abs() < 1e-10);
+
+        // Tuesday: mean gap = -0.75
+        assert_eq!(buckets[1].label, "Tuesday");
+        assert!((buckets[1].mean - (-0.75)).abs() < 1e-10);
+        assert!((buckets[1].positive_pct).abs() < 1e-10); // 0%
+    }
+
+    #[test]
+    fn test_build_buckets_hour_of_day_grouping() {
+        let bar_data = vec![
+            ("09:00".to_string(), 0.5),
+            ("09:00".to_string(), 0.3),
+            ("10:00".to_string(), -0.2),
+            ("14:00".to_string(), 0.8),
+        ];
+        let (buckets, _) = build_buckets("hour_of_day", "return", &bar_data);
+        assert_eq!(buckets.len(), 3);
+        assert_eq!(buckets[0].label, "09:00");
+        assert_eq!(buckets[0].count, 2);
+        assert_eq!(buckets[1].label, "10:00");
+        assert_eq!(buckets[2].label, "14:00");
+    }
 }
