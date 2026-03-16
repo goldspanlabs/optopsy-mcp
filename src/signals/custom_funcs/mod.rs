@@ -25,9 +25,8 @@ pub fn dispatch(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
             rolling::build(&n, args)
         }
         // Math
-        "abs" | "change" | "pct_change" | "roc" | "rel_volume" | "zscore" | "range_pct" | "if" => {
-            math::build(&n, args)
-        }
+        "abs" | "change" | "pct_change" | "roc" | "rel_volume" | "zscore" | "range_pct" | "if"
+        | "gap" | "gap_size" | "gap_filled" => math::build(&n, args),
         // Single-column map
         "rsi" | "macd_hist" | "macd_signal" | "macd_line" | "rank" | "iv_rank" | "cci" | "ppo"
         | "cmo" => single_col::build(&n, args),
@@ -59,6 +58,7 @@ pub fn dispatch(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
              adx, plus_di, minus_di, psar, tsi, vpt, donchian_upper, donchian_mid, \
              donchian_lower, ichimoku_tenkan, ichimoku_kijun, ichimoku_senkou_a, \
              ichimoku_senkou_b, envelope_upper, envelope_lower, ad, pvi, nvi, ulcer, \
+             gap, gap_size, gap_filled, \
              day_of_week, month, day_of_month, hour, minute, week_of_year"
         )),
     }

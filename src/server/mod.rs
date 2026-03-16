@@ -1594,10 +1594,12 @@ impl OptopsyServer {
         )
     }
 
-    /// Aggregate OHLCV price statistics by time dimension (day-of-week, month, quarter, year).
+    /// Aggregate OHLCV price statistics by time dimension (day-of-week, month, quarter, year, hour-of-day).
     /// Returns per-bucket descriptive stats with t-test p-values for significance.
     ///
-    /// Use this to identify seasonal patterns, day-of-week effects, or time-based anomalies.
+    /// Use this to identify seasonal patterns, day-of-week effects, intraday hour patterns, or time-based anomalies.
+    /// The `"gap"` metric measures opening gaps — use with `"day_of_week"` to find
+    /// which days have the largest/most consistent gaps, or `"hour_of_day"` for intraday gap analysis.
     #[tool(name = "aggregate_prices", annotations(read_only_hint = true))]
     async fn aggregate_prices(
         &self,

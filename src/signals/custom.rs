@@ -2045,4 +2045,54 @@ mod tests {
         assert_eq!(bools.get(1), Some(false)); // 14:00
         assert_eq!(bools.get(2), Some(true)); // 09:30
     }
+
+    #[test]
+    fn gap_function_parses() {
+        assert!(validate_formula("gap() > 0.01").is_ok());
+        assert!(validate_formula("gap_size() > 2.0").is_ok());
+        assert!(validate_formula("gap_filled() == 1.0").is_ok());
+    }
+
+    #[test]
+    fn gap_function_evaluates() {
+        // test_df data:
+        // close: 100, 102, 101, 105, 103, 107, 110, 108, 112, 115
+        // open:   99, 101, 102, 101, 105, 103, 106, 110, 108, 112
+        // gap = (open - prev_close) / prev_close
+        // bar 1: (101 - 100) / 100 = 0.01
+        // bar 2: (102 - 102) / 102 = 0.0
+        // bar 3: (101 - 101) / 101 = 0.0
+        let df = test_df();
+        let signal = FormulaSignal::new("gap() > 0.005".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        // bar 0: null (no previous close)
+        assert_eq!(bools.get(0), None); // null
+        assert_eq!(bools.get(1), Some(true)); // 0.01 > 0.005
+        assert_eq!(bools.get(2), Some(false)); // 0.0 > 0.005 = false
+    }
+
+    #[test]
+    fn gap_size_evaluates() {
+        let df = test_df();
+        let signal = FormulaSignal::new("gap_size() > 0".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        // bar 1: open=101 - prev_close=100 = 1.0 > 0 → true
+        assert_eq!(bools.get(1), Some(true));
+        // bar 3: open=101 - prev_close=101 = 0.0 > 0 → false
+        assert_eq!(bools.get(3), Some(false));
+    }
+
+    #[test]
+    fn gap_filled_evaluates() {
+        let df = test_df();
+        let signal = FormulaSignal::new("gap_filled() == 1.0".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        // bar 1: gap up (open=101 > prev_close=100). low=100 <= 100 → filled=true
+        assert_eq!(bools.get(1), Some(true));
+        // bar 4: open=105 > prev_close=105 → no gap (open == prev_close) → filled=false
+        assert_eq!(bools.get(4), Some(false));
+    }
 }

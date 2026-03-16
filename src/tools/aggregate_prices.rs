@@ -1,7 +1,7 @@
-//! Aggregate OHLCV price data by time dimension (day-of-week, month, quarter, year).
+//! Aggregate OHLCV price data by time dimension (day-of-week, month, quarter, year, hour-of-day).
 
 use anyhow::{Context, Result};
-use chrono::Datelike;
+use chrono::{Datelike, Timelike};
 use std::sync::Arc;
 
 use crate::data::cache::CachedStore;
@@ -21,7 +21,7 @@ pub async fn execute(
     end_date: Option<&str>,
 ) -> Result<AggregatePricesResponse> {
     // Validate group_by
-    let valid_groups = ["day_of_week", "month", "quarter", "year"];
+    let valid_groups = ["day_of_week", "month", "quarter", "year", "hour_of_day"];
     if !valid_groups.contains(&group_by) {
         anyhow::bail!(
             "Invalid group_by: \"{group_by}\". Must be one of: {}",
@@ -29,7 +29,7 @@ pub async fn execute(
         );
     }
     // Validate metric
-    let valid_metrics = ["return", "range", "volume"];
+    let valid_metrics = ["return", "range", "volume", "gap"];
     if !valid_metrics.contains(&metric) {
         anyhow::bail!(
             "Invalid metric: \"{metric}\". Must be one of: {}",
@@ -76,15 +76,25 @@ pub async fn execute(
     let mut bar_data: Vec<(String, f64)> = Vec::with_capacity(total_bars);
     for i in 0..prices.len() {
         let date_str = &prices[i].date;
-        let date = date_str
-            .parse::<chrono::NaiveDate>()
-            .with_context(|| format!("Invalid date: {date_str}"))?;
+
+        // Parse date — try datetime first (intraday), fall back to date-only (daily)
+        let (date, hour) = if let Ok(dt) = date_str.parse::<chrono::NaiveDateTime>() {
+            (dt.date(), Some(dt.time().hour()))
+        } else if let Ok(d) = date_str.parse::<chrono::NaiveDate>() {
+            (d, None)
+        } else {
+            anyhow::bail!("Invalid date: {date_str}");
+        };
 
         let bucket_label = match group_by {
             "day_of_week" => date.format("%A").to_string(),
             "month" => date.format("%B").to_string(),
             "quarter" => format!("Q{}", ((date.month() - 1) / 3) + 1),
             "year" => date.format("%Y").to_string(),
+            "hour_of_day" => {
+                let h = hour.unwrap_or(0);
+                format!("{h:02}:00")
+            }
             _ => unreachable!(),
         };
 
@@ -98,6 +108,16 @@ pub async fn execute(
                     continue;
                 }
                 (prices[i].close - prev_close) / prev_close * 100.0
+            }
+            "gap" => {
+                if i == 0 {
+                    continue; // skip first bar (no previous close)
+                }
+                let prev_close = prices[i - 1].close;
+                if prev_close == 0.0 {
+                    continue;
+                }
+                (prices[i].open - prev_close) / prev_close * 100.0
             }
             "range" => {
                 if prices[i].low == 0.0 {
@@ -154,7 +174,7 @@ fn sort_bucket_keys(
             ];
             keys.sort_by_key(|k| order.iter().position(|&m| m == k).unwrap_or(12));
         }
-        "quarter" | "year" => {
+        "quarter" | "year" | "hour_of_day" => {
             keys.sort();
         }
         _ => {}
@@ -195,7 +215,7 @@ fn build_buckets(
             0.0
         };
 
-        let p_value = if metric == "return" {
+        let p_value = if metric == "return" || metric == "gap" {
             stats::t_test_one_sample(values, 0.0).map(|r| r.p_value)
         } else {
             None
@@ -356,6 +376,29 @@ mod tests {
 
         let labels: Vec<&str> = buckets.iter().map(|b| b.label.as_str()).collect();
         assert_eq!(labels, vec!["Q1", "Q2", "Q3", "Q4"]);
+    }
+
+    #[test]
+    fn test_build_buckets_gap_metric_has_p_value() {
+        let bar_data: Vec<(String, f64)> = (0..30)
+            .map(|i| ("Monday".to_string(), 0.3 + f64::from(i) * 0.01))
+            .collect();
+        let (buckets, _) = build_buckets("day_of_week", "gap", &bar_data);
+        assert_eq!(buckets.len(), 1);
+        assert!(
+            buckets[0].p_value.is_some(),
+            "gap metric should produce p-values"
+        );
+    }
+
+    #[test]
+    fn test_sort_bucket_keys_hour_of_day() {
+        let mut groups = std::collections::BTreeMap::new();
+        groups.insert("14:00".to_string(), vec![1.0]);
+        groups.insert("09:00".to_string(), vec![2.0]);
+        groups.insert("04:00".to_string(), vec![3.0]);
+        let keys = sort_bucket_keys("hour_of_day", &groups);
+        assert_eq!(keys, vec!["04:00", "09:00", "14:00"]);
     }
 
     #[test]

@@ -941,10 +941,10 @@ pub struct AggregatePricesParams {
     #[serde(default = "default_years")]
     #[garde(range(min = 1, max = 50))]
     pub years: u32,
-    /// Grouping dimension: `"day_of_week"`, `"month"`, `"quarter"`, `"year"`
+    /// Grouping dimension: `"day_of_week"`, `"month"`, `"quarter"`, `"year"`, `"hour_of_day"` (for intraday data)
     #[garde(length(min = 1))]
     pub group_by: String,
-    /// Metric to aggregate: "return" (default: close-to-close pct change), "range", "volume"
+    /// Metric to aggregate: "return" (default: close-to-close pct change), "range", "volume", "gap" (open vs prev close pct)
     #[serde(default = "default_agg_metric")]
     #[garde(length(min = 1))]
     pub metric: String,
