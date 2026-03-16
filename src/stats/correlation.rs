@@ -415,18 +415,23 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::cast_precision_loss)]
     fn test_granger_independent_series() {
-        // Two independent series should not show Granger causality
+        // Two independent pseudo-random series should not show Granger causality
         let n: usize = 200;
-        let x: Vec<f64> = (0..n).map(|i| (i as f64 * 0.1).sin() * 0.05).collect();
-        let y: Vec<f64> = (0..n).map(|i| (i as f64 * 0.37).cos() * 0.03).collect();
+        let mut seed_x: u64 = 12345;
+        let mut seed_y: u64 = 67890;
+        let lcg = |seed: &mut u64| -> f64 {
+            *seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            (*seed >> 11) as f64 / (1u64 << 53) as f64 * 0.1 - 0.05
+        };
+
+        let x: Vec<f64> = (0..n).map(|_| lcg(&mut seed_x)).collect();
+        let y: Vec<f64> = (0..n).map(|_| lcg(&mut seed_y)).collect();
 
         let result = granger_f_test(&x, &y, 2);
         assert!(result.is_some(), "should produce a result");
         let (_f_stat, p_val) = result.unwrap();
-        // With independent series, p-value should generally be > 0.05
-        // (not guaranteed but very likely with these deterministic series)
+        // Independent series: p-value should generally be > 0.05
         assert!(
             p_val > 0.01,
             "independent series should have high p-value, got {p_val}"
