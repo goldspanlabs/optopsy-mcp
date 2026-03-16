@@ -84,8 +84,8 @@ pub fn long_strangle() -> StrategyDef {
         "Spreads",
         "Buy OTM call and OTM put",
         vec![
-            call_leg(Side::Long, 1, default_otm_delta()),
             put_leg(Side::Long, 1, default_otm_delta()),
+            call_leg(Side::Long, 1, default_otm_delta()),
         ],
     )
 }
@@ -96,8 +96,8 @@ pub fn short_strangle() -> StrategyDef {
         "Spreads",
         "Sell OTM call and OTM put",
         vec![
-            call_leg(Side::Short, 1, default_otm_delta()),
             put_leg(Side::Short, 1, default_otm_delta()),
+            call_leg(Side::Short, 1, default_otm_delta()),
         ],
     )
 }

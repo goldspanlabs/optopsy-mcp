@@ -372,18 +372,18 @@ fn backtest_short_straddle() {
 
 #[test]
 fn backtest_long_strangle() {
-    // L Call@105 (δ0.35) + L Put@110 (δ0.70)
+    // Legs reordered for ascending strikes: L Put@95 (δ0.20) + L Call@105 (δ0.35)
+    // Put:  (0.45-1.25)×1×100 = -80
     // Call: (1.25-3.25)×1×100 = -200
-    // Put:  (4.75-7.25)×1×100 = -250
-    // Total: -450
-    assert_backtest("long_strangle", vec![delta(0.35), delta(0.70)], -450.0);
+    // Total: -280
+    assert_backtest("long_strangle", vec![delta(0.20), delta(0.35)], -280.0);
 }
 
 #[test]
 fn backtest_short_strangle() {
-    // S Call@105 (δ0.35) + S Put@110 (δ0.70)
-    // Call: +200, Put: +250 = +450
-    assert_backtest("short_strangle", vec![delta(0.35), delta(0.70)], 450.0);
+    // Legs reordered for ascending strikes: S Put@95 (δ0.20) + S Call@105 (δ0.35)
+    // Put: +80, Call: +200 = +280
+    assert_backtest("short_strangle", vec![delta(0.20), delta(0.35)], 280.0);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
