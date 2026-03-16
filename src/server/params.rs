@@ -524,9 +524,9 @@ pub struct CompareStrategiesParams {
 /// Validate that a cache category is one of the allowed read categories.
 pub(crate) fn validate_category_read(category: &str) -> Result<&str, String> {
     match category {
-        "options" | "equities" | "futures" | "indices" => Ok(category),
+        "options" | "etf" | "stocks" | "futures" | "indices" => Ok(category),
         _ => Err(format!(
-            "Invalid category: \"{category}\". Must be \"options\", \"equities\", \"futures\", or \"indices\"."
+            "Invalid category: \"{category}\". Must be \"options\", \"etf\", \"stocks\", \"futures\", or \"indices\"."
         )),
     }
 }
@@ -537,7 +537,7 @@ pub struct CheckCacheParams {
     /// Ticker symbol (e.g. "SPY")
     #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub symbol: String,
-    /// Data category: "options" for options chain data, "equities"/"futures"/"indices" for OHLCV price data
+    /// Data category: "options" for options chain data, "etf"/"stocks"/"futures"/"indices" for OHLCV price data
     #[garde(length(min = 1))]
     pub category: String,
 }

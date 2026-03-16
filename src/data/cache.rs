@@ -96,7 +96,7 @@ impl CachedStore {
     /// Search OHLCV categories in order (`equities`, `futures`, `indices`) and return
     /// the path of the first existing parquet file for the given symbol.
     pub fn find_ohlcv(&self, symbol: &str) -> Option<PathBuf> {
-        for category in &["equities", "futures", "indices"] {
+        for category in &["etf", "stocks", "futures", "indices"] {
             if let Ok(path) = self.build_parquet_path(symbol, category) {
                 if path.exists() {
                     return Some(path);

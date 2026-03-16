@@ -122,16 +122,16 @@ impl OptopsyServer {
     /// Ensure OHLCV price data exists for a symbol, auto-fetching from Yahoo Finance if needed.
     /// Returns the parquet file path.
     ///
-    /// Searches `equities/`, `futures/`, and `indices/` in order. If no local file is found,
-    /// auto-fetches from Yahoo Finance and writes to `equities/`.
+    /// Searches `etf/`, `stocks/`, `futures/`, and `indices/` in order. If no local file
+    /// is found, auto-fetches from Yahoo Finance and writes to `stocks/`.
     async fn ensure_ohlcv(&self, symbol: &str) -> Result<String, String> {
         // Search across all OHLCV categories
         if let Some(path) = self.cache.find_ohlcv(symbol) {
             return Ok(path.to_string_lossy().to_string());
         }
 
-        // Try S3 fallback for equities
-        if let Ok(path) = self.cache.ensure_local_for(symbol, "equities").await {
+        // Try S3 fallback for stocks
+        if let Ok(path) = self.cache.ensure_local_for(symbol, "stocks").await {
             return Ok(path.to_string_lossy().to_string());
         }
 
@@ -143,7 +143,7 @@ impl OptopsyServer {
 
         let path = self
             .cache
-            .cache_path(symbol, "equities")
+            .cache_path(symbol, "stocks")
             .map_err(|e| format!("Error resolving OHLCV path: {e}"))?;
         Ok(path.to_string_lossy().to_string())
     }

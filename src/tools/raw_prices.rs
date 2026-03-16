@@ -202,7 +202,7 @@ pub async fn load_and_execute(
     // Search across OHLCV categories (equities, futures, indices); auto-fetch from Yahoo on miss
     let path = if let Some(p) = cache.find_ohlcv(&upper) {
         p
-    } else if let Ok(p) = cache.ensure_local_for(&upper, "equities").await {
+    } else if let Ok(p) = cache.ensure_local_for(&upper, "stocks").await {
         p
     } else {
         tracing::info!(symbol = %upper, "Auto-fetching OHLCV data from Yahoo Finance");
@@ -210,7 +210,7 @@ pub async fn load_and_execute(
             .await
             .with_context(|| format!("Failed to auto-fetch OHLCV data for {upper}"))?;
         cache
-            .ensure_local_for(&upper, "equities")
+            .ensure_local_for(&upper, "stocks")
             .await
             .with_context(|| format!("OHLCV data fetched but cache file not found for {upper}"))?
     };

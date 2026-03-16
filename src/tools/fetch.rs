@@ -36,8 +36,8 @@ impl QuoteProvider for YahooQuoteProvider {
     }
 }
 
-/// OHLCV category — Yahoo-fetched price data lives under `equities/`.
-const OHLCV_CATEGORY: &str = "equities";
+/// OHLCV category — Yahoo-fetched price data lives under `stocks/`.
+const OHLCV_CATEGORY: &str = "stocks";
 
 /// Fetch OHLCV data using the default Yahoo Finance provider and save to cache.
 pub async fn execute(
@@ -286,7 +286,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let cache = Arc::new(CachedStore::new(
             tmp.path().to_path_buf(),
-            "equities".to_string(),
+            "stocks".to_string(),
             None,
         ));
 
@@ -317,7 +317,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let cache = Arc::new(CachedStore::new(
             tmp.path().to_path_buf(),
-            "equities".to_string(),
+            "stocks".to_string(),
             None,
         ));
 
