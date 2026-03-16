@@ -1410,9 +1410,9 @@ async fn compare_strategies_fails_unknown_symbol() {
 // Category: get_raw_prices Integration Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Write a `DataFrame` as a Parquet file under the "prices" category.
+/// Write a `DataFrame` as a Parquet file under the "equities" category.
 fn write_prices_parquet(cache_dir: &std::path::Path, symbol: &str, df: &mut DataFrame) -> PathBuf {
-    let dir = cache_dir.join("prices");
+    let dir = cache_dir.join("equities");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("{}.parquet", symbol.to_uppercase()));
     let file = std::fs::File::create(&path).unwrap();

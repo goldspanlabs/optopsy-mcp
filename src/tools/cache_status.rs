@@ -40,7 +40,7 @@ pub fn execute(
 
     let suggested_next_steps = if exists {
         let mut steps = vec![match category {
-            "prices" => format!(
+            "equities" | "futures" | "indices" => format!(
                 "[NEXT] Call get_raw_prices({{ symbol: \"{upper}\" }}) or run_stock_backtest({{ symbol: \"{upper}\", entry_signal: ... }})"
             ),
             _ => format!(
@@ -51,7 +51,7 @@ pub fn execute(
         steps
     } else {
         vec![match category {
-            "prices" => format!(
+            "equities" | "futures" | "indices" => format!(
                 "[NEXT] Call get_raw_prices({{ symbol: \"{upper}\" }}) — OHLCV data is auto-fetched"
             ),
             _ => format!(
@@ -100,7 +100,7 @@ mod tests {
             "options".to_string(),
             None,
         ));
-        let result = execute(&cache, "spy", "prices").unwrap();
+        let result = execute(&cache, "spy", "equities").unwrap();
         assert!(result.file_path.contains("SPY.parquet"));
         assert!(result.summary.contains("SPY"));
     }
