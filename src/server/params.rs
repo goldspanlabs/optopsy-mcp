@@ -948,8 +948,8 @@ pub struct AggregatePricesParams {
     #[serde(default = "default_agg_metric")]
     #[garde(length(min = 1))]
     pub metric: String,
-    /// Bar interval. Defaults to "daily". Use "1h", "30m", "5m", or "1m" for intraday analysis.
-    /// Required when `group_by="hour_of_day"` — daily data has no time component.
+    /// Bar interval. Defaults to "daily" (auto-selects "1h" when `group_by="hour_of_day"`).
+    /// Intraday data must be available in the cache — daily-only data cannot be resampled to intraday.
     #[serde(default)]
     #[garde(skip)]
     pub interval: Option<crate::engine::types::Interval>,
