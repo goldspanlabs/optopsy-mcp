@@ -814,3 +814,112 @@ pub struct RegimeDetectResponse {
     pub key_findings: Vec<String>,
     pub suggested_next_steps: Vec<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lag_analysis_serde_round_trip() {
+        let la = LagAnalysis {
+            correlogram: vec![
+                LagCorrelationPoint {
+                    lag: -2,
+                    pearson: 0.85,
+                    p_value: Some(0.001),
+                },
+                LagCorrelationPoint {
+                    lag: 0,
+                    pearson: 0.5,
+                    p_value: Some(0.05),
+                },
+            ],
+            optimal_lag: -2,
+            optimal_correlation: 0.85,
+            granger_tests: vec![GrangerResult {
+                direction: "VIX → SPY".into(),
+                f_statistic: 5.2,
+                p_value: 0.003,
+                lag_order: 2,
+                is_significant: true,
+            }],
+        };
+        let json = serde_json::to_string(&la).unwrap();
+        let parsed: LagAnalysis = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.optimal_lag, -2);
+        assert_eq!(parsed.granger_tests.len(), 1);
+        assert!(parsed.granger_tests[0].is_significant);
+    }
+
+    #[test]
+    fn regime_info_emission_params_skip_when_none() {
+        let ri = RegimeInfo {
+            label: "Low Vol".into(),
+            count: 100,
+            pct_of_total: 50.0,
+            mean_return: 0.05,
+            std_dev: 0.8,
+            mean_vol: 12.0,
+            emission_mean: None,
+            emission_std: None,
+        };
+        let json = serde_json::to_string(&ri).unwrap();
+        assert!(!json.contains("emission_mean"));
+        assert!(!json.contains("emission_std"));
+    }
+
+    #[test]
+    fn regime_info_emission_params_present_for_hmm() {
+        let ri = RegimeInfo {
+            label: "Bear / High Vol".into(),
+            count: 80,
+            pct_of_total: 40.0,
+            mean_return: -0.02,
+            std_dev: 1.5,
+            mean_vol: 20.0,
+            emission_mean: Some(-0.015),
+            emission_std: Some(1.2),
+        };
+        let json = serde_json::to_string(&ri).unwrap();
+        assert!(json.contains("emission_mean"));
+        assert!(json.contains("emission_std"));
+        let parsed: RegimeInfo = serde_json::from_str(&json).unwrap();
+        assert!((parsed.emission_mean.unwrap() - (-0.015)).abs() < 1e-10);
+    }
+
+    #[test]
+    fn correlate_response_lag_analysis_optional() {
+        // Without lag_analysis — field should be omitted from JSON
+        let resp = CorrelateResponse {
+            summary: "test".into(),
+            series_a: "SPY return".into(),
+            series_b: "VIX return".into(),
+            n_observations: 100,
+            pearson: 0.5,
+            spearman: 0.48,
+            r_squared: 0.25,
+            p_value: Some(0.001),
+            rolling_correlation: vec![],
+            scatter: vec![],
+            lag_analysis: None,
+            key_findings: vec![],
+            suggested_next_steps: vec![],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(!json.contains("lag_analysis"));
+
+        // With lag_analysis — field should appear
+        let resp_with_lag = CorrelateResponse {
+            lag_analysis: Some(LagAnalysis {
+                correlogram: vec![],
+                optimal_lag: 3,
+                optimal_correlation: 0.9,
+                granger_tests: vec![],
+            }),
+            ..resp
+        };
+        let json2 = serde_json::to_string(&resp_with_lag).unwrap();
+        assert!(json2.contains("lag_analysis"));
+        assert!(json2.contains("optimal_lag"));
+    }
+}

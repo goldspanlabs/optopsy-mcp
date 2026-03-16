@@ -443,4 +443,83 @@ mod tests {
         assert!(granger_f_test(&[1.0, 2.0], &[3.0, 4.0], 0).is_none());
         assert!(granger_f_test(&[1.0], &[2.0], 1).is_none());
     }
+
+    #[test]
+    fn test_lagged_pearson_negative_lag() {
+        // Negative lag: x leads y
+        let x = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let y = [10.0, 20.0, 30.0, 40.0, 50.0];
+        // lag=-1: correlate x[0..4] with y[1..5]
+        let r = lagged_pearson(&x, &y, -1);
+        assert!(
+            r > 0.99,
+            "linear series should correlate at any lag, got {r}"
+        );
+    }
+
+    #[test]
+    fn test_ols_rss_known_regression() {
+        // y = 2x + 1, fit with intercept + slope → RSS should be ~0
+        let n = 50;
+        let mut x_flat = Vec::with_capacity(n * 2);
+        let mut y = Vec::with_capacity(n);
+        for i in 0..n {
+            x_flat.push(1.0); // intercept
+            x_flat.push(i as f64); // x
+            y.push(2.0 * i as f64 + 1.0); // y = 2x + 1
+        }
+        let rss = ols_rss(&x_flat, 2, &y);
+        assert!(rss.is_some(), "should solve");
+        assert!(rss.unwrap() < 1e-10, "perfect fit should have RSS ≈ 0");
+    }
+
+    #[test]
+    fn test_ols_rss_singular_matrix() {
+        // All-identical rows → singular X^T X
+        let x_flat = vec![1.0, 1.0, 1.0, 1.0, 1.0, 1.0]; // 3 rows × 2 cols, all same
+        let y = vec![1.0, 2.0, 3.0];
+        let rss = ols_rss(&x_flat, 2, &y);
+        assert!(rss.is_none(), "singular matrix should return None");
+    }
+
+    #[test]
+    fn test_solve_linear_system_2x2() {
+        // [2, 1] [x]   [5]
+        // [1, 3] [y] = [10]
+        // Solution: x=1, y=3
+        let mut a = vec![2.0, 1.0, 1.0, 3.0];
+        let mut b = vec![5.0, 10.0];
+        let result = solve_linear_system(&mut a, 2, &mut b);
+        assert!(result.is_some());
+        let x = result.unwrap();
+        assert!((x[0] - 1.0).abs() < 1e-10, "x should be 1, got {}", x[0]);
+        assert!((x[1] - 3.0).abs() < 1e-10, "y should be 3, got {}", x[1]);
+    }
+
+    #[test]
+    fn test_granger_bidirectional() {
+        // Create mutually causal series: x depends on y's past AND y depends on x's past
+        let n: usize = 300;
+        let mut seed: u64 = 777;
+        let noise = |s: &mut u64| -> f64 {
+            *s = s.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            (*s >> 11) as f64 / (1u64 << 53) as f64 * 0.02 - 0.01
+        };
+
+        let mut x = vec![0.0; n];
+        let mut y = vec![0.0; n];
+        for t in 1..n {
+            x[t] = 0.3 * x[t - 1] + 0.5 * y[t - 1] + noise(&mut seed);
+            y[t] = 0.3 * y[t - 1] + 0.5 * x[t - 1] + noise(&mut seed);
+        }
+
+        // Both directions should be significant
+        let ab = granger_f_test(&x, &y, 2);
+        let ba = granger_f_test(&y, &x, 2);
+        assert!(ab.is_some() && ba.is_some());
+        let (_, p_ab) = ab.unwrap();
+        let (_, p_ba) = ba.unwrap();
+        assert!(p_ab < 0.05, "x→y should be significant, p={p_ab}");
+        assert!(p_ba < 0.05, "y→x should be significant, p={p_ba}");
+    }
 }

@@ -403,4 +403,52 @@ mod tests {
         let path = viterbi(&hmm, &[]);
         assert!(path.is_empty());
     }
+
+    #[test]
+    fn test_variance_recovery() {
+        // State 0: low variance, State 1: high variance
+        let data = two_state_data(400);
+        let hmm = fit(&data, 2);
+
+        // State 0 (low mean) should have lower variance than state 1
+        assert!(
+            hmm.variances[0] < hmm.variances[1],
+            "state 0 var ({}) should be < state 1 var ({})",
+            hmm.variances[0],
+            hmm.variances[1]
+        );
+        // Both variances should be positive
+        assert!(hmm.variances[0] > 0.0);
+        assert!(hmm.variances[1] > 0.0);
+    }
+
+    #[test]
+    fn test_convergence_noisy_data() {
+        // Ensure HMM converges (doesn't panic) with realistic noisy returns
+        let mut seed: u64 = 314;
+        let mut data = Vec::with_capacity(500);
+        for i in 0..500 {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let noise = (seed >> 11) as f64 / (1u64 << 53) as f64 * 0.04 - 0.02;
+            // Regime switch at midpoint
+            let mean = if i < 250 { -0.005 } else { 0.01 };
+            data.push(mean + noise);
+        }
+
+        let hmm = fit(&data, 2);
+        // Should converge without NaN/Inf
+        for &m in &hmm.means {
+            assert!(m.is_finite(), "mean should be finite: {m}");
+        }
+        for &v in &hmm.variances {
+            assert!(
+                v.is_finite() && v > 0.0,
+                "variance should be finite positive: {v}"
+            );
+        }
+        for row in &hmm.transition {
+            let s: f64 = row.iter().sum();
+            assert!((s - 1.0).abs() < 1e-6, "transition row should sum to 1");
+        }
+    }
 }

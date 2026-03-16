@@ -633,4 +633,69 @@ mod tests {
             assert_eq!(l, 2, "should be unclassified sentinel");
         }
     }
+
+    #[test]
+    fn test_hmm_emission_params_populated() {
+        let prices = synthetic_prices_alternating_vol(300);
+        let returns: Vec<f64> = prices
+            .windows(2)
+            .map(|w| (w[1].close - w[0].close) / w[0].close)
+            .collect();
+        let (_, _, hmm) = classify_by_hmm(&returns, 2);
+        let hmm = hmm.expect("HMM should be fitted");
+
+        // Emission means should be finite and sorted (ascending)
+        assert!(hmm.means[0].is_finite());
+        assert!(hmm.means[1].is_finite());
+        assert!(
+            hmm.means[0] <= hmm.means[1],
+            "means should be sorted ascending"
+        );
+
+        // Variances should be positive and finite
+        assert!(hmm.variances[0] > 0.0 && hmm.variances[0].is_finite());
+        assert!(hmm.variances[1] > 0.0 && hmm.variances[1].is_finite());
+    }
+
+    #[test]
+    fn test_hmm_regime_names_correct() {
+        let prices = synthetic_prices_alternating_vol(200);
+        let returns: Vec<f64> = prices
+            .windows(2)
+            .map(|w| (w[1].close - w[0].close) / w[0].close)
+            .collect();
+
+        let (_, names_2, _) = classify_by_hmm(&returns, 2);
+        assert_eq!(names_2.len(), 2);
+        assert_eq!(names_2[0], "Bear / High Vol");
+        assert_eq!(names_2[1], "Bull / Low Vol");
+
+        let (_, names_3, _) = classify_by_hmm(&returns, 3);
+        assert_eq!(names_3.len(), 3);
+        assert_eq!(names_3[1], "Neutral");
+
+        let (_, names_4, _) = classify_by_hmm(&returns, 4);
+        assert_eq!(names_4.len(), 4);
+        assert_eq!(names_4[0], "Deep Bear");
+        assert_eq!(names_4[3], "Strong Bull");
+    }
+
+    #[test]
+    fn test_hmm_handles_nan_gaps() {
+        // Returns with NaN gaps should still classify non-NaN bars
+        let mut returns = vec![0.01; 100];
+        returns[20] = f64::NAN;
+        returns[50] = f64::NAN;
+        returns[80] = f64::NAN;
+
+        let (labels, _, hmm) = classify_by_hmm(&returns, 2);
+        assert!(hmm.is_some(), "should fit with enough finite data");
+        // NaN positions should be sentinel
+        assert_eq!(labels[20], 2);
+        assert_eq!(labels[50], 2);
+        assert_eq!(labels[80], 2);
+        // Non-NaN positions should be valid
+        assert!(labels[0] < 2);
+        assert!(labels[10] < 2);
+    }
 }
