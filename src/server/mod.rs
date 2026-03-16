@@ -1648,6 +1648,7 @@ impl OptopsyServer {
 
     /// Compute correlation between two price series (Pearson, Spearman, R²).
     /// Supports full-period and rolling correlation modes with scatter data for visualization.
+    /// Optional `lag_range` enables cross-correlogram and Granger causality testing for lead/lag detection.
     #[tool(name = "correlate", annotations(read_only_hint = true))]
     async fn correlate(
         &self,
@@ -1665,6 +1666,7 @@ impl OptopsyServer {
                     &params.mode,
                     params.window,
                     params.years,
+                    params.lag_range.as_ref().map(|lr| (lr.min, lr.max)),
                 )
                 .await
                 .map_err(|e| format!("Error: {e}"))
@@ -1702,10 +1704,11 @@ impl OptopsyServer {
         )
     }
 
-    /// Detect market regimes using volatility clustering or trend state analysis.
+    /// Detect market regimes using volatility clustering, trend state analysis, or Hidden Markov Models.
     /// Returns per-regime statistics, a transition probability matrix, and a time series of regime labels.
     ///
-    /// Methods: `volatility_cluster` (quantile-based vol regimes) or `trend_state` (SMA crossover).
+    /// Methods: `volatility_cluster` (quantile-based vol regimes), `trend_state` (SMA crossover),
+    /// or `hmm` (Gaussian HMM with Baum-Welch EM — learns regime parameters from data).
     #[tool(name = "regime_detect", annotations(read_only_hint = true))]
     async fn regime_detect(
         &self,

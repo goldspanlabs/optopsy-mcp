@@ -684,6 +684,41 @@ pub struct ScatterPoint {
     pub date: String,
 }
 
+/// A single point in a cross-correlogram (lag vs correlation).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LagCorrelationPoint {
+    /// Lag in bars (positive = series B leads A).
+    pub lag: i32,
+    pub pearson: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p_value: Option<f64>,
+}
+
+/// Result of a Granger causality F-test.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GrangerResult {
+    /// Direction of tested causality (e.g. "VIX → SPY").
+    pub direction: String,
+    pub f_statistic: f64,
+    pub p_value: f64,
+    pub lag_order: usize,
+    /// Whether p < 0.05.
+    pub is_significant: bool,
+}
+
+/// Lead/lag cross-correlation analysis results.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LagAnalysis {
+    /// Cross-correlogram: Pearson at each lag.
+    pub correlogram: Vec<LagCorrelationPoint>,
+    /// Lag with highest absolute correlation.
+    pub optimal_lag: i32,
+    /// Pearson correlation at optimal lag.
+    pub optimal_correlation: f64,
+    /// Granger causality tests in both directions.
+    pub granger_tests: Vec<GrangerResult>,
+}
+
 /// Response for `correlate`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CorrelateResponse {
@@ -700,6 +735,9 @@ pub struct CorrelateResponse {
     pub rolling_correlation: Vec<RollingCorrelationPoint>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scatter: Vec<ScatterPoint>,
+    /// Lead/lag analysis (present when `lag_range` is provided).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lag_analysis: Option<LagAnalysis>,
     pub key_findings: Vec<String>,
     pub suggested_next_steps: Vec<String>,
 }
@@ -746,6 +784,12 @@ pub struct RegimeInfo {
     pub mean_return: f64,
     pub std_dev: f64,
     pub mean_vol: f64,
+    /// HMM emission mean (only for method="hmm").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emission_mean: Option<f64>,
+    /// HMM emission std dev (only for method="hmm").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emission_std: Option<f64>,
 }
 
 /// A date-labeled regime assignment point.

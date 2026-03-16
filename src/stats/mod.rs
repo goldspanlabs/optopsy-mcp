@@ -10,7 +10,7 @@ pub mod histogram;
 pub mod hypothesis;
 pub mod rolling;
 
-pub use correlation::{covariance, pearson, spearman};
+pub use correlation::{covariance, granger_f_test, lagged_pearson, pearson, spearman};
 pub use descriptive::{kurtosis, mean, median, percentile, skewness, std_dev};
 pub use histogram::{histogram, HistogramBucket};
 pub use hypothesis::{jarque_bera, t_test_one_sample, HypothesisResult};
