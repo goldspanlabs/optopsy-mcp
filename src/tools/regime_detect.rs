@@ -235,26 +235,67 @@ fn classify_by_hmm(
         labels[original_idx] = decoded[decoded_idx];
     }
 
-    // Generate names from emission parameters (sorted by mean)
-    let names = match n_regimes {
-        2 => vec!["Bear / High Vol".into(), "Bull / Low Vol".into()],
-        3 => vec![
-            "Bear / High Vol".into(),
-            "Neutral".into(),
-            "Bull / Low Vol".into(),
-        ],
-        4 => vec![
-            "Deep Bear".into(),
-            "Mild Bear".into(),
-            "Mild Bull".into(),
-            "Strong Bull".into(),
-        ],
-        _ => (0..n_regimes)
-            .map(|i| format!("Regime {}", i + 1))
-            .collect(),
-    };
+    // Generate names from fitted emission parameters (states sorted by ascending mean)
+    let names = derive_hmm_names(&hmm);
 
     (labels, names, Some(hmm))
+}
+
+/// Derive descriptive regime names from fitted HMM emission parameters.
+///
+/// Names reflect both the mean (return direction) and volatility (emission std dev)
+/// derived from the actual fitted model, rather than hardcoded assumptions.
+fn derive_hmm_names(hmm: &crate::engine::hmm::GaussianHmm) -> Vec<String> {
+    let k = hmm.n_states;
+    // States are already sorted by ascending mean
+    let stds: Vec<f64> = hmm.variances.iter().map(|v| v.sqrt()).collect();
+
+    (0..k)
+        .map(|i| {
+            let mean_label = if k == 2 {
+                if i == 0 {
+                    "Bearish"
+                } else {
+                    "Bullish"
+                }
+            } else {
+                let frac = i as f64 / (k - 1).max(1) as f64;
+                if frac < 0.25 {
+                    "Strong Bear"
+                } else if frac < 0.5 {
+                    "Mild Bear"
+                } else if frac < 0.75 {
+                    "Mild Bull"
+                } else {
+                    "Strong Bull"
+                }
+            };
+
+            // Classify volatility relative to other states
+            let vol_label = if k <= 2 {
+                // With 2 states, compare directly
+                if stds[i] > stds[(i + 1) % k] {
+                    "High Vol"
+                } else {
+                    "Low Vol"
+                }
+            } else {
+                let min_std = stds.iter().copied().fold(f64::INFINITY, f64::min);
+                let max_std = stds.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                let range = (max_std - min_std).max(1e-15);
+                let relative = (stds[i] - min_std) / range;
+                if relative < 0.33 {
+                    "Low Vol"
+                } else if relative < 0.67 {
+                    "Med Vol"
+                } else {
+                    "High Vol"
+                }
+            };
+
+            format!("{mean_label} / {vol_label}")
+        })
+        .collect()
 }
 
 /// Classify each bar by rolling realized volatility quantiles.
@@ -667,17 +708,43 @@ mod tests {
 
         let (_, names_2, _) = classify_by_hmm(&returns, 2);
         assert_eq!(names_2.len(), 2);
-        assert_eq!(names_2[0], "Bear / High Vol");
-        assert_eq!(names_2[1], "Bull / Low Vol");
+        // Names are derived from fitted params: state 0 = lowest mean = Bearish
+        assert!(
+            names_2[0].contains("Bearish"),
+            "state 0 should be bearish: {}",
+            names_2[0]
+        );
+        assert!(
+            names_2[1].contains("Bullish"),
+            "state 1 should be bullish: {}",
+            names_2[1]
+        );
+        // Vol labels should be derived from actual emission variances
+        for name in &names_2 {
+            assert!(
+                name.contains("Vol"),
+                "names should include vol classification: {name}"
+            );
+        }
 
         let (_, names_3, _) = classify_by_hmm(&returns, 3);
         assert_eq!(names_3.len(), 3);
-        assert_eq!(names_3[1], "Neutral");
+        // First should be bearish, last should be bullish
+        assert!(names_3[0].contains("Bear"), "state 0: {}", names_3[0]);
+        assert!(names_3[2].contains("Bull"), "state 2: {}", names_3[2]);
 
         let (_, names_4, _) = classify_by_hmm(&returns, 4);
         assert_eq!(names_4.len(), 4);
-        assert_eq!(names_4[0], "Deep Bear");
-        assert_eq!(names_4[3], "Strong Bull");
+        assert!(
+            names_4[0].contains("Strong Bear"),
+            "state 0: {}",
+            names_4[0]
+        );
+        assert!(
+            names_4[3].contains("Strong Bull"),
+            "state 3: {}",
+            names_4[3]
+        );
     }
 
     #[test]
