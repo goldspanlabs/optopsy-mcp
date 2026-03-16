@@ -1,5 +1,5 @@
 //! Math and derived-feature functions: `abs`, `change`, `pct_change`, `roc`, `rel_volume`, `zscore`,
-//! `range_pct`, `if`.
+//! `range_pct`, `if`, `gap`, `gap_size`, `gap_filled`.
 
 use polars::prelude::*;
 
@@ -70,6 +70,43 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
             let then_val = args[1].clone().into_expr();
             let else_val = args[2].clone().into_expr();
             Ok(when(cond).then(then_val).otherwise(else_val))
+        }
+        // Gap functions: measure opening gap relative to previous bar's close
+        "gap" => {
+            // gap() = (open - prev_close) / prev_close (percentage, no * 100)
+            if !args.is_empty() {
+                return Err(
+                    "gap() takes no arguments — returns (open - prev_close) / prev_close"
+                        .to_string(),
+                );
+            }
+            let prev_close = col("close").shift(lit(1));
+            Ok((col("open") - prev_close.clone()) / prev_close)
+        }
+        "gap_size" => {
+            // gap_size() = open - prev_close (absolute dollar gap)
+            if !args.is_empty() {
+                return Err("gap_size() takes no arguments — returns open - prev_close".to_string());
+            }
+            Ok(col("open") - col("close").shift(lit(1)))
+        }
+        "gap_filled" => {
+            // gap_filled() = 1.0 if price retraced to prev_close during the bar, else 0.0
+            // Gap up: filled if low <= prev_close
+            // Gap down: filled if high >= prev_close
+            if !args.is_empty() {
+                return Err("gap_filled() takes no arguments — returns 1.0 if gap was filled during the bar".to_string());
+            }
+            let prev_close = col("close").shift(lit(1));
+            let gap_up_filled = col("open")
+                .gt(prev_close.clone())
+                .and(col("low").lt_eq(prev_close.clone()));
+            let gap_down_filled = col("open")
+                .lt(prev_close.clone())
+                .and(col("high").gt_eq(prev_close));
+            Ok(when(gap_up_filled.or(gap_down_filled))
+                .then(lit(1.0))
+                .otherwise(lit(0.0)))
         }
         _ => Err(format!("math: unknown function '{name}'")),
     }

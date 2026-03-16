@@ -1,7 +1,7 @@
-//! Aggregate OHLCV price data by time dimension (day-of-week, month, quarter, year).
+//! Aggregate OHLCV price data by time dimension (day-of-week, month, quarter, year, hour-of-day).
 
 use anyhow::{Context, Result};
-use chrono::Datelike;
+use chrono::{Datelike, Timelike};
 use std::sync::Arc;
 
 use crate::data::cache::CachedStore;
@@ -10,18 +10,19 @@ use crate::tools::ai_format;
 use crate::tools::response_types::{AggregateBucket, AggregatePricesResponse, DateRange};
 
 /// Execute the `aggregate_prices` analysis.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 pub async fn execute(
     cache: &Arc<CachedStore>,
     symbol: &str,
     years: u32,
     group_by: &str,
     metric: &str,
+    interval: Option<crate::engine::types::Interval>,
     start_date: Option<&str>,
     end_date: Option<&str>,
 ) -> Result<AggregatePricesResponse> {
     // Validate group_by
-    let valid_groups = ["day_of_week", "month", "quarter", "year"];
+    let valid_groups = ["day_of_week", "month", "quarter", "year", "hour_of_day"];
     if !valid_groups.contains(&group_by) {
         anyhow::bail!(
             "Invalid group_by: \"{group_by}\". Must be one of: {}",
@@ -29,11 +30,35 @@ pub async fn execute(
         );
     }
     // Validate metric
-    let valid_metrics = ["return", "range", "volume"];
+    let valid_metrics = ["return", "range", "volume", "gap"];
     if !valid_metrics.contains(&metric) {
         anyhow::bail!(
             "Invalid metric: \"{metric}\". Must be one of: {}",
             valid_metrics.join(", ")
+        );
+    }
+
+    // Resolve interval: auto-select Hour1 for hour_of_day if not specified
+    let resolved_interval = interval.unwrap_or_else(|| {
+        if group_by == "hour_of_day" {
+            crate::engine::types::Interval::Hour1
+        } else {
+            crate::engine::types::Interval::Daily
+        }
+    });
+
+    // Reject hour_of_day with daily-resolution intervals
+    if group_by == "hour_of_day"
+        && matches!(
+            resolved_interval,
+            crate::engine::types::Interval::Daily
+                | crate::engine::types::Interval::Weekly
+                | crate::engine::types::Interval::Monthly
+        )
+    {
+        anyhow::bail!(
+            "group_by=\"hour_of_day\" requires intraday data. \
+             Pass interval=\"1h\", \"30m\", \"5m\", or \"1m\"."
         );
     }
 
@@ -44,7 +69,7 @@ pub async fn execute(
         start_date,
         end_date,
         None, // no limit
-        crate::engine::types::Interval::Daily,
+        resolved_interval,
     )
     .await
     .context("Failed to load OHLCV data")?;
@@ -76,15 +101,31 @@ pub async fn execute(
     let mut bar_data: Vec<(String, f64)> = Vec::with_capacity(total_bars);
     for i in 0..prices.len() {
         let date_str = &prices[i].date;
-        let date = date_str
-            .parse::<chrono::NaiveDate>()
-            .with_context(|| format!("Invalid date: {date_str}"))?;
+
+        // Parse date — try datetime first (intraday), fall back to date-only (daily).
+        // raw_prices formats intraday timestamps as "%Y-%m-%dT%H:%M:%S", so try that explicitly.
+        let (date, hour) = if let Ok(dt) =
+            chrono::NaiveDateTime::parse_from_str(date_str, "%Y-%m-%dT%H:%M:%S")
+                .or_else(|_| chrono::NaiveDateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S"))
+        {
+            (dt.date(), Some(dt.time().hour()))
+        } else if let Ok(d) = date_str.parse::<chrono::NaiveDate>() {
+            (d, None)
+        } else {
+            anyhow::bail!("Invalid date: {date_str}");
+        };
 
         let bucket_label = match group_by {
             "day_of_week" => date.format("%A").to_string(),
             "month" => date.format("%B").to_string(),
             "quarter" => format!("Q{}", ((date.month() - 1) / 3) + 1),
             "year" => date.format("%Y").to_string(),
+            "hour_of_day" => {
+                // Midnight bars may be formatted as date-only by raw_prices,
+                // so hour=None means 00:00 when using an intraday interval.
+                let h = hour.unwrap_or(0);
+                format!("{h:02}:00")
+            }
             _ => unreachable!(),
         };
 
@@ -98,6 +139,16 @@ pub async fn execute(
                     continue;
                 }
                 (prices[i].close - prev_close) / prev_close * 100.0
+            }
+            "gap" => {
+                if i == 0 {
+                    continue; // skip first bar (no previous close)
+                }
+                let prev_close = prices[i - 1].close;
+                if prev_close == 0.0 {
+                    continue;
+                }
+                (prices[i].open - prev_close) / prev_close * 100.0
             }
             "range" => {
                 if prices[i].low == 0.0 {
@@ -154,7 +205,7 @@ fn sort_bucket_keys(
             ];
             keys.sort_by_key(|k| order.iter().position(|&m| m == k).unwrap_or(12));
         }
-        "quarter" | "year" => {
+        "quarter" | "year" | "hour_of_day" => {
             keys.sort();
         }
         _ => {}
@@ -195,7 +246,7 @@ fn build_buckets(
             0.0
         };
 
-        let p_value = if metric == "return" {
+        let p_value = if metric == "return" || metric == "gap" {
             stats::t_test_one_sample(values, 0.0).map(|r| r.p_value)
         } else {
             None
@@ -359,6 +410,29 @@ mod tests {
     }
 
     #[test]
+    fn test_build_buckets_gap_metric_has_p_value() {
+        let bar_data: Vec<(String, f64)> = (0..30)
+            .map(|i| ("Monday".to_string(), 0.3 + f64::from(i) * 0.01))
+            .collect();
+        let (buckets, _) = build_buckets("day_of_week", "gap", &bar_data);
+        assert_eq!(buckets.len(), 1);
+        assert!(
+            buckets[0].p_value.is_some(),
+            "gap metric should produce p-values"
+        );
+    }
+
+    #[test]
+    fn test_sort_bucket_keys_hour_of_day() {
+        let mut groups = std::collections::BTreeMap::new();
+        groups.insert("14:00".to_string(), vec![1.0]);
+        groups.insert("09:00".to_string(), vec![2.0]);
+        groups.insert("04:00".to_string(), vec![3.0]);
+        let keys = sort_bucket_keys("hour_of_day", &groups);
+        assert_eq!(keys, vec!["04:00", "09:00", "14:00"]);
+    }
+
+    #[test]
     fn test_build_buckets_positive_pct_mixed() {
         let bar_data = vec![
             ("Monday".to_string(), 1.0),
@@ -370,5 +444,102 @@ mod tests {
 
         assert_eq!(buckets[0].count, 4);
         assert!((buckets[0].positive_pct - 50.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_build_buckets_gap_metric_stats() {
+        // Gap values: Monday has positive gaps, Tuesday has negative
+        let bar_data = vec![
+            ("Monday".to_string(), 0.5),
+            ("Monday".to_string(), 1.0),
+            ("Monday".to_string(), 0.3),
+            ("Tuesday".to_string(), -0.5),
+            ("Tuesday".to_string(), -1.0),
+        ];
+        let (buckets, _) = build_buckets("day_of_week", "gap", &bar_data);
+        assert_eq!(buckets.len(), 2);
+
+        // Monday: mean gap = 0.6
+        assert_eq!(buckets[0].label, "Monday");
+        assert!((buckets[0].mean - 0.6).abs() < 1e-10);
+        assert!((buckets[0].positive_pct - 100.0).abs() < 1e-10);
+
+        // Tuesday: mean gap = -0.75
+        assert_eq!(buckets[1].label, "Tuesday");
+        assert!((buckets[1].mean - (-0.75)).abs() < 1e-10);
+        assert!((buckets[1].positive_pct).abs() < 1e-10); // 0%
+    }
+
+    #[test]
+    fn test_build_buckets_hour_of_day_grouping() {
+        let bar_data = vec![
+            ("09:00".to_string(), 0.5),
+            ("09:00".to_string(), 0.3),
+            ("10:00".to_string(), -0.2),
+            ("14:00".to_string(), 0.8),
+        ];
+        let (buckets, _) = build_buckets("hour_of_day", "return", &bar_data);
+        assert_eq!(buckets.len(), 3);
+        assert_eq!(buckets[0].label, "09:00");
+        assert_eq!(buckets[0].count, 2);
+        assert_eq!(buckets[1].label, "10:00");
+        assert_eq!(buckets[2].label, "14:00");
+    }
+
+    /// Parse a date string the same way `execute` does, returning `(NaiveDate, Option<hour>)`.
+    fn parse_bar_date(
+        date_str: &str,
+    ) -> Result<(chrono::NaiveDate, Option<u32>), Box<dyn std::error::Error>> {
+        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(date_str, "%Y-%m-%dT%H:%M:%S")
+            .or_else(|_| chrono::NaiveDateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S"))
+        {
+            Ok((dt.date(), Some(dt.time().hour())))
+        } else if let Ok(d) = date_str.parse::<chrono::NaiveDate>() {
+            Ok((d, None))
+        } else {
+            Err(format!("Invalid date: {date_str}").into())
+        }
+    }
+
+    #[test]
+    fn test_intraday_datetime_parsing_and_bucketing() {
+        // Simulates the full path: T-separated datetime strings → hour extraction → bucketing
+        let date_strings = [
+            "2024-01-02T09:30:00", // 09:00 bucket
+            "2024-01-02T09:45:00", // 09:00 bucket (same hour)
+            "2024-01-02T10:00:00", // 10:00 bucket
+            "2024-01-02T14:30:00", // 14:00 bucket
+        ];
+
+        let mut bar_data: Vec<(String, f64)> = Vec::new();
+        for (i, ds) in date_strings.iter().enumerate() {
+            let (_date, hour) = parse_bar_date(ds).unwrap();
+            let h = hour.expect("intraday strings should have hours");
+            let label = format!("{h:02}:00");
+            bar_data.push((label, (i as f64) * 0.1));
+        }
+
+        let (buckets, _) = build_buckets("hour_of_day", "return", &bar_data);
+        assert_eq!(buckets.len(), 3);
+        assert_eq!(buckets[0].label, "09:00");
+        assert_eq!(buckets[0].count, 2);
+        assert_eq!(buckets[1].label, "10:00");
+        assert_eq!(buckets[2].label, "14:00");
+    }
+
+    #[test]
+    fn test_midnight_bar_parsed_as_date_only_gets_hour_zero() {
+        // raw_prices formats midnight (00:00:00) as date-only "YYYY-MM-DD"
+        let (_date, hour) = parse_bar_date("2024-01-02").unwrap();
+        assert!(hour.is_none(), "date-only should have no hour");
+        // In execute(), hour.unwrap_or(0) maps this to "00:00"
+        let label = format!("{:02}:00", hour.unwrap_or(0));
+        assert_eq!(label, "00:00");
+    }
+
+    #[test]
+    fn test_space_separated_datetime_also_parses() {
+        let (_date, hour) = parse_bar_date("2024-01-02 14:30:00").unwrap();
+        assert_eq!(hour, Some(14));
     }
 }

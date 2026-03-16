@@ -2045,4 +2045,108 @@ mod tests {
         assert_eq!(bools.get(1), Some(false)); // 14:00
         assert_eq!(bools.get(2), Some(true)); // 09:30
     }
+
+    #[test]
+    fn gap_function_parses() {
+        assert!(validate_formula("gap() > 0.01").is_ok());
+        assert!(validate_formula("gap_size() > 2.0").is_ok());
+        assert!(validate_formula("gap_filled() == 1.0").is_ok());
+    }
+
+    #[test]
+    fn gap_function_evaluates() {
+        // test_df data:
+        // close: 100, 102, 101, 105, 103, 107, 110, 108, 112, 115
+        // open:   99, 101, 102, 101, 105, 103, 106, 110, 108, 112
+        // gap = (open - prev_close) / prev_close
+        // bar 1: (101 - 100) / 100 = 0.01
+        // bar 2: (102 - 102) / 102 = 0.0
+        // bar 3: (101 - 101) / 101 = 0.0
+        let df = test_df();
+        let signal = FormulaSignal::new("gap() > 0.005".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        // bar 0: null (no previous close)
+        assert_eq!(bools.get(0), None); // null
+        assert_eq!(bools.get(1), Some(true)); // 0.01 > 0.005
+        assert_eq!(bools.get(2), Some(false)); // 0.0 > 0.005 = false
+    }
+
+    #[test]
+    fn gap_size_evaluates() {
+        let df = test_df();
+        let signal = FormulaSignal::new("gap_size() > 0".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        // bar 1: open=101 - prev_close=100 = 1.0 > 0 → true
+        assert_eq!(bools.get(1), Some(true));
+        // bar 3: open=101 - prev_close=101 = 0.0 > 0 → false
+        assert_eq!(bools.get(3), Some(false));
+    }
+
+    #[test]
+    fn gap_filled_evaluates() {
+        let df = test_df();
+        let signal = FormulaSignal::new("gap_filled() == 1.0".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        // bar 1: gap up (open=101 > prev_close=100). low=100 <= 100 → filled=true
+        assert_eq!(bools.get(1), Some(true));
+        // bar 4: open=105 == prev_close=105 → no gap (open == prev_close) → filled=false
+        assert_eq!(bools.get(4), Some(false));
+    }
+
+    #[test]
+    fn gap_size_no_negatives_in_test_df() {
+        // test_df has no gap-down bars (open >= prev_close for all bars).
+        // Verify gap_size() < 0 is false for all. Real gap-down coverage
+        // is in gap_down_with_custom_data below.
+        let df = test_df();
+        let signal = FormulaSignal::new("gap_size() < 0".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        // bar 1: 101 - 100 = 1 → not < 0
+        assert_eq!(bools.get(1), Some(false));
+        // bar 3: open=101, prev_close=101 → 0, not < 0
+        assert_eq!(bools.get(3), Some(false));
+        // bar 5: open=103, prev_close=103 → 0
+        assert_eq!(bools.get(5), Some(false));
+    }
+
+    #[test]
+    fn gap_down_with_custom_data() {
+        // Create data with explicit gap downs
+        let df = df! {
+            "close"  => &[100.0, 105.0, 98.0, 102.0, 95.0],
+            "open"   => &[100.0, 102.0, 100.0, 96.0, 103.0],
+            "high"   => &[106.0, 106.0, 101.0, 103.0, 104.0],
+            "low"    => &[99.0, 101.0, 97.0, 95.0, 94.0],
+            "volume" => &[1000u64, 1200, 900, 1100, 1500],
+        }
+        .unwrap();
+
+        // gap_size: bar 1: 102-100=2, bar 2: 100-105=-5, bar 3: 96-98=-2, bar 4: 103-102=1
+        let signal = FormulaSignal::new("gap_size() < -1.0".to_string());
+        let result = signal.evaluate(&df).unwrap();
+        let bools = result.bool().unwrap();
+        assert_eq!(bools.get(1), Some(false)); // +2
+        assert_eq!(bools.get(2), Some(true)); // -5
+        assert_eq!(bools.get(3), Some(true)); // -2
+        assert_eq!(bools.get(4), Some(false)); // +1
+
+        // gap_filled for gap-down: bar 2: open=100 < prev_close=105, high=101 < 105 → NOT filled
+        // bar 3: open=96 < prev_close=98, high=103 >= 98 → filled!
+        let signal2 = FormulaSignal::new("gap_filled() == 1.0".to_string());
+        let result2 = signal2.evaluate(&df).unwrap();
+        let bools2 = result2.bool().unwrap();
+        assert_eq!(bools2.get(2), Some(false)); // gap down, high=101 < 105, not filled
+        assert_eq!(bools2.get(3), Some(true)); // gap down, high=103 >= 98, filled
+    }
+
+    #[test]
+    fn gap_functions_reject_args() {
+        assert!(validate_formula("gap(close)").is_err());
+        assert!(validate_formula("gap_size(14)").is_err());
+        assert!(validate_formula("gap_filled(close, 2)").is_err());
+    }
 }
