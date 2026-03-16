@@ -1598,8 +1598,9 @@ impl OptopsyServer {
     /// Returns per-bucket descriptive stats with t-test p-values for significance.
     ///
     /// Use this to identify seasonal patterns, day-of-week effects, intraday hour patterns, or time-based anomalies.
-    /// The `"gap"` metric measures opening gaps — use with `"day_of_week"` to find
-    /// which days have the largest/most consistent gaps, or `"hour_of_day"` for intraday gap analysis.
+    /// The `"gap"` metric measures the relative move between each bar's open and the previous bar's close
+    /// for the selected interval. With daily bars this corresponds to overnight opening gaps; with intraday
+    /// data (e.g., `group_by="hour_of_day"`) it reflects bar-to-bar gaps between consecutive closes and opens.
     /// `group_by="hour_of_day"` requires intraday data — pass `interval="1h"` (or `"30m"`, `"5m"`, `"1m"`).
     #[tool(name = "aggregate_prices", annotations(read_only_hint = true))]
     async fn aggregate_prices(
