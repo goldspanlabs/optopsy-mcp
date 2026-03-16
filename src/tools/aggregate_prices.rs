@@ -116,10 +116,12 @@ pub async fn execute(
             "month" => date.format("%B").to_string(),
             "quarter" => format!("Q{}", ((date.month() - 1) / 3) + 1),
             "year" => date.format("%Y").to_string(),
-            "hour_of_day" => match hour {
-                Some(h) => format!("{h:02}:00"),
-                None => continue, // skip bars without time (shouldn't happen after validation)
-            },
+            "hour_of_day" => {
+                // Midnight bars may be formatted as date-only by raw_prices,
+                // so hour=None means 00:00 when using an intraday interval.
+                let h = hour.unwrap_or(0);
+                format!("{h:02}:00")
+            }
             _ => unreachable!(),
         };
 
