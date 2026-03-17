@@ -420,6 +420,7 @@ fn load_underlying_prices(
     path: &std::path::Path,
     filter_datetimes: Option<&Column>,
     resample_interval: Option<crate::engine::types::Interval>,
+    date_range: Option<(Option<chrono::NaiveDate>, Option<chrono::NaiveDate>)>,
 ) -> Vec<tools::response_types::UnderlyingPrice> {
     let args = ScanArgsParquet::default();
     let path_str = path.to_string_lossy();
@@ -469,16 +470,55 @@ fn load_underlying_prices(
         df
     };
 
-    // For intraday intervals, keep only the last 7 calendar days of bars.
-    // The FE paginates backward via /api/data/prices for older data.
+    // For intraday intervals, apply date filtering to keep response sizes manageable.
+    // When a date range is provided (e.g. from a backtest), filter to that range and
+    // subsample to at most 2000 bars. Without a date range (standalone chart), keep
+    // the last 7 calendar days and let the FE paginate backward.
     let df = if let Some(interval) = resample_interval {
         if interval.is_intraday() && df.column("datetime").is_ok() {
-            let cutoff = (chrono::Utc::now() - chrono::Duration::days(7)).naive_utc();
-            df.clone()
-                .lazy()
-                .filter(col("datetime").gt_eq(lit(cutoff)))
-                .collect()
-                .unwrap_or(df)
+            let mut filtered = df.clone();
+
+            // Apply date range filter if provided, otherwise default 7-day cutoff
+            if let Some((start, end)) = &date_range {
+                if let Some(s) = start {
+                    let start_dt = s.and_hms_opt(0, 0, 0).unwrap();
+                    filtered = filtered
+                        .clone()
+                        .lazy()
+                        .filter(col("datetime").gt_eq(lit(start_dt)))
+                        .collect()
+                        .unwrap_or(filtered);
+                }
+                if let Some(e) = end {
+                    let end_next = e.succ_opt().unwrap_or(*e).and_hms_opt(0, 0, 0).unwrap();
+                    filtered = filtered
+                        .clone()
+                        .lazy()
+                        .filter(col("datetime").lt(lit(end_next)))
+                        .collect()
+                        .unwrap_or(filtered);
+                }
+            } else {
+                let cutoff = (chrono::Utc::now() - chrono::Duration::days(7)).naive_utc();
+                filtered = filtered
+                    .clone()
+                    .lazy()
+                    .filter(col("datetime").gt_eq(lit(cutoff)))
+                    .collect()
+                    .unwrap_or(filtered);
+            }
+
+            // Subsample to at most 2000 bars for intraday
+            let n = filtered.height();
+            if n > 2000 {
+                let mut indices: Vec<u32> =
+                    (0..2000).map(|i| (i * (n - 1) / 1999) as u32).collect();
+                indices.dedup();
+                let idx = IdxCa::new(PlSmallStr::from("idx"), &indices);
+                filtered.clone().take(&idx).unwrap_or(filtered)
+            } else {
+                filtered
+            }
         } else {
             df
         }
@@ -793,7 +833,7 @@ impl OptopsyServer {
                         let path = std::path::PathBuf::from(path_str);
                         tokio::task::spawn_blocking(
                             move || -> Vec<tools::response_types::UnderlyingPrice> {
-                                load_underlying_prices(&path, dt_filter.as_ref(), None)
+                                load_underlying_prices(&path, dt_filter.as_ref(), None, None)
                             },
                         )
                         .await
@@ -875,18 +915,6 @@ impl OptopsyServer {
                     &[],
                 )?;
 
-                // Load underlying prices for chart overlay.
-                // For intraday intervals, return only the last week of bars at the
-                // native interval — the FE paginates backward via /api/data/prices.
-                // For daily/weekly/monthly, return all bars (manageable count).
-                let prices_path = std::path::PathBuf::from(&ohlcv_path);
-                let interval = params.interval.unwrap_or_default();
-                let underlying_prices = tokio::task::spawn_blocking(move || {
-                    load_underlying_prices(&prices_path, None, Some(interval))
-                })
-                .await
-                .unwrap_or_default();
-
                 let start_date = params
                     .start_date
                     .as_deref()
@@ -903,6 +931,19 @@ impl OptopsyServer {
                             .map_err(|_| format!("Invalid end_date \"{s}\": expected YYYY-MM-DD"))
                     })
                     .transpose()?;
+
+                // Load underlying prices for chart overlay.
+                // For intraday intervals with a date range, return subsampled bars
+                // covering the full range. Without a range, return the last 7 days
+                // and let the FE paginate backward.
+                let prices_path = std::path::PathBuf::from(&ohlcv_path);
+                let interval = params.interval.unwrap_or_default();
+                let date_range = Some((start_date, end_date));
+                let underlying_prices = tokio::task::spawn_blocking(move || {
+                    load_underlying_prices(&prices_path, None, Some(interval), date_range)
+                })
+                .await
+                .unwrap_or_default();
 
                 let stock_params = crate::engine::stock_sim::StockBacktestParams {
                     symbol,
@@ -1911,7 +1952,7 @@ mod tests {
     #[test]
     fn underlying_prices_no_filter_returns_all_bars() {
         let tmp = write_intraday_parquet();
-        let prices = load_underlying_prices(tmp.path(), None, None);
+        let prices = load_underlying_prices(tmp.path(), None, None, None);
         assert_eq!(prices.len(), 8);
     }
 
@@ -1928,7 +1969,7 @@ mod tests {
         ];
         let filter_col: Column = Series::new("datetime".into(), &filter_dts).into();
 
-        let prices = load_underlying_prices(tmp.path(), Some(&filter_col), None);
+        let prices = load_underlying_prices(tmp.path(), Some(&filter_col), None, None);
         assert_eq!(prices.len(), 2, "should only return 15:59 bars");
         // Verify epochs correspond to 15:59:00 times
         let dt0 = chrono::DateTime::from_timestamp(prices[0].date, 0)
@@ -1948,6 +1989,7 @@ mod tests {
             tmp.path(),
             None,
             Some(crate::engine::types::Interval::Daily),
+            None,
         );
         // 8 intraday bars across 2 dates → 2 daily bars
         assert_eq!(prices.len(), 2, "should have one bar per date");
@@ -1974,7 +2016,7 @@ mod tests {
             .unwrap()];
         let filter_col: Column = Series::new("datetime".into(), &filter_dts).into();
 
-        let prices = load_underlying_prices(tmp.path(), Some(&filter_col), None);
+        let prices = load_underlying_prices(tmp.path(), Some(&filter_col), None, None);
         assert!(prices.is_empty());
     }
 }
