@@ -292,7 +292,7 @@ fn dispatch_indicator_call(
 fn extract_date_strings(df: &DataFrame, date_col: &str) -> Result<Vec<String>, PolarsError> {
     let col = df.column(date_col)?;
     let n = df.height();
-    let is_datetime = date_col == "quote_datetime";
+    let is_datetime = date_col == "datetime";
     let mut dates = Vec::with_capacity(n);
     for i in 0..n {
         if is_datetime {

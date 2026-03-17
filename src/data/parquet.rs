@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use super::DataStore;
 use crate::engine::types::EPOCH_DAYS_CE_OFFSET;
 
-/// The canonical timestamp column name used internally after normalization.
-pub const QUOTE_DATETIME_COL: &str = "quote_datetime";
+/// The canonical timestamp column name used across all data files.
+pub const DATETIME_COL: &str = "datetime";
 
 pub struct ParquetStore {
     path: PathBuf,
@@ -26,64 +26,6 @@ impl ParquetStore {
     }
 }
 
-/// Apply date-column normalization steps to a `LazyFrame`.
-///
-/// Normalizes `src_col` (of type `src_dtype`) to a
-/// `Datetime(Microseconds)` column named [`QUOTE_DATETIME_COL`].
-/// When a new alias is created (`Date` or `String` source), the caller is
-/// responsible for dropping the original column if it differs from
-/// [`QUOTE_DATETIME_COL`] and still appears in the collected schema.
-/// Offset added when casting Date → Datetime for options data: 15:59:30 (30s before close).
-/// Options quotes are end-of-day snapshots, so midnight is misleading.
-const EOD_OFFSET_US: i64 = (15 * 3600 + 59 * 60 + 30) * 1_000_000;
-
-fn apply_datetime_normalization(
-    lazy: LazyFrame,
-    src_col: &'static str,
-    src_dtype: &DataType,
-) -> LazyFrame {
-    match src_dtype {
-        DataType::Date => lazy.with_column(
-            (col(src_col).cast(DataType::Datetime(TimeUnit::Microseconds, None))
-                + lit(EOD_OFFSET_US).cast(DataType::Duration(TimeUnit::Microseconds)))
-            .alias(QUOTE_DATETIME_COL),
-        ),
-        DataType::Datetime(_, _) if src_col != QUOTE_DATETIME_COL => {
-            lazy.rename([src_col], [QUOTE_DATETIME_COL], true)
-        }
-        DataType::String => lazy.with_column(
-            (col(src_col)
-                .cast(DataType::Date)
-                .cast(DataType::Datetime(TimeUnit::Microseconds, None))
-                + lit(EOD_OFFSET_US).cast(DataType::Duration(TimeUnit::Microseconds)))
-            .alias(QUOTE_DATETIME_COL),
-        ),
-        _ => lazy, // already Datetime with the correct name
-    }
-}
-
-/// Normalize the quote date/datetime column to a Datetime column named `quote_datetime`.
-/// If the source column is Date, it gets cast to Datetime at 15:59:30 (30s before close).
-/// If it's already Datetime, it just gets renamed.
-pub fn normalize_quote_datetime(df: DataFrame) -> Result<DataFrame> {
-    let (src_col, src_dtype) = if let Ok(c) = df.column(QUOTE_DATETIME_COL) {
-        (QUOTE_DATETIME_COL, c.dtype().clone())
-    } else if let Ok(c) = df.column("quote_date") {
-        ("quote_date", c.dtype().clone())
-    } else {
-        // No recognized date column — return as-is
-        return Ok(df);
-    };
-
-    let lazy = apply_datetime_normalization(df.lazy(), src_col, &src_dtype);
-    let collected = lazy.collect()?;
-    if src_col != QUOTE_DATETIME_COL && collected.schema().contains(src_col) {
-        Ok(collected.drop(src_col)?)
-    } else {
-        Ok(collected)
-    }
-}
-
 impl DataStore for ParquetStore {
     async fn load_options(
         &self,
@@ -95,42 +37,19 @@ impl DataStore for ParquetStore {
         let start_dt = start_date.and_then(|d| d.and_hms_opt(0, 0, 0));
         let end_dt = end_date.and_then(|d| d.and_hms_opt(23, 59, 59));
 
-        // Scan lazily so Polars can push date predicates down to the Parquet
-        // row-group level, avoiding loading data that will be filtered out.
         let df = tokio::task::spawn_blocking(move || {
             let mut lazy =
                 LazyFrame::scan_parquet(path_str.as_str().into(), ScanArgsParquet::default())?;
 
-            // Detect and normalize the date column in the lazy pipeline
-            let schema = lazy.collect_schema()?;
-            let (src_col, src_dtype) = if let Some(dt) = schema.get(QUOTE_DATETIME_COL) {
-                (QUOTE_DATETIME_COL, dt.clone())
-            } else if let Some(dt) = schema.get("quote_date") {
-                ("quote_date", dt.clone())
-            } else {
-                // No recognized date column — just collect as-is
-                return lazy.collect().context("Failed to read Parquet file");
-            };
-
-            // Normalize to Datetime in the lazy pipeline using the shared helper
-            lazy = apply_datetime_normalization(lazy, src_col, &src_dtype);
-
-            // Apply date filters in the lazy pipeline for predicate pushdown
+            // Apply date filters for predicate pushdown
             if let Some(start) = start_dt {
-                lazy = lazy.filter(col(QUOTE_DATETIME_COL).gt_eq(lit(start)));
+                lazy = lazy.filter(col(DATETIME_COL).gt_eq(lit(start)));
             }
             if let Some(end) = end_dt {
-                lazy = lazy.filter(col(QUOTE_DATETIME_COL).lt_eq(lit(end)));
+                lazy = lazy.filter(col(DATETIME_COL).lt_eq(lit(end)));
             }
 
-            // Drop original column if it was renamed/aliased and a duplicate remains
-            let df = lazy.collect().context("Failed to read Parquet file")?;
-            if src_col != QUOTE_DATETIME_COL && df.schema().contains(src_col) {
-                df.drop(src_col)
-                    .context("Failed to drop original date column")
-            } else {
-                Ok(df)
-            }
+            lazy.collect().context("Failed to read Parquet file")
         })
         .await
         .context("Parquet read task panicked")??;
@@ -157,8 +76,7 @@ impl DataStore for ParquetStore {
         let df = LazyFrame::scan_parquet(path_str.as_str().into(), ScanArgsParquet::default())?
             .collect()?;
 
-        let df = normalize_quote_datetime(df)?;
-        let date_col = df.column(QUOTE_DATETIME_COL)?;
+        let date_col = df.column(DATETIME_COL)?;
         let min = date_col.min_reduce()?;
         let max = date_col.max_reduce()?;
 
@@ -169,7 +87,7 @@ impl DataStore for ParquetStore {
     }
 }
 
-/// Extract a `NaiveDate` from a Polars `Scalar`, handling Date, Datetime, and String types.
+/// Extract a `NaiveDate` from a Polars `Scalar`, handling Date and Datetime types.
 fn scalar_to_date(scalar: &Scalar) -> Result<NaiveDate> {
     match scalar.value() {
         AnyValue::Date(days) => NaiveDate::from_num_days_from_ce_opt(*days + EPOCH_DAYS_CE_OFFSET)
@@ -186,9 +104,6 @@ fn scalar_to_date(scalar: &Scalar) -> Result<NaiveDate> {
                 .map(|dt| dt.date_naive())
                 .ok_or_else(|| anyhow::anyhow!("Invalid datetime value: {ts_value}"))
         }
-        AnyValue::String(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d")
-            .or_else(|_| NaiveDate::parse_from_str(&s[..10.min(s.len())], "%Y-%m-%d"))
-            .context("Failed to parse date string"),
         other => anyhow::bail!("Unexpected scalar type for date: {other:?}"),
     }
 }
@@ -196,75 +111,24 @@ fn scalar_to_date(scalar: &Scalar) -> Result<NaiveDate> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn normalize_date_column_to_datetime() {
-        let dates = vec![
-            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 1, 16).unwrap(),
-        ];
-        let df = df! {
-            "quote_date" => &dates,
-            "value" => &[1, 2],
-        }
-        .unwrap();
 
-        let result = normalize_quote_datetime(df).unwrap();
-        assert!(result.schema().contains(QUOTE_DATETIME_COL));
-        assert!(!result.schema().contains("quote_date"));
-        match result.column(QUOTE_DATETIME_COL).unwrap().dtype() {
-            DataType::Datetime(_, _) => {}
-            other => panic!("Expected Datetime, got {other:?}"),
-        }
+    #[test]
+    fn datetime_col_constant() {
+        assert_eq!(DATETIME_COL, "datetime");
     }
 
     #[test]
-    fn normalize_datetime_column_passthrough() {
-        let datetimes = vec![
-            NaiveDate::from_ymd_opt(2024, 1, 15)
-                .unwrap()
-                .and_hms_opt(9, 30, 0)
-                .unwrap(),
-            NaiveDate::from_ymd_opt(2024, 1, 16)
-                .unwrap()
-                .and_hms_opt(10, 0, 0)
-                .unwrap(),
-        ];
-        let df = df! {
-            "quote_datetime" => &datetimes,
-            "value" => &[1, 2],
-        }
-        .unwrap();
-
-        let result = normalize_quote_datetime(df).unwrap();
-        assert!(result.schema().contains(QUOTE_DATETIME_COL));
-        assert_eq!(result.height(), 2);
-    }
-
-    #[test]
-    fn normalize_string_column_to_datetime() {
-        let df = df! {
-            "quote_date" => &["2024-01-15", "2024-01-16"],
-            "value" => &[1, 2],
-        }
-        .unwrap();
-
-        let result = normalize_quote_datetime(df).unwrap();
-        assert!(result.schema().contains(QUOTE_DATETIME_COL));
-        match result.column(QUOTE_DATETIME_COL).unwrap().dtype() {
-            DataType::Datetime(_, _) => {}
-            other => panic!("Expected Datetime, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn normalize_no_recognized_column_noop() {
-        let df = df! {
-            "some_other_col" => &[1, 2],
-            "value" => &[3, 4],
-        }
-        .unwrap();
-
-        let result = normalize_quote_datetime(df.clone()).unwrap();
-        assert_eq!(result.schema(), df.schema());
+    fn scalar_to_date_from_datetime() {
+        let dt = NaiveDate::from_ymd_opt(2024, 1, 15)
+            .unwrap()
+            .and_hms_opt(15, 59, 30)
+            .unwrap();
+        let us = dt.and_utc().timestamp_micros();
+        let scalar = Scalar::new(
+            DataType::Datetime(TimeUnit::Microseconds, None),
+            AnyValue::Datetime(us, TimeUnit::Microseconds, None),
+        );
+        let result = scalar_to_date(&scalar).unwrap();
+        assert_eq!(result, NaiveDate::from_ymd_opt(2024, 1, 15).unwrap());
     }
 }

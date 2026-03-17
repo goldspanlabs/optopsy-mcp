@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use chrono::NaiveDate;
-use optopsy_mcp::data::parquet::QUOTE_DATETIME_COL;
+use optopsy_mcp::data::parquet::DATETIME_COL;
 use optopsy_mcp::engine::types::{BacktestParams, DteRange, Slippage, TargetRange, TradeSelector};
 use polars::prelude::*;
 use tempfile::TempDir;
@@ -102,7 +102,7 @@ pub fn make_multi_strike_df() -> DataFrame {
     add_rows(&put_data_far, "put", exp_far);
 
     let mut df = df! {
-        QUOTE_DATETIME_COL => &quote_dates,
+        DATETIME_COL => &quote_dates,
         "option_type" => &option_types,
         "strike" => &strikes,
         "bid" => &bids,

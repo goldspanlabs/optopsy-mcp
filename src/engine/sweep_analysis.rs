@@ -7,7 +7,7 @@ use anyhow::{bail, Result};
 use polars::prelude::*;
 
 use super::types::{DteRange, Slippage, SweepResult, TargetRange};
-use crate::data::parquet::QUOTE_DATETIME_COL;
+use crate::data::parquet::DATETIME_COL;
 use crate::signals::registry::SignalSpec;
 use crate::strategies;
 
@@ -173,7 +173,7 @@ pub fn split_by_date(df: &DataFrame, oos_pct: f64) -> Result<(DataFrame, DataFra
         bail!("out_of_sample_pct must be between 0 and 1 (exclusive)");
     }
 
-    let date_col = QUOTE_DATETIME_COL;
+    let date_col = DATETIME_COL;
     let sorted = df
         .clone()
         .lazy()

@@ -1,6 +1,6 @@
 // Volatility compute functions: ATR, Bollinger Bands, Keltner Channels, IV aggregation
 
-use crate::data::parquet::QUOTE_DATETIME_COL;
+use crate::data::parquet::DATETIME_COL;
 use polars::prelude::*;
 
 /// Compute ATR values for a given period.
@@ -83,11 +83,11 @@ pub fn aggregate_daily_iv(options_df: &DataFrame) -> Result<DataFrame, PolarsErr
                 .into(),
         ));
     }
-    if !columns.contains(&QUOTE_DATETIME_COL) {
+    if !columns.contains(&DATETIME_COL) {
         return Err(PolarsError::ComputeError(
             format!(
-                "Options data does not contain a '{QUOTE_DATETIME_COL}' column. \
-                 IV aggregation requires '{QUOTE_DATETIME_COL}' to group by date."
+                "Options data does not contain a '{DATETIME_COL}' column. \
+                 IV aggregation requires '{DATETIME_COL}' to group by date."
             )
             .into(),
         ));
@@ -109,9 +109,9 @@ pub fn aggregate_daily_iv(options_df: &DataFrame) -> Result<DataFrame, PolarsErr
         lazy
     };
 
-    // Extract date from quote_datetime and compute median IV per date
+    // Extract date from datetime and compute median IV per date
     let result = filtered
-        .with_column(col(QUOTE_DATETIME_COL).cast(DataType::Date).alias("date"))
+        .with_column(col(DATETIME_COL).cast(DataType::Date).alias("date"))
         .group_by([col("date")])
         .agg([col("implied_volatility").median().alias("iv")])
         .sort(["date"], SortMultipleOptions::default())
@@ -222,7 +222,7 @@ mod tests {
                 .and_hms_opt(0, 0, 0)
                 .unwrap(),
         ];
-        let dt_chunked = DatetimeChunked::new(PlSmallStr::from("quote_datetime"), &dates);
+        let dt_chunked = DatetimeChunked::new(PlSmallStr::from("datetime"), &dates);
         let df = DataFrame::new(
             3,
             vec![

@@ -611,7 +611,7 @@ mod tests {
             NaiveDateTime::parse_from_str("2024-01-05 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap(),
         ];
         let dt_chunked: DatetimeChunked =
-            DatetimeChunked::new(PlSmallStr::from("quote_datetime"), &datetimes);
+            DatetimeChunked::new(PlSmallStr::from("datetime"), &datetimes);
         let df = DataFrame::new(
             5,
             vec![
@@ -624,7 +624,7 @@ mod tests {
         let spec = SignalSpec::Formula {
             formula: "consecutive_up(close) >= 2".into(),
         };
-        let result = active_dates(&spec, &df, "quote_datetime").unwrap();
+        let result = active_dates(&spec, &df, "datetime").unwrap();
         assert!(result.contains(&NaiveDate::from_ymd_opt(2024, 1, 3).unwrap()));
         assert!(result.contains(&NaiveDate::from_ymd_opt(2024, 1, 4).unwrap()));
         assert!(result.contains(&NaiveDate::from_ymd_opt(2024, 1, 5).unwrap()));
@@ -641,7 +641,7 @@ mod tests {
             NaiveDateTime::parse_from_str("2024-01-03 09:31:00", "%Y-%m-%d %H:%M:%S").unwrap(),
         ];
         let dt_chunked: DatetimeChunked =
-            DatetimeChunked::new(PlSmallStr::from("quote_datetime"), &datetimes);
+            DatetimeChunked::new(PlSmallStr::from("datetime"), &datetimes);
         DataFrame::new(
             5,
             vec![
@@ -658,7 +658,7 @@ mod tests {
         let spec = SignalSpec::Formula {
             formula: "consecutive_up(close) >= 2".into(),
         };
-        let result = active_datetimes(&spec, &df, "quote_datetime").unwrap();
+        let result = active_datetimes(&spec, &df, "datetime").unwrap();
         // consecutive_up >= 2 fires at indices 2, 3, 4
         let dt2 =
             NaiveDateTime::parse_from_str("2024-01-02 09:32:00", "%Y-%m-%d %H:%M:%S").unwrap();
@@ -679,7 +679,7 @@ mod tests {
         let spec = SignalSpec::Formula {
             formula: "close > 102".into(),
         };
-        let result = active_datetimes_multi(&spec, &df, &cross_dfs, "quote_datetime").unwrap();
+        let result = active_datetimes_multi(&spec, &df, &cross_dfs, "datetime").unwrap();
         // close > 102 at indices 3 (103) and 4 (104)
         let dt3 =
             NaiveDateTime::parse_from_str("2024-01-03 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap();
@@ -884,7 +884,7 @@ mod tests {
         };
 
         let result =
-            active_datetimes_multi(&spec, &intraday_df, &cross_dfs, "quote_datetime").unwrap();
+            active_datetimes_multi(&spec, &intraday_df, &cross_dfs, "datetime").unwrap();
 
         let dt_jan3_0930 =
             NaiveDateTime::parse_from_str("2024-01-03 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap();
@@ -926,7 +926,7 @@ mod tests {
         };
 
         let result =
-            active_datetimes_multi(&spec, &intraday_df, &cross_dfs, "quote_datetime").unwrap();
+            active_datetimes_multi(&spec, &intraday_df, &cross_dfs, "datetime").unwrap();
         // Should have: Jan 3 09:31 (from primary) + Jan 4 00:00 (from VIX daily)
         assert!(
             result.len() >= 2,

@@ -48,7 +48,7 @@ fn select_closest_delta_on_empty_df() {
     let dt_col: Vec<chrono::NaiveDateTime> = vec![];
     let exp_col: Vec<chrono::NaiveDateTime> = vec![];
     let df = df! {
-        "quote_datetime" => &dt_col,
+        "datetime" => &dt_col,
         "expiration" => &exp_col,
         "delta" => Vec::<f64>::new(),
         "strike" => Vec::<f64>::new(),
@@ -273,7 +273,7 @@ fn make_many_entry_dates_df() -> DataFrame {
     }
 
     let mut df = df! {
-        "quote_datetime" => &quote_dates,
+        "datetime" => &quote_dates,
         "option_type" => &option_types,
         "strike" => &strikes,
         "bid" => &bids,

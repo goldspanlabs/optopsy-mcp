@@ -37,11 +37,11 @@ fn load_ohlcv_closes(
 
     let mut closes_map = std::collections::BTreeMap::new();
 
-    // Intraday path: "quote_datetime" Datetime column → extract date portion.
-    // Sort by quote_datetime so later entries overwrite earlier ones, giving last-close-per-day.
+    // Intraday path: "datetime" Datetime column → extract date portion.
+    // Sort by datetime so later entries overwrite earlier ones, giving last-close-per-day.
     // Only take this branch when the column is actually a Datetime dtype.
     let has_datetime = df
-        .column("quote_datetime")
+        .column("datetime")
         .ok()
         .is_some_and(|c| matches!(c.dtype(), polars::prelude::DataType::Datetime(_, _)));
     if has_datetime {
@@ -49,13 +49,13 @@ fn load_ohlcv_closes(
             .clone()
             .lazy()
             .sort(
-                ["quote_datetime"],
+                ["datetime"],
                 polars::prelude::SortMultipleOptions::default(),
             )
             .collect()
             .ok()?;
         let closes = sorted.column("close").ok()?.f64().ok()?;
-        let dt_col_ref = sorted.column("quote_datetime").ok()?;
+        let dt_col_ref = sorted.column("datetime").ok()?;
         for i in 0..sorted.height() {
             let Ok(ndt) = super::price_table::extract_datetime_from_column(dt_col_ref, i) else {
                 continue;
@@ -715,7 +715,7 @@ fn build_compare_labels(entries: &[CompareEntry]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::parquet::QUOTE_DATETIME_COL;
+    use crate::data::parquet::DATETIME_COL;
     use chrono::NaiveDate;
 
     fn make_entry(name: &str, delta: f64, dte: i32) -> CompareEntry {
@@ -852,7 +852,7 @@ mod tests {
 
         let n = dates.len();
         let mut df = df! {
-            QUOTE_DATETIME_COL => &quote_dates,
+            DATETIME_COL => &quote_dates,
             "option_type" => vec!["call"; n],
             "strike" => vec![100.0f64; n],
             "bid" => &bids,
@@ -891,7 +891,7 @@ mod tests {
 
         let n = dates.len();
         let mut df = df! {
-            QUOTE_DATETIME_COL => &quote_dates,
+            DATETIME_COL => &quote_dates,
             "option_type" => vec!["call"; n],
             "strike" => vec![100.0f64; n],
             "bid" => &bids,
@@ -1216,7 +1216,7 @@ mod tests {
         }
 
         let mut df = df! {
-            QUOTE_DATETIME_COL => &quote_dates,
+            DATETIME_COL => &quote_dates,
             "option_type" => &option_types,
             "strike" => &strikes,
             "bid" => &bids,
@@ -1308,7 +1308,7 @@ mod tests {
         let n = dates.len();
 
         let mut df = df! {
-            QUOTE_DATETIME_COL => &quote_dates,
+            DATETIME_COL => &quote_dates,
             "option_type" => vec!["call"; n],
             "strike" => vec![100.0f64; n],
             "bid" => vec![5.00, 4.50, 3.80, 3.20, 2.60, 2.00f64],

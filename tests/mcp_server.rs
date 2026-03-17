@@ -27,7 +27,7 @@ fn make_sparse_df() -> DataFrame {
     let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
 
     df! {
-        "quote_datetime" => &[datetime],
+        "datetime" => &[datetime],
         "option_type" => &["call"],
         "strike" => &[100.0],
         "bid" => &[5.0],

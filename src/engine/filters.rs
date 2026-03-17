@@ -8,9 +8,9 @@ use chrono::Datelike;
 use polars::prelude::*;
 
 use super::types::{ExpirationCycle, ExpirationFilter, TargetRange, EPOCH_DAYS_CE_OFFSET};
-use crate::data::parquet::QUOTE_DATETIME_COL;
+use crate::data::parquet::DATETIME_COL;
 
-/// Compute DTE (days to expiration) from `quote_datetime` and expiration columns.
+/// Compute DTE (days to expiration) from `datetime` and expiration columns.
 /// Casts both to Date for integer-day DTE regardless of intraday granularity.
 pub fn compute_dte(df: &DataFrame) -> Result<DataFrame> {
     let ms_per_day = 86_400_000i64;
@@ -19,7 +19,7 @@ pub fn compute_dte(df: &DataFrame) -> Result<DataFrame> {
         .lazy()
         .with_column(
             ((col("expiration").cast(DataType::Date)
-                - col(QUOTE_DATETIME_COL).cast(DataType::Date))
+                - col(DATETIME_COL).cast(DataType::Date))
             .dt()
             .total_milliseconds(false)
                 / lit(ms_per_day))
@@ -55,7 +55,7 @@ pub fn filter_option_type(df: &DataFrame, option_type: &str) -> Result<DataFrame
 }
 
 /// Select the closest option to a target delta within a range.
-/// Groups by (`quote_datetime`, expiration) and picks the row closest to target delta.
+/// Groups by (`datetime`, expiration) and picks the row closest to target delta.
 pub fn select_closest_delta(df: &DataFrame, target: &TargetRange) -> Result<DataFrame> {
     let result = df
         .clone()
@@ -76,7 +76,7 @@ pub fn select_closest_delta(df: &DataFrame, target: &TargetRange) -> Result<Data
             SortMultipleOptions::default().with_order_descending(false),
         )
         .unique_generic(
-            Some(vec![col(QUOTE_DATETIME_COL), col("expiration")]),
+            Some(vec![col(DATETIME_COL), col("expiration")]),
             UniqueKeepStrategy::First,
         )
         .collect()?;
@@ -90,7 +90,7 @@ pub fn select_closest_delta(df: &DataFrame, target: &TargetRange) -> Result<Data
 /// with the leg index suffix to avoid conflicts when joining multiple legs.
 ///
 /// The `base_cols` are the per-leg columns to rename (e.g. `["strike", "bid", "ask", "delta"]`).
-/// Each is renamed to `{col}_{leg_index}`. Only join keys (`quote_datetime`, `expiration`)
+/// Each is renamed to `{col}_{leg_index}`. Only join keys (`datetime`, `expiration`)
 /// and the renamed columns are kept, dropping extras like `option_type` and `dte` that
 /// would cause duplicate column errors when joining 3+ legs.
 ///
@@ -102,7 +102,7 @@ pub fn prepare_leg_for_join(
     leg_index: usize,
     base_cols: &[&str],
 ) -> Result<DataFrame> {
-    let mut select_cols: Vec<&str> = vec![QUOTE_DATETIME_COL, "expiration"];
+    let mut select_cols: Vec<&str> = vec![DATETIME_COL, "expiration"];
     select_cols.extend_from_slice(base_cols);
 
     let selected = df.select(select_cols)?;
@@ -123,7 +123,7 @@ pub fn prepare_leg_for_join(
 
 /// Like `prepare_leg_for_join`, but renames `expiration` to a cycle-specific
 /// column (`expiration_primary` or `expiration_secondary`) so that legs from
-/// different expiration cycles can be joined on `quote_datetime` alone and
+/// different expiration cycles can be joined on `datetime` alone and
 /// then cross-filtered by `expiration_secondary > expiration_primary`.
 pub fn prepare_leg_for_join_multi_exp(
     df: &DataFrame,
@@ -136,7 +136,7 @@ pub fn prepare_leg_for_join_multi_exp(
         ExpirationCycle::Secondary => "expiration_secondary",
     };
 
-    let mut select_cols: Vec<&str> = vec![QUOTE_DATETIME_COL, "expiration"];
+    let mut select_cols: Vec<&str> = vec![DATETIME_COL, "expiration"];
     select_cols.extend_from_slice(base_cols);
 
     let selected = df.select(select_cols)?;
@@ -158,7 +158,7 @@ pub fn prepare_leg_for_join_multi_exp(
 /// Join legs for multi-expiration strategies (calendar/diagonal).
 ///
 /// Primary and secondary legs are joined separately within their groups on
-/// `(quote_datetime, expiration_<cycle>)`, then cross-joined on `quote_datetime`
+/// `(datetime, expiration_<cycle>)`, then cross-joined on `datetime`
 /// with a filter ensuring `expiration_secondary > expiration_primary`.
 pub fn join_multi_expiration_legs(leg_dfs: &[(DataFrame, ExpirationCycle)]) -> Result<DataFrame> {
     let mut primary_dfs: Vec<&DataFrame> = Vec::new();
@@ -181,7 +181,7 @@ pub fn join_multi_expiration_legs(leg_dfs: &[(DataFrame, ExpirationCycle)]) -> R
     // Join within primary group
     let mut primary = primary_dfs[0].clone();
     for df in primary_dfs.iter().skip(1) {
-        let join_cols: Vec<&str> = vec![QUOTE_DATETIME_COL, "expiration_primary"];
+        let join_cols: Vec<&str> = vec![DATETIME_COL, "expiration_primary"];
         primary = primary
             .lazy()
             .join(
@@ -196,7 +196,7 @@ pub fn join_multi_expiration_legs(leg_dfs: &[(DataFrame, ExpirationCycle)]) -> R
     // Join within secondary group
     let mut secondary = secondary_dfs[0].clone();
     for df in secondary_dfs.iter().skip(1) {
-        let join_cols: Vec<&str> = vec![QUOTE_DATETIME_COL, "expiration_secondary"];
+        let join_cols: Vec<&str> = vec![DATETIME_COL, "expiration_secondary"];
         secondary = secondary
             .lazy()
             .join(
@@ -208,13 +208,13 @@ pub fn join_multi_expiration_legs(leg_dfs: &[(DataFrame, ExpirationCycle)]) -> R
             .collect()?;
     }
 
-    // Cross-join on quote_datetime, then filter expiration_secondary > expiration_primary
+    // Cross-join on datetime, then filter expiration_secondary > expiration_primary
     let combined = primary
         .lazy()
         .join(
             secondary.lazy(),
-            vec![col(QUOTE_DATETIME_COL)],
-            vec![col(QUOTE_DATETIME_COL)],
+            vec![col(DATETIME_COL)],
+            vec![col(DATETIME_COL)],
             JoinArgs::new(JoinType::Inner),
         )
         .filter(col("expiration_secondary").gt(col("expiration_primary")))
@@ -227,7 +227,7 @@ pub fn join_multi_expiration_legs(leg_dfs: &[(DataFrame, ExpirationCycle)]) -> R
 ///
 /// If `is_multi_exp` is true, delegates to `join_multi_expiration_legs`.
 /// Otherwise, performs a sequential inner join of all legs on
-/// `(quote_datetime, expiration)`.
+/// `(datetime, expiration)`.
 pub fn join_legs(
     leg_dfs: &[(DataFrame, ExpirationCycle)],
     is_multi_exp: bool,
@@ -236,7 +236,7 @@ pub fn join_legs(
         return join_multi_expiration_legs(leg_dfs);
     }
     let mut combined = leg_dfs[0].0.clone();
-    let join_cols: Vec<&str> = vec![QUOTE_DATETIME_COL, "expiration"];
+    let join_cols: Vec<&str> = vec![DATETIME_COL, "expiration"];
     for (leg_df, _) in leg_dfs.iter().skip(1) {
         combined = combined
             .lazy()
@@ -283,7 +283,7 @@ pub fn filter_leg_candidates(
         // compute_dte
         .with_column(
             ((col("expiration").cast(DataType::Date)
-                - col(QUOTE_DATETIME_COL).cast(DataType::Date))
+                - col(DATETIME_COL).cast(DataType::Date))
             .dt()
             .total_milliseconds(false)
                 / lit(ms_per_day))
@@ -359,7 +359,7 @@ mod tests {
     use super::*;
     use chrono::NaiveDate;
     /// Build a minimal options `DataFrame` for testing filters.
-    /// Uses `Datetime` for `quote_datetime` and `Date` for expiration to match production data.
+    /// Uses `Datetime` for `datetime` and `Date` for expiration to match production data.
     fn make_options_df() -> DataFrame {
         let dates = vec![
             NaiveDate::from_ymd_opt(2024, 1, 15)
@@ -388,7 +388,7 @@ mod tests {
 
         // Build base df with df! macro, then add expiration as Date column
         let mut df = df! {
-            QUOTE_DATETIME_COL => &dates,
+            DATETIME_COL => &dates,
             "option_type" => &["call", "call", "put", "call"],
             "strike" => &[100.0f64, 105.0, 100.0, 100.0],
             "bid" => &[2.0f64, 1.5, 3.0, 0.0],
@@ -424,7 +424,7 @@ mod tests {
             NaiveDate::from_ymd_opt(2024, 3, 15).unwrap(), // 59 DTE
         ];
         let mut df = df! {
-            QUOTE_DATETIME_COL => &dates,
+            DATETIME_COL => &dates,
         }
         .unwrap();
         df.with_column(
@@ -524,7 +524,7 @@ mod tests {
             .and_hms_opt(0, 0, 0)
             .unwrap();
         let df = df! {
-            QUOTE_DATETIME_COL => &[dt1, dt1, dt1],
+            DATETIME_COL => &[dt1, dt1, dt1],
             "expiration" => &[exp1, exp1, exp1],
             "delta" => &[0.30, 0.48, 0.52],
             "strike" => &[95.0, 100.0, 105.0],
@@ -562,7 +562,7 @@ mod tests {
             .and_hms_opt(0, 0, 0)
             .unwrap();
         let df = df! {
-            QUOTE_DATETIME_COL => &[dt1, dt1],
+            DATETIME_COL => &[dt1, dt1],
             "expiration" => &[exp1, exp1],
             "delta" => &[0.10, 0.90],
             "strike" => &[90.0, 110.0],
@@ -610,7 +610,7 @@ mod tests {
             .and_hms_opt(0, 0, 0)
             .unwrap();
         let mut df = df! {
-            QUOTE_DATETIME_COL => &[dt, dt],
+            DATETIME_COL => &[dt, dt],
             "option_type" => &["call", "call"],
             "strike" => &[100.0f64, 100.0],
             "bid" => &[1.0f64, 1.0],
@@ -637,7 +637,7 @@ mod tests {
             .and_hms_opt(0, 0, 0)
             .unwrap();
         let mut df = df! {
-            QUOTE_DATETIME_COL => &[dt, dt],
+            DATETIME_COL => &[dt, dt],
             "option_type" => &["call", "call"],
             "strike" => &[100.0f64, 100.0],
             "bid" => &[1.0f64, 1.0],
@@ -664,7 +664,7 @@ mod tests {
             .and_hms_opt(0, 0, 0)
             .unwrap();
         let mut df = df! {
-            QUOTE_DATETIME_COL => &[dt, dt],
+            DATETIME_COL => &[dt, dt],
             "option_type" => &["call", "call"],
             "strike" => &[100.0f64, 100.0],
             "bid" => &[1.0f64, 1.0],

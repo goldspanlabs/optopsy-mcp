@@ -4,7 +4,7 @@ use anyhow::{bail, Result};
 use chrono::{Days, NaiveDate, NaiveDateTime};
 use polars::prelude::*;
 
-use crate::data::parquet::QUOTE_DATETIME_COL;
+use crate::data::parquet::DATETIME_COL;
 use crate::engine::core::run_backtest;
 use crate::engine::stock_sim::{self, Bar, StockBacktestParams};
 use crate::engine::types::BacktestParams;
@@ -50,7 +50,7 @@ pub struct WalkForwardResult {
 }
 
 /// Filter a `DataFrame` to rows within `[start, end)` by calendar date.
-/// Filters directly on the native `quote_datetime` Datetime column (Polars `Datetime`
+/// Filters directly on the native `datetime` Datetime column (Polars `Datetime`
 /// with its existing time unit, e.g. microseconds/milliseconds/nanoseconds) using
 /// midnight-boundary `NaiveDateTimes`, avoiding an expensive per-window cast to `Date`.
 fn slice_by_date_range(df: &DataFrame, start: NaiveDate, end: NaiveDate) -> Result<DataFrame> {
@@ -60,15 +60,15 @@ fn slice_by_date_range(df: &DataFrame, start: NaiveDate, end: NaiveDate) -> Resu
         .clone()
         .lazy()
         .filter(
-            col(QUOTE_DATETIME_COL)
+            col(DATETIME_COL)
                 .gt_eq(lit(start_dt))
-                .and(col(QUOTE_DATETIME_COL).lt(lit(end_dt))),
+                .and(col(DATETIME_COL).lt(lit(end_dt))),
         )
         .collect()?)
 }
 
 /// Get the min and max dates from the `DataFrame`.
-/// Works directly on the native `quote_datetime` Datetime column, handling
+/// Works directly on the native `datetime` Datetime column, handling
 /// all Polars time units (microseconds, milliseconds, nanoseconds) without
 /// casting the full column to `Date`.
 fn date_range(df: &DataFrame) -> Result<(NaiveDate, NaiveDate)> {
@@ -76,8 +76,8 @@ fn date_range(df: &DataFrame) -> Result<(NaiveDate, NaiveDate)> {
         .clone()
         .lazy()
         .select([
-            col(QUOTE_DATETIME_COL).min().alias("min_dt"),
-            col(QUOTE_DATETIME_COL).max().alias("max_dt"),
+            col(DATETIME_COL).min().alias("min_dt"),
+            col(DATETIME_COL).max().alias("max_dt"),
         ])
         .collect()?;
 
@@ -365,7 +365,7 @@ mod tests {
     use polars::prelude::{DatetimeChunked, PlSmallStr};
     use std::collections::HashMap;
 
-    /// Build a minimal `DataFrame` with a `quote_datetime` Datetime column
+    /// Build a minimal `DataFrame` with a `datetime` Datetime column
     /// covering the specified inclusive date range (one row per day).
     fn make_df_for_dates(start: NaiveDate, end: NaiveDate) -> DataFrame {
         let mut dates = Vec::new();
@@ -375,7 +375,7 @@ mod tests {
             d += Duration::days(1);
         }
         let n = dates.len();
-        let dt_chunked = DatetimeChunked::new(PlSmallStr::from(QUOTE_DATETIME_COL), &dates);
+        let dt_chunked = DatetimeChunked::new(PlSmallStr::from(DATETIME_COL), &dates);
         DataFrame::new(n, vec![dt_chunked.into_series().into()])
             .expect("failed to build test DataFrame")
     }

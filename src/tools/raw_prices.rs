@@ -33,7 +33,7 @@ pub fn execute(
         let start_date = start
             .parse::<chrono::NaiveDate>()
             .with_context(|| format!("Invalid start_date: {start}"))?;
-        if date_col_name == "quote_datetime" {
+        if date_col_name == "datetime" {
             let start_dt = start_date.and_hms_opt(0, 0, 0).unwrap();
             lazy = lazy.filter(col(date_col_name).gt_eq(lit(start_dt)));
         } else {
@@ -44,7 +44,7 @@ pub fn execute(
         let end_date = end
             .parse::<chrono::NaiveDate>()
             .with_context(|| format!("Invalid end_date: {end}"))?;
-        if date_col_name == "quote_datetime" {
+        if date_col_name == "datetime" {
             let end_next = end_date
                 .succ_opt()
                 .unwrap_or(end_date)
@@ -64,7 +64,7 @@ pub fn execute(
     // Apply interval resampling (passthrough for same-interval / Min1)
     let filtered = crate::engine::stock_sim::resample_ohlcv(&filtered, interval)?;
 
-    // Re-detect date column — resampling may change it (e.g., quote_datetime → date for Daily)
+    // Re-detect date column — resampling may change it (e.g., datetime → date for Daily)
     let date_col_name = crate::engine::stock_sim::detect_date_col(&filtered);
 
     let total_rows = filtered.height();

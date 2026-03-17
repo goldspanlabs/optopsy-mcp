@@ -4,7 +4,7 @@
 //! consistency, and focus on asserting exit type priorities.
 
 use chrono::NaiveDate;
-use optopsy_mcp::data::parquet::QUOTE_DATETIME_COL;
+use optopsy_mcp::data::parquet::DATETIME_COL;
 use optopsy_mcp::engine::core::run_backtest;
 use optopsy_mcp::engine::types::{
     BacktestParams, DteRange, ExitType, Slippage, TargetRange, TradeSelector,
@@ -237,7 +237,7 @@ fn make_short_dte_df() -> DataFrame {
     }
 
     let mut df = df! {
-        QUOTE_DATETIME_COL => &quote_dates,
+        DATETIME_COL => &quote_dates,
         "option_type" => &option_types,
         "strike" => &strikes,
         "bid" => &bids,

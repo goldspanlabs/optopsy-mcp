@@ -10,12 +10,12 @@ use polars::prelude::*;
 
 #[allow(clippy::wildcard_imports)]
 use super::types::*;
-use crate::data::parquet::QUOTE_DATETIME_COL;
+use crate::data::parquet::DATETIME_COL;
 
 /// Build a price lookup table from the raw options `DataFrame`.
 /// Returns the table and a sorted list of unique trading dates.
 pub fn build_price_table(df: &DataFrame) -> Result<(PriceTable, Vec<NaiveDate>, DateIndex)> {
-    let quote_col = df.column(QUOTE_DATETIME_COL)?;
+    let quote_col = df.column(DATETIME_COL)?;
     let exp_col = df.column("expiration")?;
 
     // Try fast path: downcast typed columns once, iterate via phys iterators
@@ -88,7 +88,7 @@ fn build_price_table_fast(
                 _ => continue,
             };
             let quote_days = q_vals[i].div_euclid(micros_per_day) + i64::from(EPOCH_DAYS_CE_OFFSET);
-            let quote_date = days_to_naive_date(quote_days, "quote_datetime", i)?;
+            let quote_date = days_to_naive_date(quote_days, "datetime", i)?;
             let exp_days = i64::from(e_vals[i]) + i64::from(EPOCH_DAYS_CE_OFFSET);
             let exp_date = days_to_naive_date(exp_days, "expiration", i)?;
 
@@ -132,7 +132,7 @@ fn build_price_table_fast(
                 _ => continue,
             };
             let qv_days = qv.div_euclid(micros_per_day) + i64::from(EPOCH_DAYS_CE_OFFSET);
-            let quote_date = days_to_naive_date(qv_days, "quote_datetime", row_idx)?;
+            let quote_date = days_to_naive_date(qv_days, "datetime", row_idx)?;
             let ev_days = i64::from(ev) + i64::from(EPOCH_DAYS_CE_OFFSET);
             let exp_date = days_to_naive_date(ev_days, "expiration", row_idx)?;
 
@@ -309,7 +309,7 @@ pub(crate) fn extract_datetime_from_column(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::parquet::QUOTE_DATETIME_COL;
+    use crate::data::parquet::DATETIME_COL;
 
     /// Helper: build a synthetic daily options `DataFrame` for testing `build_price_table`.
     pub(crate) fn make_daily_df() -> DataFrame {
@@ -326,7 +326,7 @@ mod tests {
         let expirations = [exp, exp, exp];
 
         let mut df = df! {
-            QUOTE_DATETIME_COL => &quote_dates,
+            DATETIME_COL => &quote_dates,
             "option_type" => &["call", "call", "call"],
             "strike" => &[100.0f64, 100.0, 100.0],
             "bid" => &[5.0f64, 3.0, 2.0],

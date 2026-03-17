@@ -1009,7 +1009,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::data::parquet::QUOTE_DATETIME_COL;
+    use crate::data::parquet::DATETIME_COL;
     use crate::engine::sweep_analysis::{
         build_signal_combos, cartesian_product, signal_spec_label,
     };
@@ -1217,7 +1217,7 @@ mod tests {
         let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
         let qt = date.and_hms_opt(0, 0, 0).unwrap();
         let mut df = df! {
-            QUOTE_DATETIME_COL => &[qt],
+            DATETIME_COL => &[qt],
             "option_type" => &["call"],
             "strike" => &[100.0f64],
             "bid" => &[5.0f64],
@@ -1287,7 +1287,7 @@ mod tests {
         let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
         let qt = date.and_hms_opt(0, 0, 0).unwrap();
         let mut df = df! {
-            QUOTE_DATETIME_COL => &[qt],
+            DATETIME_COL => &[qt],
             "option_type" => &["call"],
             "strike" => &[100.0f64],
             "bid" => &[5.0f64],
@@ -1317,7 +1317,7 @@ mod tests {
             .collect();
 
         let df = df! {
-            QUOTE_DATETIME_COL => &dates,
+            DATETIME_COL => &dates,
             "value" => &(1..=10).collect::<Vec<i32>>(),
         }
         .unwrap();
@@ -1449,7 +1449,7 @@ mod tests {
         let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
         let qt = date.and_hms_opt(0, 0, 0).unwrap();
         let mut df = df! {
-            QUOTE_DATETIME_COL => &[qt],
+            DATETIME_COL => &[qt],
             "option_type" => &["call"],
             "strike" => &[100.0f64],
             "bid" => &[5.0f64],

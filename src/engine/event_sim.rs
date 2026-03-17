@@ -18,7 +18,7 @@ use super::positions::{
 use super::rules;
 #[allow(clippy::wildcard_imports)]
 use super::types::*;
-use crate::data::parquet::QUOTE_DATETIME_COL;
+use crate::data::parquet::DATETIME_COL;
 
 // Re-export public API from extracted modules
 pub use super::positions::mark_to_market;
@@ -106,7 +106,7 @@ pub fn find_entry_candidates(
     }
 
     // Convert to EntryCandidate structs grouped by date
-    let quote_dates = combined.column(QUOTE_DATETIME_COL)?;
+    let quote_dates = combined.column(DATETIME_COL)?;
 
     let mut candidates: BTreeMap<NaiveDate, Vec<EntryCandidate>> = BTreeMap::new();
 
@@ -663,7 +663,7 @@ mod tests {
         let expirations = [exp, exp, exp];
 
         let mut df = df! {
-            QUOTE_DATETIME_COL => &quote_dates,
+            DATETIME_COL => &quote_dates,
             "option_type" => &["call", "call", "call"],
             "strike" => &[100.0f64, 100.0, 100.0],
             "bid" => &[5.0f64, 3.0, 2.0],
@@ -1259,7 +1259,7 @@ mod tests {
             .unwrap();
 
         let mut df = df! {
-            QUOTE_DATETIME_COL => &[d1, d1, d1],
+            DATETIME_COL => &[d1, d1, d1],
             "option_type" => &["call", "call", "call"],
             "strike" => &[100.0f64, 105.0, 110.0],
             "bid" => &[5.0f64, 3.0, 1.5],
@@ -1347,7 +1347,7 @@ mod tests {
         let strike_col = Series::new("strike".into(), null_strike).into_column();
 
         let mut df = df! {
-            QUOTE_DATETIME_COL => &[d1],
+            DATETIME_COL => &[d1],
             "option_type" => &["call"],
             "bid" => &[5.0f64],
             "ask" => &[5.50f64],
@@ -1511,7 +1511,7 @@ mod tests {
             .unwrap();
 
         let mut df = df! {
-            QUOTE_DATETIME_COL => &[d1],
+            DATETIME_COL => &[d1],
             "option_type" => &["call"],
             "strike" => &[100.0f64],
             "bid" => &[0.30f64],
@@ -1700,7 +1700,7 @@ mod tests {
             .unwrap();
 
         let mut df = df! {
-            QUOTE_DATETIME_COL => &[d1],
+            DATETIME_COL => &[d1],
             "option_type" => &["call"],
             "strike" => &[100.0f64],
             "bid" => &[5.0f64],
@@ -1769,7 +1769,7 @@ mod tests {
             .unwrap();
 
         let mut df = df! {
-            QUOTE_DATETIME_COL => &[d1],
+            DATETIME_COL => &[d1],
             "option_type" => &["call"],
             "strike" => &[100.0f64],
             "bid" => &[5.0f64],
@@ -1839,7 +1839,7 @@ mod tests {
             .unwrap();
 
         let mut df = df! {
-            QUOTE_DATETIME_COL => &[d1],
+            DATETIME_COL => &[d1],
             "option_type" => &["call"],
             "strike" => &[100.0f64],
             "bid" => &[5.0f64],
@@ -1908,7 +1908,7 @@ mod tests {
             .unwrap();
 
         let mut df = df! {
-            QUOTE_DATETIME_COL => &[d1],
+            DATETIME_COL => &[d1],
             "option_type" => &["call"],
             "strike" => &[100.0f64],
             "bid" => &[5.0f64],

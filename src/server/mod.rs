@@ -413,20 +413,20 @@ fn load_underlying_prices(path: &std::path::Path) -> Vec<tools::response_types::
         return vec![];
     };
 
-    // Detect whether this file uses "quote_datetime" or "date" column, and whether
+    // Detect whether this file uses "datetime" or "date" column, and whether
     // the date column stores a Datetime type (needs the intraday formatting path).
     let Ok(schema) = lf.clone().collect_schema() else {
         return vec![];
     };
     let has_datetime_col = schema
-        .get("quote_datetime")
+        .get("datetime")
         .is_some_and(|dt| matches!(dt, polars::prelude::DataType::Datetime(_, _)));
     let date_col_is_datetime = schema
         .get("date")
         .is_some_and(|dt| matches!(dt, polars::prelude::DataType::Datetime(_, _)));
     let has_datetime = has_datetime_col || date_col_is_datetime;
     let date_col_name = if has_datetime_col {
-        "quote_datetime"
+        "datetime"
     } else {
         "date"
     };
