@@ -119,40 +119,22 @@ impl OptopsyServer {
         Ok((sym_upper, df))
     }
 
-    /// Ensure OHLCV price data exists for a symbol, auto-fetching from Yahoo Finance if needed.
+    /// Ensure OHLCV price data exists for a symbol.
     /// Returns the parquet file path.
     ///
-    /// Searches `etf/`, `stocks/`, `futures/`, and `indices/` in order. If no local file
-    /// is found, auto-fetches from Yahoo Finance and writes to `stocks/`.
-    async fn ensure_ohlcv(&self, symbol: &str) -> Result<String, String> {
-        // Search across all OHLCV categories
-        if let Some(path) = self.cache.find_ohlcv(symbol) {
-            return Ok(path.to_string_lossy().to_string());
+    /// Searches `etf/`, `stocks/`, `futures/`, and `indices/` in order.
+    fn ensure_ohlcv(&self, symbol: &str) -> Result<String, String> {
+        match self.cache.find_ohlcv(symbol) {
+            Some(path) => Ok(path.to_string_lossy().to_string()),
+            None => Err(format!("No OHLCV data found for {symbol}. Upload parquet to the cache directory.")),
         }
-
-        // Try S3 fallback for stocks
-        if let Ok(path) = self.cache.ensure_local_for(symbol, "stocks").await {
-            return Ok(path.to_string_lossy().to_string());
-        }
-
-        tracing::info!(symbol = %symbol, "Auto-fetching OHLCV data from Yahoo Finance");
-
-        tools::fetch::execute(&self.cache, symbol, "5y")
-            .await
-            .map_err(|e| format!("Failed to auto-fetch OHLCV data for {symbol}: {e}"))?;
-
-        let path = self
-            .cache
-            .cache_path(symbol, "stocks")
-            .map_err(|e| format!("Error resolving OHLCV path: {e}"))?;
-        Ok(path.to_string_lossy().to_string())
     }
 
     /// Collect all cross-symbol references from entry/exit signals and resolve their OHLCV paths.
     ///
     /// Inspects both the singular `entry_signal`/`exit_signal` and the plural
     /// `entry_signals`/`exit_signals` lists (used by parameter sweep).
-    async fn resolve_cross_ohlcv_paths(
+    fn resolve_cross_ohlcv_paths(
         &self,
         entry_signal: Option<&SignalSpec>,
         exit_signal: Option<&SignalSpec>,
@@ -177,7 +159,7 @@ impl OptopsyServer {
         for sym in all_symbols {
             validate_path_segment(&sym)
                 .map_err(|e| format!("Invalid cross-symbol \"{sym}\": {e}"))?;
-            let path = self.ensure_ohlcv(&sym).await?;
+            let path = self.ensure_ohlcv(&sym)?;
             paths.insert(sym, path);
         }
         Ok(paths)
@@ -240,14 +222,13 @@ impl OptopsyServer {
             )
             || strategy_def.as_ref().is_some_and(|s| s.has_stock_leg);
         let ohlcv_path = if needs_ohlcv {
-            Some(self.ensure_ohlcv(&symbol).await?)
+            Some(self.ensure_ohlcv(&symbol)?)
         } else {
             None
         };
 
         let cross_ohlcv_paths = self
-            .resolve_cross_ohlcv_paths(entry_signal.as_ref(), exit_signal.as_ref(), &[], &[])
-            .await?;
+            .resolve_cross_ohlcv_paths(entry_signal.as_ref(), exit_signal.as_ref(), &[], &[])?;
 
         let leg_deltas = resolve_leg_deltas(leg_deltas, &strategy)?;
 
@@ -292,6 +273,7 @@ impl OptopsyServer {
     ///
     /// Ensures OHLCV data is available, builds `StockBacktestParams`, and prepares
     /// bars + signal filters. Returns everything needed to run a stock backtest.
+    #[allow(clippy::unused_async)] // ensure_ohlcv became sync; callers still .await this
     async fn resolve_stock_backtest_params(
         &self,
         base: BacktestBaseParams,
@@ -310,7 +292,7 @@ impl OptopsyServer {
             .to_uppercase();
         validate_path_segment(&symbol).map_err(|e| format!("Invalid symbol: {e}"))?;
 
-        let ohlcv_path = self.ensure_ohlcv(&symbol).await?;
+        let ohlcv_path = self.ensure_ohlcv(&symbol)?;
 
         let cross_ohlcv_paths = self
             .resolve_cross_ohlcv_paths(
@@ -318,8 +300,7 @@ impl OptopsyServer {
                 base.exit_signal.as_ref(),
                 &[],
                 &[],
-            )
-            .await?;
+            )?;
 
         let start_date = base
             .start_date
@@ -753,7 +734,7 @@ impl OptopsyServer {
                 }
 
                 // Load underlying OHLCV close prices for chart overlay, auto-fetching if needed
-                let ohlcv_path = self.ensure_ohlcv(&symbol).await.ok();
+                let ohlcv_path = self.ensure_ohlcv(&symbol).ok();
                 let underlying_prices = match ohlcv_path {
                     Some(path_str) => {
                         let path = std::path::PathBuf::from(path_str);
@@ -831,7 +812,7 @@ impl OptopsyServer {
                 );
 
                 // Ensure OHLCV data is available (also used for chart overlay)
-                let ohlcv_path = self.ensure_ohlcv(&symbol).await?;
+                let ohlcv_path = self.ensure_ohlcv(&symbol)?;
 
                 // Resolve cross-symbol OHLCV paths for signals
                 let cross_ohlcv_paths = self
@@ -840,8 +821,7 @@ impl OptopsyServer {
                         params.exit_signal.as_ref(),
                         &[],
                         &[],
-                    )
-                    .await?;
+                    )?;
 
                 // Load underlying prices for chart overlay
                 let prices_path = std::path::PathBuf::from(&ohlcv_path);
@@ -1047,7 +1027,7 @@ impl OptopsyServer {
                     .ok_or("symbol is required for stock mode")?
                     .to_uppercase();
                 validate_path_segment(&symbol).map_err(|e| format!("Invalid symbol: {e}"))?;
-                let ohlcv_path = self.ensure_ohlcv(&symbol).await?;
+                let ohlcv_path = self.ensure_ohlcv(&symbol)?;
 
                 // Resolve cross-symbol OHLCV paths from all entry/exit signals
                 let exit_sigs_ref = stock_dims.exit_signals.as_deref().unwrap_or(&[]);
@@ -1057,8 +1037,7 @@ impl OptopsyServer {
                         None,
                         &stock_dims.entry_signals,
                         exit_sigs_ref,
-                    )
-                    .await?;
+                    )?;
 
                 let start_date = params
                     .sim_params
@@ -1181,7 +1160,7 @@ impl OptopsyServer {
                     || !params.sim_params.exit_signals.is_empty()
                     || any_stock_leg;
                 let ohlcv_path = if needs_ohlcv {
-                    Some(self.ensure_ohlcv(&symbol).await?)
+                    Some(self.ensure_ohlcv(&symbol)?)
                 } else {
                     None
                 };
@@ -1192,8 +1171,7 @@ impl OptopsyServer {
                         params.sim_params.exit_signal.as_ref(),
                         &params.sim_params.entry_signals,
                         &params.sim_params.exit_signals,
-                    )
-                    .await?;
+                    )?;
 
                 // Options mode: sweep dimensions are required (validated upstream)
                 let sweep_dims = params.sweep.ok_or_else(|| {
@@ -1393,7 +1371,7 @@ impl OptopsyServer {
                         .ok_or("symbol is required for stock mode")?
                         .to_uppercase();
                     validate_path_segment(&symbol).map_err(|e| format!("Invalid symbol: {e}"))?;
-                    let ohlcv_path = self.ensure_ohlcv(&symbol).await?;
+                    let ohlcv_path = self.ensure_ohlcv(&symbol)?;
 
                     // Collect all signals for cross-symbol resolution
                     let all_sigs: Vec<&crate::signals::registry::SignalSpec> = stock_entries
@@ -1411,7 +1389,7 @@ impl OptopsyServer {
                                 validate_path_segment(e.key()).map_err(|err| {
                                     format!("Invalid cross-symbol \"{}\": {err}", e.key())
                                 })?;
-                                let path = self.ensure_ohlcv(e.key()).await?;
+                                let path = self.ensure_ohlcv(e.key())?;
                                 e.insert(path);
                             }
                         }
@@ -1480,7 +1458,7 @@ impl OptopsyServer {
                         || params.exit_signal.is_some()
                         || any_stock_leg
                     {
-                        Some(self.ensure_ohlcv(&symbol).await?)
+                        Some(self.ensure_ohlcv(&symbol)?)
                     } else {
                         None
                     };
@@ -1491,8 +1469,7 @@ impl OptopsyServer {
                             params.exit_signal.as_ref(),
                             &[],
                             &[],
-                        )
-                        .await?;
+                        )?;
 
                     let mut sim_params = params.sim_params;
                     sim_params.entry_signal = params.entry_signal;

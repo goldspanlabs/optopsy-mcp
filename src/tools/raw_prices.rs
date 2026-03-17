@@ -199,21 +199,10 @@ pub async fn load_and_execute(
 ) -> Result<RawPricesResponse> {
     let upper = symbol.to_uppercase();
 
-    // Search across OHLCV categories (equities, futures, indices); auto-fetch from Yahoo on miss
-    let path = if let Some(p) = cache.find_ohlcv(&upper) {
-        p
-    } else if let Ok(p) = cache.ensure_local_for(&upper, "stocks").await {
-        p
-    } else {
-        tracing::info!(symbol = %upper, "Auto-fetching OHLCV data from Yahoo Finance");
-        super::fetch::execute(cache, &upper, "5y")
-            .await
-            .with_context(|| format!("Failed to auto-fetch OHLCV data for {upper}"))?;
-        cache
-            .ensure_local_for(&upper, "stocks")
-            .await
-            .with_context(|| format!("OHLCV data fetched but cache file not found for {upper}"))?
-    };
+    // Search across OHLCV categories (etf, stocks, futures, indices)
+    let path = cache
+        .find_ohlcv(&upper)
+        .with_context(|| format!("No OHLCV data found for {upper}. Upload parquet to the cache directory."))?;
 
     // Read parquet into DataFrame
     let df = tokio::task::spawn_blocking(move || -> Result<DataFrame> {
