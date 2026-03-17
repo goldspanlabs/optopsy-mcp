@@ -306,7 +306,6 @@ pub async fn execute(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::stats;
 
     /// Helper: build a simple linear price series.
