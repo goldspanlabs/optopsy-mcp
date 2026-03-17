@@ -7,6 +7,7 @@ use std::sync::Arc;
 use crate::data::cache::CachedStore;
 use crate::stats;
 use crate::tools::ai_format;
+use crate::tools::ai_helpers::epoch_to_date_string;
 use crate::tools::response_types::CorrelationSeries;
 use crate::tools::response_types::{
     CorrelateResponse, GrangerResult, LagAnalysis, LagCorrelationPoint, RollingCorrelationPoint,
@@ -333,14 +334,6 @@ pub async fn execute(
         lag_analysis,
         &symbol_a_upper,
     ))
-}
-
-/// Convert an epoch timestamp (seconds) to a `YYYY-MM-DD` date string.
-fn epoch_to_date_string(epoch: i64) -> String {
-    chrono::DateTime::from_timestamp(epoch, 0).map_or_else(
-        || format!("{epoch}"),
-        |dt| dt.naive_utc().format("%Y-%m-%d").to_string(),
-    )
 }
 
 /// Subsample a Vec to at most `max` elements using evenly-spaced indices.

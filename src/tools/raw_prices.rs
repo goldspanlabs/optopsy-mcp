@@ -71,6 +71,11 @@ pub fn execute(
 
     // For intraday intervals with no explicit start_date, limit to the last 7 calendar days.
     // This keeps response sizes manageable; callers can pass start_date to override.
+    //
+    // NOTE: `load_and_execute()` already applies an equivalent predicate-pushdown cutoff
+    // during the parquet scan, so this branch is redundant when called via that path.
+    // It is intentionally kept here so that direct `execute()` calls (e.g. in unit tests)
+    // also respect the 7-day cap without requiring a full parquet load.
     let filtered = if interval.is_intraday() && start_date.is_none() && end_date.is_none() {
         let cutoff = (chrono::Utc::now() - chrono::Duration::days(7)).naive_utc();
         if date_col_name == "datetime" {

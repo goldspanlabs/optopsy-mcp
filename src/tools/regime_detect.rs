@@ -6,6 +6,7 @@ use std::sync::Arc;
 use crate::data::cache::CachedStore;
 use crate::stats;
 use crate::tools::ai_format;
+use crate::tools::ai_helpers::epoch_to_date_string;
 use crate::tools::response_types::{RegimeDetectResponse, RegimeInfo, RegimeSeriesPoint};
 
 /// Execute the `regime_detect` analysis.
@@ -196,14 +197,6 @@ pub async fn execute(
         transition_matrix,
         regime_series,
     ))
-}
-
-/// Convert an epoch timestamp (seconds) to a `YYYY-MM-DD` date string.
-fn epoch_to_date_string(epoch: i64) -> String {
-    chrono::DateTime::from_timestamp(epoch, 0).map_or_else(
-        || format!("{epoch}"),
-        |dt| dt.naive_utc().format("%Y-%m-%d").to_string(),
-    )
 }
 
 /// Classify each bar using a Gaussian Hidden Markov Model.

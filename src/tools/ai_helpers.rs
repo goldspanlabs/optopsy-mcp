@@ -372,6 +372,16 @@ pub(crate) fn walk_forward_findings(
     findings
 }
 
+/// Convert an epoch timestamp (seconds) to a `YYYY-MM-DD` date string.
+///
+/// Returns the raw integer as a string if the timestamp is out of range.
+pub(crate) fn epoch_to_date_string(epoch: i64) -> String {
+    chrono::DateTime::from_timestamp(epoch, 0).map_or_else(
+        || format!("{epoch}"),
+        |dt| dt.naive_utc().format("%Y-%m-%d").to_string(),
+    )
+}
+
 /// Return a significance label for a p-value (e.g. "highly significant", "not significant").
 pub(crate) fn interpret_p_value(p: f64) -> &'static str {
     if p < P_HIGHLY_SIGNIFICANT {
