@@ -6,8 +6,12 @@ use std::path::PathBuf;
 use super::DataStore;
 use crate::engine::types::EPOCH_DAYS_CE_OFFSET;
 
-/// The canonical timestamp column name used across all data files.
+/// The canonical timestamp column name used internally by the engine.
 pub const DATETIME_COL: &str = "datetime";
+
+/// Offset added when casting options `date` (Date) → `datetime` (Datetime).
+/// 15:59:00 aligns with the nearest OHLCV 1-minute bar before market close.
+const EOD_OFFSET_US: i64 = (15 * 3600 + 59 * 60) * 1_000_000;
 
 pub struct ParquetStore {
     path: PathBuf,
@@ -41,6 +45,17 @@ impl DataStore for ParquetStore {
             let mut lazy =
                 LazyFrame::scan_parquet(path_str.as_str().into(), ScanArgsParquet::default())?;
 
+            // Options parquets store a `date` (Date) column. Cast to Datetime at
+            // 15:59:00 and rename to `datetime` so the engine has a unified column.
+            let schema = lazy.collect_schema()?;
+            if schema.get("date").is_some() && schema.get(DATETIME_COL).is_none() {
+                lazy = lazy.with_column(
+                    (col("date").cast(DataType::Datetime(TimeUnit::Microseconds, None))
+                        + lit(EOD_OFFSET_US).cast(DataType::Duration(TimeUnit::Microseconds)))
+                    .alias(DATETIME_COL),
+                );
+            }
+
             // Apply date filters for predicate pushdown
             if let Some(start) = start_dt {
                 lazy = lazy.filter(col(DATETIME_COL).gt_eq(lit(start)));
@@ -49,7 +64,13 @@ impl DataStore for ParquetStore {
                 lazy = lazy.filter(col(DATETIME_COL).lt_eq(lit(end)));
             }
 
-            lazy.collect().context("Failed to read Parquet file")
+            let df = lazy.collect().context("Failed to read Parquet file")?;
+            // Drop the original `date` column if both exist
+            if df.schema().contains("date") && df.schema().contains(DATETIME_COL) {
+                df.drop("date").context("Failed to drop date column")
+            } else {
+                Ok(df)
+            }
         })
         .await
         .context("Parquet read task panicked")??;
@@ -76,7 +97,13 @@ impl DataStore for ParquetStore {
         let df = LazyFrame::scan_parquet(path_str.as_str().into(), ScanArgsParquet::default())?
             .collect()?;
 
-        let date_col = df.column(DATETIME_COL)?;
+        // Options files have `date`, OHLCV files have `datetime`
+        let col_name = if df.schema().contains("date") {
+            "date"
+        } else {
+            DATETIME_COL
+        };
+        let date_col = df.column(col_name)?;
         let min = date_col.min_reduce()?;
         let max = date_col.max_reduce()?;
 
@@ -111,6 +138,7 @@ fn scalar_to_date(scalar: &Scalar) -> Result<NaiveDate> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Timelike;
 
     #[test]
     fn datetime_col_constant() {
@@ -130,5 +158,87 @@ mod tests {
         );
         let result = scalar_to_date(&scalar).unwrap();
         assert_eq!(result, NaiveDate::from_ymd_opt(2024, 1, 15).unwrap());
+    }
+
+    /// Write a `DataFrame` with a `date` (Date) column to a temp parquet file,
+    /// load it via `ParquetStore::load_options`, and verify it comes back with
+    /// a `datetime` (Datetime) column at 15:59:00.
+    #[tokio::test]
+    async fn load_options_casts_date_to_datetime_at_1559() {
+        let dates = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 16).unwrap(),
+        ];
+        let df = df! {
+            "date" => &dates,
+            "strike" => &[100.0, 105.0],
+        }
+        .unwrap();
+
+        let tmp = tempfile::NamedTempFile::with_suffix(".parquet").unwrap();
+        polars::prelude::ParquetWriter::new(std::fs::File::create(tmp.path()).unwrap())
+            .finish(&mut df.clone())
+            .unwrap();
+
+        let store = ParquetStore::new(&tmp.path().to_string_lossy());
+        let result = store.load_options("TEST", None, None).await.unwrap();
+
+        // Should have `datetime` column, not `date`
+        assert!(result.schema().contains(DATETIME_COL));
+        assert!(!result.schema().contains("date"));
+
+        // Should be Datetime type
+        assert!(matches!(
+            result.column(DATETIME_COL).unwrap().dtype(),
+            DataType::Datetime(_, _)
+        ));
+
+        // Both values should be at 15:59:00
+        let dt_col_ref = result.column(DATETIME_COL).unwrap();
+        for i in 0..result.height() {
+            let ndt =
+                crate::engine::price_table::extract_datetime_from_column(dt_col_ref, i).unwrap();
+            assert_eq!(ndt.time().hour(), 15);
+            assert_eq!(ndt.time().minute(), 59);
+            assert_eq!(ndt.time().second(), 0);
+        }
+    }
+
+    /// When the parquet already has a `datetime` column, `load_options` should
+    /// pass it through unchanged (no double-cast).
+    #[tokio::test]
+    async fn load_options_passthrough_existing_datetime() {
+        let datetimes = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 15)
+                .unwrap()
+                .and_hms_opt(9, 30, 0)
+                .unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 16)
+                .unwrap()
+                .and_hms_opt(10, 0, 0)
+                .unwrap(),
+        ];
+        let df = df! {
+            "datetime" => &datetimes,
+            "strike" => &[100.0, 105.0],
+        }
+        .unwrap();
+
+        let tmp = tempfile::NamedTempFile::with_suffix(".parquet").unwrap();
+        polars::prelude::ParquetWriter::new(std::fs::File::create(tmp.path()).unwrap())
+            .finish(&mut df.clone())
+            .unwrap();
+
+        let store = ParquetStore::new(&tmp.path().to_string_lossy());
+        let result = store.load_options("TEST", None, None).await.unwrap();
+
+        assert!(result.schema().contains(DATETIME_COL));
+        assert_eq!(result.height(), 2);
+
+        // Times should be preserved, not overwritten to 15:59
+        let dt_col_ref = result.column(DATETIME_COL).unwrap();
+        let ndt = crate::engine::price_table::extract_datetime_from_column(dt_col_ref, 0).unwrap();
+        assert_eq!(ndt.time().hour(), 9);
+        assert_eq!(ndt.time().minute(), 30);
     }
 }

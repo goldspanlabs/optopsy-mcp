@@ -71,7 +71,7 @@ Flag these common mistakes in reviews:
 
 ### Data Layer (`src/data/`)
 - Path traversal protection via `validate_path_segment()` — flag any file path construction that bypasses this check.
-- Parquet date normalization: `quote_date`/`quote_datetime` → unified `Datetime("quote_datetime")`. Flag any code that assumes a specific date column format without going through normalization.
+- Parquet date columns: options use `date` (Date, cast to `datetime` at 15:59 on load), OHLCV uses `datetime` (Datetime) directly. The engine works on `DATETIME_COL` (`"datetime"`) everywhere.
 - Cache pattern: local Parquet → S3 fallback → error. Flag any direct S3 access that skips the cache layer.
 
 ## Validation (`garde`)

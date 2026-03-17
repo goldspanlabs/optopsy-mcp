@@ -136,7 +136,7 @@ Key submodules: `filters.rs` (DTE/delta filtering, `filter_valid_quotes(df, min_
 31 strategies across singles, spreads, butterflies, condors, iron, and calendar categories. Built using helpers (`call_leg`, `put_leg`, `strategy`) in `helpers.rs`. `all_strategies()` returns the full list; `find_strategy(name)` does linear scan. Multi-expiration strategies (calendar/diagonal) use `ExpirationCycle::Primary`/`Secondary` tags on legs.
 
 ### Data Layer (`src/data/`)
-`DataStore` trait with `CachedStore` as default — local Parquet cache at `~/.optopsy/cache/{category}/{SYMBOL}.parquet` with S3 fetch-on-miss. `ParquetStore` handles normalization of date columns (`quote_date`/`quote_datetime` as Date, Datetime, or String → unified `Datetime("quote_datetime")`). Path segments validated against traversal attacks.
+`DataStore` trait with `CachedStore` as default — local Parquet cache at `~/.optopsy/cache/{category}/{SYMBOL}.parquet` with S3 fetch-on-miss. `ParquetStore` handles date column normalization: options files store `date` (Date) which is cast to `datetime` (Datetime) at 15:59:00 on load; OHLCV files already have a `datetime` (Datetime) column. Path segments validated against traversal attacks.
 
 ### Signals (`src/signals/`)
 TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, trend, volatility, overlap, price, volume, plus combinators. Split across three focused modules: `spec.rs` (the `SignalSpec` enum with 40+ variants), `builders.rs` (`build_signal()` factory and per-category builders), and `registry.rs` (signal catalog metadata, `collect_cross_symbols`, re-exports). Signals are **fully wired** into both options and stock backtests via `entry_signal` and `exit_signal` params. For options (`BacktestParams`), signals are optional entry/exit filters. For stocks (`StockBacktestParams`), `entry_signal` is required — it drives when trades open. OHLCV data is auto-fetched when signals are used.
@@ -547,8 +547,9 @@ Validation happens in tool handlers via `params.validate().map_err(...)?`. Inval
 - Path traversal protection via `validate_path_segment()` — rejects `/`, `\`, `..`, empty strings
 
 ### ParquetStore (`src/data/parquet.rs`)
-- Reads/writes Parquet with date column normalization
-- Detects and normalizes: `quote_date` (Date), `quote_datetime` (Datetime/String) → unified `Datetime("quote_datetime")`
+- Reads/writes Parquet with date column handling
+- Options files: `date` (Date) → cast to `datetime` (Datetime) at 15:59:00 on load
+- OHLCV files: `datetime` (Datetime) column used directly, no normalization needed
 - Lazy scanning for memory efficiency: `scan_parquet().select([...]).filter(...).collect()`
 
 ### EodhdProvider (`src/data/eodhd.rs`)
@@ -575,7 +576,7 @@ Validation happens in tool handlers via `params.validate().map_err(...)?`. Inval
 ```rust
 let lazy = df.clone().lazy()
   .filter(col("expiration").is_not_null())
-  .filter(col("quote_datetime").is_not_null())
+  .filter(col("datetime").is_not_null())
   .filter(col("bid").gt(min_bid_ask).and(col("ask").gt(min_bid_ask)))
   .collect()?;
 ```

@@ -883,8 +883,7 @@ mod tests {
             }),
         };
 
-        let result =
-            active_datetimes_multi(&spec, &intraday_df, &cross_dfs, "datetime").unwrap();
+        let result = active_datetimes_multi(&spec, &intraday_df, &cross_dfs, "datetime").unwrap();
 
         let dt_jan3_0930 =
             NaiveDateTime::parse_from_str("2024-01-03 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap();
@@ -925,8 +924,7 @@ mod tests {
             }),
         };
 
-        let result =
-            active_datetimes_multi(&spec, &intraday_df, &cross_dfs, "datetime").unwrap();
+        let result = active_datetimes_multi(&spec, &intraday_df, &cross_dfs, "datetime").unwrap();
         // Should have: Jan 3 09:31 (from primary) + Jan 4 00:00 (from VIX daily)
         assert!(
             result.len() >= 2,

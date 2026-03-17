@@ -18,10 +18,9 @@ pub fn compute_dte(df: &DataFrame) -> Result<DataFrame> {
         .clone()
         .lazy()
         .with_column(
-            ((col("expiration").cast(DataType::Date)
-                - col(DATETIME_COL).cast(DataType::Date))
-            .dt()
-            .total_milliseconds(false)
+            ((col("expiration").cast(DataType::Date) - col(DATETIME_COL).cast(DataType::Date))
+                .dt()
+                .total_milliseconds(false)
                 / lit(ms_per_day))
             .cast(DataType::Int32)
             .alias("dte"),

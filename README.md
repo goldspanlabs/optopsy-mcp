@@ -113,7 +113,7 @@ Minimum required columns for options chain data:
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `quote_date` | Date/Datetime | Trading date |
+| `date` | Date | Trading date (options; cast to `datetime` at 15:59 on load) |
 | `expiration` | Date/Datetime | Option expiration date |
 | `strike` | Float64 | Strike price |
 | `option_type` | String | `"call"` or `"put"` |

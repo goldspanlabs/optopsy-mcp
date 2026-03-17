@@ -1820,13 +1820,7 @@ mod tests {
         .hstack(&[dt_series.into()])
         .unwrap()
         .select([
-            "datetime",
-            "open",
-            "high",
-            "low",
-            "close",
-            "adjclose",
-            "volume",
+            "datetime", "open", "high", "low", "close", "adjclose", "volume",
         ])
         .unwrap();
 

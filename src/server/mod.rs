@@ -8,6 +8,8 @@ mod sanitize;
 
 use garde::Validate;
 use polars::prelude::*;
+
+use crate::data::parquet::DATETIME_COL;
 use rmcp::{
     handler::server::router::tool::ToolRouter,
     model::{Implementation, ServerCapabilities, ServerInfo},
@@ -405,8 +407,20 @@ impl OptopsyServer {
 }
 
 /// Load OHLCV prices from a cached parquet file for chart overlay.
+///
+/// When `filter_datetimes` is provided, only OHLCV bars whose `datetime` matches
+/// one of the given timestamps are returned. This is used for options backtests
+/// where the options and OHLCV data share aligned timestamps (e.g. 15:59:00).
+///
+/// When `resample_interval` is provided, the data is resampled to that interval
+/// before building the output (e.g. Daily for stock backtests to avoid returning
+/// millions of intraday bars).
 #[allow(clippy::too_many_lines)]
-fn load_underlying_prices(path: &std::path::Path) -> Vec<tools::response_types::UnderlyingPrice> {
+fn load_underlying_prices(
+    path: &std::path::Path,
+    filter_datetimes: Option<&Column>,
+    resample_interval: Option<crate::engine::types::Interval>,
+) -> Vec<tools::response_types::UnderlyingPrice> {
     let args = ScanArgsParquet::default();
     let path_str = path.to_string_lossy();
     let Ok(lf) = LazyFrame::scan_parquet(path_str.as_ref().into(), args) else {
@@ -421,30 +435,50 @@ fn load_underlying_prices(path: &std::path::Path) -> Vec<tools::response_types::
     let has_datetime_col = schema
         .get("datetime")
         .is_some_and(|dt| matches!(dt, polars::prelude::DataType::Datetime(_, _)));
-    let date_col_is_datetime = schema
-        .get("date")
-        .is_some_and(|dt| matches!(dt, polars::prelude::DataType::Datetime(_, _)));
-    let has_datetime = has_datetime_col || date_col_is_datetime;
-    let date_col_name = if has_datetime_col {
-        "datetime"
-    } else {
-        "date"
-    };
+    let date_col_name = if has_datetime_col { "datetime" } else { "date" };
 
-    let Ok(df) = lf
-        .select([
-            col(date_col_name),
-            col("open"),
-            col("high"),
-            col("low"),
-            col("close"),
-            col("volume"),
-        ])
+    let mut lazy = lf.select([
+        col(date_col_name),
+        col("open"),
+        col("high"),
+        col("low"),
+        col("close"),
+        col("volume"),
+    ]);
+
+    // Filter to only timestamps present in the options data
+    if let Some(dt_filter) = filter_datetimes {
+        if let Ok(unique) = dt_filter.unique() {
+            if let Ok(list) = unique.take_materialized_series().implode() {
+                lazy = lazy.filter(col(date_col_name).is_in(lit(list.into_series()), false));
+            }
+        }
+    }
+
+    let Ok(df) = lazy
         .sort([date_col_name], SortMultipleOptions::default())
         .collect()
     else {
         return vec![];
     };
+
+    // Resample to the requested interval (e.g. intraday → daily for stock backtests)
+    let df = if let Some(interval) = resample_interval {
+        crate::engine::stock_sim::resample_ohlcv(&df, interval).unwrap_or(df)
+    } else {
+        df
+    };
+
+    // Re-detect date column after resampling (may change from "datetime" to "date")
+    let date_col_name = if df.column("datetime").is_ok() {
+        "datetime"
+    } else {
+        "date"
+    };
+    let has_datetime = df
+        .column(date_col_name)
+        .ok()
+        .is_some_and(|c| matches!(c.dtype(), polars::prelude::DataType::Datetime(_, _)));
 
     let Ok(opens) = df.column("open").and_then(|c| Ok(c.f64()?.clone())) else {
         return vec![];
@@ -738,14 +772,17 @@ impl OptopsyServer {
                     }
                 }
 
-                // Load underlying OHLCV close prices for chart overlay, auto-fetching if needed
+                // Load underlying OHLCV close prices for chart overlay, auto-fetching if needed.
+                // Filter to only timestamps present in the options data so we return ~600
+                // bars instead of millions of intraday bars.
                 let ohlcv_path = self.ensure_ohlcv(&symbol).ok();
+                let dt_filter = df.column(DATETIME_COL).ok().cloned();
                 let underlying_prices = match ohlcv_path {
                     Some(path_str) => {
                         let path = std::path::PathBuf::from(path_str);
                         tokio::task::spawn_blocking(
                             move || -> Vec<tools::response_types::UnderlyingPrice> {
-                                load_underlying_prices(&path)
+                                load_underlying_prices(&path, dt_filter.as_ref(), None)
                             },
                         )
                         .await
@@ -827,12 +864,16 @@ impl OptopsyServer {
                     &[],
                 )?;
 
-                // Load underlying prices for chart overlay
+                // Load underlying prices for chart overlay, resampled to the
+                // requested interval (defaults to Daily) to avoid returning
+                // millions of intraday bars.
                 let prices_path = std::path::PathBuf::from(&ohlcv_path);
-                let underlying_prices =
-                    tokio::task::spawn_blocking(move || load_underlying_prices(&prices_path))
-                        .await
-                        .unwrap_or_default();
+                let interval = params.interval.unwrap_or_default();
+                let underlying_prices = tokio::task::spawn_blocking(move || {
+                    load_underlying_prices(&prices_path, None, Some(interval))
+                })
+                .await
+                .unwrap_or_default();
 
                 let start_date = params
                     .start_date
@@ -1813,5 +1854,99 @@ impl ServerHandler for OptopsyServer {
                     .into(),
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    /// Write a synthetic intraday OHLCV `DataFrame` to a temp parquet file.
+    /// Returns the path. 12 bars across 2 dates at various times.
+    fn write_intraday_parquet() -> tempfile::NamedTempFile {
+        let d1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let d2 = NaiveDate::from_ymd_opt(2024, 1, 16).unwrap();
+        let datetimes = vec![
+            d1.and_hms_opt(9, 30, 0).unwrap(),
+            d1.and_hms_opt(10, 0, 0).unwrap(),
+            d1.and_hms_opt(15, 59, 0).unwrap(),
+            d1.and_hms_opt(16, 0, 0).unwrap(),
+            d2.and_hms_opt(9, 30, 0).unwrap(),
+            d2.and_hms_opt(10, 0, 0).unwrap(),
+            d2.and_hms_opt(15, 59, 0).unwrap(),
+            d2.and_hms_opt(16, 0, 0).unwrap(),
+        ];
+        let n = datetimes.len();
+        let df = df! {
+            "datetime" => &datetimes,
+            "open" => vec![100.0; n],
+            "high" => vec![101.0; n],
+            "low" => vec![99.0; n],
+            "close" => vec![100.5; n],
+            "volume" => vec![1000_i64; n],
+        }
+        .unwrap();
+
+        let tmp = tempfile::NamedTempFile::with_suffix(".parquet").unwrap();
+        polars::prelude::ParquetWriter::new(std::fs::File::create(tmp.path()).unwrap())
+            .finish(&mut df.clone())
+            .unwrap();
+        tmp
+    }
+
+    #[test]
+    fn underlying_prices_no_filter_returns_all_bars() {
+        let tmp = write_intraday_parquet();
+        let prices = load_underlying_prices(tmp.path(), None, None);
+        assert_eq!(prices.len(), 8);
+    }
+
+    #[test]
+    fn underlying_prices_filter_matches_only_given_timestamps() {
+        let tmp = write_intraday_parquet();
+
+        // Build a filter column with only 15:59:00 timestamps (like options data)
+        let d1 = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let d2 = NaiveDate::from_ymd_opt(2024, 1, 16).unwrap();
+        let filter_dts = vec![
+            d1.and_hms_opt(15, 59, 0).unwrap(),
+            d2.and_hms_opt(15, 59, 0).unwrap(),
+        ];
+        let filter_col: Column = Series::new("datetime".into(), &filter_dts).into();
+
+        let prices = load_underlying_prices(tmp.path(), Some(&filter_col), None);
+        assert_eq!(prices.len(), 2, "should only return 15:59 bars");
+        assert!(prices[0].date.contains("15:59:00"));
+        assert!(prices[1].date.contains("15:59:00"));
+    }
+
+    #[test]
+    fn underlying_prices_resample_daily_reduces_to_one_per_date() {
+        let tmp = write_intraday_parquet();
+        let prices = load_underlying_prices(
+            tmp.path(),
+            None,
+            Some(crate::engine::types::Interval::Daily),
+        );
+        // 8 intraday bars across 2 dates → 2 daily bars
+        assert_eq!(prices.len(), 2, "should have one bar per date");
+        // Daily bars should have date-only format (no time component)
+        assert!(!prices[0].date.contains('T'), "daily should be date-only");
+    }
+
+    #[test]
+    fn underlying_prices_filter_with_no_matches_returns_empty() {
+        let tmp = write_intraday_parquet();
+
+        // Filter with a timestamp that doesn't exist in the data
+        let filter_dts = vec![NaiveDate::from_ymd_opt(2099, 1, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap()];
+        let filter_col: Column = Series::new("datetime".into(), &filter_dts).into();
+
+        let prices = load_underlying_prices(tmp.path(), Some(&filter_col), None);
+        assert!(prices.is_empty());
     }
 }
