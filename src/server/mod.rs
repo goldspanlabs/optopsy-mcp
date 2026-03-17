@@ -469,6 +469,23 @@ fn load_underlying_prices(
         df
     };
 
+    // For intraday intervals, keep only the last 7 calendar days of bars.
+    // The FE paginates backward via /api/data/prices for older data.
+    let df = if let Some(interval) = resample_interval {
+        if interval.is_intraday() && df.column("datetime").is_ok() {
+            let cutoff = (chrono::Utc::now() - chrono::Duration::days(7)).naive_utc();
+            df.clone()
+                .lazy()
+                .filter(col("datetime").gt_eq(lit(cutoff)))
+                .collect()
+                .unwrap_or(df)
+        } else {
+            df
+        }
+    } else {
+        df
+    };
+
     // Re-detect date column after resampling (may change from "datetime" to "date")
     let date_col_name = if df.column("datetime").is_ok() {
         "datetime"
@@ -864,9 +881,10 @@ impl OptopsyServer {
                     &[],
                 )?;
 
-                // Load underlying prices for chart overlay, resampled to the
-                // requested interval (defaults to Daily) to avoid returning
-                // millions of intraday bars.
+                // Load underlying prices for chart overlay.
+                // For intraday intervals, return only the last week of bars at the
+                // native interval — the FE paginates backward via /api/data/prices.
+                // For daily/weekly/monthly, return all bars (manageable count).
                 let prices_path = std::path::PathBuf::from(&ohlcv_path);
                 let interval = params.interval.unwrap_or_default();
                 let underlying_prices = tokio::task::spawn_blocking(move || {
