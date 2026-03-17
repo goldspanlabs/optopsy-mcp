@@ -5,11 +5,15 @@
 
 use std::collections::HashMap;
 
+use anyhow::Context;
+
 use crate::engine::types::{
     to_display_name, BacktestParams, BacktestQualityStats, ExitType, TradeRecord,
 };
 
-use super::response_types::{BacktestDataQuality, BacktestParamsSummary, TradeStat, TradeSummary};
+use super::response_types::{
+    BacktestDataQuality, BacktestParamsSummary, PriceBar, TradeStat, TradeSummary,
+};
 
 // ── Assessment thresholds ────────────────────────────────────────────────────
 // Centralised so they can be tuned (or made configurable) in one place.
@@ -392,5 +396,88 @@ pub(crate) fn interpret_p_value(p: f64) -> &'static str {
         "marginally significant"
     } else {
         "not significant"
+    }
+}
+
+// ── Shared utility helpers ──────────────────────────────────────────────────
+
+/// Compute a date cutoff string (YYYY-MM-DD) going back `years` from today.
+pub(crate) fn compute_years_cutoff(years: u32) -> String {
+    let cutoff = chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
+    cutoff.format("%Y-%m-%d").to_string()
+}
+
+/// Evenly subsample a vector down to at most `max` elements.
+pub(crate) fn subsample_to_max<T: Clone>(data: Vec<T>, max: usize) -> Vec<T> {
+    let n = data.len();
+    if n <= max {
+        return data;
+    }
+    let mut indices: Vec<usize> = (0..max).map(|i| i * (n - 1) / (max - 1)).collect();
+    indices.dedup();
+    indices.iter().map(|&i| data[i].clone()).collect()
+}
+
+/// Compute simple returns and corresponding dates from a price series.
+///
+/// Emits `NaN` for bars where the prior close is zero, preserving index alignment.
+pub(crate) fn compute_returns(prices: &[PriceBar]) -> (Vec<f64>, Vec<i64>) {
+    let returns: Vec<f64> = prices
+        .windows(2)
+        .map(|w| {
+            if w[0].close == 0.0 {
+                f64::NAN
+            } else {
+                (w[1].close - w[0].close) / w[0].close
+            }
+        })
+        .collect();
+    let dates: Vec<i64> = prices[1..].iter().map(|p| p.date).collect();
+    (returns, dates)
+}
+
+/// Compute p-value for a Pearson correlation coefficient.
+pub(crate) fn pearson_p_value(r: f64, n: usize) -> Option<f64> {
+    if n <= 2 {
+        return None;
+    }
+    let r_sq = r * r;
+    let denom = (1.0 - r_sq).max(0.0);
+    if denom < f64::EPSILON {
+        Some(0.0)
+    } else {
+        let t_stat = r * ((n as f64 - 2.0) / denom).sqrt();
+        statrs::distribution::StudentsT::new(0.0, 1.0, (n - 2) as f64)
+            .ok()
+            .map(|d| {
+                use statrs::distribution::ContinuousCDF;
+                2.0 * (1.0 - d.cdf(t_stat.abs()))
+            })
+    }
+}
+
+/// Parse a date string parameter with a descriptive error.
+pub(crate) fn parse_date_param(
+    date_str: &str,
+    param_name: &str,
+) -> anyhow::Result<chrono::NaiveDate> {
+    date_str
+        .parse::<chrono::NaiveDate>()
+        .with_context(|| format!("Invalid {param_name}: {date_str}"))
+}
+
+/// Validate that a string value is one of the allowed choices.
+pub(crate) fn validate_choice<'a>(
+    value: &'a str,
+    valid: &[&str],
+    field_name: &str,
+) -> anyhow::Result<&'a str> {
+    if valid.contains(&value) {
+        Ok(value)
+    } else {
+        anyhow::bail!(
+            "Invalid {field_name}: \"{value}\". Must be one of: {}",
+            valid.join(", ")
+        )
     }
 }

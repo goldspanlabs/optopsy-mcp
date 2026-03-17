@@ -6,7 +6,9 @@ use std::sync::Arc;
 use crate::data::cache::CachedStore;
 use crate::stats;
 use crate::tools::ai_format;
-use crate::tools::ai_helpers::epoch_to_date_string;
+use crate::tools::ai_helpers::{
+    compute_returns, compute_years_cutoff, epoch_to_date_string, subsample_to_max, validate_choice,
+};
 use crate::tools::response_types::{RegimeDetectResponse, RegimeInfo, RegimeSeriesPoint};
 
 /// Execute the `regime_detect` analysis.
@@ -19,17 +21,14 @@ pub async fn execute(
     years: u32,
     lookback_window: usize,
 ) -> Result<RegimeDetectResponse> {
-    let valid_methods = ["volatility_cluster", "trend_state", "hmm"];
-    if !valid_methods.contains(&method) {
-        anyhow::bail!(
-            "Invalid method: \"{method}\". Must be one of: {}",
-            valid_methods.join(", ")
-        );
-    }
+    validate_choice(
+        method,
+        &["volatility_cluster", "trend_state", "hmm"],
+        "method",
+    )?;
 
     let upper = symbol.to_uppercase();
-    let cutoff = chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
-    let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
+    let cutoff_str = compute_years_cutoff(years);
 
     let resp = crate::tools::raw_prices::load_and_execute(
         cache,
@@ -60,17 +59,7 @@ pub async fn execute(
 
     // Compute daily returns; emit NaN for zero-close bars to preserve index alignment
     // with SMA arrays (critical for classify_by_trend).
-    let returns: Vec<f64> = prices
-        .windows(2)
-        .map(|w| {
-            if w[0].close == 0.0 {
-                f64::NAN
-            } else {
-                (w[1].close - w[0].close) / w[0].close
-            }
-        })
-        .collect();
-    let dates: Vec<i64> = prices[1..].iter().map(|p| p.date).collect();
+    let (returns, dates) = compute_returns(prices);
 
     let (regime_labels, regime_names, hmm_params) = match method {
         "volatility_cluster" => {
@@ -102,15 +91,7 @@ pub async fn execute(
     }
 
     // Subsample to max 500
-    if regime_series.len() > 500 {
-        let n = regime_series.len();
-        let mut indices: Vec<usize> = (0..500).map(|i| i * (n - 1) / 499).collect();
-        indices.dedup();
-        regime_series = indices
-            .into_iter()
-            .map(|i| regime_series[i].clone())
-            .collect();
-    }
+    regime_series = subsample_to_max(regime_series, 500);
 
     // Per-regime statistics
     let total_classified = regime_labels.iter().filter(|&&l| l < n_regimes).count();

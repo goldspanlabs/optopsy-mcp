@@ -6,7 +6,9 @@ use std::sync::Arc;
 use crate::data::cache::CachedStore;
 use crate::stats;
 use crate::tools::ai_format;
-use crate::tools::ai_helpers::epoch_to_date_string;
+use crate::tools::ai_helpers::{
+    compute_years_cutoff, epoch_to_date_string, subsample_to_max, validate_choice,
+};
 use crate::tools::response_types::{RollingMetricResponse, RollingPoint, RollingStats};
 
 /// Execute the `rolling_metric` analysis.
@@ -19,27 +21,24 @@ pub async fn execute(
     benchmark: Option<&str>,
     years: u32,
 ) -> Result<RollingMetricResponse> {
-    let valid_metrics = [
-        "volatility",
-        "sharpe",
-        "mean_return",
-        "max_drawdown",
-        "beta",
-        "correlation",
-    ];
-    if !valid_metrics.contains(&metric) {
-        anyhow::bail!(
-            "Invalid metric: \"{metric}\". Must be one of: {}",
-            valid_metrics.join(", ")
-        );
-    }
+    validate_choice(
+        metric,
+        &[
+            "volatility",
+            "sharpe",
+            "mean_return",
+            "max_drawdown",
+            "beta",
+            "correlation",
+        ],
+        "metric",
+    )?;
     if (metric == "beta" || metric == "correlation") && benchmark.is_none() {
         anyhow::bail!("Metric \"{metric}\" requires a benchmark symbol");
     }
 
     let upper = symbol.to_uppercase();
-    let cutoff = chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
-    let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
+    let cutoff_str = compute_years_cutoff(years);
 
     let resp = crate::tools::raw_prices::load_and_execute(
         cache,
@@ -179,12 +178,7 @@ pub async fn execute(
     }
 
     // Subsample to max 500 points
-    if series.len() > 500 {
-        let n = series.len();
-        let mut indices: Vec<usize> = (0..500).map(|i| i * (n - 1) / 499).collect();
-        indices.dedup();
-        series = indices.into_iter().map(|i| series[i].clone()).collect();
-    }
+    series = subsample_to_max(series, 500);
 
     // Compute summary statistics from non-NaN values
     let valid_values: Vec<f64> = series_values

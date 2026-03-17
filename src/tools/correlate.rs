@@ -7,7 +7,9 @@ use std::sync::Arc;
 use crate::data::cache::CachedStore;
 use crate::stats;
 use crate::tools::ai_format;
-use crate::tools::ai_helpers::epoch_to_date_string;
+use crate::tools::ai_helpers::{
+    compute_years_cutoff, epoch_to_date_string, pearson_p_value, subsample_to_max, validate_choice,
+};
 use crate::tools::response_types::CorrelationSeries;
 use crate::tools::response_types::{
     CorrelateResponse, GrangerResult, LagAnalysis, LagCorrelationPoint, RollingCorrelationPoint,
@@ -25,12 +27,9 @@ pub async fn execute(
     years: u32,
     lag_range: Option<(i32, i32)>,
 ) -> Result<CorrelateResponse> {
-    if mode != "full" && mode != "rolling" {
-        anyhow::bail!("Invalid mode: \"{mode}\". Must be \"full\" or \"rolling\".");
-    }
+    validate_choice(mode, &["full", "rolling"], "mode")?;
 
-    let cutoff = chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
-    let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
+    let cutoff_str = compute_years_cutoff(years);
 
     // Load both series
     let (prices_a, prices_b) = {
@@ -182,22 +181,7 @@ pub async fn execute(
     let r_squared = pearson * pearson;
 
     // P-value for pearson (t-test approximation)
-    let p_value = if n > 2 {
-        let denom = (1.0 - r_squared).max(0.0);
-        if denom < f64::EPSILON {
-            // Perfect correlation: p-value is effectively 0
-            Some(0.0)
-        } else {
-            let t_stat = pearson * ((n as f64 - 2.0) / denom).sqrt();
-            let dist = statrs::distribution::StudentsT::new(0.0, 1.0, (n - 2) as f64).ok();
-            dist.map(|d| {
-                use statrs::distribution::ContinuousCDF;
-                2.0 * (1.0 - d.cdf(t_stat.abs()))
-            })
-        }
-    } else {
-        None
-    };
+    let p_value = pearson_p_value(pearson, n);
 
     // Rolling correlation
     if mode == "rolling" && n < window {
@@ -217,7 +201,7 @@ pub async fn execute(
             });
         }
         // Subsample to max 500 points
-        subsample(points, 500)
+        subsample_to_max(points, 500)
     } else {
         vec![]
     };
@@ -231,7 +215,7 @@ pub async fn execute(
                 date: epoch_to_date_string(dates[i]),
             })
             .collect();
-        subsample(all, 500)
+        subsample_to_max(all, 500)
     };
 
     // Lead/lag analysis
@@ -245,23 +229,7 @@ pub async fn execute(
             // P-value for lagged correlation
             let lag_abs = lag.unsigned_abs() as usize;
             let effective_n = n.saturating_sub(lag_abs);
-            let lag_p = if effective_n > 2 {
-                let r_sq = r * r;
-                let denom = (1.0 - r_sq).max(0.0);
-                if denom < f64::EPSILON {
-                    Some(0.0)
-                } else {
-                    let t_stat = r * ((effective_n as f64 - 2.0) / denom).sqrt();
-                    statrs::distribution::StudentsT::new(0.0, 1.0, (effective_n - 2) as f64)
-                        .ok()
-                        .map(|d| {
-                            use statrs::distribution::ContinuousCDF;
-                            2.0 * (1.0 - d.cdf(t_stat.abs()))
-                        })
-                }
-            } else {
-                None
-            };
+            let lag_p = pearson_p_value(r, effective_n);
 
             if r.abs() > best_corr.abs() {
                 best_corr = r;
@@ -334,17 +302,6 @@ pub async fn execute(
         lag_analysis,
         &symbol_a_upper,
     ))
-}
-
-/// Subsample a Vec to at most `max` elements using evenly-spaced indices.
-fn subsample<T: Clone>(data: Vec<T>, max: usize) -> Vec<T> {
-    let n = data.len();
-    if n <= max {
-        return data;
-    }
-    let mut indices: Vec<usize> = (0..max).map(|i| i * (n - 1) / (max - 1)).collect();
-    indices.dedup();
-    indices.iter().map(|&i| data[i].clone()).collect()
 }
 
 #[cfg(test)]
@@ -453,8 +410,9 @@ mod tests {
 
     #[test]
     fn test_subsample_respects_max() {
+        use crate::tools::ai_helpers::subsample_to_max;
         let data: Vec<i32> = (0..1000).collect();
-        let result = subsample(data, 500);
+        let result = subsample_to_max(data, 500);
         assert_eq!(result.len(), 500);
         assert_eq!(result[0], 0);
         assert_eq!(result[499], 999);
@@ -462,8 +420,9 @@ mod tests {
 
     #[test]
     fn test_subsample_smaller_than_max() {
+        use crate::tools::ai_helpers::subsample_to_max;
         let data: Vec<i32> = (0..100).collect();
-        let result = subsample(data.clone(), 500);
+        let result = subsample_to_max(data.clone(), 500);
         assert_eq!(
             result.len(),
             100,

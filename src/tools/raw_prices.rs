@@ -11,6 +11,7 @@ use std::time::Instant;
 use crate::data::cache::CachedStore;
 
 use super::ai_format;
+use super::ai_helpers::parse_date_param;
 use super::response_types::{DateRange, PriceBar, RawPricesResponse};
 
 use crate::engine::types::EPOCH_DAYS_CE_OFFSET;
@@ -32,9 +33,7 @@ pub fn execute(
 
     // Apply optional date filters
     if let Some(start) = start_date {
-        let start_date = start
-            .parse::<chrono::NaiveDate>()
-            .with_context(|| format!("Invalid start_date: {start}"))?;
+        let start_date = parse_date_param(start, "start_date")?;
         if date_col_name == "datetime" {
             let start_dt = start_date.and_hms_opt(0, 0, 0).unwrap();
             lazy = lazy.filter(col(date_col_name).gt_eq(lit(start_dt)));
@@ -43,9 +42,7 @@ pub fn execute(
         }
     }
     if let Some(end) = end_date {
-        let end_date = end
-            .parse::<chrono::NaiveDate>()
-            .with_context(|| format!("Invalid end_date: {end}"))?;
+        let end_date = parse_date_param(end, "end_date")?;
         if date_col_name == "datetime" {
             let end_next = end_date
                 .succ_opt()
