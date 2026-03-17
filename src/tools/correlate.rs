@@ -40,6 +40,7 @@ pub async fn execute(
             None,
             None,
             crate::engine::types::Interval::Daily,
+            None,
         )
         .await
         .context(format!("Failed to load data for {}", series_a.symbol))?;
@@ -51,6 +52,7 @@ pub async fn execute(
             None,
             None,
             crate::engine::types::Interval::Daily,
+            None,
         )
         .await
         .context(format!("Failed to load data for {}", series_b.symbol))?;
@@ -59,21 +61,21 @@ pub async fn execute(
     };
 
     // Build date-indexed maps
-    let map_a: HashMap<&str, usize> = prices_a
+    let map_a: HashMap<i64, usize> = prices_a
         .iter()
         .enumerate()
-        .map(|(i, p)| (p.date.as_str(), i))
+        .map(|(i, p)| (p.date, i))
         .collect();
 
     // Align by date (inner join)
-    let mut aligned_dates: Vec<String> = Vec::new();
+    let mut aligned_dates: Vec<i64> = Vec::new();
     let mut vals_a_raw: Vec<(f64, f64, f64, f64, f64)> = Vec::new();
     let mut vals_b_raw: Vec<(f64, f64, f64, f64, f64)> = Vec::new();
 
     for pb in &prices_b {
-        if let Some(&idx_a) = map_a.get(pb.date.as_str()) {
+        if let Some(&idx_a) = map_a.get(&pb.date) {
             let pa = &prices_a[idx_a];
-            aligned_dates.push(pb.date.clone());
+            aligned_dates.push(pb.date);
             vals_a_raw.push((pa.close, pa.open, pa.high, pa.low, pa.volume as f64));
             vals_b_raw.push((pb.close, pb.open, pb.high, pb.low, pb.volume as f64));
         }
@@ -159,7 +161,7 @@ pub async fn execute(
         if field_a[i].is_finite() && field_b[i].is_finite() {
             fa_clean.push(field_a[i]);
             fb_clean.push(field_b[i]);
-            dates_clean.push(dates[i].clone());
+            dates_clean.push(dates[i]);
         }
     }
     let n = fa_clean.len();
@@ -209,7 +211,7 @@ pub async fn execute(
             let start = i + 1 - window;
             let r = stats::pearson(&fa[start..=i], &fb[start..=i]);
             points.push(RollingCorrelationPoint {
-                date: dates[i].clone(),
+                date: epoch_to_date_string(dates[i]),
                 correlation: r,
             });
         }
@@ -225,7 +227,7 @@ pub async fn execute(
             .map(|i| ScatterPoint {
                 x: fa[i],
                 y: fb[i],
-                date: dates[i].clone(),
+                date: epoch_to_date_string(dates[i]),
             })
             .collect();
         subsample(all, 500)
@@ -331,6 +333,14 @@ pub async fn execute(
         lag_analysis,
         &symbol_a_upper,
     ))
+}
+
+/// Convert an epoch timestamp (seconds) to a `YYYY-MM-DD` date string.
+fn epoch_to_date_string(epoch: i64) -> String {
+    chrono::DateTime::from_timestamp(epoch, 0).map_or_else(
+        || format!("{epoch}"),
+        |dt| dt.naive_utc().format("%Y-%m-%d").to_string(),
+    )
 }
 
 /// Subsample a Vec to at most `max` elements using evenly-spaced indices.

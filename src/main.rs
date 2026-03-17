@@ -19,6 +19,8 @@ struct PricesQuery {
     start_date: Option<String>,
     end_date: Option<String>,
     interval: Option<optopsy_mcp::engine::types::Interval>,
+    limit: Option<usize>,
+    tail: Option<bool>,
 }
 
 async fn prices_handler(
@@ -35,8 +37,9 @@ async fn prices_handler(
         &symbol,
         query.start_date.as_deref(),
         query.end_date.as_deref(),
-        None,
+        query.limit,
         interval,
+        query.tail,
     )
     .await
     .map(axum::Json)

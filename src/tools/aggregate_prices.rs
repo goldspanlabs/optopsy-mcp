@@ -70,6 +70,7 @@ pub async fn execute(
         end_date,
         None, // no limit
         resolved_interval,
+        None, // no tail
     )
     .await
     .context("Failed to load OHLCV data")?;
@@ -78,10 +79,10 @@ pub async fn execute(
     let prices = if start_date.is_none() && end_date.is_none() && years < 50 {
         let cutoff =
             chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
-        let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
+        let cutoff_epoch = cutoff.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
         resp.prices
             .into_iter()
-            .filter(|p| p.date >= cutoff_str)
+            .filter(|p| p.date >= cutoff_epoch)
             .collect::<Vec<_>>()
     } else {
         resp.prices
@@ -93,26 +94,22 @@ pub async fn execute(
 
     let total_bars = prices.len();
     let date_range = DateRange {
-        start: prices.first().map(|p| p.date.clone()),
-        end: prices.last().map(|p| p.date.clone()),
+        start: prices.first().map(|p| p.date),
+        end: prices.last().map(|p| p.date),
     };
 
     // Compute per-bar metric values
     let mut bar_data: Vec<(String, f64)> = Vec::with_capacity(total_bars);
     for i in 0..prices.len() {
-        let date_str = &prices[i].date;
-
-        // Parse date — try datetime first (intraday), fall back to date-only (daily).
-        // raw_prices formats intraday timestamps as "%Y-%m-%dT%H:%M:%S", so try that explicitly.
-        let (date, hour) = if let Ok(dt) =
-            chrono::NaiveDateTime::parse_from_str(date_str, "%Y-%m-%dT%H:%M:%S")
-                .or_else(|_| chrono::NaiveDateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S"))
-        {
-            (dt.date(), Some(dt.time().hour()))
-        } else if let Ok(d) = date_str.parse::<chrono::NaiveDate>() {
-            (d, None)
+        let epoch = prices[i].date;
+        let dt = chrono::DateTime::from_timestamp(epoch, 0)
+            .ok_or_else(|| anyhow::anyhow!("Invalid epoch timestamp: {epoch}"))?
+            .naive_utc();
+        let date = dt.date();
+        let hour = if dt.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
+            None
         } else {
-            anyhow::bail!("Invalid date: {date_str}");
+            Some(dt.time().hour())
         };
 
         let bucket_label = match group_by {

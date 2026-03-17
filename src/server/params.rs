@@ -604,6 +604,12 @@ pub struct GetRawPricesParams {
     #[serde(default)]
     #[garde(skip)]
     pub interval: Option<Interval>,
+    /// When `true` and `limit` is set, return the last N bars (tail) instead of evenly sampling.
+    /// Use this for backward pagination: `end_date` + `limit=500` + `tail=true` returns
+    /// the 500 most recent bars before `end_date`.
+    #[serde(default)]
+    #[garde(skip)]
+    pub tail: Option<bool>,
 }
 
 fn default_sweep_max_positions() -> i32 {

@@ -6,6 +6,7 @@
 use anyhow::{Context, Result};
 use polars::prelude::*;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::data::cache::CachedStore;
 
@@ -24,6 +25,7 @@ pub fn execute(
     end_date: Option<&str>,
     limit: Option<usize>,
     interval: crate::engine::types::Interval,
+    tail: Option<bool>,
 ) -> Result<RawPricesResponse> {
     let date_col_name = crate::engine::stock_sim::detect_date_col(df);
     let mut lazy = df.clone().lazy();
@@ -67,10 +69,44 @@ pub fn execute(
     // Re-detect date column — resampling may change it (e.g., datetime → date for Daily)
     let date_col_name = crate::engine::stock_sim::detect_date_col(&filtered);
 
+    // For intraday intervals with no explicit start_date, limit to the last 7 calendar days.
+    // This keeps response sizes manageable; callers can pass start_date to override.
+    let filtered = if interval.is_intraday() && start_date.is_none() && end_date.is_none() {
+        let cutoff = (chrono::Utc::now() - chrono::Duration::days(7)).naive_utc();
+        if date_col_name == "datetime" {
+            filtered
+                .clone()
+                .lazy()
+                .filter(col("datetime").gt_eq(lit(cutoff)))
+                .collect()
+                .unwrap_or(filtered)
+        } else {
+            let cutoff_date = cutoff.date();
+            filtered
+                .clone()
+                .lazy()
+                .filter(col("date").gt_eq(lit(cutoff_date)))
+                .collect()
+                .unwrap_or(filtered)
+        }
+    } else {
+        filtered
+    };
+
     let total_rows = filtered.height();
 
-    // Sample if limit is specified and data exceeds it
-    let (output_df, sampled) = if let Some(max) = limit {
+    // Tail mode: take the last N rows (for backward pagination)
+    let (output_df, sampled) = if tail.unwrap_or(false) {
+        if let Some(max) = limit {
+            if total_rows > max {
+                (filtered.tail(Some(max)), false)
+            } else {
+                (filtered, false)
+            }
+        } else {
+            (filtered, false)
+        }
+    } else if let Some(max) = limit {
         if total_rows > max && max > 0 {
             // Use integer math to produce evenly-spaced, deduplicated indices.
             // Always include the first and last row.
@@ -122,11 +158,7 @@ pub fn execute(
         ) {
             for i in 0..rows {
                 let ndt = crate::engine::price_table::extract_datetime_from_column(dt_col_ref, i)?;
-                let date = if ndt.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
-                    ndt.format("%Y-%m-%d").to_string()
-                } else {
-                    ndt.format("%Y-%m-%dT%H:%M:%S").to_string()
-                };
+                let date = ndt.and_utc().timestamp();
                 bars.push(PriceBar {
                     date,
                     open: opens.get(i).unwrap_or(0.0),
@@ -138,8 +170,8 @@ pub fn execute(
                 });
             }
             let date_range = DateRange {
-                start: bars.first().map(|b| b.date.clone()),
-                end: bars.last().map(|b| b.date.clone()),
+                start: bars.first().map(|b| b.date),
+                end: bars.last().map(|b| b.date),
             };
             return Ok(ai_format::format_raw_prices(
                 symbol, total_rows, rows, sampled, date_range, bars,
@@ -157,8 +189,10 @@ pub fn execute(
         let date =
             chrono::NaiveDate::from_num_days_from_ce_opt(days_since_epoch + EPOCH_DAYS_CE_OFFSET)
                 .ok_or_else(|| anyhow::anyhow!("Invalid date value at row {i}"))?
-                .format("%Y-%m-%d")
-                .to_string();
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc()
+                .timestamp();
 
         bars.push(PriceBar {
             date,
@@ -172,12 +206,9 @@ pub fn execute(
     }
 
     // Extract date range
-    let first_date = bars.first().map(|b| b.date.clone());
-    let last_date = bars.last().map(|b| b.date.clone());
-
     let date_range = DateRange {
-        start: first_date,
-        end: last_date,
+        start: bars.first().map(|b| b.date),
+        end: bars.last().map(|b| b.date),
     };
 
     Ok(ai_format::format_raw_prices(
@@ -199,26 +230,73 @@ pub async fn load_and_execute(
     end_date: Option<&str>,
     limit: Option<usize>,
     interval: crate::engine::types::Interval,
+    tail: Option<bool>,
 ) -> Result<RawPricesResponse> {
+    let t0 = Instant::now();
     let upper = symbol.to_uppercase();
+
+    eprintln!(
+        "[get_raw_prices] symbol={upper} interval={interval:?} start={start_date:?} end={end_date:?} limit={limit:?}"
+    );
 
     // Search across OHLCV categories (etf, stocks, futures, indices)
     let path = cache.find_ohlcv(&upper).with_context(|| {
         format!("No OHLCV data found for {upper}. Upload parquet to the cache directory.")
     })?;
+    eprintln!("[get_raw_prices] found parquet: {}", path.display());
 
-    // Read parquet into DataFrame
+    // For intraday requests with no start_date, push a 7-day cutoff into
+    // the parquet scan so Polars can skip irrelevant row groups (~100MB → ~2MB).
+    let intraday_cutoff = if interval.is_intraday() && start_date.is_none() && end_date.is_none() {
+        let cutoff = (chrono::Utc::now() - chrono::Duration::days(7)).naive_utc();
+        eprintln!("[get_raw_prices] intraday cutoff: {cutoff}");
+        Some(cutoff)
+    } else {
+        None
+    };
+
+    // Read parquet into DataFrame (with predicate pushdown for intraday)
+    let t1 = Instant::now();
     let df = tokio::task::spawn_blocking(move || -> Result<DataFrame> {
         let args = ScanArgsParquet::default();
         let path_str = path.to_string_lossy();
-        LazyFrame::scan_parquet(path_str.as_ref().into(), args)?
-            .collect()
-            .context("Failed to read OHLCV parquet")
+        let mut lazy = LazyFrame::scan_parquet(path_str.as_ref().into(), args)?;
+        if let Some(cutoff) = intraday_cutoff {
+            // Detect which date column the file has from the schema
+            let schema = lazy.clone().collect_schema()?;
+            if schema.get("datetime").is_some() {
+                lazy = lazy.filter(col("datetime").gt_eq(lit(cutoff)));
+            } else if schema.get("date").is_some() {
+                lazy = lazy.filter(col("date").gt_eq(lit(cutoff.date())));
+            }
+        }
+        lazy.collect().context("Failed to read OHLCV parquet")
     })
     .await
     .context("Parquet read task panicked")??;
+    eprintln!(
+        "[get_raw_prices] parquet loaded: {} rows, {:.0}ms",
+        df.height(),
+        t1.elapsed().as_millis()
+    );
 
-    execute(&df, &upper, start_date, end_date, limit, interval)
+    let t2 = Instant::now();
+    let resp = execute(&df, &upper, start_date, end_date, limit, interval, tail)?;
+    eprintln!(
+        "[get_raw_prices] execute done: {} bars returned, sampled={}, {:.0}ms",
+        resp.returned_rows,
+        resp.sampled,
+        t2.elapsed().as_millis()
+    );
+
+    let json_size = serde_json::to_string(&resp).map(|s| s.len()).unwrap_or(0);
+    eprintln!(
+        "[get_raw_prices] total: {:.0}ms, response JSON ~{}KB",
+        t0.elapsed().as_millis(),
+        json_size / 1024
+    );
+
+    Ok(resp)
 }
 
 #[cfg(test)]
@@ -263,6 +341,7 @@ mod tests {
             None,
             None,
             crate::engine::types::Interval::Daily,
+            None,
         )
         .unwrap();
 
@@ -271,9 +350,11 @@ mod tests {
         assert_eq!(resp.returned_rows, 5);
         assert!(!resp.sampled);
         assert_eq!(resp.prices.len(), 5);
-        assert_eq!(resp.prices[0].date, "2024-01-02");
+        // 2024-01-02 00:00:00 UTC = 1704153600
+        assert_eq!(resp.prices[0].date, 1_704_153_600);
         assert_eq!(resp.prices[0].open, 100.0);
-        assert_eq!(resp.prices[4].date, "2024-01-08");
+        // 2024-01-08 00:00:00 UTC = 1704672000
+        assert_eq!(resp.prices[4].date, 1_704_672_000);
     }
 
     #[test]
@@ -286,6 +367,7 @@ mod tests {
             None,
             Some(3),
             crate::engine::types::Interval::Daily,
+            None,
         )
         .unwrap();
 
@@ -293,8 +375,8 @@ mod tests {
         assert_eq!(resp.returned_rows, 3);
         assert!(resp.sampled);
         // Should include first and last
-        assert_eq!(resp.prices[0].date, "2024-01-02");
-        assert_eq!(resp.prices[2].date, "2024-01-08");
+        assert_eq!(resp.prices[0].date, 1_704_153_600);
+        assert_eq!(resp.prices[2].date, 1_704_672_000);
     }
 
     #[test]
@@ -307,12 +389,14 @@ mod tests {
             Some("2024-01-05"),
             None,
             crate::engine::types::Interval::Daily,
+            None,
         )
         .unwrap();
 
         assert_eq!(resp.returned_rows, 3);
-        assert_eq!(resp.prices[0].date, "2024-01-03");
-        assert_eq!(resp.prices[2].date, "2024-01-05");
+        // 2024-01-03 = 1704240000, 2024-01-05 = 1704412800
+        assert_eq!(resp.prices[0].date, 1_704_240_000);
+        assert_eq!(resp.prices[2].date, 1_704_412_800);
     }
 
     #[test]
@@ -325,6 +409,7 @@ mod tests {
             None,
             Some(100),
             crate::engine::types::Interval::Daily,
+            None,
         )
         .unwrap();
 
@@ -342,6 +427,7 @@ mod tests {
             None,
             None,
             crate::engine::types::Interval::Daily,
+            None,
         )
         .unwrap();
         assert_eq!(resp.prices[0].adjclose, Some(101.0));
@@ -357,12 +443,13 @@ mod tests {
             None,
             Some(1),
             crate::engine::types::Interval::Daily,
+            None,
         )
         .unwrap();
 
         assert_eq!(resp.returned_rows, 1);
         assert!(resp.sampled);
-        assert_eq!(resp.prices[0].date, "2024-01-08");
+        assert_eq!(resp.prices[0].date, 1_704_672_000);
     }
 
     #[test]
@@ -376,16 +463,17 @@ mod tests {
             None,
             Some(4),
             crate::engine::types::Interval::Daily,
+            None,
         )
         .unwrap();
 
         assert_eq!(resp.returned_rows, 4);
         assert!(resp.sampled);
         // First and last should be included
-        assert_eq!(resp.prices[0].date, "2024-01-02");
-        assert_eq!(resp.prices[3].date, "2024-01-08");
+        assert_eq!(resp.prices[0].date, 1_704_153_600);
+        assert_eq!(resp.prices[3].date, 1_704_672_000);
         // All dates should be unique
-        let dates: Vec<&str> = resp.prices.iter().map(|p| p.date.as_str()).collect();
+        let dates: Vec<i64> = resp.prices.iter().map(|p| p.date).collect();
         let mut deduped = dates.clone();
         deduped.dedup();
         assert_eq!(dates, deduped, "Sampling produced duplicate dates");

@@ -722,7 +722,7 @@ fn tool_execute_end_to_end() {
         .iter()
         .enumerate()
         .map(|(i, d)| UnderlyingPrice {
-            date: d.format("%Y-%m-%d").to_string(),
+            date: d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp(),
             open: opens[i],
             high: highs[i],
             low: lows[i],

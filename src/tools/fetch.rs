@@ -81,8 +81,12 @@ pub async fn execute_with_provider(
         }
     }
 
-    let first_date = dates.first().map(|d| d.format("%Y-%m-%d").to_string());
-    let last_date = dates.last().map(|d| d.format("%Y-%m-%d").to_string());
+    let first_date = dates
+        .first()
+        .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp());
+    let last_date = dates
+        .last()
+        .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp());
 
     // Perform blocking filesystem work off the async executor thread
     let file_path = write_parquet(path, df).await?;
@@ -305,8 +309,9 @@ mod tests {
             vec!["date", "open", "high", "low", "close", "adjclose", "volume"]
         );
         assert!(response.file_path.ends_with(".parquet"));
-        assert_eq!(response.date_range.start, Some("2024-01-01".to_string()));
-        assert_eq!(response.date_range.end, Some("2024-01-03".to_string()));
+        // 2024-01-01 00:00:00 UTC = 1704067200, 2024-01-03 00:00:00 UTC = 1704240000
+        assert_eq!(response.date_range.start, Some(1_704_067_200));
+        assert_eq!(response.date_range.end, Some(1_704_240_000));
 
         // Verify file was created
         assert!(std::path::Path::new(&response.file_path).exists());

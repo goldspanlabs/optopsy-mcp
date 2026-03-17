@@ -37,6 +37,7 @@ pub async fn execute(
         None,
         None,
         crate::engine::types::Interval::Daily,
+        None,
     )
     .await
     .context("Failed to load OHLCV data")?;
@@ -68,7 +69,7 @@ pub async fn execute(
             }
         })
         .collect();
-    let dates: Vec<String> = prices[1..].iter().map(|p| p.date.clone()).collect();
+    let dates: Vec<i64> = prices[1..].iter().map(|p| p.date).collect();
 
     let (regime_labels, regime_names, hmm_params) = match method {
         "volatility_cluster" => {
@@ -93,7 +94,7 @@ pub async fn execute(
     for i in start_idx..regime_labels.len().min(dates.len()) {
         if regime_labels[i] < n_regimes {
             regime_series.push(RegimeSeriesPoint {
-                date: dates[i].clone(),
+                date: epoch_to_date_string(dates[i]),
                 regime: regime_names[regime_labels[i]].clone(),
             });
         }
@@ -195,6 +196,14 @@ pub async fn execute(
         transition_matrix,
         regime_series,
     ))
+}
+
+/// Convert an epoch timestamp (seconds) to a `YYYY-MM-DD` date string.
+fn epoch_to_date_string(epoch: i64) -> String {
+    chrono::DateTime::from_timestamp(epoch, 0).map_or_else(
+        || format!("{epoch}"),
+        |dt| dt.naive_utc().format("%Y-%m-%d").to_string(),
+    )
 }
 
 /// Classify each bar using a Gaussian Hidden Markov Model.
@@ -482,7 +491,9 @@ mod tests {
     use super::*;
 
     /// Build a deterministic synthetic price series with alternating high/low volatility.
+    #[allow(clippy::cast_possible_wrap)]
     fn synthetic_prices_alternating_vol(n: usize) -> Vec<crate::tools::response_types::PriceBar> {
+        let base_epoch: i64 = 1_577_836_800; // 2020-01-01T00:00:00Z
         let mut prices = Vec::with_capacity(n);
         let mut close = 100.0_f64;
         for i in 0..n {
@@ -492,7 +503,7 @@ mod tests {
             close += delta;
             close = close.max(1.0); // avoid zero/negative
             prices.push(crate::tools::response_types::PriceBar {
-                date: format!("2020-01-{:02}", (i % 28) + 1),
+                date: base_epoch + (i as i64) * 86400,
                 open: close,
                 high: close + 0.1,
                 low: close - 0.1,
@@ -505,12 +516,14 @@ mod tests {
     }
 
     /// Build a monotonically rising price series (deterministic uptrend).
+    #[allow(clippy::cast_possible_wrap)]
     fn rising_prices(n: usize) -> Vec<crate::tools::response_types::PriceBar> {
+        let base_epoch: i64 = 1_577_836_800; // 2020-01-01T00:00:00Z
         (0..n)
             .map(|i| {
                 let close = 100.0 + i as f64 * 0.5;
                 crate::tools::response_types::PriceBar {
-                    date: format!("2020-01-{:02}", (i % 28) + 1),
+                    date: base_epoch + (i as i64) * 86400,
                     open: close,
                     high: close + 0.05,
                     low: close - 0.05,
@@ -577,9 +590,10 @@ mod tests {
     fn test_trend_strength_zero_long_sma_guard() {
         // Prices of all zeros would yield long_sma = 0 → division by zero.
         // The guard should return n_regimes (unclassified) instead of Inf/NaN.
+        let base_epoch: i64 = 1_577_836_800; // 2020-01-01T00:00:00Z
         let prices: Vec<crate::tools::response_types::PriceBar> = (0..200)
             .map(|i| crate::tools::response_types::PriceBar {
-                date: format!("2020-01-{:02}", (i % 28) + 1),
+                date: base_epoch + i64::from(i) * 86400,
                 open: 0.0,
                 high: 0.0,
                 low: 0.0,

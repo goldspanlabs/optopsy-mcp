@@ -38,7 +38,7 @@ pub struct BacktestDataQuality {
 /// OHLCV price bar for overlaying the underlying's price on charts.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct UnderlyingPrice {
-    pub date: String,
+    pub date: i64,
     pub open: f64,
     pub high: f64,
     pub low: f64,
@@ -238,8 +238,8 @@ pub struct CompareResponse {
 /// Start and end date strings for a data range.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DateRange {
-    pub start: Option<String>,
-    pub end: Option<String>,
+    pub start: Option<i64>,
+    pub end: Option<i64>,
 }
 
 /// AI-enriched response for `list_strategies`
@@ -291,7 +291,7 @@ pub struct FetchResponse {
 /// A single OHLCV price bar for `get_raw_prices`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PriceBar {
-    pub date: String,
+    pub date: i64,
     pub open: f64,
     pub high: f64,
     pub low: f64,

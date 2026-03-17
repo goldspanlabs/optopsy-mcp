@@ -1504,9 +1504,9 @@ async fn get_raw_prices_returns_bars() {
 
     let prices = resp["prices"].as_array().unwrap();
     assert_eq!(prices.len(), 3);
-    assert_eq!(prices[0]["date"], "2024-01-02");
+    assert_eq!(prices[0]["date"], 1_704_153_600); // 2024-01-02T00:00:00Z
     assert_eq!(prices[0]["open"], 100.0);
-    assert_eq!(prices[2]["date"], "2024-01-04");
+    assert_eq!(prices[2]["date"], 1_704_326_400); // 2024-01-04T00:00:00Z
     assert_eq!(prices[2]["close"], 103.5);
 
     client.cancel().await.unwrap();

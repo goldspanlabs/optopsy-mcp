@@ -23,7 +23,7 @@ pub enum DisplayType {
 /// A single date + value point for an indicator series.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct IndicatorPoint {
-    pub date: String,
+    pub date: i64,
     pub value: f64,
 }
 

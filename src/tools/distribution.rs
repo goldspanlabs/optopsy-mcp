@@ -31,6 +31,7 @@ pub async fn execute(
                 None,
                 None,
                 crate::engine::types::Interval::Daily,
+                None,
             )
             .await
             .context("Failed to load OHLCV data")?;

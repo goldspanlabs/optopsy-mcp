@@ -101,7 +101,7 @@ fn extract_indicators_from_formula(
         return vec![];
     }
 
-    let Ok(dates) = extract_date_strings(df, date_col) else {
+    let Ok(dates) = extract_epoch_seconds(df, date_col) else {
         return vec![];
     };
 
@@ -126,7 +126,7 @@ fn extract_indicators_from_formula(
 fn dispatch_indicator_call(
     call: &super::custom::IndicatorCall,
     df: &DataFrame,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let col = call.col_args.first().map_or("close", String::as_str);
     match call.func_name.as_str() {
@@ -285,11 +285,11 @@ fn dispatch_indicator_call(
 
 // ── Date extraction ──────────────────────────────────────────────────────────
 
-/// Extract date strings from a `DataFrame` column (handles Date and Datetime types).
+/// Extract epoch-second timestamps from a `DataFrame` column (handles Date and Datetime types).
 ///
 /// Returns an error if the column doesn't exist. Individual date extraction failures
-/// produce a sentinel empty string — `build_series` filters these out alongside NaN values.
-fn extract_date_strings(df: &DataFrame, date_col: &str) -> Result<Vec<String>, PolarsError> {
+/// produce a sentinel `0` — `build_series` filters these out alongside NaN values.
+fn extract_epoch_seconds(df: &DataFrame, date_col: &str) -> Result<Vec<i64>, PolarsError> {
     let col = df.column(date_col)?;
     let n = df.height();
     let is_datetime = date_col == "datetime";
@@ -297,19 +297,13 @@ fn extract_date_strings(df: &DataFrame, date_col: &str) -> Result<Vec<String>, P
     for i in 0..n {
         if is_datetime {
             match extract_datetime_from_column(col, i) {
-                Ok(dt) => {
-                    if dt.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
-                        dates.push(dt.format("%Y-%m-%d").to_string());
-                    } else {
-                        dates.push(dt.format("%Y-%m-%dT%H:%M:%S").to_string());
-                    }
-                }
-                Err(_) => dates.push(String::new()),
+                Ok(dt) => dates.push(dt.and_utc().timestamp()),
+                Err(_) => dates.push(0),
             }
         } else {
             match extract_date_from_column(col, i) {
-                Ok(d) => dates.push(d.format("%Y-%m-%d").to_string()),
-                Err(_) => dates.push(String::new()),
+                Ok(d) => dates.push(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp()),
+                Err(_) => dates.push(0),
             }
         }
     }
@@ -318,16 +312,16 @@ fn extract_date_strings(df: &DataFrame, date_col: &str) -> Result<Vec<String>, P
 
 // ── Series builder helpers ───────────────────────────────────────────────────
 
-/// Build an `IndicatorSeries` from padded values and date strings, filtering NaN
-/// and empty-date sentinels. Samples down to `MAX_INDICATOR_POINTS` if needed.
+/// Build an `IndicatorSeries` from padded values and epoch-second timestamps, filtering NaN
+/// and zero-date sentinels. Samples down to `MAX_INDICATOR_POINTS` if needed.
 /// Returns `(series, total_raw_points)` so callers can report sampling metadata.
-fn build_series(label: &str, padded: &[f64], dates: &[String]) -> (IndicatorSeries, usize) {
+fn build_series(label: &str, padded: &[f64], dates: &[i64]) -> (IndicatorSeries, usize) {
     let mut points: Vec<IndicatorPoint> = padded
         .iter()
         .zip(dates.iter())
-        .filter(|(&v, d)| !v.is_nan() && !d.is_empty())
-        .map(|(&v, d)| IndicatorPoint {
-            date: d.clone(),
+        .filter(|(&v, &d)| !v.is_nan() && d != 0)
+        .map(|(&v, &d)| IndicatorPoint {
+            date: d,
             value: (v * 10000.0).round() / 10000.0,
         })
         .collect();
@@ -351,7 +345,7 @@ fn make_indicator(
     name: String,
     display_type: DisplayType,
     padded: &[f64],
-    dates: &[String],
+    dates: &[i64],
     series_label: &str,
     thresholds: Vec<f64>,
 ) -> IndicatorData {
@@ -383,7 +377,7 @@ fn compute_rsi_indicator(
     df: &DataFrame,
     column: &str,
     period: usize,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(prices) = column_to_f64(df, column) else {
         return vec![];
@@ -408,7 +402,7 @@ fn compute_rsi_indicator(
     )]
 }
 
-fn compute_macd_indicator(df: &DataFrame, column: &str, dates: &[String]) -> Vec<IndicatorData> {
+fn compute_macd_indicator(df: &DataFrame, column: &str, dates: &[i64]) -> Vec<IndicatorData> {
     let Ok(prices) = column_to_f64(df, column) else {
         return vec![];
     };
@@ -435,7 +429,7 @@ fn compute_stochastic_indicator(
     high_col: &str,
     low_col: &str,
     period: usize,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(close) = column_to_f64(df, close_col) else {
         return vec![];
@@ -468,7 +462,7 @@ fn compute_ma_indicator(
     period: usize,
     ma_type: &str,
     ma_fn: fn(&[f64], usize) -> Vec<f64>,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(prices) = column_to_f64(df, column) else {
         return vec![];
@@ -494,7 +488,7 @@ fn compute_aroon_indicator(
     high_col: &str,
     low_col: &str,
     period: usize,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(highs) = column_to_f64(df, high_col) else {
         return vec![];
@@ -528,7 +522,7 @@ fn compute_aroon_up_indicator(
     df: &DataFrame,
     high_col: &str,
     period: usize,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(highs) = column_to_f64(df, high_col) else {
         return vec![];
@@ -561,7 +555,7 @@ fn compute_supertrend_indicator(
     low_col: &str,
     period: usize,
     multiplier: f64,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(close) = column_to_f64(df, close_col) else {
         return vec![];
@@ -601,7 +595,7 @@ fn compute_atr_indicator(
     high_col: &str,
     low_col: &str,
     period: usize,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(close) = column_to_f64(df, close_col) else {
         return vec![];
@@ -632,7 +626,7 @@ fn compute_bollinger_indicator(
     df: &DataFrame,
     column: &str,
     period: usize,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(prices) = column_to_f64(df, column) else {
         return vec![];
@@ -667,7 +661,7 @@ fn compute_keltner_indicator(
     low_col: &str,
     period: usize,
     multiplier: f64,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(close) = column_to_f64(df, close_col) else {
         return vec![];
@@ -709,7 +703,7 @@ fn compute_mfi_indicator(
     close_col: &str,
     volume_col: &str,
     period: usize,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(high) = column_to_f64(df, high_col) else {
         return vec![];
@@ -745,7 +739,7 @@ fn compute_obv_indicator(
     df: &DataFrame,
     price_col: &str,
     volume_col: &str,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(prices) = column_to_f64(df, price_col) else {
         return vec![];
@@ -776,7 +770,7 @@ fn compute_cmf_indicator(
     low_col: &str,
     volume_col: &str,
     period: usize,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(close) = column_to_f64(df, close_col) else {
         return vec![];
@@ -812,7 +806,7 @@ fn compute_williams_r_indicator(
     low_col: &str,
     close_col: &str,
     period: usize,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(high) = column_to_f64(df, high_col) else {
         return vec![];
@@ -843,7 +837,7 @@ fn compute_cci_indicator(
     df: &DataFrame,
     column: &str,
     period: usize,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(prices) = column_to_f64(df, column) else {
         return vec![];
@@ -875,7 +869,7 @@ fn compute_ppo_indicator(
     column: &str,
     short_period: usize,
     long_period: usize,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(prices) = column_to_f64(df, column) else {
         return vec![];
@@ -905,7 +899,7 @@ fn compute_cmo_indicator(
     df: &DataFrame,
     column: &str,
     period: usize,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(prices) = column_to_f64(df, column) else {
         return vec![];
@@ -934,7 +928,7 @@ fn compute_dms_indicator(
     close_col: &str,
     period: usize,
     component: &str,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(high) = column_to_f64(df, high_col) else {
         return vec![];
@@ -978,7 +972,7 @@ fn compute_psar_indicator(
     low_col: &str,
     accel: f64,
     max_accel: f64,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(high) = column_to_f64(df, high_col) else {
         return vec![];
@@ -1015,7 +1009,7 @@ fn compute_tsi_indicator(
     column: &str,
     fast: usize,
     slow: usize,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(prices) = column_to_f64(df, column) else {
         return vec![];
@@ -1046,7 +1040,7 @@ fn compute_vpt_indicator(
     df: &DataFrame,
     price_col: &str,
     volume_col: &str,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(prices) = column_to_f64(df, price_col) else {
         return vec![];
@@ -1075,7 +1069,7 @@ fn compute_donchian_indicator(
     high_col: &str,
     low_col: &str,
     period: usize,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(high) = column_to_f64(df, high_col) else {
         return vec![];
@@ -1116,7 +1110,7 @@ fn compute_ichimoku_indicator(
     high_col: &str,
     low_col: &str,
     close_col: &str,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(high) = column_to_f64(df, high_col) else {
         return vec![];
@@ -1163,7 +1157,7 @@ fn compute_envelope_indicator(
     column: &str,
     period: usize,
     pct: f64,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(prices) = column_to_f64(df, column) else {
         return vec![];
@@ -1205,7 +1199,7 @@ fn compute_ad_indicator(
     low_col: &str,
     close_col: &str,
     volume_col: &str,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(high) = column_to_f64(df, high_col) else {
         return vec![];
@@ -1240,7 +1234,7 @@ fn compute_pvi_nvi_indicator(
     price_col: &str,
     volume_col: &str,
     func_name: &str,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(prices) = column_to_f64(df, price_col) else {
         return vec![];
@@ -1278,7 +1272,7 @@ fn compute_ulcer_indicator(
     df: &DataFrame,
     column: &str,
     period: usize,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(prices) = column_to_f64(df, column) else {
         return vec![];
@@ -1303,7 +1297,7 @@ fn compute_roc_indicator(
     df: &DataFrame,
     column: &str,
     period: usize,
-    dates: &[String],
+    dates: &[i64],
 ) -> Vec<IndicatorData> {
     let Ok(prices) = column_to_f64(df, column) else {
         return vec![];
@@ -1471,9 +1465,10 @@ mod tests {
 
     #[test]
     fn sampling_limits_points() {
+        let base_epoch: i64 = 1_704_067_200; // 2024-01-01T00:00:00Z
         let points: Vec<IndicatorPoint> = (0..500)
             .map(|i| IndicatorPoint {
-                date: format!("2024-01-{:02}", (i % 28) + 1),
+                date: base_epoch + i64::from(i) * 86400,
                 value: f64::from(i),
             })
             .collect();

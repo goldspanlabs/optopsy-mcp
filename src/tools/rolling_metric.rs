@@ -47,6 +47,7 @@ pub async fn execute(
         None,
         None,
         crate::engine::types::Interval::Daily,
+        None,
     )
     .await
     .context("Failed to load OHLCV data")?;
@@ -57,11 +58,11 @@ pub async fn execute(
 
     // Compute daily returns, skipping bars where prior close is zero
     let mut returns: Vec<f64> = Vec::with_capacity(resp.prices.len());
-    let mut dates: Vec<String> = Vec::with_capacity(resp.prices.len());
+    let mut dates: Vec<i64> = Vec::with_capacity(resp.prices.len());
     for w in resp.prices.windows(2) {
         if w[0].close != 0.0 {
             returns.push((w[1].close - w[0].close) / w[0].close);
-            dates.push(w[1].date.clone());
+            dates.push(w[1].date);
         }
     }
 
@@ -84,21 +85,22 @@ pub async fn execute(
             None,
             None,
             crate::engine::types::Interval::Daily,
+            None,
         )
         .await
         .context(format!("Failed to load benchmark data for {bench_upper}"))?;
 
         // Align by date
-        let bench_map: std::collections::HashMap<&str, usize> = bench_resp
+        let bench_map: std::collections::HashMap<i64, usize> = bench_resp
             .prices
             .iter()
             .enumerate()
-            .map(|(i, p)| (p.date.as_str(), i))
+            .map(|(i, p)| (p.date, i))
             .collect();
 
         let mut aligned = vec![f64::NAN; dates.len()];
         for (i, date) in dates.iter().enumerate() {
-            if let Some(&bench_idx) = bench_map.get(date.as_str()) {
+            if let Some(&bench_idx) = bench_map.get(date) {
                 if bench_idx > 0 {
                     let prev = bench_resp.prices[bench_idx - 1].close;
                     if prev != 0.0 {
@@ -169,7 +171,7 @@ pub async fn execute(
     for (i, &val) in series_values.iter().enumerate() {
         if val.is_finite() {
             series.push(RollingPoint {
-                date: dates[i].clone(),
+                date: epoch_to_date_string(dates[i]),
                 value: val,
             });
         }
@@ -248,6 +250,14 @@ pub async fn execute(
         rolling_stats,
         series,
     ))
+}
+
+/// Convert an epoch timestamp (seconds) to a `YYYY-MM-DD` date string.
+fn epoch_to_date_string(epoch: i64) -> String {
+    chrono::DateTime::from_timestamp(epoch, 0).map_or_else(
+        || format!("{epoch}"),
+        |dt| dt.naive_utc().format("%Y-%m-%d").to_string(),
+    )
 }
 
 /// Rolling paired computation (e.g., for beta, correlation) filtering NaN benchmark values.

@@ -532,14 +532,8 @@ fn load_underlying_prices(
             else {
                 continue;
             };
-            // Use full timestamp for intraday, date-only for midnight
-            let fmt = if ndt.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
-                ndt.format("%Y-%m-%d").to_string()
-            } else {
-                ndt.format("%Y-%m-%dT%H:%M:%S").to_string()
-            };
             prices.push(tools::response_types::UnderlyingPrice {
-                date: fmt,
+                date: ndt.and_utc().timestamp(),
                 open,
                 high,
                 low,
@@ -568,7 +562,7 @@ fn load_underlying_prices(
             chrono::NaiveDate::from_num_days_from_ce_opt(days + EPOCH_DAYS_CE_OFFSET)
         {
             prices.push(tools::response_types::UnderlyingPrice {
-                date: date.format("%Y-%m-%d").to_string(),
+                date: date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp(),
                 open,
                 high,
                 low,
@@ -1633,6 +1627,7 @@ impl OptopsyServer {
                     params.end_date.as_deref(),
                     params.limit,
                     params.interval.unwrap_or_default(),
+                    params.tail,
                 )
                 .await
                 .map_err(|e| format!("Error: {e}"))
@@ -1935,8 +1930,15 @@ mod tests {
 
         let prices = load_underlying_prices(tmp.path(), Some(&filter_col), None);
         assert_eq!(prices.len(), 2, "should only return 15:59 bars");
-        assert!(prices[0].date.contains("15:59:00"));
-        assert!(prices[1].date.contains("15:59:00"));
+        // Verify epochs correspond to 15:59:00 times
+        let dt0 = chrono::DateTime::from_timestamp(prices[0].date, 0)
+            .unwrap()
+            .naive_utc();
+        let dt1 = chrono::DateTime::from_timestamp(prices[1].date, 0)
+            .unwrap()
+            .naive_utc();
+        assert_eq!(dt0.format("%H:%M:%S").to_string(), "15:59:00");
+        assert_eq!(dt1.format("%H:%M:%S").to_string(), "15:59:00");
     }
 
     #[test]
@@ -1950,7 +1952,15 @@ mod tests {
         // 8 intraday bars across 2 dates → 2 daily bars
         assert_eq!(prices.len(), 2, "should have one bar per date");
         // Daily bars should have date-only format (no time component)
-        assert!(!prices[0].date.contains('T'), "daily should be date-only");
+        // Daily bars should have midnight epoch (no time component)
+        let dt0 = chrono::DateTime::from_timestamp(prices[0].date, 0)
+            .unwrap()
+            .naive_utc();
+        assert_eq!(
+            dt0.format("%H:%M:%S").to_string(),
+            "00:00:00",
+            "daily should be midnight epoch"
+        );
     }
 
     #[test]
