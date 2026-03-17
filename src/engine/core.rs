@@ -37,11 +37,11 @@ fn load_ohlcv_closes(
 
     let mut closes_map = std::collections::BTreeMap::new();
 
-    // Intraday path: "datetime" Datetime column → extract date portion.
-    // Sort by datetime so later entries overwrite earlier ones, giving last-close-per-day.
+    // Intraday path: "quote_datetime" Datetime column → extract date portion.
+    // Sort by quote_datetime so later entries overwrite earlier ones, giving last-close-per-day.
     // Only take this branch when the column is actually a Datetime dtype.
     let has_datetime = df
-        .column("datetime")
+        .column("quote_datetime")
         .ok()
         .is_some_and(|c| matches!(c.dtype(), polars::prelude::DataType::Datetime(_, _)));
     if has_datetime {
@@ -49,13 +49,13 @@ fn load_ohlcv_closes(
             .clone()
             .lazy()
             .sort(
-                ["datetime"],
+                ["quote_datetime"],
                 polars::prelude::SortMultipleOptions::default(),
             )
             .collect()
             .ok()?;
         let closes = sorted.column("close").ok()?.f64().ok()?;
-        let dt_col_ref = sorted.column("datetime").ok()?;
+        let dt_col_ref = sorted.column("quote_datetime").ok()?;
         for i in 0..sorted.height() {
             let Ok(ndt) = super::price_table::extract_datetime_from_column(dt_col_ref, i) else {
                 continue;

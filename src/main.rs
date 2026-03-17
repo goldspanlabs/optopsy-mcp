@@ -25,7 +25,10 @@ async fn prices_handler(
     cache: Arc<data::cache::CachedStore>,
     axum::extract::Path(symbol): axum::extract::Path<String>,
     axum::extract::Query(query): axum::extract::Query<PricesQuery>,
-) -> Result<axum::Json<optopsy_mcp::tools::response_types::RawPricesResponse>, (axum::http::StatusCode, String)> {
+) -> Result<
+    axum::Json<optopsy_mcp::tools::response_types::RawPricesResponse>,
+    (axum::http::StatusCode, String),
+> {
     let interval = query.interval.unwrap_or_default();
     optopsy_mcp::tools::raw_prices::load_and_execute(
         &cache,

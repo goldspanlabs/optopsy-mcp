@@ -330,16 +330,16 @@ const DATE_FUNCTIONS: &[&str] = &[
 /// Inject a `__dt` column (Datetime type) derived from whichever date column exists.
 /// This normalizes `Date` → `Datetime` so all `.dt()` accessors work uniformly.
 fn inject_datetime_column(df: &DataFrame) -> Result<DataFrame, PolarsError> {
-    // Try "datetime" first, fall back to "date"
+    // Try "quote_datetime" first, fall back to "date"
     let names = df.get_column_names();
     let has = |n: &str| names.iter().any(|c| c.as_str() == n);
-    let col_name = if has("datetime") {
-        "datetime"
+    let col_name = if has("quote_datetime") {
+        "quote_datetime"
     } else if has("date") {
         "date"
     } else {
         return Err(PolarsError::ColumnNotFound(
-            "No 'date' or 'datetime' column found for date/time functions".into(),
+            "No 'date' or 'quote_datetime' column found for date/time functions".into(),
         ));
     };
 
@@ -2015,7 +2015,7 @@ mod tests {
             ),
         ];
         let dt_chunked: DatetimeChunked =
-            DatetimeChunked::new(PlSmallStr::from("datetime"), &datetimes);
+            DatetimeChunked::new(PlSmallStr::from("quote_datetime"), &datetimes);
         let df = DataFrame::new(
             3,
             vec![

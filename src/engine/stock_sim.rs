@@ -432,9 +432,9 @@ pub fn filter_session(
         return Ok(df.clone());
     };
 
-    // Only applies to DataFrames with a Datetime-typed "datetime" column
+    // Only applies to DataFrames with a Datetime-typed "quote_datetime" column
     let has_datetime = df
-        .column("datetime")
+        .column("quote_datetime")
         .ok()
         .is_some_and(|c| matches!(c.dtype(), DataType::Datetime(_, _)));
     if !has_datetime {
@@ -453,8 +453,8 @@ pub fn filter_session(
     let eh = lit(i64::from(end_time.hour()));
     let em = lit(i64::from(end_time.minute()));
 
-    let hour = col("datetime").dt().hour().cast(DataType::Int64);
-    let minute = col("datetime").dt().minute().cast(DataType::Int64);
+    let hour = col("quote_datetime").dt().hour().cast(DataType::Int64);
+    let minute = col("quote_datetime").dt().minute().cast(DataType::Int64);
 
     let ge_start = hour
         .clone()
@@ -483,11 +483,13 @@ fn volume_as_i64(
     let vol = df.column("volume")?;
     match vol.dtype() {
         DataType::Int64 => Ok(vol.i64()?.clone()),
-        DataType::UInt64 => {
+        DataType::UInt64 | DataType::Float64 => {
             let casted = vol.cast(&DataType::Int64)?;
             Ok(casted.i64()?.clone())
         }
-        other => anyhow::bail!("Unexpected volume dtype: {other:?}, expected Int64 or UInt64"),
+        other => {
+            anyhow::bail!("Unexpected volume dtype: {other:?}, expected Int64, UInt64, or Float64")
+        }
     }
 }
 
@@ -506,7 +508,7 @@ pub fn resample_ohlcv(
     interval: Interval,
 ) -> Result<polars::prelude::DataFrame> {
     let has_datetime_col = df
-        .column("datetime")
+        .column("quote_datetime")
         .ok()
         .and_then(|c| c.datetime().ok())
         .is_some();
@@ -526,7 +528,7 @@ pub fn resample_ohlcv(
         return Ok(df
             .clone()
             .lazy()
-            .sort(["datetime"], SortMultipleOptions::default())
+            .sort(["quote_datetime"], SortMultipleOptions::default())
             .collect()?);
     }
     if !has_datetime_col && interval == Interval::Daily {
@@ -564,12 +566,12 @@ fn resample_datetime(
     let df = df
         .clone()
         .lazy()
-        .sort(["datetime"], SortMultipleOptions::default())
+        .sort(["quote_datetime"], SortMultipleOptions::default())
         .collect()?;
 
     let dt_col_ref = df
-        .column("datetime")
-        .map_err(|e| anyhow::anyhow!("Missing 'datetime' column: {e}"))?;
+        .column("quote_datetime")
+        .map_err(|e| anyhow::anyhow!("Missing 'quote_datetime' column: {e}"))?;
 
     let opens = df.column("open")?.f64()?;
     let highs = df.column("high")?.f64()?;
@@ -701,9 +703,9 @@ fn resample_datetime(
             .iter()
             .map(|dt| dt.and_utc().timestamp_micros())
             .collect();
-        let dt_series = Series::new("datetime".into(), &timestamps_us)
+        let dt_series = Series::new("quote_datetime".into(), &timestamps_us)
             .cast(&DataType::Datetime(TimeUnit::Microseconds, None))
-            .map_err(|e| anyhow::anyhow!("Failed to create datetime column: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("Failed to create quote_datetime column: {e}"))?;
 
         let mut columns = vec![
             dt_series.into(),
@@ -918,14 +920,13 @@ pub fn load_ohlcv_df(
     let args = ScanArgsParquet::default();
     let mut lazy_base = LazyFrame::scan_parquet(ohlcv_path.into(), args)?;
 
-    // Inspect schema to determine whether this file uses "datetime" or "date".
-    // Only treat "datetime" as the time column when it is actually a Datetime dtype.
+    // Inspect schema to determine whether this file uses "quote_datetime" or "date".
     let schema = lazy_base.collect_schema()?;
     let date_col_name = if schema
-        .get("datetime")
+        .get("quote_datetime")
         .is_some_and(|dt| matches!(dt, DataType::Datetime(_, _)))
     {
-        "datetime"
+        "quote_datetime"
     } else {
         "date"
     };
@@ -933,7 +934,7 @@ pub fn load_ohlcv_df(
     let mut lazy = lazy_base.filter(col("open").gt(lit(0.0)).and(col("close").gt(lit(0.0))));
 
     if let Some(start) = start_date {
-        if date_col_name == "datetime" {
+        if date_col_name == "quote_datetime" {
             // Promote NaiveDate to midnight NaiveDateTime for Datetime column comparison
             let start_dt = start.and_hms_opt(0, 0, 0).unwrap();
             lazy = lazy.filter(col(date_col_name).gt_eq(lit(start_dt)));
@@ -942,7 +943,7 @@ pub fn load_ohlcv_df(
         }
     }
     if let Some(end) = end_date {
-        if date_col_name == "datetime" {
+        if date_col_name == "quote_datetime" {
             // Use next day at midnight with < to include all bars on the end date
             let end_next = end.succ_opt().unwrap_or(end).and_hms_opt(0, 0, 0).unwrap();
             lazy = lazy.filter(col(date_col_name).lt(lit(end_next)));
@@ -992,8 +993,8 @@ pub fn bars_from_df(df: &polars::prelude::DataFrame) -> Result<Vec<Bar>> {
 
     // Intraday path: "datetime" column (Datetime type)
     let date_col_name = detect_date_col(df);
-    if date_col_name == "datetime" {
-        let dt_col_ref = df.column("datetime")?;
+    if date_col_name == "quote_datetime" {
+        let dt_col_ref = df.column("quote_datetime")?;
         for i in 0..df.height() {
             let Ok(datetime) =
                 crate::engine::price_table::extract_datetime_from_column(dt_col_ref, i)
@@ -1078,9 +1079,9 @@ type DateTimeFilter = Option<HashSet<NaiveDateTime>>;
 /// Returns `"datetime"` only if the column exists **and** has a `Datetime` dtype,
 /// otherwise falls back to `"date"`.
 pub fn detect_date_col(df: &polars::prelude::DataFrame) -> &'static str {
-    if let Ok(col) = df.column("datetime") {
+    if let Ok(col) = df.column("quote_datetime") {
         if matches!(col.dtype(), polars::prelude::DataType::Datetime(_, _)) {
-            return "datetime";
+            return "quote_datetime";
         }
     }
     "date"
@@ -1115,7 +1116,7 @@ pub fn build_stock_signal_filters(
     }
 
     let date_col = detect_date_col(ohlcv_df);
-    let is_intraday = date_col == "datetime";
+    let is_intraday = date_col == "quote_datetime";
 
     // Check for cross-symbol references
     let has_cross = params
@@ -1797,7 +1798,7 @@ mod tests {
             })
             .collect();
 
-        let dt_series = Series::new("datetime".into(), &timestamps_us)
+        let dt_series = Series::new("quote_datetime".into(), &timestamps_us)
             .cast(&DataType::Datetime(TimeUnit::Microseconds, None))
             .unwrap();
 
@@ -1819,7 +1820,13 @@ mod tests {
         .hstack(&[dt_series.into()])
         .unwrap()
         .select([
-            "datetime", "open", "high", "low", "close", "adjclose", "volume",
+            "quote_datetime",
+            "open",
+            "high",
+            "low",
+            "close",
+            "adjclose",
+            "volume",
         ])
         .unwrap();
 
@@ -1844,7 +1851,7 @@ mod tests {
         assert_eq!(result.height(), 3);
 
         // Output should have "datetime" column (intraday target)
-        assert!(result.column("datetime").is_ok());
+        assert!(result.column("quote_datetime").is_ok());
         assert!(result.column("date").is_err());
 
         let opens = result.column("open").unwrap().f64().unwrap();
@@ -1901,7 +1908,7 @@ mod tests {
 
         // Output should have "date" column (daily target), not "datetime"
         assert!(result.column("date").is_ok());
-        assert!(result.column("datetime").is_err());
+        assert!(result.column("quote_datetime").is_err());
 
         let opens = result.column("open").unwrap().f64().unwrap();
         let highs = result.column("high").unwrap().f64().unwrap();
@@ -1976,7 +1983,7 @@ mod tests {
             "unexpected 5m bar count: {}",
             result.height()
         );
-        assert!(result.column("datetime").is_ok());
+        assert!(result.column("quote_datetime").is_ok());
     }
 
     #[test]
@@ -1988,7 +1995,7 @@ mod tests {
             "unexpected hourly bar count: {}",
             result.height()
         );
-        assert!(result.column("datetime").is_ok());
+        assert!(result.column("quote_datetime").is_ok());
     }
 
     #[test]
@@ -2202,7 +2209,7 @@ mod tests {
                     .unwrap(),
             ];
         let dt_chunked: DatetimeChunked =
-            DatetimeChunked::new(PlSmallStr::from("datetime"), &datetimes);
+            DatetimeChunked::new(PlSmallStr::from("quote_datetime"), &datetimes);
         let df = DataFrame::new(
             1,
             vec![
@@ -2211,7 +2218,7 @@ mod tests {
             ],
         )
         .unwrap();
-        assert_eq!(detect_date_col(&df), "datetime");
+        assert_eq!(detect_date_col(&df), "quote_datetime");
     }
 
     #[test]
@@ -2239,7 +2246,7 @@ mod tests {
                     .unwrap(),
             ];
         let dt_chunked: DatetimeChunked =
-            DatetimeChunked::new(PlSmallStr::from("datetime"), &datetimes);
+            DatetimeChunked::new(PlSmallStr::from("quote_datetime"), &datetimes);
         let df = DataFrame::new(
             1,
             vec![
@@ -2249,7 +2256,7 @@ mod tests {
             ],
         )
         .unwrap();
-        assert_eq!(detect_date_col(&df), "datetime");
+        assert_eq!(detect_date_col(&df), "quote_datetime");
     }
 
     #[test]
@@ -2262,7 +2269,7 @@ mod tests {
             1,
             vec![
                 date_col,
-                Series::new("datetime".into(), &["2024-01-02 09:30:00"]).into(),
+                Series::new("quote_datetime".into(), &["2024-01-02 09:30:00"]).into(),
                 Series::new("close".into(), &[100.0]).into(),
             ],
         )

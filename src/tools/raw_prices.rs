@@ -33,7 +33,7 @@ pub fn execute(
         let start_date = start
             .parse::<chrono::NaiveDate>()
             .with_context(|| format!("Invalid start_date: {start}"))?;
-        if date_col_name == "datetime" {
+        if date_col_name == "quote_datetime" {
             let start_dt = start_date.and_hms_opt(0, 0, 0).unwrap();
             lazy = lazy.filter(col(date_col_name).gt_eq(lit(start_dt)));
         } else {
@@ -44,7 +44,7 @@ pub fn execute(
         let end_date = end
             .parse::<chrono::NaiveDate>()
             .with_context(|| format!("Invalid end_date: {end}"))?;
-        if date_col_name == "datetime" {
+        if date_col_name == "quote_datetime" {
             let end_next = end_date
                 .succ_opt()
                 .unwrap_or(end_date)
@@ -63,6 +63,9 @@ pub fn execute(
 
     // Apply interval resampling (passthrough for same-interval / Min1)
     let filtered = crate::engine::stock_sim::resample_ohlcv(&filtered, interval)?;
+
+    // Re-detect date column — resampling may change it (e.g., quote_datetime → date for Daily)
+    let date_col_name = crate::engine::stock_sim::detect_date_col(&filtered);
 
     let total_rows = filtered.height();
 
@@ -200,24 +203,17 @@ pub async fn load_and_execute(
     let upper = symbol.to_uppercase();
 
     // Search across OHLCV categories (etf, stocks, futures, indices)
-    let path = cache
-        .find_ohlcv(&upper)
-        .with_context(|| format!("No OHLCV data found for {upper}. Upload parquet to the cache directory."))?;
+    let path = cache.find_ohlcv(&upper).with_context(|| {
+        format!("No OHLCV data found for {upper}. Upload parquet to the cache directory.")
+    })?;
 
     // Read parquet into DataFrame
     let df = tokio::task::spawn_blocking(move || -> Result<DataFrame> {
         let args = ScanArgsParquet::default();
         let path_str = path.to_string_lossy();
-        let mut df = LazyFrame::scan_parquet(path_str.as_ref().into(), args)?
+        LazyFrame::scan_parquet(path_str.as_ref().into(), args)?
             .collect()
-            .context("Failed to read OHLCV parquet")?;
-
-        // Normalize: rename "quote_datetime" → "datetime" so downstream code
-        // (detect_date_col, resample_ohlcv, execute) works uniformly.
-        if df.schema().contains("quote_datetime") && !df.schema().contains("datetime") {
-            df.rename("quote_datetime", "datetime".into())?;
-        }
-        Ok(df)
+            .context("Failed to read OHLCV parquet")
     })
     .await
     .context("Parquet read task panicked")??;

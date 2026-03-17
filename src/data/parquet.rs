@@ -33,6 +33,10 @@ impl ParquetStore {
 /// When a new alias is created (`Date` or `String` source), the caller is
 /// responsible for dropping the original column if it differs from
 /// [`QUOTE_DATETIME_COL`] and still appears in the collected schema.
+/// Offset added when casting Date → Datetime for options data: 15:59:30 (30s before close).
+/// Options quotes are end-of-day snapshots, so midnight is misleading.
+const EOD_OFFSET_US: i64 = (15 * 3600 + 59 * 60 + 30) * 1_000_000;
+
 fn apply_datetime_normalization(
     lazy: LazyFrame,
     src_col: &'static str,
@@ -40,25 +44,26 @@ fn apply_datetime_normalization(
 ) -> LazyFrame {
     match src_dtype {
         DataType::Date => lazy.with_column(
-            col(src_col)
-                .cast(DataType::Datetime(TimeUnit::Microseconds, None))
-                .alias(QUOTE_DATETIME_COL),
+            (col(src_col).cast(DataType::Datetime(TimeUnit::Microseconds, None))
+                + lit(EOD_OFFSET_US).cast(DataType::Duration(TimeUnit::Microseconds)))
+            .alias(QUOTE_DATETIME_COL),
         ),
         DataType::Datetime(_, _) if src_col != QUOTE_DATETIME_COL => {
             lazy.rename([src_col], [QUOTE_DATETIME_COL], true)
         }
         DataType::String => lazy.with_column(
-            col(src_col)
+            (col(src_col)
                 .cast(DataType::Date)
                 .cast(DataType::Datetime(TimeUnit::Microseconds, None))
-                .alias(QUOTE_DATETIME_COL),
+                + lit(EOD_OFFSET_US).cast(DataType::Duration(TimeUnit::Microseconds)))
+            .alias(QUOTE_DATETIME_COL),
         ),
         _ => lazy, // already Datetime with the correct name
     }
 }
 
 /// Normalize the quote date/datetime column to a Datetime column named `quote_datetime`.
-/// If the source column is Date, it gets cast to Datetime at midnight (00:00:00).
+/// If the source column is Date, it gets cast to Datetime at 15:59:30 (30s before close).
 /// If it's already Datetime, it just gets renamed.
 pub fn normalize_quote_datetime(df: DataFrame) -> Result<DataFrame> {
     let (src_col, src_dtype) = if let Ok(c) = df.column(QUOTE_DATETIME_COL) {

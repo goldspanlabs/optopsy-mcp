@@ -126,7 +126,9 @@ impl OptopsyServer {
     fn ensure_ohlcv(&self, symbol: &str) -> Result<String, String> {
         match self.cache.find_ohlcv(symbol) {
             Some(path) => Ok(path.to_string_lossy().to_string()),
-            None => Err(format!("No OHLCV data found for {symbol}. Upload parquet to the cache directory.")),
+            None => Err(format!(
+                "No OHLCV data found for {symbol}. Upload parquet to the cache directory."
+            )),
         }
     }
 
@@ -227,8 +229,8 @@ impl OptopsyServer {
             None
         };
 
-        let cross_ohlcv_paths = self
-            .resolve_cross_ohlcv_paths(entry_signal.as_ref(), exit_signal.as_ref(), &[], &[])?;
+        let cross_ohlcv_paths =
+            self.resolve_cross_ohlcv_paths(entry_signal.as_ref(), exit_signal.as_ref(), &[], &[])?;
 
         let leg_deltas = resolve_leg_deltas(leg_deltas, &strategy)?;
 
@@ -294,13 +296,12 @@ impl OptopsyServer {
 
         let ohlcv_path = self.ensure_ohlcv(&symbol)?;
 
-        let cross_ohlcv_paths = self
-            .resolve_cross_ohlcv_paths(
-                base.entry_signal.as_ref(),
-                base.exit_signal.as_ref(),
-                &[],
-                &[],
-            )?;
+        let cross_ohlcv_paths = self.resolve_cross_ohlcv_paths(
+            base.entry_signal.as_ref(),
+            base.exit_signal.as_ref(),
+            &[],
+            &[],
+        )?;
 
         let start_date = base
             .start_date
@@ -412,19 +413,23 @@ fn load_underlying_prices(path: &std::path::Path) -> Vec<tools::response_types::
         return vec![];
     };
 
-    // Detect whether this file uses "datetime" or "date" column, and whether
+    // Detect whether this file uses "quote_datetime" or "date" column, and whether
     // the date column stores a Datetime type (needs the intraday formatting path).
     let Ok(schema) = lf.clone().collect_schema() else {
         return vec![];
     };
     let has_datetime_col = schema
-        .get("datetime")
+        .get("quote_datetime")
         .is_some_and(|dt| matches!(dt, polars::prelude::DataType::Datetime(_, _)));
     let date_col_is_datetime = schema
         .get("date")
         .is_some_and(|dt| matches!(dt, polars::prelude::DataType::Datetime(_, _)));
     let has_datetime = has_datetime_col || date_col_is_datetime;
-    let date_col_name = if has_datetime_col { "datetime" } else { "date" };
+    let date_col_name = if has_datetime_col {
+        "quote_datetime"
+    } else {
+        "date"
+    };
 
     let Ok(df) = lf
         .select([
@@ -815,13 +820,12 @@ impl OptopsyServer {
                 let ohlcv_path = self.ensure_ohlcv(&symbol)?;
 
                 // Resolve cross-symbol OHLCV paths for signals
-                let cross_ohlcv_paths = self
-                    .resolve_cross_ohlcv_paths(
-                        Some(&params.entry_signal),
-                        params.exit_signal.as_ref(),
-                        &[],
-                        &[],
-                    )?;
+                let cross_ohlcv_paths = self.resolve_cross_ohlcv_paths(
+                    Some(&params.entry_signal),
+                    params.exit_signal.as_ref(),
+                    &[],
+                    &[],
+                )?;
 
                 // Load underlying prices for chart overlay
                 let prices_path = std::path::PathBuf::from(&ohlcv_path);
@@ -1463,13 +1467,12 @@ impl OptopsyServer {
                         None
                     };
 
-                    let cross_ohlcv_paths = self
-                        .resolve_cross_ohlcv_paths(
-                            params.entry_signal.as_ref(),
-                            params.exit_signal.as_ref(),
-                            &[],
-                            &[],
-                        )?;
+                    let cross_ohlcv_paths = self.resolve_cross_ohlcv_paths(
+                        params.entry_signal.as_ref(),
+                        params.exit_signal.as_ref(),
+                        &[],
+                        &[],
+                    )?;
 
                     let mut sim_params = params.sim_params;
                     sim_params.entry_signal = params.entry_signal;
