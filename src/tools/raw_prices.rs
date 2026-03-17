@@ -111,8 +111,8 @@ pub fn execute(
 
     let mut bars: Vec<PriceBar> = Vec::with_capacity(rows);
 
-    // Intraday path: "datetime" Datetime column → format with time
-    if let Ok(dt_col_ref) = output_df.column("datetime") {
+    // Intraday path: Datetime column → format with time
+    if let Ok(dt_col_ref) = output_df.column(date_col_name) {
         if matches!(
             dt_col_ref.dtype(),
             polars::prelude::DataType::Datetime(_, _)
@@ -144,8 +144,8 @@ pub fn execute(
         }
     }
 
-    // Daily path: "date" Date column
-    let dates = output_df.column("date")?.date()?.clone();
+    // Daily path: Date column (typically "date")
+    let dates = output_df.column(date_col_name)?.date()?.clone();
     for i in 0..rows {
         let days_since_epoch = dates
             .phys
@@ -219,9 +219,16 @@ pub async fn load_and_execute(
     let df = tokio::task::spawn_blocking(move || -> Result<DataFrame> {
         let args = ScanArgsParquet::default();
         let path_str = path.to_string_lossy();
-        LazyFrame::scan_parquet(path_str.as_ref().into(), args)?
+        let mut df = LazyFrame::scan_parquet(path_str.as_ref().into(), args)?
             .collect()
-            .context("Failed to read OHLCV parquet")
+            .context("Failed to read OHLCV parquet")?;
+
+        // Normalize: rename "quote_datetime" → "datetime" so downstream code
+        // (detect_date_col, resample_ohlcv, execute) works uniformly.
+        if df.schema().contains("quote_datetime") && !df.schema().contains("datetime") {
+            df.rename("quote_datetime", "datetime".into())?;
+        }
+        Ok(df)
     })
     .await
     .context("Parquet read task panicked")??;

@@ -13,6 +13,33 @@ use tracing_subscriber::{self, EnvFilter};
 
 use optopsy_mcp::{data, server};
 
+/// Query parameters for the `/prices/:symbol` REST endpoint.
+#[derive(serde::Deserialize)]
+struct PricesQuery {
+    start_date: Option<String>,
+    end_date: Option<String>,
+    interval: Option<optopsy_mcp::engine::types::Interval>,
+}
+
+async fn prices_handler(
+    cache: Arc<data::cache::CachedStore>,
+    axum::extract::Path(symbol): axum::extract::Path<String>,
+    axum::extract::Query(query): axum::extract::Query<PricesQuery>,
+) -> Result<axum::Json<optopsy_mcp::tools::response_types::RawPricesResponse>, (axum::http::StatusCode, String)> {
+    let interval = query.interval.unwrap_or_default();
+    optopsy_mcp::tools::raw_prices::load_and_execute(
+        &cache,
+        &symbol,
+        query.start_date.as_deref(),
+        query.end_date.as_deref(),
+        None,
+        interval,
+    )
+    .await
+    .map(axum::Json)
+    .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -28,6 +55,7 @@ async fn main() -> Result<()> {
             session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
         };
 
+        let prices_cache = cache.clone();
         let service = StreamableHttpService::new(
             move || Ok(server::OptopsyServer::new(cache.clone())),
             LocalSessionManager::default().into(),
@@ -43,6 +71,13 @@ async fn main() -> Result<()> {
                 "/strategies",
                 axum::routing::get(|| async {
                     axum::Json(optopsy_mcp::tools::strategies::execute())
+                }),
+            )
+            .route(
+                "/prices/:symbol",
+                axum::routing::get({
+                    let cache = prices_cache.clone();
+                    move |path, query| prices_handler(cache.clone(), path, query)
                 }),
             )
             .nest_service("/mcp", service)
