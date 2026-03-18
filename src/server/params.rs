@@ -218,7 +218,7 @@ pub struct BacktestBaseParams {
     #[serde(default)]
     #[garde(skip)]
     pub side: Option<crate::engine::types::Side>,
-    /// Bar interval: "daily" (default), "weekly", "monthly", or intraday ("1m", "5m", "30m", "1h"). Stock mode only.
+    /// Bar interval: "daily" (default), "weekly", "monthly", or intraday ("1m", "5m", "10m", "15m", "30m", "1h", "4h"). Stock mode only.
     #[serde(default)]
     #[garde(skip)]
     pub interval: Option<crate::engine::types::Interval>,
@@ -1046,7 +1046,7 @@ pub struct CorrelateParams {
     #[garde(dive)]
     pub lag_range: Option<LagRange>,
     /// Bar interval for both series: "daily" (default), "weekly", "monthly", or intraday
-    /// ("1m", "5m", "30m", "1h"). Both series are resampled to this interval before
+    /// ("1m", "5m", "10m", "15m", "30m", "1h", "4h"). Both series are resampled to this interval before
     /// computing correlation and lag analysis.
     #[serde(default)]
     #[garde(skip)]
@@ -1104,7 +1104,7 @@ pub struct RegimeDetectParams {
     #[serde(default = "default_lookback_window")]
     #[garde(range(min = 5, max = 252))]
     pub lookback_window: usize,
-    /// Bar interval: "daily" (default), "weekly", "monthly", or intraday ("1m", "5m", "30m", "1h").
+    /// Bar interval: "daily" (default), "weekly", "monthly", or intraday ("1m", "5m", "10m", "15m", "30m", "1h", "4h").
     /// OHLCV data is resampled to this interval before applying the detection method.
     #[serde(default)]
     #[garde(skip)]
