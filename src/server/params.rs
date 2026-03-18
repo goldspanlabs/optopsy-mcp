@@ -1099,6 +1099,51 @@ fn default_regime_method() -> String {
     "volatility_cluster".to_string()
 }
 
+fn resolve_strategy_entries(
+    strats: Vec<SweepStrategyInput>,
+) -> Result<Vec<crate::engine::sweep::SweepStrategyEntry>, String> {
+    strats
+        .into_iter()
+        .map(|s| {
+            let name = s.name;
+            let strategy_def = crate::strategies::find_strategy(&name)
+                .ok_or_else(|| format!("Unknown strategy: {name}"))?;
+
+            let leg_delta_targets = if let Some(targets) = s.leg_delta_targets {
+                // Validate that the number of legs matches the strategy definition.
+                if targets.len() != strategy_def.legs.len() {
+                    return Err(format!(
+                        "Strategy '{}' expects {} leg(s) but {} leg delta target set(s) were provided",
+                        name,
+                        strategy_def.legs.len(),
+                        targets.len()
+                    ));
+                }
+                // Validate that each leg's sweep list is non-empty.
+                for (idx, leg_targets) in targets.iter().enumerate() {
+                    if leg_targets.is_empty() {
+                        return Err(format!(
+                            "Strategy '{name}' leg {idx} has an empty delta target list; each leg must have at least one target",
+                        ));
+                    }
+                }
+                targets
+            } else {
+                // Use strategy defaults — single value per leg
+                strategy_def
+                    .default_deltas()
+                    .iter()
+                    .map(|d| vec![d.target])
+                    .collect()
+            };
+            Ok(crate::engine::sweep::SweepStrategyEntry {
+                name,
+                leg_delta_targets,
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1261,7 +1306,7 @@ mod tests {
     }
 
     /// The handler unwraps `params.interval.unwrap_or(Interval::Daily)`.
-    /// Verify for CorrelateParams as well.
+    /// Verify for `CorrelateParams` as well.
     #[test]
     fn correlate_params_interval_unwrap_default() {
         let none_params = CorrelateParams {
@@ -1304,49 +1349,4 @@ mod tests {
             Interval::Min30
         );
     }
-}
-
-fn resolve_strategy_entries(
-    strats: Vec<SweepStrategyInput>,
-) -> Result<Vec<crate::engine::sweep::SweepStrategyEntry>, String> {
-    strats
-        .into_iter()
-        .map(|s| {
-            let name = s.name;
-            let strategy_def = crate::strategies::find_strategy(&name)
-                .ok_or_else(|| format!("Unknown strategy: {name}"))?;
-
-            let leg_delta_targets = if let Some(targets) = s.leg_delta_targets {
-                // Validate that the number of legs matches the strategy definition.
-                if targets.len() != strategy_def.legs.len() {
-                    return Err(format!(
-                        "Strategy '{}' expects {} leg(s) but {} leg delta target set(s) were provided",
-                        name,
-                        strategy_def.legs.len(),
-                        targets.len()
-                    ));
-                }
-                // Validate that each leg's sweep list is non-empty.
-                for (idx, leg_targets) in targets.iter().enumerate() {
-                    if leg_targets.is_empty() {
-                        return Err(format!(
-                            "Strategy '{name}' leg {idx} has an empty delta target list; each leg must have at least one target",
-                        ));
-                    }
-                }
-                targets
-            } else {
-                // Use strategy defaults — single value per leg
-                strategy_def
-                    .default_deltas()
-                    .iter()
-                    .map(|d| vec![d.target])
-                    .collect()
-            };
-            Ok(crate::engine::sweep::SweepStrategyEntry {
-                name,
-                leg_delta_targets,
-            })
-        })
-        .collect()
 }
