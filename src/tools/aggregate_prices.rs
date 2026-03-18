@@ -63,10 +63,23 @@ pub async fn execute(
     }
 
     let upper = symbol.to_uppercase();
+
+    // When no explicit date range is given, derive start_date from years so that
+    // load_and_execute bypasses its 7-day intraday cutoff (which only triggers
+    // when start_date is None).
+    let years_start = if start_date.is_none() && end_date.is_none() && years < 50 {
+        let cutoff =
+            chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
+        Some(cutoff.format("%Y-%m-%d").to_string())
+    } else {
+        None
+    };
+    let effective_start = start_date.or(years_start.as_deref());
+
     let resp = crate::tools::raw_prices::load_and_execute(
         cache,
         &upper,
-        start_date,
+        effective_start,
         end_date,
         None, // no limit
         resolved_interval,
@@ -75,18 +88,7 @@ pub async fn execute(
     .await
     .context("Failed to load OHLCV data")?;
 
-    // Filter by years if no explicit date range
-    let prices = if start_date.is_none() && end_date.is_none() && years < 50 {
-        let cutoff =
-            chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
-        let cutoff_epoch = cutoff.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
-        resp.prices
-            .into_iter()
-            .filter(|p| p.date >= cutoff_epoch)
-            .collect::<Vec<_>>()
-    } else {
-        resp.prices
-    };
+    let prices = resp.prices;
 
     if prices.len() < 2 {
         anyhow::bail!("Insufficient price data for {upper} (need at least 2 bars)");
