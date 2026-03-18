@@ -234,6 +234,9 @@ pub fn build_signal_filters(
         ));
     };
 
+    // Detect the date column name from the OHLCV DataFrame — may be "datetime" or "date"
+    let date_col = stock_sim::detect_date_col(&ohlcv_df);
+
     // Check if any signal references a cross-symbol
     let has_cross = params
         .entry_signal
@@ -254,12 +257,12 @@ pub fn build_signal_filters(
         let entry_dates = params
             .entry_signal
             .as_ref()
-            .map(|spec| signals::active_dates_multi(spec, &ohlcv_df, &cross_dfs, "date"))
+            .map(|spec| signals::active_dates_multi(spec, &ohlcv_df, &cross_dfs, date_col))
             .transpose()?;
         let exit_dates = params
             .exit_signal
             .as_ref()
-            .map(|spec| signals::active_dates_multi(spec, &ohlcv_df, &cross_dfs, "date"))
+            .map(|spec| signals::active_dates_multi(spec, &ohlcv_df, &cross_dfs, date_col))
             .transpose()?;
 
         Ok((entry_dates, exit_dates))
@@ -268,12 +271,12 @@ pub fn build_signal_filters(
         let entry_dates = params
             .entry_signal
             .as_ref()
-            .map(|spec| signals::active_dates(spec, &ohlcv_df, "date"))
+            .map(|spec| signals::active_dates(spec, &ohlcv_df, date_col))
             .transpose()?;
         let exit_dates = params
             .exit_signal
             .as_ref()
-            .map(|spec| signals::active_dates(spec, &ohlcv_df, "date"))
+            .map(|spec| signals::active_dates(spec, &ohlcv_df, date_col))
             .transpose()?;
 
         Ok((entry_dates, exit_dates))
