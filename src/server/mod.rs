@@ -983,9 +983,9 @@ impl OptopsyServer {
                         &chart_symbol,
                         chart_start.as_deref(),
                         chart_end.as_deref(),
-                        None, // no limit
+                        Some(2000), // cap to keep response size manageable
                         interval,
-                        None, // no tail
+                        Some(true), // tail: most recent bars covering trades
                     ))
                 })
                 .await
