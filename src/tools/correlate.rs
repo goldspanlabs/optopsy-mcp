@@ -8,7 +8,8 @@ use crate::data::cache::CachedStore;
 use crate::stats;
 use crate::tools::ai_format;
 use crate::tools::ai_helpers::{
-    compute_years_cutoff, epoch_to_date_string, pearson_p_value, subsample_to_max, validate_choice,
+    compute_years_cutoff, epoch_to_timestamp_string, pearson_p_value, subsample_to_max,
+    validate_choice,
 };
 use crate::tools::response_types::CorrelationSeries;
 use crate::tools::response_types::{
@@ -201,7 +202,7 @@ pub async fn execute(
             let start = i + 1 - window;
             let r = stats::pearson(&fa[start..=i], &fb[start..=i]);
             points.push(RollingCorrelationPoint {
-                date: epoch_to_date_string(dates[i]),
+                date: epoch_to_timestamp_string(dates[i], interval),
                 correlation: r,
             });
         }
@@ -217,7 +218,7 @@ pub async fn execute(
             .map(|i| ScatterPoint {
                 x: fa[i],
                 y: fb[i],
-                date: epoch_to_date_string(dates[i]),
+                date: epoch_to_timestamp_string(dates[i], interval),
             })
             .collect();
         subsample_to_max(all, 500)

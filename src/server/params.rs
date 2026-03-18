@@ -1016,7 +1016,7 @@ pub struct CorrelateParams {
     #[serde(default = "default_corr_mode")]
     #[garde(length(min = 1))]
     pub mode: String,
-    /// Rolling window size (days, for mode="rolling")
+    /// Rolling window size in bars/observations at the selected interval (for mode="rolling")
     #[serde(default = "default_window")]
     #[garde(range(min = 5, max = 504))]
     pub window: usize,
@@ -1084,7 +1084,7 @@ pub struct RegimeDetectParams {
     #[serde(default = "default_years")]
     #[garde(range(min = 1, max = 50))]
     pub years: u32,
-    /// Lookback window for rolling volatility/trend calculation (default: 21 trading days)
+    /// Lookback window for rolling volatility/trend calculation (default: 21 bars at the selected interval)
     #[serde(default = "default_lookback_window")]
     #[garde(range(min = 5, max = 252))]
     pub lookback_window: usize,
