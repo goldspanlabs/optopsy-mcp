@@ -7,7 +7,8 @@ use crate::data::cache::CachedStore;
 use crate::stats;
 use crate::tools::ai_format;
 use crate::tools::ai_helpers::{
-    compute_returns, compute_years_cutoff, epoch_to_date_string, subsample_to_max, validate_choice,
+    compute_returns, compute_years_cutoff, epoch_to_timestamp_string, subsample_to_max,
+    validate_choice,
 };
 use crate::tools::response_types::{RegimeDetectResponse, RegimeInfo, RegimeSeriesPoint};
 
@@ -20,6 +21,7 @@ pub async fn execute(
     n_regimes: usize,
     years: u32,
     lookback_window: usize,
+    interval: crate::engine::types::Interval,
 ) -> Result<RegimeDetectResponse> {
     validate_choice(
         method,
@@ -36,7 +38,7 @@ pub async fn execute(
         Some(&cutoff_str),
         None,
         None,
-        crate::engine::types::Interval::Daily,
+        interval,
         None,
     )
     .await
@@ -63,7 +65,7 @@ pub async fn execute(
 
     let (regime_labels, regime_names, hmm_params) = match method {
         "volatility_cluster" => {
-            let (l, n) = classify_by_volatility(&returns, lookback_window, n_regimes);
+            let (l, n) = classify_by_volatility(&returns, lookback_window, n_regimes, interval);
             (l, n, None)
         }
         "trend_state" => {
@@ -84,7 +86,7 @@ pub async fn execute(
     for i in start_idx..regime_labels.len().min(dates.len()) {
         if regime_labels[i] < n_regimes {
             regime_series.push(RegimeSeriesPoint {
-                date: epoch_to_date_string(dates[i]),
+                date: epoch_to_timestamp_string(dates[i], interval),
                 regime: regime_names[regime_labels[i]].clone(),
             });
         }
@@ -104,8 +106,9 @@ pub async fn execute(
     let mut regimes: Vec<RegimeInfo> = Vec::with_capacity(n_regimes);
 
     // Compute rolling vols once outside the loop to avoid redundant O(n) passes
+    let annualization = interval.bars_per_year().sqrt();
     let rolling_vols = stats::rolling_apply(&returns, lookback_window, |w| {
-        stats::std_dev(w) * 252.0_f64.sqrt()
+        stats::std_dev(w) * annualization
     });
 
     for (regime_idx, name) in regime_names.iter().enumerate() {
@@ -286,8 +289,9 @@ fn classify_by_volatility(
     returns: &[f64],
     lookback: usize,
     n_regimes: usize,
+    interval: crate::engine::types::Interval,
 ) -> (Vec<usize>, Vec<String>) {
-    let annualization = 252.0_f64.sqrt();
+    let annualization = interval.bars_per_year().sqrt();
     let rolling_vol =
         stats::rolling_apply(returns, lookback, |w| stats::std_dev(w) * annualization);
 
@@ -518,7 +522,12 @@ mod tests {
             .collect();
         let lookback = 10;
         let n_regimes = 2;
-        let (labels, names) = classify_by_volatility(&returns, lookback, n_regimes);
+        let (labels, names) = classify_by_volatility(
+            &returns,
+            lookback,
+            n_regimes,
+            crate::engine::types::Interval::Daily,
+        );
         assert_eq!(labels.len(), returns.len());
         assert_eq!(names.len(), n_regimes);
         // Labels must be either a valid regime index or the sentinel (n_regimes = unclassified)
@@ -597,7 +606,8 @@ mod tests {
             .windows(2)
             .map(|w| (w[1].close - w[0].close) / w[0].close)
             .collect();
-        let (labels, _) = classify_by_volatility(&returns, 20, 2);
+        let (labels, _) =
+            classify_by_volatility(&returns, 20, 2, crate::engine::types::Interval::Daily);
         let r0 = labels.iter().filter(|&&l| l == 0).count();
         let r1 = labels.iter().filter(|&&l| l == 1).count();
         assert!(r0 > 0, "regime 0 should have observations");

@@ -386,6 +386,24 @@ pub(crate) fn epoch_to_date_string(epoch: i64) -> String {
     )
 }
 
+/// Format an epoch timestamp as date-only or full datetime depending on interval.
+///
+/// For intraday intervals, returns `YYYY-MM-DD HH:MM` to avoid collapsing
+/// multiple bars onto the same date label. For daily and above, returns `YYYY-MM-DD`.
+pub(crate) fn epoch_to_timestamp_string(
+    epoch: i64,
+    interval: crate::engine::types::Interval,
+) -> String {
+    if interval.is_intraday() {
+        chrono::DateTime::from_timestamp(epoch, 0).map_or_else(
+            || format!("{epoch}"),
+            |dt| dt.naive_utc().format("%Y-%m-%d %H:%M").to_string(),
+        )
+    } else {
+        epoch_to_date_string(epoch)
+    }
+}
+
 /// Return a significance label for a p-value (e.g. "highly significant", "not significant").
 pub(crate) fn interpret_p_value(p: f64) -> &'static str {
     if p < P_HIGHLY_SIGNIFICANT {
