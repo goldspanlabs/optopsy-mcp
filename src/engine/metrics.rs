@@ -658,9 +658,14 @@ mod tests {
         assert!((Interval::Weekly.bars_per_year() - 52.0).abs() < f64::EPSILON);
         assert!((Interval::Monthly.bars_per_year() - 12.0).abs() < f64::EPSILON);
         assert!((Interval::Min1.bars_per_year() - 252.0 * 390.0).abs() < f64::EPSILON);
+        assert!((Interval::Min2.bars_per_year() - 252.0 * 195.0).abs() < f64::EPSILON);
+        assert!((Interval::Min3.bars_per_year() - 252.0 * 130.0).abs() < f64::EPSILON);
         assert!((Interval::Min5.bars_per_year() - 252.0 * 78.0).abs() < f64::EPSILON);
+        assert!((Interval::Min10.bars_per_year() - 252.0 * 39.0).abs() < f64::EPSILON);
+        assert!((Interval::Min15.bars_per_year() - 252.0 * 26.0).abs() < f64::EPSILON);
         assert!((Interval::Min30.bars_per_year() - 252.0 * 13.0).abs() < f64::EPSILON);
         assert!((Interval::Hour1.bars_per_year() - 252.0 * 7.0).abs() < f64::EPSILON);
+        assert!((Interval::Hour4.bars_per_year() - 252.0 * 2.0).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -670,8 +675,13 @@ mod tests {
         assert!(!Interval::Weekly.is_intraday());
         assert!(!Interval::Monthly.is_intraday());
         assert!(Interval::Min1.is_intraday());
+        assert!(Interval::Min2.is_intraday());
+        assert!(Interval::Min3.is_intraday());
         assert!(Interval::Min5.is_intraday());
+        assert!(Interval::Min10.is_intraday());
+        assert!(Interval::Min15.is_intraday());
         assert!(Interval::Min30.is_intraday());
         assert!(Interval::Hour1.is_intraday());
+        assert!(Interval::Hour4.is_intraday());
     }
 }

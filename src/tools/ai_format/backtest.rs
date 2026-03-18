@@ -383,6 +383,13 @@ pub fn format_stock_backtest(
         crate::engine::types::Side::Short => "Short",
     };
 
+    let conflict_str =
+        if params.conflict_resolution == crate::engine::types::ConflictResolution::StopLossFirst {
+            None
+        } else {
+            Some(format!("{:?}", params.conflict_resolution))
+        };
+
     let params_summary = StockBacktestParamsSummary {
         symbol: params.symbol.clone(),
         side: params.side,
@@ -394,6 +401,7 @@ pub fn format_stock_backtest(
         stop_loss: params.stop_loss,
         take_profit: params.take_profit,
         max_hold_days: params.max_hold_days,
+        max_hold_bars: params.max_hold_bars,
         entry_signal: params
             .entry_signal
             .as_ref()
@@ -406,6 +414,7 @@ pub fn format_stock_backtest(
         end_date: params.end_date.map(|d| d.format("%Y-%m-%d").to_string()),
         interval: params.interval.to_string(),
         sizing: params.sizing.clone(),
+        conflict_resolution: conflict_str,
     };
 
     if result.trade_log.is_empty() {

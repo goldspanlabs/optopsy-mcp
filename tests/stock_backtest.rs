@@ -8,7 +8,7 @@ use optopsy_mcp::engine::stock_sim::{
     build_stock_signal_filters, load_ohlcv_df, parse_ohlcv_bars, run_stock_backtest,
     StockBacktestParams,
 };
-use optopsy_mcp::engine::types::{Commission, ExitType, Side, Slippage};
+use optopsy_mcp::engine::types::{Commission, ConflictResolution, ExitType, Side, Slippage};
 use optopsy_mcp::signals::registry::SignalSpec;
 use optopsy_mcp::tools::response_types::UnderlyingPrice;
 use polars::prelude::*;
@@ -33,7 +33,10 @@ fn default_params() -> StockBacktestParams {
         stop_loss: None,
         take_profit: None,
         max_hold_days: None,
+        max_hold_bars: None,
         min_days_between_entries: None,
+        min_bars_between_entries: None,
+        conflict_resolution: ConflictResolution::default(),
         entry_signal: None,
         exit_signal: None,
         ohlcv_path: None,

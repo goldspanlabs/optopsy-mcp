@@ -7,7 +7,7 @@ use chrono::{Datelike, NaiveDate};
 use optopsy_mcp::engine::core::run_backtest;
 use optopsy_mcp::engine::sweep::{run_sweep, SweepDimensions, SweepParams, SweepStrategyEntry};
 use optopsy_mcp::engine::types::{
-    strategy_direction, Direction, ExitType, SimParams, Slippage, TradeSelector,
+    strategy_direction, ConflictResolution, Direction, ExitType, SimParams, Slippage, TradeSelector,
 };
 use optopsy_mcp::signals::registry::SignalSpec;
 
@@ -25,11 +25,14 @@ fn default_sim_params() -> SimParams {
         stop_loss: None,
         take_profit: None,
         max_hold_days: None,
+        max_hold_bars: None,
         entry_signal: None,
         exit_signal: None,
         ohlcv_path: None,
         cross_ohlcv_paths: std::collections::HashMap::new(),
         min_days_between_entries: None,
+        min_bars_between_entries: None,
+        conflict_resolution: None,
         exit_net_delta: None,
     }
 }
@@ -985,7 +988,10 @@ fn stock_sweep_single_entry_signal_produces_results() {
         stop_loss: None,
         take_profit: None,
         max_hold_days: Some(5),
+        max_hold_bars: None,
         min_days_between_entries: None,
+        min_bars_between_entries: None,
+        conflict_resolution: ConflictResolution::default(),
         entry_signal: None,
         exit_signal: None,
         ohlcv_path: Some(path),
@@ -1049,7 +1055,10 @@ fn stock_sweep_cartesian_product_generates_all_combos() {
         stop_loss: None,
         take_profit: None,
         max_hold_days: Some(5),
+        max_hold_bars: None,
         min_days_between_entries: None,
+        min_bars_between_entries: None,
+        conflict_resolution: ConflictResolution::default(),
         entry_signal: None,
         exit_signal: None,
         ohlcv_path: Some(path),

@@ -29,15 +29,30 @@ pub enum Interval {
     /// 1-minute bars
     #[serde(rename = "1m")]
     Min1,
+    /// 2-minute bars
+    #[serde(rename = "2m")]
+    Min2,
+    /// 3-minute bars
+    #[serde(rename = "3m")]
+    Min3,
     /// 5-minute bars
     #[serde(rename = "5m")]
     Min5,
+    /// 10-minute bars
+    #[serde(rename = "10m")]
+    Min10,
+    /// 15-minute bars
+    #[serde(rename = "15m")]
+    Min15,
     /// 30-minute bars
     #[serde(rename = "30m")]
     Min30,
     /// 1-hour bars
     #[serde(rename = "1h")]
     Hour1,
+    /// 4-hour bars
+    #[serde(rename = "4h")]
+    Hour4,
 }
 
 impl Interval {
@@ -46,21 +61,55 @@ impl Interval {
     /// Intraday counts assume a 6.5-hour regular session (390 minutes) × 252 trading days.
     /// `Hour1` uses 7 bars/day because hour-truncated bucketing produces bars at hours
     /// 9, 10, 11, 12, 13, 14, 15 for a 09:30–16:00 session.
+    /// `Hour4` uses 2 bars/day (approximate for a 6.5h session).
     pub fn bars_per_year(self) -> f64 {
         match self {
             Self::Daily => 252.0,
             Self::Weekly => 52.0,
             Self::Monthly => 12.0,
             Self::Min1 => 252.0 * 390.0,
+            Self::Min2 => 252.0 * 195.0,
+            Self::Min3 => 252.0 * 130.0,
             Self::Min5 => 252.0 * 78.0,
+            Self::Min10 => 252.0 * 39.0,
+            Self::Min15 => 252.0 * 26.0,
             Self::Min30 => 252.0 * 13.0,
             Self::Hour1 => 252.0 * 7.0,
+            Self::Hour4 => 252.0 * 2.0,
         }
     }
 
     /// Whether this interval represents intraday data.
     pub fn is_intraday(self) -> bool {
-        matches!(self, Self::Min1 | Self::Min5 | Self::Min30 | Self::Hour1)
+        matches!(
+            self,
+            Self::Min1
+                | Self::Min2
+                | Self::Min3
+                | Self::Min5
+                | Self::Min10
+                | Self::Min15
+                | Self::Min30
+                | Self::Hour1
+                | Self::Hour4
+        )
+    }
+
+    /// Fraction of bar range used as synthetic bid-ask spread for slippage.
+    ///
+    /// Wider bars (daily) have a larger fraction because the range is proportionally
+    /// larger relative to the actual spread. Tighter intraday bars use smaller fractions
+    /// to avoid overstating transaction costs.
+    pub fn spread_fraction(self) -> f64 {
+        match self {
+            Self::Daily | Self::Weekly | Self::Monthly => 0.10,
+            Self::Hour4 => 0.07,
+            Self::Hour1 => 0.05,
+            Self::Min30 => 0.04,
+            Self::Min15 | Self::Min10 => 0.035,
+            Self::Min5 | Self::Min3 | Self::Min2 => 0.03,
+            Self::Min1 => 0.02,
+        }
     }
 }
 
@@ -71,11 +120,28 @@ impl std::fmt::Display for Interval {
             Self::Weekly => write!(f, "weekly"),
             Self::Monthly => write!(f, "monthly"),
             Self::Min1 => write!(f, "1m"),
+            Self::Min2 => write!(f, "2m"),
+            Self::Min3 => write!(f, "3m"),
             Self::Min5 => write!(f, "5m"),
+            Self::Min10 => write!(f, "10m"),
+            Self::Min15 => write!(f, "15m"),
             Self::Min30 => write!(f, "30m"),
             Self::Hour1 => write!(f, "1h"),
+            Self::Hour4 => write!(f, "4h"),
         }
     }
+}
+
+/// How to resolve conflicts when both stop-loss and take-profit trigger on the same bar.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum ConflictResolution {
+    /// Assume stop-loss was hit first (conservative/pessimistic). Default.
+    #[default]
+    StopLossFirst,
+    /// Assume take-profit was hit first (optimistic).
+    TakeProfitFirst,
+    /// Pick whichever trigger price is closer to the bar's open (more realistic).
+    Nearest,
 }
 
 /// Trading session time-of-day filter for intraday data.
@@ -713,6 +779,10 @@ pub struct SimParams {
     pub take_profit: Option<f64>,
     #[garde(inner(range(min = 1)))]
     pub max_hold_days: Option<i32>,
+    /// Maximum bars to hold a position before force-closing (intraday alternative to `max_hold_days`).
+    #[serde(default)]
+    #[garde(inner(range(min = 1)))]
+    pub max_hold_bars: Option<i32>,
     /// Entry signal — only open trades on dates where this TA signal fires.
     /// OHLCV data is auto-loaded from the local Parquet cache when signals are present.
     #[serde(default)]
@@ -735,6 +805,14 @@ pub struct SimParams {
     #[serde(default)]
     #[garde(inner(range(min = 1)))]
     pub min_days_between_entries: Option<i32>,
+    /// Minimum bars between consecutive entries (intraday alternative to `min_days_between_entries`).
+    #[serde(default)]
+    #[garde(inner(range(min = 1)))]
+    pub min_bars_between_entries: Option<i32>,
+    /// How to resolve when both stop-loss and take-profit trigger on the same bar.
+    #[serde(default)]
+    #[garde(skip)]
+    pub conflict_resolution: Option<ConflictResolution>,
     /// Exit when the absolute net position delta exceeds this value.
     #[serde(default)]
     #[garde(inner(range(min = 0.0)))]
@@ -1232,11 +1310,14 @@ mod tests {
             stop_loss: None,
             take_profit: None,
             max_hold_days: None,
+            max_hold_bars: None,
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,
             cross_ohlcv_paths: HashMap::new(),
             min_days_between_entries: None,
+            min_bars_between_entries: None,
+            conflict_resolution: None,
             exit_net_delta: None,
         };
         assert!(p.validate().is_err());
