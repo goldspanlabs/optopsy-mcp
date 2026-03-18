@@ -173,6 +173,7 @@ fn formula_references_iv(formula: &str) -> bool {
 /// For pure IV signals (no OHLCV path), a minimal `DataFrame` is constructed from the IV aggregation.
 /// When `CrossSymbol` variants are present, loads secondary symbol `DataFrame`s
 /// from `params.cross_ohlcv_paths` and uses `active_dates_multi` for evaluation.
+#[allow(clippy::too_many_lines)]
 pub fn build_signal_filters(
     params: &BacktestParams,
     options_df: &DataFrame,
@@ -236,6 +237,26 @@ pub fn build_signal_filters(
 
     // Detect the date column name from the OHLCV DataFrame — may be "datetime" or "date"
     let date_col = stock_sim::detect_date_col(&ohlcv_df);
+
+    // For options backtests with intraday OHLCV data, filter to only the 15:59 bar
+    // per day to match options pricing time. This ensures signals evaluate against
+    // the same price context the options engine uses.
+    let ohlcv_df = if date_col == "datetime" {
+        ohlcv_df
+            .clone()
+            .lazy()
+            .filter(
+                col("datetime")
+                    .dt()
+                    .hour()
+                    .eq(lit(15))
+                    .and(col("datetime").dt().minute().eq(lit(59))),
+            )
+            .collect()
+            .unwrap_or(ohlcv_df)
+    } else {
+        ohlcv_df
+    };
 
     // Check if any signal references a cross-symbol
     let has_cross = params
