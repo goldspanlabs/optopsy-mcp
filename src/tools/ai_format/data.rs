@@ -153,4 +153,34 @@ mod tests {
         assert_eq!(response.categories["Spreads"], 1);
         assert!(response.summary.contains('3'));
     }
+
+    #[test]
+    fn format_list_symbols_empty() {
+        let response = format_list_symbols(0, vec![]);
+        assert_eq!(response.total, 0);
+        assert!(response.categories.is_empty());
+        assert!(response.summary.contains("No cached data"));
+    }
+
+    #[test]
+    fn format_list_symbols_with_categories() {
+        let categories = vec![
+            SymbolCategory {
+                category: "etf".to_string(),
+                count: 2,
+                symbols: vec!["QQQ".to_string(), "SPY".to_string()],
+            },
+            SymbolCategory {
+                category: "stocks".to_string(),
+                count: 1,
+                symbols: vec!["AAPL".to_string()],
+            },
+        ];
+        let response = format_list_symbols(3, categories);
+        assert_eq!(response.total, 3);
+        assert_eq!(response.categories.len(), 2);
+        assert!(response.summary.contains("3 symbols"));
+        assert!(response.summary.contains("2 categories"));
+        assert!(response.summary.contains("etf (2)"));
+    }
 }
