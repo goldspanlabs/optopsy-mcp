@@ -662,6 +662,9 @@ impl OptopsyServer {
     ///   - `validate` — Check formula syntax without saving
     ///   - `list` — Show all saved custom signals
     ///   - `get` — Load a saved signal's spec
+    ///   - `update` — Update a saved signal: rename (`new_name`), set display name (`display_name`),
+    ///     and/or change formula (`formula`). Requires `name` and `new_name` (can be same as `name`
+    ///     to update in-place without renaming)
     ///   - `delete` — Remove a saved signal
     ///
     /// **Common built-in signals** (use directly as `entry_signal`/`exit_signal` JSON — no search needed):
@@ -751,10 +754,24 @@ impl OptopsyServer {
                     let name = params.name.ok_or("'name' is required for action='get'")?;
                     tools::build_signal::Action::Get { name }
                 }
+                "update" => {
+                    let name = params
+                        .name
+                        .ok_or("'name' is required for action='update'")?;
+                    let new_name = params
+                        .new_name
+                        .ok_or("'new_name' is required for action='update'")?;
+                    tools::build_signal::Action::Update {
+                        name,
+                        new_name,
+                        display_name: params.display_name,
+                        formula: params.formula,
+                    }
+                }
                 "catalog" => tools::build_signal::Action::Catalog,
                 other => {
                     return Err(format!(
-                        "Invalid action: \"{other}\". Must be \"catalog\", \"search\", \"create\", \"list\", \"delete\", \"validate\", or \"get\"."
+                        "Invalid action: \"{other}\". Must be \"catalog\", \"search\", \"create\", \"list\", \"delete\", \"validate\", \"get\", or \"update\"."
                     ));
                 }
             };

@@ -1,13 +1,26 @@
 //! Persistent storage for custom signals.
 //!
 //! Signals are stored as JSON files in `~/.optopsy/signals/{name}.json`.
-//! Each file contains a serialized `SignalSpec`.
+//! Each file contains a `SavedSignal` envelope with an optional `display_name`
+//! and the `SignalSpec`. Legacy files containing bare `SignalSpec` are loaded
+//! transparently (backward compatible).
 
 use anyhow::{bail, Context, Result};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Component, PathBuf};
 
 use super::registry::SignalSpec;
+
+/// On-disk envelope for a saved signal. Wraps `SignalSpec` with optional metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SavedSignal {
+    /// Human-readable display name (may contain spaces, punctuation, etc.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    display_name: Option<String>,
+    /// The signal specification
+    spec: SignalSpec,
+}
 
 /// Test-only override for signals directory, allowing isolation via temp dirs.
 #[cfg(test)]
@@ -184,7 +197,7 @@ pub fn find_duplicate_formula(formula: &str, exclude_name: &str) -> Result<Optio
 /// Writes to a uniquely-named temporary file in the same directory first, then atomically
 /// renames it into place. Both the temporary path and final target path are checked for
 /// symlinks before writing to prevent symlink-based redirect attacks.
-pub fn save_signal(name: &str, spec: &SignalSpec) -> Result<()> {
+pub fn save_signal(name: &str, spec: &SignalSpec, display_name: Option<&str>) -> Result<()> {
     validate_name(name)?;
     let dir = signals_dir()?;
     let path = dir.join(format!("{name}.json"));
@@ -199,7 +212,11 @@ pub fn save_signal(name: &str, spec: &SignalSpec) -> Result<()> {
         }
     }
 
-    let json = serde_json::to_string_pretty(spec).context("Failed to serialize signal")?;
+    let envelope = SavedSignal {
+        display_name: display_name.map(String::from),
+        spec: spec.clone(),
+    };
+    let json = serde_json::to_string_pretty(&envelope).context("Failed to serialize signal")?;
 
     // Use a PID-qualified temp filename to avoid collisions between concurrent writers.
     let tmp_path = dir.join(format!(".{name}.{}.tmp", std::process::id()));
@@ -227,8 +244,11 @@ pub fn save_signal(name: &str, spec: &SignalSpec) -> Result<()> {
     Ok(())
 }
 
-/// Load a signal spec from disk by name.
-pub fn load_signal(name: &str) -> Result<SignalSpec> {
+/// Load a signal spec and optional display name from disk.
+///
+/// Supports both the new envelope format (`{ display_name, spec }`) and
+/// legacy bare `SignalSpec` files for backward compatibility.
+pub fn load_signal(name: &str) -> Result<(SignalSpec, Option<String>)> {
     validate_name(name)?;
     let dir = signals_dir()?;
     let path = dir.join(format!("{name}.json"));
@@ -237,9 +257,14 @@ pub fn load_signal(name: &str) -> Result<SignalSpec> {
     }
     let json = fs::read_to_string(&path)
         .with_context(|| format!("Failed to read signal file: {}", path.display()))?;
+
+    // Try envelope format first, then fall back to bare SignalSpec
+    if let Ok(envelope) = serde_json::from_str::<SavedSignal>(&json) {
+        return Ok((envelope.spec, envelope.display_name));
+    }
     let spec: SignalSpec =
         serde_json::from_str(&json).with_context(|| format!("Failed to parse signal '{name}'"))?;
-    Ok(spec)
+    Ok((spec, None))
 }
 
 /// Delete a saved signal by name.
@@ -252,6 +277,48 @@ pub fn delete_signal(name: &str) -> Result<()> {
     }
     fs::remove_file(&path)
         .with_context(|| format!("Failed to delete signal file: {}", path.display()))?;
+    Ok(())
+}
+
+/// Update a saved signal: rename, change display name, and/or update formula.
+pub fn update_signal(
+    old_name: &str,
+    new_name: &str,
+    new_display_name: Option<&str>,
+    new_formula: Option<&str>,
+) -> Result<()> {
+    validate_name(old_name)?;
+    validate_name(new_name)?;
+    let dir = signals_dir()?;
+    let old_path = dir.join(format!("{old_name}.json"));
+    let new_path = dir.join(format!("{new_name}.json"));
+    if !old_path.exists() {
+        bail!("Signal '{old_name}' not found");
+    }
+    if old_name != new_name && new_path.exists() {
+        bail!("Signal '{new_name}' already exists");
+    }
+
+    // Validate new formula if provided
+    if let Some(formula) = new_formula {
+        crate::signals::custom::validate_formula(formula)
+            .map_err(|e| anyhow::anyhow!("Invalid formula: {e}"))?;
+    }
+
+    // Load existing spec, optionally replace formula, then re-save
+    let (spec, _old_display) = load_signal(old_name)?;
+    let spec = match new_formula {
+        Some(formula) => SignalSpec::Formula {
+            formula: formula.to_string(),
+        },
+        None => spec,
+    };
+    save_signal(new_name, &spec, new_display_name)?;
+
+    // Delete old file if the name actually changed
+    if old_name != new_name {
+        let _ = fs::remove_file(&old_path);
+    }
     Ok(())
 }
 
@@ -270,23 +337,40 @@ pub fn list_saved_signals() -> Result<Vec<SavedSignalInfo>> {
                 if validate_name(&name).is_err() {
                     continue;
                 }
-                // Try to load and extract info
+                // Try to load and extract info (supports both envelope and legacy format)
                 match fs::read_to_string(&path) {
                     Ok(json) => {
-                        let spec: Result<SignalSpec, _> = serde_json::from_str(&json);
-                        let (formula, description) = match &spec {
-                            Ok(SignalSpec::Formula { formula: f }) => (Some(f.clone()), None),
-                            _ => (None, None),
-                        };
-                        signals.push(SavedSignalInfo {
-                            name,
-                            formula,
-                            description,
-                        });
+                        // Try envelope format first
+                        if let Ok(env) = serde_json::from_str::<SavedSignal>(&json) {
+                            let (formula, description) = match &env.spec {
+                                SignalSpec::Formula { formula: f } => (Some(f.clone()), None),
+                                _ => (None, None),
+                            };
+                            signals.push(SavedSignalInfo {
+                                name,
+                                display_name: env.display_name,
+                                formula,
+                                description,
+                            });
+                        } else {
+                            // Legacy bare SignalSpec
+                            let spec: Result<SignalSpec, _> = serde_json::from_str(&json);
+                            let (formula, description) = match &spec {
+                                Ok(SignalSpec::Formula { formula: f }) => (Some(f.clone()), None),
+                                _ => (None, None),
+                            };
+                            signals.push(SavedSignalInfo {
+                                name,
+                                display_name: None,
+                                formula,
+                                description,
+                            });
+                        }
                     }
                     Err(_) => {
                         signals.push(SavedSignalInfo {
                             name,
+                            display_name: None,
                             formula: None,
                             description: None,
                         });
@@ -303,6 +387,7 @@ pub fn list_saved_signals() -> Result<Vec<SavedSignalInfo>> {
 /// Info about a saved signal.
 pub struct SavedSignalInfo {
     pub name: String,
+    pub display_name: Option<String>,
     pub formula: Option<String>,
     pub description: Option<String>,
 }
@@ -419,7 +504,7 @@ mod tests {
         let spec = SignalSpec::Formula {
             formula: formula.to_string(),
         };
-        save_signal(name_a, &spec).unwrap();
+        save_signal(name_a, &spec, None).unwrap();
 
         // Same formula under different name should be detected
         let result = find_duplicate_formula(formula, name_b).unwrap();
@@ -441,7 +526,7 @@ mod tests {
         let spec = SignalSpec::Formula {
             formula: formula.to_string(),
         };
-        save_signal(name, &spec).unwrap();
+        save_signal(name, &spec, None).unwrap();
 
         // Extra whitespace should still match
         assert_eq!(
@@ -473,7 +558,7 @@ mod tests {
         let spec = SignalSpec::Formula {
             formula: formula.to_string(),
         };
-        save_signal(name, &spec).unwrap();
+        save_signal(name, &spec, None).unwrap();
 
         // Different formula should not match
         let result = find_duplicate_formula("close < ema(close, 20)", "other").unwrap();
@@ -490,15 +575,15 @@ mod tests {
         let spec1 = SignalSpec::Formula {
             formula: "close > sma(close, 10)".to_string(),
         };
-        save_signal(name, &spec1).unwrap();
+        save_signal(name, &spec1, None).unwrap();
 
         let spec2 = SignalSpec::Formula {
             formula: "close > sma(close, 20)".to_string(),
         };
-        save_signal(name, &spec2).unwrap();
+        save_signal(name, &spec2, None).unwrap();
 
         // Should have the updated formula
-        let loaded = load_signal(name).unwrap();
+        let (loaded, _) = load_signal(name).unwrap();
         if let SignalSpec::Formula { formula } = loaded {
             assert_eq!(formula, "close > sma(close, 20)");
         } else {

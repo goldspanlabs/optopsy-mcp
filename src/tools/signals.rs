@@ -75,7 +75,7 @@ pub fn execute() -> SignalsResponse {
             let custom: Vec<SignalCatalogEntry> = saved
                 .into_iter()
                 .map(|s| SignalCatalogEntry {
-                    display_name: to_display_name(&s.name),
+                    display_name: s.display_name.unwrap_or_else(|| to_display_name(&s.name)),
                     name: s.name,
                     formula_example: s.formula.clone().unwrap_or_default(),
                     description: s

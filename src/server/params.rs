@@ -556,10 +556,18 @@ pub struct BuildSignalParams {
     #[serde(default)]
     #[garde(inner(length(min = 1, max = 500), pattern(r"[^ \t\n\r]")))]
     pub prompt: Option<String>,
-    /// Signal name (required for create, delete, get)
+    /// Signal name (required for create, delete, get, update)
     #[serde(default)]
     #[garde(inner(length(min = 1, max = 64), pattern(r"^[A-Za-z0-9_-]+$")))]
     pub name: Option<String>,
+    /// New signal name for storage (required for action="update"). Must be filesystem-safe.
+    #[serde(default)]
+    #[garde(inner(length(min = 1, max = 64), pattern(r"^[A-Za-z0-9_-]+$")))]
+    pub new_name: Option<String>,
+    /// Human-readable display name (may contain spaces). Used by action="update".
+    #[serde(default)]
+    #[garde(inner(length(min = 1, max = 100)))]
+    pub display_name: Option<String>,
     /// Formula expression (required for create, validate).
     /// Uses price columns (close, open, high, low, volume) with operators and functions.
     /// Examples: "close > sma(close, 20)", "volume > sma(volume, 20) * 2.0"
