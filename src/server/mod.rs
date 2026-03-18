@@ -209,6 +209,9 @@ impl OptopsyServer {
             session_filter: _,
             start_date: _,
             end_date: _,
+            max_hold_bars: _,
+            min_bars_between_entries: _,
+            conflict_resolution: _,
         } = base;
 
         // This function is only called for options mode; validation guarantees strategy is Some.
@@ -337,7 +340,10 @@ impl OptopsyServer {
             stop_loss: base.stop_loss,
             take_profit: base.take_profit,
             max_hold_days: base.max_hold_days,
+            max_hold_bars: base.max_hold_bars,
             min_days_between_entries: base.min_days_between_entries,
+            min_bars_between_entries: base.min_bars_between_entries,
+            conflict_resolution: base.conflict_resolution.unwrap_or_default(),
             entry_signal: base.entry_signal,
             exit_signal: base.exit_signal,
             ohlcv_path: Some(ohlcv_path),
@@ -959,7 +965,10 @@ impl OptopsyServer {
                     stop_loss: params.stop_loss,
                     take_profit: params.take_profit,
                     max_hold_days: params.max_hold_days,
+                    max_hold_bars: params.max_hold_bars,
                     min_days_between_entries: params.min_days_between_entries,
+                    min_bars_between_entries: params.min_bars_between_entries,
+                    conflict_resolution: params.conflict_resolution.unwrap_or_default(),
                     entry_signal: Some(params.entry_signal),
                     exit_signal: params.exit_signal,
                     ohlcv_path: Some(ohlcv_path),
@@ -1248,7 +1257,10 @@ impl OptopsyServer {
                     stop_loss: None,       // overridden per combo
                     take_profit: None,     // overridden per combo
                     max_hold_days: params.sim_params.max_hold_days,
+                    max_hold_bars: params.sim_params.max_hold_bars,
                     min_days_between_entries: params.sim_params.min_days_between_entries,
+                    min_bars_between_entries: params.sim_params.min_bars_between_entries,
+                    conflict_resolution: params.sim_params.conflict_resolution.unwrap_or_default(),
                     entry_signal: None,    // overridden per combo
                     exit_signal: None,     // overridden per combo
                     ohlcv_path: Some(ohlcv_path),
@@ -1352,11 +1364,14 @@ impl OptopsyServer {
                         stop_loss: params.sim_params.stop_loss,
                         take_profit: params.sim_params.take_profit,
                         max_hold_days: params.sim_params.max_hold_days,
+                        max_hold_bars: params.sim_params.max_hold_bars,
                         entry_signal: params.sim_params.entry_signal,
                         exit_signal: params.sim_params.exit_signal,
                         ohlcv_path,
                         cross_ohlcv_paths,
                         min_days_between_entries: params.sim_params.min_days_between_entries,
+                        min_bars_between_entries: params.sim_params.min_bars_between_entries,
+                        conflict_resolution: params.sim_params.conflict_resolution,
                         sizing: params.sim_params.sizing,
                         exit_net_delta: params.sim_params.exit_net_delta,
                     },
@@ -1581,9 +1596,17 @@ impl OptopsyServer {
                                     stop_loss: e.stop_loss.or(params.sim_params.stop_loss),
                                     take_profit: e.take_profit.or(params.sim_params.take_profit),
                                     max_hold_days: params.sim_params.max_hold_days,
+                                    max_hold_bars: params.sim_params.max_hold_bars,
                                     min_days_between_entries: params
                                         .sim_params
                                         .min_days_between_entries,
+                                    min_bars_between_entries: params
+                                        .sim_params
+                                        .min_bars_between_entries,
+                                    conflict_resolution: params
+                                        .sim_params
+                                        .conflict_resolution
+                                        .unwrap_or_default(),
                                     entry_signal: Some(e.entry_signal),
                                     exit_signal: e.exit_signal,
                                     ohlcv_path: Some(ohlcv_path.clone()),

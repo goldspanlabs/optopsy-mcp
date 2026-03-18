@@ -168,9 +168,13 @@ pub struct BacktestBaseParams {
     /// Take profit threshold (multiplier of entry cost; values > 1.0 allowed)
     #[garde(inner(range(min = 0.0)))]
     pub take_profit: Option<f64>,
-    /// Maximum days to hold
+    /// Maximum days to hold (daily+ intervals)
     #[garde(inner(range(min = 1)))]
     pub max_hold_days: Option<i32>,
+    /// Maximum bars to hold a position (intraday alternative to `max_hold_days`). Stock mode only.
+    #[serde(default)]
+    #[garde(inner(range(min = 1)))]
+    pub max_hold_bars: Option<i32>,
     /// Starting capital (default: 10000)
     #[serde(default = "default_capital")]
     #[garde(range(min = 0.01))]
@@ -214,7 +218,7 @@ pub struct BacktestBaseParams {
     #[serde(default)]
     #[garde(skip)]
     pub side: Option<crate::engine::types::Side>,
-    /// Bar interval: "daily" (default), "weekly", "monthly", or intraday ("1m", "5m", "30m", "1h"). Stock mode only.
+    /// Bar interval: "daily" (default), "weekly", "monthly", or intraday ("1m", "5m", "10m", "15m", "30m", "1h", "4h"). Stock mode only.
     #[serde(default)]
     #[garde(skip)]
     pub interval: Option<crate::engine::types::Interval>,
@@ -252,6 +256,14 @@ pub struct BacktestBaseParams {
     #[serde(default)]
     #[garde(inner(range(min = 1)))]
     pub min_days_between_entries: Option<i32>,
+    /// Minimum bars between consecutive entries (intraday alternative). Stock mode only.
+    #[serde(default)]
+    #[garde(inner(range(min = 1)))]
+    pub min_bars_between_entries: Option<i32>,
+    /// SL/TP conflict resolution: `StopLossFirst` (default), `TakeProfitFirst`, `Nearest`. Stock mode only.
+    #[serde(default)]
+    #[garde(skip)]
+    pub conflict_resolution: Option<crate::engine::types::ConflictResolution>,
     /// Filter expirations by calendar type: `Any` (default), `Weekly` (Fridays only),
     /// or `Monthly` (third Friday of the month only).
     #[serde(default)]
@@ -322,13 +334,26 @@ pub struct RunStockBacktestParams {
     /// Take profit as fraction of entry price (e.g., 0.10 = 10%)
     #[garde(inner(range(min = 0.0)))]
     pub take_profit: Option<f64>,
-    /// Maximum days to hold a position
+    /// Maximum days to hold a position (daily+ intervals)
     #[garde(inner(range(min = 1)))]
     pub max_hold_days: Option<i32>,
+    /// Maximum bars to hold a position before force-closing (intraday alternative to `max_hold_days`).
+    #[serde(default)]
+    #[garde(inner(range(min = 1)))]
+    pub max_hold_bars: Option<i32>,
     /// Minimum calendar days between consecutive position entries (cooldown / stagger).
     #[serde(default)]
     #[garde(inner(range(min = 1)))]
     pub min_days_between_entries: Option<i32>,
+    /// Minimum bars between consecutive entries (intraday alternative to `min_days_between_entries`).
+    #[serde(default)]
+    #[garde(inner(range(min = 1)))]
+    pub min_bars_between_entries: Option<i32>,
+    /// How to resolve when both stop-loss and take-profit trigger on the same bar.
+    /// Options: `StopLossFirst` (default, conservative), `TakeProfitFirst`, `Nearest` (closer to open wins).
+    #[serde(default)]
+    #[garde(skip)]
+    pub conflict_resolution: Option<crate::engine::types::ConflictResolution>,
     /// Entry signal — REQUIRED. Opens positions when this signal fires.
     /// Use `build_signal(action="search")` to find suitable signals.
     #[garde(skip)]
@@ -787,6 +812,10 @@ pub struct SweepSimParams {
     /// Max hold days
     #[garde(inner(range(min = 1)))]
     pub max_hold_days: Option<i32>,
+    /// Maximum bars to hold a position (intraday alternative to `max_hold_days`).
+    #[serde(default)]
+    #[garde(inner(range(min = 1)))]
+    pub max_hold_bars: Option<i32>,
     /// Entry signal — only open trades on dates where this TA signal fires.
     /// Requires OHLCV data (loaded from cache when needed).
     #[serde(default)]
@@ -813,6 +842,14 @@ pub struct SweepSimParams {
     #[serde(default)]
     #[garde(inner(range(min = 1)))]
     pub min_days_between_entries: Option<i32>,
+    /// Minimum bars between consecutive entries (intraday alternative to `min_days_between_entries`).
+    #[serde(default)]
+    #[garde(inner(range(min = 1)))]
+    pub min_bars_between_entries: Option<i32>,
+    /// How to resolve when both stop-loss and take-profit trigger on the same bar.
+    #[serde(default)]
+    #[garde(skip)]
+    pub conflict_resolution: Option<crate::engine::types::ConflictResolution>,
     /// Exit when absolute net position delta exceeds this value.
     #[serde(default)]
     #[garde(inner(range(min = 0.0)))]
@@ -1009,7 +1046,7 @@ pub struct CorrelateParams {
     #[garde(dive)]
     pub lag_range: Option<LagRange>,
     /// Bar interval for both series: "daily" (default), "weekly", "monthly", or intraday
-    /// ("1m", "5m", "30m", "1h"). Both series are resampled to this interval before
+    /// ("1m", "5m", "10m", "15m", "30m", "1h", "4h"). Both series are resampled to this interval before
     /// computing correlation and lag analysis.
     #[serde(default)]
     #[garde(skip)]
@@ -1067,7 +1104,7 @@ pub struct RegimeDetectParams {
     #[serde(default = "default_lookback_window")]
     #[garde(range(min = 5, max = 252))]
     pub lookback_window: usize,
-    /// Bar interval: "daily" (default), "weekly", "monthly", or intraday ("1m", "5m", "30m", "1h").
+    /// Bar interval: "daily" (default), "weekly", "monthly", or intraday ("1m", "5m", "10m", "15m", "30m", "1h", "4h").
     /// OHLCV data is resampled to this interval before applying the detection method.
     #[serde(default)]
     #[garde(skip)]

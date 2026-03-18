@@ -24,11 +24,14 @@ fn default_sim_params() -> SimParams {
         stop_loss: None,
         take_profit: None,
         max_hold_days: None,
+        max_hold_bars: None,
         entry_signal: None,
         exit_signal: None,
         ohlcv_path: None,
         cross_ohlcv_paths: std::collections::HashMap::new(),
         min_days_between_entries: None,
+        min_bars_between_entries: None,
+        conflict_resolution: None,
         exit_net_delta: None,
     }
 }

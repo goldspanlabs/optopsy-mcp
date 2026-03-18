@@ -15,8 +15,8 @@ use crate::engine::multiple_comparisons::MultipleComparisonsResult;
 use crate::engine::permutation::MetricPermutationResult;
 use crate::engine::sweep::{DimensionStats, OosResult, StabilityScore};
 use crate::engine::types::{
-    Commission, CompareResult, DteRange, ExpirationFilter, PerformanceMetrics, Side, SizingConfig,
-    Slippage, SweepResult, TargetRange, TradeRecord, TradeSelector,
+    Commission, CompareResult, ConflictResolution, DteRange, ExpirationFilter, PerformanceMetrics,
+    Side, SizingConfig, Slippage, SweepResult, TargetRange, TradeRecord, TradeSelector,
 };
 use crate::signals::helpers::IndicatorData;
 use crate::signals::registry::SignalSpec;
@@ -156,15 +156,21 @@ pub struct StockBacktestParamsSummary {
     pub stop_loss: Option<f64>,
     pub take_profit: Option<f64>,
     pub max_hold_days: Option<i32>,
+    /// Maximum bars to hold (intraday)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_hold_bars: Option<i32>,
     pub entry_signal: Option<serde_json::Value>,
     pub exit_signal: Option<serde_json::Value>,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
-    /// Bar interval used (daily, weekly, or monthly)
+    /// Bar interval used
     pub interval: String,
     /// Position sizing configuration (only present when sizing is active)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sizing: Option<SizingConfig>,
+    /// SL/TP conflict resolution strategy (omitted when default `StopLossFirst`)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conflict_resolution: Option<ConflictResolution>,
 }
 
 /// AI-enriched response for `run_stock_backtest`, matching options backtest output shape.

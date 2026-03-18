@@ -11,8 +11,8 @@ use std::collections::HashSet;
 
 use super::metrics;
 use super::types::{
-    BacktestResult, Commission, EquityPoint, ExitType, Interval, SessionFilter, Side, Slippage,
-    TradeRecord,
+    BacktestResult, Commission, ConflictResolution, EquityPoint, ExitType, Interval, SessionFilter,
+    Side, Slippage, TradeRecord,
 };
 use crate::engine::pricing::fill_price;
 
@@ -31,8 +31,14 @@ pub struct StockBacktestParams {
     pub stop_loss: Option<f64>,
     pub take_profit: Option<f64>,
     pub max_hold_days: Option<i32>,
+    /// Maximum bars to hold a position before force-closing (intraday alternative to `max_hold_days`).
+    pub max_hold_bars: Option<i32>,
     /// Minimum calendar days between consecutive position entries (cooldown / stagger).
     pub min_days_between_entries: Option<i32>,
+    /// Minimum bars between consecutive position entries (intraday alternative to `min_days_between_entries`).
+    pub min_bars_between_entries: Option<i32>,
+    /// How to resolve when both stop-loss and take-profit trigger on the same bar.
+    pub conflict_resolution: ConflictResolution,
     pub entry_signal: Option<crate::signals::registry::SignalSpec>,
     pub exit_signal: Option<crate::signals::registry::SignalSpec>,
     pub ohlcv_path: Option<String>,
@@ -60,6 +66,7 @@ pub struct Bar {
 struct StockPosition {
     id: usize,
     entry_datetime: NaiveDateTime,
+    entry_bar_idx: usize,
     entry_price: f64,
     quantity: i32,
     side: Side,
@@ -96,6 +103,7 @@ pub fn run_stock_backtest(
     let mut skipped_capital: usize = 0;
     let mut first_skip_required: Option<f64> = None;
     let mut last_entry_date: Option<chrono::NaiveDate> = None;
+    let mut last_entry_bar_idx: Option<usize> = None;
 
     let signal_fire_count = entry_dates.as_ref().map_or(0, |dates| dates.len());
 
@@ -103,7 +111,7 @@ pub fn run_stock_backtest(
         // ── 1. Check exits on open positions ────────────────────────────────
         let mut closed_ids = Vec::new();
         for pos in &positions {
-            if let Some(decision) = check_exit(pos, bar, params, exit_dates) {
+            if let Some(decision) = check_exit(pos, bar, bar_idx, params, exit_dates) {
                 closed_ids.push((pos.id, decision));
             }
         }
@@ -130,16 +138,37 @@ pub fn run_stock_backtest(
             .as_ref()
             .is_some_and(|dates| dates.contains(&bar.datetime));
 
-        // Stagger check: skip entry if we entered too recently
-        let stagger_ok = match (params.min_days_between_entries, last_entry_date) {
-            (Some(min_days), Some(last)) => {
-                (bar.datetime.date() - last).num_days() >= i64::from(min_days)
+        // Fix 3: prevent entering on a bar where exit signal also fires (avoids 0-duration trades)
+        let exit_fires = exit_dates
+            .as_ref()
+            .is_some_and(|dates| dates.contains(&bar.datetime));
+
+        // Stagger check: for intraday, prefer bar-count cooldown; fall back to calendar days
+        let stagger_ok = if params.interval.is_intraday() {
+            match (params.min_bars_between_entries, last_entry_bar_idx) {
+                (Some(min_bars), Some(last_idx)) => {
+                    bar_idx.saturating_sub(last_idx) >= min_bars as usize
+                }
+                (Some(_), None) => true,
+                _ => match (params.min_days_between_entries, last_entry_date) {
+                    (Some(min_days), Some(last)) => {
+                        (bar.datetime.date() - last).num_days() >= i64::from(min_days)
+                    }
+                    _ => true,
+                },
             }
-            _ => true,
+        } else {
+            match (params.min_days_between_entries, last_entry_date) {
+                (Some(min_days), Some(last)) => {
+                    (bar.datetime.date() - last).num_days() >= i64::from(min_days)
+                }
+                _ => true,
+            }
         };
 
-        if can_enter && signal_fires && stagger_ok {
-            let entry_price = compute_entry_price(bar, params.side, &params.slippage);
+        if can_enter && signal_fires && stagger_ok && !exit_fires {
+            let entry_price =
+                compute_entry_price(bar, params.side, &params.slippage, params.interval);
 
             // Dynamic position sizing
             let effective_qty = params.sizing.as_ref().map_or(params.quantity, |cfg| {
@@ -183,6 +212,7 @@ pub fn run_stock_backtest(
                 let pos = StockPosition {
                     id: next_trade_id,
                     entry_datetime: bar.datetime,
+                    entry_bar_idx: bar_idx,
                     entry_price,
                     quantity: effective_qty,
                     side: params.side,
@@ -190,6 +220,7 @@ pub fn run_stock_backtest(
                 };
                 next_trade_id += 1;
                 last_entry_date = Some(bar.datetime.date());
+                last_entry_bar_idx = Some(bar_idx);
                 positions.push(pos);
             }
         }
@@ -261,15 +292,19 @@ pub fn run_stock_backtest(
 /// Check if a position should be exited on this bar.
 ///
 /// Returns an `ExitDecision` with the exit type and an optional fill price
-/// override for SL/TP exits (which fill at the trigger level, not bar close).
+/// override for SL/TP exits. Gap-through fills use the bar's open when the
+/// open has already blown past the trigger level (the trigger price was never
+/// available as a fill).
+#[allow(clippy::too_many_lines)]
 fn check_exit(
     pos: &StockPosition,
     bar: &Bar,
+    bar_idx: usize,
     params: &StockBacktestParams,
     exit_dates: Option<&HashSet<NaiveDateTime>>,
 ) -> Option<ExitDecision> {
-    // Stop loss: check if intraday low (for longs) or high (for shorts) hit stop
-    if let Some(sl_pct) = params.stop_loss {
+    // ── Evaluate SL and TP triggers independently ───────────────────────
+    let sl_decision = params.stop_loss.and_then(|sl_pct| {
         let sl_price = match pos.side {
             Side::Long => pos.entry_price * (1.0 - sl_pct),
             Side::Short => pos.entry_price * (1.0 + sl_pct),
@@ -278,16 +313,33 @@ fn check_exit(
             Side::Long => bar.low <= sl_price,
             Side::Short => bar.high >= sl_price,
         };
-        if triggered {
-            return Some(ExitDecision {
-                exit_type: ExitType::StopLoss,
-                fill_price: Some(sl_price),
-            });
+        if !triggered {
+            return None;
         }
-    }
+        // Gap-through: if the open already blew past the stop, fill at the open
+        let fill = match pos.side {
+            Side::Long => {
+                if bar.open <= sl_price {
+                    bar.open
+                } else {
+                    sl_price
+                }
+            }
+            Side::Short => {
+                if bar.open >= sl_price {
+                    bar.open
+                } else {
+                    sl_price
+                }
+            }
+        };
+        Some(ExitDecision {
+            exit_type: ExitType::StopLoss,
+            fill_price: Some(fill),
+        })
+    });
 
-    // Take profit: check if intraday high (for longs) or low (for shorts) hit target
-    if let Some(tp_pct) = params.take_profit {
+    let tp_decision = params.take_profit.and_then(|tp_pct| {
         let tp_price = match pos.side {
             Side::Long => pos.entry_price * (1.0 + tp_pct),
             Side::Short => pos.entry_price * (1.0 - tp_pct),
@@ -296,29 +348,77 @@ fn check_exit(
             Side::Long => bar.high >= tp_price,
             Side::Short => bar.low <= tp_price,
         };
-        if triggered {
-            return Some(ExitDecision {
-                exit_type: ExitType::TakeProfit,
-                fill_price: Some(tp_price),
-            });
+        if !triggered {
+            return None;
         }
+        // Gap-through: if the open already blew past the target, fill at the open
+        let fill = match pos.side {
+            Side::Long => {
+                if bar.open >= tp_price {
+                    bar.open
+                } else {
+                    tp_price
+                }
+            }
+            Side::Short => {
+                if bar.open <= tp_price {
+                    bar.open
+                } else {
+                    tp_price
+                }
+            }
+        };
+        Some(ExitDecision {
+            exit_type: ExitType::TakeProfit,
+            fill_price: Some(fill),
+        })
+    });
+
+    // ── Resolve SL/TP conflict when both trigger on the same bar ────────
+    match (sl_decision, tp_decision) {
+        (Some(sl), Some(tp)) => {
+            let winner = match params.conflict_resolution {
+                ConflictResolution::StopLossFirst => sl,
+                ConflictResolution::TakeProfitFirst => tp,
+                ConflictResolution::Nearest => {
+                    let sl_dist = (sl.fill_price.unwrap_or(bar.close) - bar.open).abs();
+                    let tp_dist = (tp.fill_price.unwrap_or(bar.close) - bar.open).abs();
+                    if sl_dist <= tp_dist {
+                        sl
+                    } else {
+                        tp
+                    }
+                }
+            };
+            return Some(winner);
+        }
+        (Some(sl), None) => return Some(sl),
+        (None, Some(tp)) => return Some(tp),
+        (None, None) => {}
     }
 
-    // Max hold days — only applicable to daily (or coarser) intervals.
-    // For intraday data, time-based exits should use exit signals instead.
-    if !params.interval.is_intraday() {
-        if let Some(max_days) = params.max_hold_days {
-            let days_held = (bar.datetime.date() - pos.entry_datetime.date()).num_days();
-            if days_held >= i64::from(max_days) {
+    // ── Max hold: bar-count for intraday, calendar days for daily+ ──────
+    if params.interval.is_intraday() {
+        if let Some(max_bars) = params.max_hold_bars {
+            let bars_held = bar_idx as i64 - pos.entry_bar_idx as i64;
+            if bars_held >= i64::from(max_bars) {
                 return Some(ExitDecision {
                     exit_type: ExitType::MaxHold,
                     fill_price: None,
                 });
             }
         }
+    } else if let Some(max_days) = params.max_hold_days {
+        let days_held = (bar.datetime.date() - pos.entry_datetime.date()).num_days();
+        if days_held >= i64::from(max_days) {
+            return Some(ExitDecision {
+                exit_type: ExitType::MaxHold,
+                fill_price: None,
+            });
+        }
     }
 
-    // Exit signal
+    // ── Exit signal ─────────────────────────────────────────────────────
     if let Some(dates) = exit_dates {
         if dates.contains(&bar.datetime) {
             return Some(ExitDecision {
@@ -334,21 +434,22 @@ fn check_exit(
 /// Compute entry fill price from a bar's open, applying slippage.
 ///
 /// For stocks, we treat the open as midpoint and apply a small synthetic spread
-/// based on the bar's high-low range. For `Slippage::Mid`, we just use the open.
-fn compute_entry_price(bar: &Bar, side: Side, slippage: &Slippage) -> f64 {
+/// based on the bar's high-low range. The spread fraction scales by interval —
+/// wider bars (daily) use 10%, tighter intraday bars use smaller fractions.
+/// For `Slippage::Mid`, we just use the open.
+fn compute_entry_price(bar: &Bar, side: Side, slippage: &Slippage, interval: Interval) -> f64 {
     if matches!(slippage, Slippage::Mid) {
         return bar.open;
     }
-    // Synthetic spread: use a fraction of the bar's range as bid-ask spread
     let range = bar.high - bar.low;
-    let synthetic_spread = range * 0.1; // 10% of daily range as spread
+    let synthetic_spread = range * interval.spread_fraction();
     let bid = bar.open - synthetic_spread / 2.0;
     let ask = bar.open + synthetic_spread / 2.0;
     fill_price(bid.max(0.01), ask.max(0.01), side, slippage)
 }
 
 /// Compute exit fill price from a bar's close, applying slippage.
-fn compute_exit_price(bar: &Bar, side: Side, slippage: &Slippage) -> f64 {
+fn compute_exit_price(bar: &Bar, side: Side, slippage: &Slippage, interval: Interval) -> f64 {
     let exit_side = match side {
         Side::Long => Side::Short,
         Side::Short => Side::Long,
@@ -357,7 +458,7 @@ fn compute_exit_price(bar: &Bar, side: Side, slippage: &Slippage) -> f64 {
         return bar.close;
     }
     let range = bar.high - bar.low;
-    let synthetic_spread = range * 0.1;
+    let synthetic_spread = range * interval.spread_fraction();
     let bid = bar.close - synthetic_spread / 2.0;
     let ask = bar.close + synthetic_spread / 2.0;
     fill_price(bid.max(0.01), ask.max(0.01), exit_side, slippage)
@@ -374,8 +475,8 @@ fn close_position(
     trigger_price: Option<f64>,
     params: &StockBacktestParams,
 ) -> (f64, TradeRecord) {
-    let exit_price =
-        trigger_price.unwrap_or_else(|| compute_exit_price(bar, pos.side, &params.slippage));
+    let exit_price = trigger_price
+        .unwrap_or_else(|| compute_exit_price(bar, pos.side, &params.slippage, params.interval));
     let direction = pos.side.multiplier();
     let qty = f64::from(pos.quantity);
 
@@ -606,11 +707,23 @@ fn resample_datetime(
                 let trunc_min = (dt.time().minute() / 5) * 5;
                 (dt.date().num_days_from_ce(), dt.time().hour(), trunc_min)
             }
+            Interval::Min10 => {
+                let trunc_min = (dt.time().minute() / 10) * 10;
+                (dt.date().num_days_from_ce(), dt.time().hour(), trunc_min)
+            }
+            Interval::Min15 => {
+                let trunc_min = (dt.time().minute() / 15) * 15;
+                (dt.date().num_days_from_ce(), dt.time().hour(), trunc_min)
+            }
             Interval::Min30 => {
                 let trunc_min = (dt.time().minute() / 30) * 30;
                 (dt.date().num_days_from_ce(), dt.time().hour(), trunc_min)
             }
             Interval::Hour1 => (dt.date().num_days_from_ce(), dt.time().hour(), 0),
+            Interval::Hour4 => {
+                let trunc_hour = (dt.time().hour() / 4) * 4;
+                (dt.date().num_days_from_ce(), trunc_hour, 0)
+            }
             // Daily+: group by date/week/month
             Interval::Daily => (dt.date().num_days_from_ce(), 0, 0),
             Interval::Weekly => (dt.date().iso_week().year(), dt.date().iso_week().week(), 0),
@@ -1316,7 +1429,10 @@ mod tests {
             stop_loss: None,
             take_profit: None,
             max_hold_days: None,
+            max_hold_bars: None,
             min_days_between_entries: None,
+            min_bars_between_entries: None,
+            conflict_resolution: ConflictResolution::default(),
             entry_signal: None,
             exit_signal: None,
             ohlcv_path: None,
@@ -2434,5 +2550,311 @@ mod tests {
         // Should have used dynamic sizing
         let trade = &result.trade_log[0];
         assert!(trade.computed_quantity.is_some());
+    }
+
+    // ── Intraday helpers ──────────────────────────────────────────────────
+
+    /// Build intraday bars at 5-minute intervals within a single day.
+    fn make_intraday_bars(count: usize) -> Vec<Bar> {
+        let base = NaiveDate::from_ymd_opt(2024, 3, 15)
+            .unwrap()
+            .and_hms_opt(9, 30, 0)
+            .unwrap();
+        (0..count)
+            .map(|i| {
+                let dt = base + chrono::Duration::minutes(5 * i as i64);
+                let price = 100.0 + i as f64;
+                Bar {
+                    datetime: dt,
+                    open: price,
+                    high: price + 1.0,
+                    low: price - 0.5,
+                    close: price + 0.5,
+                }
+            })
+            .collect()
+    }
+
+    fn intraday_params() -> StockBacktestParams {
+        StockBacktestParams {
+            interval: Interval::Min5,
+            ..default_params()
+        }
+    }
+
+    // ── Fix 1: min_bars_between_entries ────────────────────────────────
+
+    #[test]
+    fn intraday_min_bars_between_entries_enforces_cooldown() {
+        let bars = make_intraday_bars(10);
+        let mut params = intraday_params();
+        params.min_bars_between_entries = Some(3);
+        params.max_hold_bars = Some(1); // exit after 1 bar so position frees up
+
+        // Signal fires on every bar
+        let entry_dates: HashSet<NaiveDateTime> = bars.iter().map(|b| b.datetime).collect();
+
+        let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+        // Entry at bar 0, exit at bar 1. Cooldown=3, so next entry at bar 3, exit at bar 4.
+        // Next at bar 6, exit at bar 7. Next at bar 9, force-close at end.
+        // Without cooldown we'd get ~10 trades; with cooldown=3 we get exactly 4.
+        assert_eq!(
+            result.trade_count, 4,
+            "With 10 bars, hold=1, cooldown=3: expected 4 trades; got {}",
+            result.trade_count
+        );
+        // Verify entry bar spacing: bars 0, 3, 6, 9
+        let entry_dts: Vec<_> = result.trade_log.iter().map(|t| t.entry_datetime).collect();
+        assert_eq!(entry_dts[0], bars[0].datetime);
+        assert_eq!(entry_dts[1], bars[3].datetime);
+        assert_eq!(entry_dts[2], bars[6].datetime);
+        assert_eq!(entry_dts[3], bars[9].datetime);
+    }
+
+    #[test]
+    fn intraday_min_bars_cooldown_allows_reentry_after_gap() {
+        let bars = make_intraday_bars(10);
+        let mut params = intraday_params();
+        params.min_bars_between_entries = Some(3);
+        params.max_hold_bars = Some(2); // exit after 2 bars
+
+        let entry_dates: HashSet<NaiveDateTime> = bars.iter().map(|b| b.datetime).collect();
+
+        let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+        // Entry at bar 0, exit at bar 2. Cooldown=3, next entry at bar 3, exit at bar 5.
+        // Next at bar 6, exit at bar 8. Next at bar 9, force-close at end. = 4 trades.
+        assert_eq!(
+            result.trade_count, 4,
+            "With 10 bars, hold=2, cooldown=3: expected 4 trades; got {}",
+            result.trade_count
+        );
+        let entry_dts: Vec<_> = result.trade_log.iter().map(|t| t.entry_datetime).collect();
+        assert_eq!(entry_dts[0], bars[0].datetime);
+        assert_eq!(entry_dts[1], bars[3].datetime);
+        assert_eq!(entry_dts[2], bars[6].datetime);
+        assert_eq!(entry_dts[3], bars[9].datetime);
+    }
+
+    // ── Fix 2: max_hold_bars ──────────────────────────────────────────
+
+    #[test]
+    fn intraday_max_hold_bars_closes_after_n_bars() {
+        let bars = make_intraday_bars(10);
+        let mut params = intraday_params();
+        params.max_hold_bars = Some(3);
+        params.max_positions = 1;
+
+        let mut entry_dates = HashSet::new();
+        entry_dates.insert(bars[0].datetime);
+
+        let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+        assert_eq!(result.trade_count, 1);
+        assert_eq!(result.trade_log[0].exit_type, ExitType::MaxHold);
+        // Entry at bar 0 (09:30), exit at bar 3 (09:45) — held exactly 3 bars
+        assert_eq!(result.trade_log[0].entry_datetime, bars[0].datetime);
+        assert_eq!(result.trade_log[0].exit_datetime, bars[3].datetime);
+    }
+
+    #[test]
+    fn daily_max_hold_days_still_works() {
+        let bars = make_bars();
+        let mut params = default_params();
+        params.max_hold_days = Some(2);
+
+        let mut entry_dates = HashSet::new();
+        entry_dates.insert(bars[0].datetime);
+
+        let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+        assert_eq!(result.trade_count, 1);
+        assert_eq!(result.trade_log[0].exit_type, ExitType::MaxHold);
+    }
+
+    // ── Fix 3: same-bar entry+exit guard ──────────────────────────────
+
+    #[test]
+    fn same_bar_entry_exit_signal_prevents_trade() {
+        let bars = make_bars();
+        let params = default_params();
+
+        let mut entry_dates = HashSet::new();
+        entry_dates.insert(bars[0].datetime);
+        let mut exit_dates = HashSet::new();
+        exit_dates.insert(bars[0].datetime); // same bar
+
+        let result =
+            run_stock_backtest(&bars, &params, Some(&entry_dates), Some(&exit_dates)).unwrap();
+        assert_eq!(
+            result.trade_count, 0,
+            "Should not open a trade when exit signal fires on same bar"
+        );
+    }
+
+    // ── Fix 4: ConflictResolution ─────────────────────────────────────
+
+    #[test]
+    fn conflict_resolution_stop_loss_first() {
+        // Bar where both SL and TP trigger: wide range bar
+        let bars = vec![
+            Bar {
+                datetime: dt(2024, 1, 2),
+                open: 100.0,
+                high: 101.0,
+                low: 99.0,
+                close: 100.0,
+            },
+            Bar {
+                datetime: dt(2024, 1, 3),
+                open: 100.0,
+                high: 115.0, // hits TP at 110
+                low: 85.0,   // hits SL at 90
+                close: 100.0,
+            },
+        ];
+        let mut params = default_params();
+        params.stop_loss = Some(0.10);
+        params.take_profit = Some(0.10);
+        params.conflict_resolution = ConflictResolution::StopLossFirst;
+
+        let mut entry_dates = HashSet::new();
+        entry_dates.insert(bars[0].datetime);
+
+        let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+        assert_eq!(result.trade_log[0].exit_type, ExitType::StopLoss);
+    }
+
+    #[test]
+    fn conflict_resolution_take_profit_first() {
+        let bars = vec![
+            Bar {
+                datetime: dt(2024, 1, 2),
+                open: 100.0,
+                high: 101.0,
+                low: 99.0,
+                close: 100.0,
+            },
+            Bar {
+                datetime: dt(2024, 1, 3),
+                open: 100.0,
+                high: 115.0,
+                low: 85.0,
+                close: 100.0,
+            },
+        ];
+        let mut params = default_params();
+        params.stop_loss = Some(0.10);
+        params.take_profit = Some(0.10);
+        params.conflict_resolution = ConflictResolution::TakeProfitFirst;
+
+        let mut entry_dates = HashSet::new();
+        entry_dates.insert(bars[0].datetime);
+
+        let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+        assert_eq!(result.trade_log[0].exit_type, ExitType::TakeProfit);
+    }
+
+    #[test]
+    fn conflict_resolution_nearest_picks_closer_to_open() {
+        // SL at 90 (distance 10 from open 100), TP at 105 (distance 5 from open)
+        let bars = vec![
+            Bar {
+                datetime: dt(2024, 1, 2),
+                open: 100.0,
+                high: 101.0,
+                low: 99.0,
+                close: 100.0,
+            },
+            Bar {
+                datetime: dt(2024, 1, 3),
+                open: 100.0,
+                high: 115.0,
+                low: 85.0,
+                close: 100.0,
+            },
+        ];
+        let mut params = default_params();
+        params.stop_loss = Some(0.10); // SL at 90, dist=10
+        params.take_profit = Some(0.05); // TP at 105, dist=5
+        params.conflict_resolution = ConflictResolution::Nearest;
+
+        let mut entry_dates = HashSet::new();
+        entry_dates.insert(bars[0].datetime);
+
+        let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+        // TP is closer to open (5 vs 10), so TP wins
+        assert_eq!(result.trade_log[0].exit_type, ExitType::TakeProfit);
+    }
+
+    // ── Fix 5: gap-through fill ───────────────────────────────────────
+
+    #[test]
+    fn gap_through_stop_loss_fills_at_open() {
+        // Long position, stop at 95 (5%), but next bar opens at 92 (gap through)
+        let bars = vec![
+            Bar {
+                datetime: dt(2024, 1, 2),
+                open: 100.0,
+                high: 101.0,
+                low: 99.0,
+                close: 100.0,
+            },
+            Bar {
+                datetime: dt(2024, 1, 3),
+                open: 92.0, // gap through SL at 95
+                high: 94.0,
+                low: 91.0,
+                close: 93.0,
+            },
+        ];
+        let mut params = default_params();
+        params.stop_loss = Some(0.05); // SL at 95
+
+        let mut entry_dates = HashSet::new();
+        entry_dates.insert(bars[0].datetime);
+
+        let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+        assert_eq!(result.trade_log[0].exit_type, ExitType::StopLoss);
+        // PnL should be based on fill at 92 (open), not 95 (stop level)
+        // Entry at 100, exit at 92, 100 shares = -800
+        assert!(
+            (result.total_pnl - (-800.0)).abs() < 1e-6,
+            "Gap-through should fill at open (92), not stop (95); pnl={}",
+            result.total_pnl
+        );
+    }
+
+    #[test]
+    fn gap_through_take_profit_fills_at_open() {
+        // Long position, TP at 105 (5%), but next bar opens at 108 (gap through)
+        let bars = vec![
+            Bar {
+                datetime: dt(2024, 1, 2),
+                open: 100.0,
+                high: 101.0,
+                low: 99.0,
+                close: 100.0,
+            },
+            Bar {
+                datetime: dt(2024, 1, 3),
+                open: 108.0, // gap through TP at 105
+                high: 110.0,
+                low: 107.0,
+                close: 109.0,
+            },
+        ];
+        let mut params = default_params();
+        params.take_profit = Some(0.05); // TP at 105
+
+        let mut entry_dates = HashSet::new();
+        entry_dates.insert(bars[0].datetime);
+
+        let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+        assert_eq!(result.trade_log[0].exit_type, ExitType::TakeProfit);
+        // PnL should be based on fill at 108 (open), not 105 (TP level)
+        // Entry at 100, exit at 108, 100 shares = 800
+        assert!(
+            (result.total_pnl - 800.0).abs() < 1e-6,
+            "Gap-through should fill at open (108), not TP (105); pnl={}",
+            result.total_pnl
+        );
     }
 }
