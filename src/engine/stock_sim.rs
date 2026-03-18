@@ -701,14 +701,6 @@ fn resample_datetime(
         let key = match interval {
             // Intraday targets: truncate time to interval boundary
             Interval::Min1 => unreachable!(), // handled by passthrough
-            Interval::Min2 => {
-                let trunc_min = (dt.time().minute() / 2) * 2;
-                (dt.date().num_days_from_ce(), dt.time().hour(), trunc_min)
-            }
-            Interval::Min3 => {
-                let trunc_min = (dt.time().minute() / 3) * 3;
-                (dt.date().num_days_from_ce(), dt.time().hour(), trunc_min)
-            }
             Interval::Min5 => {
                 let trunc_min = (dt.time().minute() / 5) * 5;
                 (dt.date().num_days_from_ce(), dt.time().hour(), trunc_min)

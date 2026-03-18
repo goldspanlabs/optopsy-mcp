@@ -29,12 +29,6 @@ pub enum Interval {
     /// 1-minute bars
     #[serde(rename = "1m")]
     Min1,
-    /// 2-minute bars
-    #[serde(rename = "2m")]
-    Min2,
-    /// 3-minute bars
-    #[serde(rename = "3m")]
-    Min3,
     /// 5-minute bars
     #[serde(rename = "5m")]
     Min5,
@@ -68,8 +62,6 @@ impl Interval {
             Self::Weekly => 52.0,
             Self::Monthly => 12.0,
             Self::Min1 => 252.0 * 390.0,
-            Self::Min2 => 252.0 * 195.0,
-            Self::Min3 => 252.0 * 130.0,
             Self::Min5 => 252.0 * 78.0,
             Self::Min10 => 252.0 * 39.0,
             Self::Min15 => 252.0 * 26.0,
@@ -84,8 +76,6 @@ impl Interval {
         matches!(
             self,
             Self::Min1
-                | Self::Min2
-                | Self::Min3
                 | Self::Min5
                 | Self::Min10
                 | Self::Min15
@@ -107,7 +97,7 @@ impl Interval {
             Self::Hour1 => 0.05,
             Self::Min30 => 0.04,
             Self::Min15 | Self::Min10 => 0.035,
-            Self::Min5 | Self::Min3 | Self::Min2 => 0.03,
+            Self::Min5 => 0.03,
             Self::Min1 => 0.02,
         }
     }
@@ -120,8 +110,6 @@ impl std::fmt::Display for Interval {
             Self::Weekly => write!(f, "weekly"),
             Self::Monthly => write!(f, "monthly"),
             Self::Min1 => write!(f, "1m"),
-            Self::Min2 => write!(f, "2m"),
-            Self::Min3 => write!(f, "3m"),
             Self::Min5 => write!(f, "5m"),
             Self::Min10 => write!(f, "10m"),
             Self::Min15 => write!(f, "15m"),
