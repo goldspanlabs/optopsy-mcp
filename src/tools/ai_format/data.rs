@@ -88,30 +88,54 @@ pub fn format_raw_prices(
 }
 
 /// Format cached symbol listing into an AI-enriched response.
-pub fn format_list_symbols(total: usize, categories: Vec<SymbolCategory>) -> ListSymbolsResponse {
+pub fn format_list_symbols(
+    total: usize,
+    total_matches: usize,
+    categories: Vec<SymbolCategory>,
+    query: Option<&str>,
+) -> ListSymbolsResponse {
     let summary = if total == 0 {
         "No cached data found. Place .parquet files under the cache directory.".to_string()
+    } else if let Some(q) = query {
+        if total_matches == 0 {
+            format!(
+                "No symbols matching \"{q}\" found. {total} symbols cached — try a different query or omit query to see category counts."
+            )
+        } else {
+            format!("Found {total_matches} symbols matching \"{q}\" ({total} total cached).")
+        }
     } else {
         let parts: Vec<String> = categories
             .iter()
             .map(|c| format!("{} ({})", c.category, c.count))
             .collect();
         format!(
-            "{total} symbols cached across {} categories: {}.",
+            "{total} symbols cached across {} categories: {}. Use query to search for specific symbols.",
             categories.len(),
             parts.join(", "),
         )
     };
 
-    ListSymbolsResponse {
-        summary,
-        total,
-        categories,
-        suggested_next_steps: vec![
+    let suggested_next_steps = if query.is_some() && total_matches > 0 {
+        vec![
             "[NEXT] Call run_options_backtest({ symbol: \"<symbol>\" }) to backtest an options strategy".to_string(),
             "[NEXT] Call run_stock_backtest({ symbol: \"<symbol>\", entry_signal: ... }) for a stock backtest".to_string(),
             "[NEXT] Call get_raw_prices({ symbol: \"<symbol>\" }) to view price data for charting".to_string(),
-        ],
+        ]
+    } else {
+        vec![
+            "[NEXT] Call list_symbols({ query: \"SPY\" }) to search for a specific symbol"
+                .to_string(),
+            "[NEXT] Call list_strategies() to browse available options strategies".to_string(),
+        ]
+    };
+
+    ListSymbolsResponse {
+        summary,
+        total,
+        total_matches,
+        categories,
+        suggested_next_steps,
     }
 }
 
@@ -156,31 +180,51 @@ mod tests {
 
     #[test]
     fn format_list_symbols_empty() {
-        let response = format_list_symbols(0, vec![]);
+        let response = format_list_symbols(0, 0, vec![], None);
         assert_eq!(response.total, 0);
         assert!(response.categories.is_empty());
         assert!(response.summary.contains("No cached data"));
     }
 
     #[test]
-    fn format_list_symbols_with_categories() {
+    fn format_list_symbols_summary_mode() {
         let categories = vec![
             SymbolCategory {
                 category: "etf".to_string(),
-                count: 2,
-                symbols: vec!["QQQ".to_string(), "SPY".to_string()],
+                count: 100,
+                symbols: vec![],
             },
             SymbolCategory {
                 category: "stocks".to_string(),
-                count: 1,
-                symbols: vec!["AAPL".to_string()],
+                count: 200,
+                symbols: vec![],
             },
         ];
-        let response = format_list_symbols(3, categories);
-        assert_eq!(response.total, 3);
+        let response = format_list_symbols(300, 300, categories, None);
+        assert_eq!(response.total, 300);
         assert_eq!(response.categories.len(), 2);
-        assert!(response.summary.contains("3 symbols"));
-        assert!(response.summary.contains("2 categories"));
-        assert!(response.summary.contains("etf (2)"));
+        assert!(response.summary.contains("300 symbols"));
+        assert!(response.summary.contains("etf (100)"));
+    }
+
+    #[test]
+    fn format_list_symbols_search_mode() {
+        let categories = vec![SymbolCategory {
+            category: "etf".to_string(),
+            count: 100,
+            symbols: vec!["SPY".to_string(), "SPLG".to_string()],
+        }];
+        let response = format_list_symbols(300, 2, categories, Some("SP"));
+        assert_eq!(response.total, 300);
+        assert_eq!(response.total_matches, 2);
+        assert!(response.summary.contains("2 symbols matching"));
+        assert!(response.summary.contains("\"SP\""));
+    }
+
+    #[test]
+    fn format_list_symbols_search_no_matches() {
+        let response = format_list_symbols(300, 0, vec![], Some("ZZZZZ"));
+        assert_eq!(response.total_matches, 0);
+        assert!(response.summary.contains("No symbols matching"));
     }
 }

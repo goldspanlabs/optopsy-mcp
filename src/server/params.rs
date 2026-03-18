@@ -1078,6 +1078,16 @@ fn default_regime_method() -> String {
     "volatility_cluster".to_string()
 }
 
+/// Parameters for the `list_symbols` tool.
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+#[garde(context(()))]
+pub struct ListSymbolsParams {
+    /// Search query — case-insensitive prefix/substring match across all categories.
+    /// Omit to get a summary of category counts without listing individual symbols.
+    #[garde(inner(length(min = 1, max = 20)))]
+    pub query: Option<String>,
+}
+
 fn resolve_strategy_entries(
     strats: Vec<SweepStrategyInput>,
 ) -> Result<Vec<crate::engine::sweep::SweepStrategyEntry>, String> {

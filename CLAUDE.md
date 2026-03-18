@@ -150,14 +150,20 @@ TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, tr
 ### Data Tools
 
 #### `list_symbols`
-List all symbols available in the local Parquet cache, grouped by category.
+Search or browse symbols available in the local Parquet cache.
 
-**Parameters:** None
+**Parameters:**
+```json
+{
+  "query": "SPY"  // Optional. Case-insensitive prefix/substring search. Omit for category summary.
+}
+```
 
 **Response:** `ListSymbolsResponse`
-- `summary` — Human-readable summary of cached data
-- `total` — Total symbol count across all categories
-- `categories` — Array of `{ category, count, symbols }` grouped by data type (options, etf, stocks, futures, indices)
+- `summary` — Human-readable summary or search results
+- `total` — Total symbols cached across all categories
+- `total_matches` — Number of symbols matching the query (equals `total` when no query)
+- `categories` — Array of `{ category, count, symbols }` grouped by data type (options, etf, stocks, futures, indices). `symbols` is populated only when a query is provided; empty in summary mode.
 - `suggested_next_steps` — Recommended follow-up actions
 
 #### `get_raw_prices`

@@ -24,16 +24,23 @@ use crate::signals::registry::SignalSpec;
 /// A group of symbols belonging to a single data category.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SymbolCategory {
+    /// Category name (e.g. "options", "etf", "stocks", "futures", "indices")
     pub category: String,
+    /// Total symbols cached in this category
     pub count: usize,
+    /// Matching symbols (populated only when a search query is provided; empty in summary mode)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub symbols: Vec<String>,
 }
 
-/// Response for `list_symbols` — all cached symbols grouped by category.
+/// Response for `list_symbols` — cached data summary or search results.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ListSymbolsResponse {
     pub summary: String,
+    /// Total symbols cached across all categories
     pub total: usize,
+    /// Number of symbols matching the query (equals `total` when no query)
+    pub total_matches: usize,
     pub categories: Vec<SymbolCategory>,
     pub suggested_next_steps: Vec<String>,
 }
