@@ -2587,15 +2587,26 @@ mod tests {
         let bars = make_intraday_bars(10);
         let mut params = intraday_params();
         params.min_bars_between_entries = Some(3);
+        params.max_hold_bars = Some(1); // exit after 1 bar so position frees up
 
         // Signal fires on every bar
         let entry_dates: HashSet<NaiveDateTime> = bars.iter().map(|b| b.datetime).collect();
 
         let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
-        // With max_positions=1, first entry at bar 0, force-closed at end.
-        // But cooldown of 3 bars means re-entry at bar 3 earliest after close.
-        // Since max_positions=1 and no exit signal, only 1 trade (held to end).
-        assert_eq!(result.trade_count, 1);
+        // Entry at bar 0, exit at bar 1. Cooldown=3, so next entry at bar 3, exit at bar 4.
+        // Next at bar 6, exit at bar 7. Next at bar 9, force-close at end.
+        // Without cooldown we'd get ~10 trades; with cooldown=3 we get exactly 4.
+        assert_eq!(
+            result.trade_count, 4,
+            "With 10 bars, hold=1, cooldown=3: expected 4 trades; got {}",
+            result.trade_count
+        );
+        // Verify entry bar spacing: bars 0, 3, 6, 9
+        let entry_dts: Vec<_> = result.trade_log.iter().map(|t| t.entry_datetime).collect();
+        assert_eq!(entry_dts[0], bars[0].datetime);
+        assert_eq!(entry_dts[1], bars[3].datetime);
+        assert_eq!(entry_dts[2], bars[6].datetime);
+        assert_eq!(entry_dts[3], bars[9].datetime);
     }
 
     #[test]
@@ -2608,13 +2619,18 @@ mod tests {
         let entry_dates: HashSet<NaiveDateTime> = bars.iter().map(|b| b.datetime).collect();
 
         let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
-        // Entry at bar 0, exit at bar 2 (max_hold_bars=2).
-        // Next entry allowed at bar 3 (cooldown=3). Exit at bar 5. Next at bar 6. Exit at bar 8.
-        assert!(
-            result.trade_count >= 3,
-            "Expected at least 3 trades with 10 bars, cooldown=3, hold=2; got {}",
+        // Entry at bar 0, exit at bar 2. Cooldown=3, next entry at bar 3, exit at bar 5.
+        // Next at bar 6, exit at bar 8. Next at bar 9, force-close at end. = 4 trades.
+        assert_eq!(
+            result.trade_count, 4,
+            "With 10 bars, hold=2, cooldown=3: expected 4 trades; got {}",
             result.trade_count
         );
+        let entry_dts: Vec<_> = result.trade_log.iter().map(|t| t.entry_datetime).collect();
+        assert_eq!(entry_dts[0], bars[0].datetime);
+        assert_eq!(entry_dts[1], bars[3].datetime);
+        assert_eq!(entry_dts[2], bars[6].datetime);
+        assert_eq!(entry_dts[3], bars[9].datetime);
     }
 
     // ── Fix 2: max_hold_bars ──────────────────────────────────────────
@@ -2632,6 +2648,9 @@ mod tests {
         let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
         assert_eq!(result.trade_count, 1);
         assert_eq!(result.trade_log[0].exit_type, ExitType::MaxHold);
+        // Entry at bar 0 (09:30), exit at bar 3 (09:45) — held exactly 3 bars
+        assert_eq!(result.trade_log[0].entry_datetime, bars[0].datetime);
+        assert_eq!(result.trade_log[0].exit_datetime, bars[3].datetime);
     }
 
     #[test]
