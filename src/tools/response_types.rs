@@ -21,6 +21,23 @@ use crate::engine::types::{
 use crate::signals::helpers::IndicatorData;
 use crate::signals::registry::SignalSpec;
 
+/// A group of symbols belonging to a single data category.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SymbolCategory {
+    pub category: String,
+    pub count: usize,
+    pub symbols: Vec<String>,
+}
+
+/// Response for `list_symbols` — all cached symbols grouped by category.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ListSymbolsResponse {
+    pub summary: String,
+    pub total: usize,
+    pub categories: Vec<SymbolCategory>,
+    pub suggested_next_steps: Vec<String>,
+}
+
 /// Data quality report included in backtest responses, summarizing price coverage
 /// and fill statistics to help assess result reliability.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

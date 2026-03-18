@@ -59,6 +59,27 @@ impl CachedStore {
         self.build_parquet_path(symbol, category)
     }
 
+    /// List all symbols available in a specific category directory.
+    pub fn list_symbols_for_category(&self, category: &str) -> Result<Vec<String>> {
+        let category_dir = self.cache_dir.join(category);
+        if !category_dir.exists() {
+            return Ok(vec![]);
+        }
+
+        let mut symbols = Vec::new();
+        for entry in std::fs::read_dir(&category_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "parquet") {
+                if let Some(stem) = path.file_stem() {
+                    symbols.push(stem.to_string_lossy().to_string());
+                }
+            }
+        }
+        symbols.sort();
+        Ok(symbols)
+    }
+
     /// Search OHLCV categories in order (`equities`, `futures`, `indices`) and return
     /// the path of the first existing parquet file for the given symbol.
     pub fn find_ohlcv(&self, symbol: &str) -> Option<PathBuf> {

@@ -28,9 +28,9 @@ use crate::signals::registry::{collect_cross_symbols, SignalSpec};
 use crate::tools;
 use crate::tools::response_types::{
     AggregatePricesResponse, BacktestResponse, BuildSignalResponse, CompareResponse,
-    CorrelateResponse, DistributionResponse, PermutationTestResponse, RawPricesResponse,
-    RegimeDetectResponse, RollingMetricResponse, StockBacktestResponse, StrategiesResponse,
-    SweepResponse, WalkForwardResponse,
+    CorrelateResponse, DistributionResponse, ListSymbolsResponse, PermutationTestResponse,
+    RawPricesResponse, RegimeDetectResponse, RollingMetricResponse, StockBacktestResponse,
+    StrategiesResponse, SweepResponse, WalkForwardResponse,
 };
 use params::{
     resolve_leg_deltas, resolve_sweep_strategies, validation_err, AggregatePricesParams,
@@ -603,6 +603,19 @@ use rmcp::handler::server::wrapper::Parameters;
 
 #[tool_router]
 impl OptopsyServer {
+    /// List all symbols available in the local Parquet cache, grouped by category
+    /// (options, etf, stocks, futures, indices).
+    ///
+    /// **When to use**: To discover what data is available before running backtests or analysis.
+    /// **Prerequisites**: None (reads the cache directory)
+    /// **Next tools**: `run_options_backtest()`, `run_stock_backtest()`, or `get_raw_prices()`
+    #[tool(name = "list_symbols", annotations(read_only_hint = true))]
+    async fn list_symbols(&self) -> SanitizedResult<ListSymbolsResponse, String> {
+        SanitizedResult(
+            tools::list_symbols::execute(&self.cache).map_err(|e| format!("Error: {e}")),
+        )
+    }
+
     /// Browse all 32 built-in options strategies grouped by category.
     ///
     /// **When to use**: To choose a strategy for analysis

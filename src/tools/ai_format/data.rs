@@ -7,7 +7,8 @@
 use std::collections::HashMap;
 
 use crate::tools::response_types::{
-    DateRange, PriceBar, RawPricesResponse, StrategiesResponse, StrategyInfo,
+    DateRange, ListSymbolsResponse, PriceBar, RawPricesResponse, StrategiesResponse, StrategyInfo,
+    SymbolCategory,
 };
 
 /// Format the full strategy list into a categorized summary response.
@@ -82,6 +83,34 @@ pub fn format_raw_prices(
         suggested_next_steps: vec![
             "[TIP] Use the prices array to generate a line chart (close prices), candlestick chart (OHLC), or area chart.".to_string(),
             "[TIP] Combine with backtest trade_log data to overlay strategy performance on price action.".to_string(),
+        ],
+    }
+}
+
+/// Format cached symbol listing into an AI-enriched response.
+pub fn format_list_symbols(total: usize, categories: Vec<SymbolCategory>) -> ListSymbolsResponse {
+    let summary = if total == 0 {
+        "No cached data found. Place .parquet files under the cache directory.".to_string()
+    } else {
+        let parts: Vec<String> = categories
+            .iter()
+            .map(|c| format!("{} ({})", c.category, c.count))
+            .collect();
+        format!(
+            "{total} symbols cached across {} categories: {}.",
+            categories.len(),
+            parts.join(", "),
+        )
+    };
+
+    ListSymbolsResponse {
+        summary,
+        total,
+        categories,
+        suggested_next_steps: vec![
+            "[NEXT] Call run_options_backtest({ symbol: \"<symbol>\" }) to backtest an options strategy".to_string(),
+            "[NEXT] Call run_stock_backtest({ symbol: \"<symbol>\", entry_signal: ... }) for a stock backtest".to_string(),
+            "[NEXT] Call get_raw_prices({ symbol: \"<symbol>\" }) to view price data for charting".to_string(),
         ],
     }
 }
