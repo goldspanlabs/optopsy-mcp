@@ -776,18 +776,10 @@ mod tests {
             .map(|w| (w[1].close - w[0].close) / w[0].close)
             .collect();
 
-        let (labels_daily, names_daily) = classify_by_volatility(
-            &returns,
-            20,
-            2,
-            crate::engine::types::Interval::Daily,
-        );
-        let (labels_hourly, names_hourly) = classify_by_volatility(
-            &returns,
-            20,
-            2,
-            crate::engine::types::Interval::Hour1,
-        );
+        let (labels_daily, names_daily) =
+            classify_by_volatility(&returns, 20, 2, crate::engine::types::Interval::Daily);
+        let (labels_hourly, names_hourly) =
+            classify_by_volatility(&returns, 20, 2, crate::engine::types::Interval::Hour1);
 
         // Both produce valid labels and two regime names
         assert_eq!(labels_daily.len(), labels_hourly.len());
@@ -816,12 +808,8 @@ mod tests {
             .windows(2)
             .map(|w| (w[1].close - w[0].close) / w[0].close)
             .collect();
-        let (labels, names) = classify_by_volatility(
-            &returns,
-            10,
-            2,
-            crate::engine::types::Interval::Weekly,
-        );
+        let (labels, names) =
+            classify_by_volatility(&returns, 10, 2, crate::engine::types::Interval::Weekly);
         assert_eq!(labels.len(), returns.len());
         assert_eq!(names.len(), 2);
         // Labels must be valid
