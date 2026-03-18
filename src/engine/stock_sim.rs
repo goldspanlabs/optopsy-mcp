@@ -2549,4 +2549,291 @@ mod tests {
         let trade = &result.trade_log[0];
         assert!(trade.computed_quantity.is_some());
     }
+
+    // ── Intraday helpers ──────────────────────────────────────────────────
+
+    /// Build intraday bars at 5-minute intervals within a single day.
+    fn make_intraday_bars(count: usize) -> Vec<Bar> {
+        let base = NaiveDate::from_ymd_opt(2024, 3, 15)
+            .unwrap()
+            .and_hms_opt(9, 30, 0)
+            .unwrap();
+        (0..count)
+            .map(|i| {
+                let dt = base + chrono::Duration::minutes(5 * i as i64);
+                let price = 100.0 + i as f64;
+                Bar {
+                    datetime: dt,
+                    open: price,
+                    high: price + 1.0,
+                    low: price - 0.5,
+                    close: price + 0.5,
+                }
+            })
+            .collect()
+    }
+
+    fn intraday_params() -> StockBacktestParams {
+        StockBacktestParams {
+            interval: Interval::Min5,
+            ..default_params()
+        }
+    }
+
+    // ── Fix 1: min_bars_between_entries ────────────────────────────────
+
+    #[test]
+    fn intraday_min_bars_between_entries_enforces_cooldown() {
+        let bars = make_intraday_bars(10);
+        let mut params = intraday_params();
+        params.min_bars_between_entries = Some(3);
+
+        // Signal fires on every bar
+        let entry_dates: HashSet<NaiveDateTime> = bars.iter().map(|b| b.datetime).collect();
+
+        let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+        // With max_positions=1, first entry at bar 0, force-closed at end.
+        // But cooldown of 3 bars means re-entry at bar 3 earliest after close.
+        // Since max_positions=1 and no exit signal, only 1 trade (held to end).
+        assert_eq!(result.trade_count, 1);
+    }
+
+    #[test]
+    fn intraday_min_bars_cooldown_allows_reentry_after_gap() {
+        let bars = make_intraday_bars(10);
+        let mut params = intraday_params();
+        params.min_bars_between_entries = Some(3);
+        params.max_hold_bars = Some(2); // exit after 2 bars
+
+        let entry_dates: HashSet<NaiveDateTime> = bars.iter().map(|b| b.datetime).collect();
+
+        let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+        // Entry at bar 0, exit at bar 2 (max_hold_bars=2).
+        // Next entry allowed at bar 3 (cooldown=3). Exit at bar 5. Next at bar 6. Exit at bar 8.
+        assert!(
+            result.trade_count >= 3,
+            "Expected at least 3 trades with 10 bars, cooldown=3, hold=2; got {}",
+            result.trade_count
+        );
+    }
+
+    // ── Fix 2: max_hold_bars ──────────────────────────────────────────
+
+    #[test]
+    fn intraday_max_hold_bars_closes_after_n_bars() {
+        let bars = make_intraday_bars(10);
+        let mut params = intraday_params();
+        params.max_hold_bars = Some(3);
+        params.max_positions = 1;
+
+        let mut entry_dates = HashSet::new();
+        entry_dates.insert(bars[0].datetime);
+
+        let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+        assert_eq!(result.trade_count, 1);
+        assert_eq!(result.trade_log[0].exit_type, ExitType::MaxHold);
+    }
+
+    #[test]
+    fn daily_max_hold_days_still_works() {
+        let bars = make_bars();
+        let mut params = default_params();
+        params.max_hold_days = Some(2);
+
+        let mut entry_dates = HashSet::new();
+        entry_dates.insert(bars[0].datetime);
+
+        let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+        assert_eq!(result.trade_count, 1);
+        assert_eq!(result.trade_log[0].exit_type, ExitType::MaxHold);
+    }
+
+    // ── Fix 3: same-bar entry+exit guard ──────────────────────────────
+
+    #[test]
+    fn same_bar_entry_exit_signal_prevents_trade() {
+        let bars = make_bars();
+        let params = default_params();
+
+        let mut entry_dates = HashSet::new();
+        entry_dates.insert(bars[0].datetime);
+        let mut exit_dates = HashSet::new();
+        exit_dates.insert(bars[0].datetime); // same bar
+
+        let result =
+            run_stock_backtest(&bars, &params, Some(&entry_dates), Some(&exit_dates)).unwrap();
+        assert_eq!(
+            result.trade_count, 0,
+            "Should not open a trade when exit signal fires on same bar"
+        );
+    }
+
+    // ── Fix 4: ConflictResolution ─────────────────────────────────────
+
+    #[test]
+    fn conflict_resolution_stop_loss_first() {
+        // Bar where both SL and TP trigger: wide range bar
+        let bars = vec![
+            Bar {
+                datetime: dt(2024, 1, 2),
+                open: 100.0,
+                high: 101.0,
+                low: 99.0,
+                close: 100.0,
+            },
+            Bar {
+                datetime: dt(2024, 1, 3),
+                open: 100.0,
+                high: 115.0, // hits TP at 110
+                low: 85.0,   // hits SL at 90
+                close: 100.0,
+            },
+        ];
+        let mut params = default_params();
+        params.stop_loss = Some(0.10);
+        params.take_profit = Some(0.10);
+        params.conflict_resolution = ConflictResolution::StopLossFirst;
+
+        let mut entry_dates = HashSet::new();
+        entry_dates.insert(bars[0].datetime);
+
+        let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+        assert_eq!(result.trade_log[0].exit_type, ExitType::StopLoss);
+    }
+
+    #[test]
+    fn conflict_resolution_take_profit_first() {
+        let bars = vec![
+            Bar {
+                datetime: dt(2024, 1, 2),
+                open: 100.0,
+                high: 101.0,
+                low: 99.0,
+                close: 100.0,
+            },
+            Bar {
+                datetime: dt(2024, 1, 3),
+                open: 100.0,
+                high: 115.0,
+                low: 85.0,
+                close: 100.0,
+            },
+        ];
+        let mut params = default_params();
+        params.stop_loss = Some(0.10);
+        params.take_profit = Some(0.10);
+        params.conflict_resolution = ConflictResolution::TakeProfitFirst;
+
+        let mut entry_dates = HashSet::new();
+        entry_dates.insert(bars[0].datetime);
+
+        let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+        assert_eq!(result.trade_log[0].exit_type, ExitType::TakeProfit);
+    }
+
+    #[test]
+    fn conflict_resolution_nearest_picks_closer_to_open() {
+        // SL at 90 (distance 10 from open 100), TP at 105 (distance 5 from open)
+        let bars = vec![
+            Bar {
+                datetime: dt(2024, 1, 2),
+                open: 100.0,
+                high: 101.0,
+                low: 99.0,
+                close: 100.0,
+            },
+            Bar {
+                datetime: dt(2024, 1, 3),
+                open: 100.0,
+                high: 115.0,
+                low: 85.0,
+                close: 100.0,
+            },
+        ];
+        let mut params = default_params();
+        params.stop_loss = Some(0.10); // SL at 90, dist=10
+        params.take_profit = Some(0.05); // TP at 105, dist=5
+        params.conflict_resolution = ConflictResolution::Nearest;
+
+        let mut entry_dates = HashSet::new();
+        entry_dates.insert(bars[0].datetime);
+
+        let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+        // TP is closer to open (5 vs 10), so TP wins
+        assert_eq!(result.trade_log[0].exit_type, ExitType::TakeProfit);
+    }
+
+    // ── Fix 5: gap-through fill ───────────────────────────────────────
+
+    #[test]
+    fn gap_through_stop_loss_fills_at_open() {
+        // Long position, stop at 95 (5%), but next bar opens at 92 (gap through)
+        let bars = vec![
+            Bar {
+                datetime: dt(2024, 1, 2),
+                open: 100.0,
+                high: 101.0,
+                low: 99.0,
+                close: 100.0,
+            },
+            Bar {
+                datetime: dt(2024, 1, 3),
+                open: 92.0, // gap through SL at 95
+                high: 94.0,
+                low: 91.0,
+                close: 93.0,
+            },
+        ];
+        let mut params = default_params();
+        params.stop_loss = Some(0.05); // SL at 95
+
+        let mut entry_dates = HashSet::new();
+        entry_dates.insert(bars[0].datetime);
+
+        let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+        assert_eq!(result.trade_log[0].exit_type, ExitType::StopLoss);
+        // PnL should be based on fill at 92 (open), not 95 (stop level)
+        // Entry at 100, exit at 92, 100 shares = -800
+        assert!(
+            (result.total_pnl - (-800.0)).abs() < 1e-6,
+            "Gap-through should fill at open (92), not stop (95); pnl={}",
+            result.total_pnl
+        );
+    }
+
+    #[test]
+    fn gap_through_take_profit_fills_at_open() {
+        // Long position, TP at 105 (5%), but next bar opens at 108 (gap through)
+        let bars = vec![
+            Bar {
+                datetime: dt(2024, 1, 2),
+                open: 100.0,
+                high: 101.0,
+                low: 99.0,
+                close: 100.0,
+            },
+            Bar {
+                datetime: dt(2024, 1, 3),
+                open: 108.0, // gap through TP at 105
+                high: 110.0,
+                low: 107.0,
+                close: 109.0,
+            },
+        ];
+        let mut params = default_params();
+        params.take_profit = Some(0.05); // TP at 105
+
+        let mut entry_dates = HashSet::new();
+        entry_dates.insert(bars[0].datetime);
+
+        let result = run_stock_backtest(&bars, &params, Some(&entry_dates), None).unwrap();
+        assert_eq!(result.trade_log[0].exit_type, ExitType::TakeProfit);
+        // PnL should be based on fill at 108 (open), not 105 (TP level)
+        // Entry at 100, exit at 108, 100 shares = 800
+        assert!(
+            (result.total_pnl - 800.0).abs() < 1e-6,
+            "Gap-through should fill at open (108), not TP (105); pnl={}",
+            result.total_pnl
+        );
+    }
 }
