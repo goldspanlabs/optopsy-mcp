@@ -1029,6 +1029,12 @@ pub struct CorrelateParams {
     #[serde(default)]
     #[garde(dive)]
     pub lag_range: Option<LagRange>,
+    /// Bar interval for both series: "daily" (default), "weekly", "monthly", or intraday
+    /// ("1m", "5m", "30m", "1h"). Both series are resampled to this interval before
+    /// computing correlation and lag analysis.
+    #[serde(default)]
+    #[garde(skip)]
+    pub interval: Option<Interval>,
 }
 
 fn default_corr_mode() -> String {
@@ -1082,6 +1088,11 @@ pub struct RegimeDetectParams {
     #[serde(default = "default_lookback_window")]
     #[garde(range(min = 5, max = 252))]
     pub lookback_window: usize,
+    /// Bar interval: "daily" (default), "weekly", "monthly", or intraday ("1m", "5m", "30m", "1h").
+    /// OHLCV data is resampled to this interval before applying the detection method.
+    #[serde(default)]
+    #[garde(skip)]
+    pub interval: Option<Interval>,
 }
 
 fn default_regime_method() -> String {

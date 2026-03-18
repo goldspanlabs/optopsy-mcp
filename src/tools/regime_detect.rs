@@ -20,6 +20,7 @@ pub async fn execute(
     n_regimes: usize,
     years: u32,
     lookback_window: usize,
+    interval: crate::engine::types::Interval,
 ) -> Result<RegimeDetectResponse> {
     validate_choice(
         method,
@@ -36,7 +37,7 @@ pub async fn execute(
         Some(&cutoff_str),
         None,
         None,
-        crate::engine::types::Interval::Daily,
+        interval,
         None,
     )
     .await

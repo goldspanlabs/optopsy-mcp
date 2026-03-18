@@ -17,7 +17,11 @@ use crate::tools::response_types::{
 };
 
 /// Execute the correlate analysis.
-#[allow(clippy::too_many_lines, clippy::similar_names)]
+#[allow(
+    clippy::too_many_lines,
+    clippy::similar_names,
+    clippy::too_many_arguments
+)]
 pub async fn execute(
     cache: &Arc<CachedStore>,
     series_a: &CorrelationSeries,
@@ -26,6 +30,7 @@ pub async fn execute(
     window: usize,
     years: u32,
     lag_range: Option<(i32, i32)>,
+    interval: crate::engine::types::Interval,
 ) -> Result<CorrelateResponse> {
     validate_choice(mode, &["full", "rolling"], "mode")?;
 
@@ -39,7 +44,7 @@ pub async fn execute(
             Some(&cutoff_str),
             None,
             None,
-            crate::engine::types::Interval::Daily,
+            interval,
             None,
         )
         .await
@@ -51,7 +56,7 @@ pub async fn execute(
             Some(&cutoff_str),
             None,
             None,
-            crate::engine::types::Interval::Daily,
+            interval,
             None,
         )
         .await
