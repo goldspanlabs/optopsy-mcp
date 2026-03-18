@@ -169,22 +169,6 @@ pub struct StockBacktestResponse {
     pub suggested_next_steps: Vec<String>,
 }
 
-/// Status of currently loaded data
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct StatusResponse {
-    pub summary: String,
-    /// Symbols currently loaded in memory
-    pub loaded_symbols: Vec<String>,
-    /// Total number of rows across all loaded symbols, if any
-    pub rows: Option<usize>,
-    /// Date range of loaded data, if available.
-    /// Note: currently not populated by `tools::status::execute` and may be `None`.
-    pub date_range: Option<DateRange>,
-    /// Available columns in loaded data (from first symbol when sorted lexicographically)
-    pub columns: Vec<String>,
-    pub suggested_next_steps: Vec<String>,
-}
-
 /// Aggregate statistics for all trades in a backtest.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TradeSummary {
@@ -262,18 +246,6 @@ pub struct StrategyInfo {
     pub description: String,
     /// Default per-leg delta targets for this strategy (used when `leg_deltas` is omitted)
     pub default_deltas: Vec<TargetRange>,
-}
-
-/// Response for `check_cache_status`
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct CheckCacheResponse {
-    pub summary: String,
-    /// The symbol that was checked (for reference in follow-up questions)
-    pub symbol: String,
-    pub exists: bool,
-    pub last_updated: Option<String>,
-    pub file_path: String,
-    pub suggested_next_steps: Vec<String>,
 }
 
 /// A single OHLCV price bar for `get_raw_prices`

@@ -40,13 +40,12 @@ fn make_sparse_df() -> DataFrame {
 
 // ─── Test Helpers ────────────────────────────────────────────────────────────
 
-/// Create an `OptopsyServer` backed by a temporary directory (no S3).
+/// Create an `OptopsyServer` backed by a temporary directory.
 fn make_test_server() -> (OptopsyServer, TempDir) {
     let tmp = TempDir::new().unwrap();
     let cache = Arc::new(CachedStore::new(
         tmp.path().to_path_buf(),
         "options".to_string(),
-        None,
     ));
     let server = OptopsyServer::new(cache);
     (server, tmp)
@@ -56,16 +55,6 @@ fn make_test_server() -> (OptopsyServer, TempDir) {
 async fn preload_data(server: &OptopsyServer, symbol: &str, df: DataFrame) {
     let mut guard = server.data.write().await;
     guard.insert(symbol.to_uppercase(), df);
-}
-
-/// Write a `DataFrame` as a Parquet file in the temp cache directory.
-fn write_test_parquet(cache_dir: &std::path::Path, symbol: &str, df: &mut DataFrame) -> PathBuf {
-    let dir = cache_dir.join("options");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join(format!("{}.parquet", symbol.to_uppercase()));
-    let file = std::fs::File::create(&path).unwrap();
-    ParquetWriter::new(file).finish(df).unwrap();
-    path
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -105,17 +94,15 @@ async fn tool_router_lists_all_tools() {
     let tools = client.list_all_tools().await.unwrap();
     let tool_names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
 
-    assert_eq!(tools.len(), 16, "Expected 16 tools, got: {tool_names:?}");
+    assert_eq!(tools.len(), 14, "Expected 14 tools, got: {tool_names:?}");
     for expected in [
         "list_strategies",
-        "get_loaded_symbol",
         "run_options_backtest",
         "run_stock_backtest",
         "compare_strategies",
         "parameter_sweep",
         "walk_forward",
         "permutation_test",
-        "check_cache_status",
         "get_raw_prices",
         "build_signal",
         "aggregate_prices",
@@ -223,91 +210,6 @@ async fn build_signal_catalog_returns_catalog() {
     server_handle.await.unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn get_loaded_symbol_no_data_loaded() {
-    let (server, _tmp) = make_test_server();
-
-    let (server_tx, server_rx) = tokio::io::duplex(4096);
-    let (client_tx, client_rx) = tokio::io::duplex(4096);
-
-    let server_handle =
-        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
-
-    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
-        ().serve((server_rx, client_tx)).await.unwrap();
-
-    let result = client
-        .peer()
-        .call_tool(CallToolRequestParams {
-            meta: None,
-            name: "get_loaded_symbol".into(),
-            arguments: None,
-            task: None,
-        })
-        .await
-        .unwrap();
-
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.raw.as_text())
-        .unwrap();
-    let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
-
-    // When no data loaded, loaded_symbols should be empty array
-    assert_eq!(resp["loaded_symbols"], json!([]));
-    assert_eq!(resp["rows"], serde_json::Value::Null);
-    assert!(resp["summary"].as_str().unwrap().contains("No data"));
-
-    client.cancel().await.unwrap();
-    server_handle.await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn get_loaded_symbol_after_load_data() {
-    let (server, _tmp) = make_test_server();
-
-    let (server_tx, server_rx) = tokio::io::duplex(4096);
-    let (client_tx, client_rx) = tokio::io::duplex(4096);
-
-    // Preload test data
-    let df = make_multi_strike_df();
-    preload_data(&server, "SPY", df).await;
-
-    let server_handle =
-        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
-
-    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
-        ().serve((server_rx, client_tx)).await.unwrap();
-
-    let result = client
-        .peer()
-        .call_tool(CallToolRequestParams {
-            meta: None,
-            name: "get_loaded_symbol".into(),
-            arguments: None,
-            task: None,
-        })
-        .await
-        .unwrap();
-
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.raw.as_text())
-        .unwrap();
-    let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
-
-    // After preload_data, should return loaded_symbols array with SPY
-    assert_eq!(resp["loaded_symbols"], json!(["SPY"]));
-    assert!(resp["rows"].as_u64().unwrap() > 0);
-    assert!(!resp["columns"].as_array().unwrap().is_empty());
-    assert!(resp["summary"].as_str().unwrap().contains("1 symbol"));
-
-    client.cancel().await.unwrap();
-    server_handle.await.unwrap();
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // Category 3: Parameter Validation — Garde Rejection
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -359,59 +261,6 @@ async fn backtest_rejects_zero_capital() {
         "Expected validation error for zero capital, got: {}",
         text.text
     );
-
-    client.cancel().await.unwrap();
-    server_handle.await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn check_cache_rejects_path_traversal() {
-    let (server, _tmp) = make_test_server();
-
-    let (server_tx, server_rx) = tokio::io::duplex(4096);
-    let (client_tx, client_rx) = tokio::io::duplex(4096);
-
-    let server_handle =
-        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
-
-    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
-        ().serve((server_rx, client_tx)).await.unwrap();
-
-    let result = client
-        .peer()
-        .call_tool(CallToolRequestParams {
-            meta: None,
-            name: "check_cache_status".into(),
-            arguments: Some(
-                serde_json::from_value(json!({
-                    "symbol": "SPY",
-                    "category": "../../etc"
-                }))
-                .unwrap(),
-            ),
-            task: None,
-        })
-        .await;
-
-    // Path traversal is now rejected at deserialization time (enum validation)
-    // or returns an error result if it somehow passes
-    assert!(
-        result.is_err() || result.as_ref().unwrap().is_error.unwrap_or(false),
-        "Expected error for path traversal attempt"
-    );
-
-    // If we got a successful call but with error result, check the message
-    if let Ok(result) = result {
-        if let Some(text) = result.content.first().and_then(|c| c.raw.as_text()) {
-            assert!(
-                text.text.contains("unknown variant")
-                    || text.text.contains("Validation error")
-                    || text.text.contains("Invalid category"),
-                "Expected deserialization, validation, or category error for path traversal, got: {}",
-                text.text
-            );
-        }
-    }
 
     client.cancel().await.unwrap();
     server_handle.await.unwrap();
@@ -796,93 +645,6 @@ async fn backtest_golden_path_output_shape() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Category 6: Cache Status
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn check_cache_reports_missing_file() {
-    let (server, _tmp) = make_test_server();
-
-    let (server_tx, server_rx) = tokio::io::duplex(4096);
-    let (client_tx, client_rx) = tokio::io::duplex(4096);
-
-    let server_handle =
-        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
-
-    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
-        ().serve((server_rx, client_tx)).await.unwrap();
-
-    let result = client
-        .peer()
-        .call_tool(CallToolRequestParams {
-            meta: None,
-            name: "check_cache_status".into(),
-            arguments: Some(
-                serde_json::from_value(json!({"symbol": "MISSING", "category": "options"}))
-                    .unwrap(),
-            ),
-            task: None,
-        })
-        .await
-        .unwrap();
-
-    assert!(!result.is_error.unwrap_or(false));
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.raw.as_text())
-        .unwrap();
-    let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
-    assert_eq!(resp["exists"], false);
-    assert!(resp["last_updated"].is_null());
-
-    client.cancel().await.unwrap();
-    server_handle.await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn check_cache_reports_existing_file() {
-    let (server, tmp) = make_test_server();
-    let mut df = make_multi_strike_df();
-    write_test_parquet(tmp.path(), "SPY", &mut df);
-
-    let (server_tx, server_rx) = tokio::io::duplex(4096);
-    let (client_tx, client_rx) = tokio::io::duplex(4096);
-
-    let server_handle =
-        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
-
-    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
-        ().serve((server_rx, client_tx)).await.unwrap();
-
-    let result = client
-        .peer()
-        .call_tool(CallToolRequestParams {
-            meta: None,
-            name: "check_cache_status".into(),
-            arguments: Some(
-                serde_json::from_value(json!({"symbol": "SPY", "category": "options"})).unwrap(),
-            ),
-            task: None,
-        })
-        .await
-        .unwrap();
-
-    assert!(!result.is_error.unwrap_or(false));
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.raw.as_text())
-        .unwrap();
-    let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
-    assert_eq!(resp["exists"], true);
-    assert!(resp["last_updated"].is_string());
-
-    client.cancel().await.unwrap();
-    server_handle.await.unwrap();
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // Category 7: MCP Protocol Round-Trip
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -919,56 +681,6 @@ async fn mcp_roundtrip_list_strategies() {
         .unwrap();
     let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
     assert_eq!(resp["total"], 31);
-
-    client.cancel().await.unwrap();
-    server_handle.await.unwrap();
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Category 9: Multi-Symbol Support
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn get_loaded_symbol_with_multiple_symbols() {
-    let (server, _tmp) = make_test_server();
-
-    let (server_tx, server_rx) = tokio::io::duplex(4096);
-    let (client_tx, client_rx) = tokio::io::duplex(4096);
-
-    // Preload multiple symbols
-    preload_data(&server, "SPY", make_multi_strike_df()).await;
-    preload_data(&server, "QQQ", make_multi_strike_df()).await;
-
-    let server_handle =
-        tokio::spawn(async move { server.serve((client_rx, server_tx)).await.unwrap() });
-
-    let client: rmcp::service::RunningService<rmcp::service::RoleClient, _> =
-        ().serve((server_rx, client_tx)).await.unwrap();
-
-    let result = client
-        .peer()
-        .call_tool(CallToolRequestParams {
-            meta: None,
-            name: "get_loaded_symbol".into(),
-            arguments: None,
-            task: None,
-        })
-        .await
-        .unwrap();
-
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.raw.as_text())
-        .unwrap();
-    let resp: serde_json::Value = serde_json::from_str(&text.text).unwrap();
-
-    // Should report both symbols (sorted)
-    let loaded_symbols = resp["loaded_symbols"].as_array().unwrap();
-    assert_eq!(loaded_symbols.len(), 2);
-    assert_eq!(loaded_symbols[0], "QQQ");
-    assert_eq!(loaded_symbols[1], "SPY");
-    assert!(resp["summary"].as_str().unwrap().contains("2 symbol"));
 
     client.cancel().await.unwrap();
     server_handle.await.unwrap();

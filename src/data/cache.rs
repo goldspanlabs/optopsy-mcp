@@ -1,8 +1,6 @@
 use anyhow::{bail, Context, Result};
 use chrono::NaiveDate;
 use polars::prelude::*;
-use s3::creds::Credentials;
-use s3::{Bucket, Region};
 use std::path::PathBuf;
 
 use super::parquet::ParquetStore;
@@ -10,7 +8,6 @@ use super::DataStore;
 
 pub struct CachedStore {
     cache_dir: PathBuf,
-    bucket: Option<Box<Bucket>>,
     category: String,
 }
 
@@ -19,11 +16,9 @@ impl CachedStore {
     ///
     /// - `cache_dir`: local directory for cached parquet files (e.g. `~/.optopsy/cache`)
     /// - `category`: subdirectory name (e.g. `"options"`)
-    /// - `bucket`: optional S3 bucket for remote fetch-on-miss
-    pub fn new(cache_dir: PathBuf, category: String, bucket: Option<Box<Bucket>>) -> Self {
+    pub fn new(cache_dir: PathBuf, category: String) -> Self {
         Self {
             cache_dir,
-            bucket,
             category,
         }
     }
@@ -38,42 +33,13 @@ impl CachedStore {
     /// | Env Var | Default | Purpose |
     /// |---------|---------|---------|
     /// | `DATA_ROOT` | `~/.optopsy/cache` | Local cache directory |
-    /// | `S3_BUCKET` | (none) | Bucket name — if unset, S3 disabled |
-    /// | `S3_ENDPOINT` | (none) | S3-compatible endpoint URL |
-    /// | `AWS_ACCESS_KEY_ID` | (none) | S3 credentials |
-    /// | `AWS_SECRET_ACCESS_KEY` | (none) | S3 credentials |
     pub fn from_env() -> Result<Self> {
         let cache_dir = match std::env::var("DATA_ROOT") {
             Ok(val) => PathBuf::from(val),
             Err(_) => dirs_default_cache(),
         };
 
-        let bucket_name =
-            std::env::var("S3_BUCKET").or_else(|_| std::env::var("AWS_S3_BUCKET_NAME"));
-        let endpoint = std::env::var("S3_ENDPOINT").or_else(|_| std::env::var("AWS_ENDPOINT_URL"));
-
-        let bucket = match (bucket_name, endpoint) {
-            (Ok(bucket_name), Ok(endpoint)) => {
-                let region = Region::Custom {
-                    region: "auto".to_string(),
-                    endpoint,
-                };
-                let credentials = Credentials::from_env_specific(
-                    Some("AWS_ACCESS_KEY_ID"),
-                    Some("AWS_SECRET_ACCESS_KEY"),
-                    None,
-                    None,
-                )
-                .context("Failed to load S3 credentials from environment")?;
-
-                let bucket = Bucket::new(&bucket_name, region, credentials)
-                    .context("Failed to create S3 bucket")?;
-                Some(bucket)
-            }
-            _ => None,
-        };
-
-        Ok(Self::new(cache_dir, "options".to_string(), bucket))
+        Ok(Self::new(cache_dir, "options".to_string()))
     }
 
     /// Build the parquet file path for a symbol under a category.
@@ -111,8 +77,8 @@ impl CachedStore {
         self.build_parquet_path(symbol, &self.category)
     }
 
-    /// Ensure a file exists locally under the given category, fetching from S3 if needed.
-    pub async fn ensure_local_for(&self, symbol: &str, category: &str) -> Result<PathBuf> {
+    /// Ensure a file exists locally under the given category, returning an error if not found.
+    pub fn ensure_local_for(&self, symbol: &str, category: &str) -> Result<PathBuf> {
         let path = self.build_parquet_path(symbol, category)?;
 
         if path.exists() {
@@ -120,47 +86,8 @@ impl CachedStore {
             return Ok(path);
         }
 
-        // Try S3 fetch
-        if let Some(bucket) = &self.bucket {
-            let key = format!("{category}/{}.parquet", symbol.to_uppercase());
-            tracing::info!(%symbol, %key, "Fetching from S3");
-
-            let response = bucket
-                .get_object(&key)
-                .await
-                .with_context(|| format!("S3 GET failed for key: {key}"))?;
-
-            if response.status_code() != 200 {
-                bail!(
-                    "S3 returned status {} for key: {key}",
-                    response.status_code()
-                );
-            }
-
-            // Ensure parent directory exists
-            if let Some(parent) = path.parent() {
-                tokio::fs::create_dir_all(parent)
-                    .await
-                    .with_context(|| format!("Failed to create cache dir: {}", parent.display()))?;
-            }
-
-            // Write to a temp file then atomically rename to avoid corrupt cache on crash
-            let tmp_path = path.with_extension("parquet.tmp");
-            tokio::fs::write(&tmp_path, response.as_slice())
-                .await
-                .with_context(|| {
-                    format!("Failed to write temp cache file: {}", tmp_path.display())
-                })?;
-            tokio::fs::rename(&tmp_path, &path)
-                .await
-                .with_context(|| format!("Failed to rename cache file: {}", path.display()))?;
-
-            tracing::info!(%symbol, path = %path.display(), "Cached locally");
-            return Ok(path);
-        }
-
         bail!(
-            "File not found: {} (no S3 configured for remote fetch)",
+            "No cached data found for {symbol}. Place the Parquet file at {}",
             path.display()
         );
     }
@@ -173,7 +100,7 @@ impl DataStore for CachedStore {
         start_date: Option<NaiveDate>,
         end_date: Option<NaiveDate>,
     ) -> Result<DataFrame> {
-        let path = self.ensure_local_for(symbol, &self.category).await?;
+        let path = self.ensure_local_for(symbol, &self.category)?;
 
         let store = ParquetStore::new(&path.to_string_lossy());
         store.load_options(symbol, start_date, end_date).await

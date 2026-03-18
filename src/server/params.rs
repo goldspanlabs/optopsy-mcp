@@ -521,27 +521,6 @@ pub struct CompareStrategiesParams {
     pub symbol: Option<String>,
 }
 
-/// Validate that a cache category is one of the allowed read categories.
-pub(crate) fn validate_category_read(category: &str) -> Result<&str, String> {
-    match category {
-        "options" | "etf" | "stocks" | "futures" | "indices" => Ok(category),
-        _ => Err(format!(
-            "Invalid category: \"{category}\". Must be \"options\", \"etf\", \"stocks\", \"futures\", or \"indices\"."
-        )),
-    }
-}
-
-/// Parameters for the `check_cache_status` tool.
-#[derive(Debug, Deserialize, JsonSchema, Validate)]
-pub struct CheckCacheParams {
-    /// Ticker symbol (e.g. "SPY")
-    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
-    pub symbol: String,
-    /// Data category: "options" for options chain data, "etf"/"stocks"/"futures"/"indices" for OHLCV price data
-    #[garde(length(min = 1))]
-    pub category: String,
-}
-
 /// Parameters for the `build_signal` tool, supporting multiple actions (search, create, etc.).
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct BuildSignalParams {

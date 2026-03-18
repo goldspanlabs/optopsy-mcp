@@ -101,12 +101,7 @@ Control runtime behavior and data sources:
 | Variable | Purpose | Default | Notes |
 |----------|---------|---------|-------|
 | `PORT` | HTTP service port; if unset, uses stdio | _(unset)_ | e.g., `PORT=8000 cargo run` |
-| `EODHD_API_KEY` | Enable EODHD API for options downloads | _(unset)_ | Sets `EodhdProvider::from_env()` to Some |
 | `DATA_ROOT` | Local Parquet cache directory | `~/.optopsy/cache` | Created if missing; `~/` expanded via `shellexpand` |
-| `S3_BUCKET` | S3 bucket name | _(unset)_ | Requires `S3_ENDPOINT`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` |
-| `S3_ENDPOINT` | S3-compatible endpoint URL | _(unset)_ | e.g., `https://s3.amazonaws.com` |
-| `AWS_ACCESS_KEY_ID` | S3 credentials | _(unset)_ | Via `Credentials::from_env_specific()` |
-| `AWS_SECRET_ACCESS_KEY` | S3 credentials | _(unset)_ | Via `Credentials::from_env_specific()` |
 | `RUST_LOG` | Tracing filter | _(unset)_ | e.g., `RUST_LOG=optopsy_mcp=debug` |
 
 ## Architecture
@@ -136,10 +131,10 @@ Key submodules: `filters.rs` (DTE/delta filtering, `filter_valid_quotes(df, min_
 31 strategies across singles, spreads, butterflies, condors, iron, and calendar categories. Built using helpers (`call_leg`, `put_leg`, `strategy`) in `helpers.rs`. `all_strategies()` returns the full list; `find_strategy(name)` does linear scan. Multi-expiration strategies (calendar/diagonal) use `ExpirationCycle::Primary`/`Secondary` tags on legs.
 
 ### Data Layer (`src/data/`)
-`DataStore` trait with `CachedStore` as default — local Parquet cache at `~/.optopsy/cache/{category}/{SYMBOL}.parquet` with S3 fetch-on-miss. `ParquetStore` handles date column normalization: options files store `date` (Date) which is cast to `datetime` (Datetime) at 15:59:00 on load; OHLCV files already have a `datetime` (Datetime) column. Path segments validated against traversal attacks.
+`DataStore` trait with `CachedStore` as default — local Parquet cache only at `~/.optopsy/cache/{category}/{SYMBOL}.parquet`, errors if data not found. `ParquetStore` handles date column normalization: options files store `date` (Date) which is cast to `datetime` (Datetime) at 15:59:00 on load; OHLCV files already have a `datetime` (Datetime) column. Path segments validated against traversal attacks.
 
 ### Signals (`src/signals/`)
-TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, trend, volatility, overlap, price, volume, plus combinators. Split across three focused modules: `spec.rs` (the `SignalSpec` enum with 40+ variants), `builders.rs` (`build_signal()` factory and per-category builders), and `registry.rs` (signal catalog metadata, `collect_cross_symbols`, re-exports). Signals are **fully wired** into both options and stock backtests via `entry_signal` and `exit_signal` params. For options (`BacktestParams`), signals are optional entry/exit filters. For stocks (`StockBacktestParams`), `entry_signal` is required — it drives when trades open. OHLCV data is auto-fetched when signals are used.
+TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, trend, volatility, overlap, price, volume, plus combinators. Split across three focused modules: `spec.rs` (the `SignalSpec` enum with 40+ variants), `builders.rs` (`build_signal()` factory and per-category builders), and `registry.rs` (signal catalog metadata, `collect_cross_symbols`, re-exports). Signals are **fully wired** into both options and stock backtests via `entry_signal` and `exit_signal` params. For options (`BacktestParams`), signals are optional entry/exit filters. For stocks (`StockBacktestParams`), `entry_signal` is required — it drives when trades open. OHLCV data is loaded from the local Parquet cache when signals are used.
 
 ## Polars 0.53 Conventions
 
@@ -173,7 +168,7 @@ Check if Parquet cache exists for a symbol and last update time.
 
 #### `get_raw_prices`
 Return raw OHLCV price data for a symbol, ready for chart generation by LLMs.
-OHLCV data is auto-fetched from Yahoo Finance and cached on first access.
+OHLCV data is loaded from the local Parquet cache.
 
 **Parameters:**
 ```json
@@ -311,7 +306,7 @@ Full event-driven day-by-day options simulation with trade log and metrics. Opti
 - `suggested_next_steps` — Follow-up actions
 
 #### `run_stock_backtest`
-Signal-driven stock/equity backtest on OHLCV data. Entry signal is required. OHLCV data is auto-fetched from Yahoo Finance.
+Signal-driven stock/equity backtest on OHLCV data. Entry signal is required. OHLCV data is loaded from the local Parquet cache.
 
 **Parameters:**
 ```json
@@ -541,9 +536,8 @@ Validation happens in tool handlers via `params.validate().map_err(...)?`. Inval
 ## Data Layer Internals
 
 ### CachedStore (`src/data/cache.rs`)
-- Holds local Parquet cache dir and optional S3 config
-- `load_options(symbol, start, end)` — Try local → S3 → error
-- `save_options(symbol, df)` — Write to local parquet (creates dirs as needed)
+- Holds local Parquet cache dir
+- `load_options(symbol, start, end)` — Load from local cache or error if not found
 - Path traversal protection via `validate_path_segment()` — rejects `/`, `\`, `..`, empty strings
 
 ### ParquetStore (`src/data/parquet.rs`)
@@ -551,11 +545,6 @@ Validation happens in tool handlers via `params.validate().map_err(...)?`. Inval
 - Options files: `date` (Date) → cast to `datetime` (Datetime) at 15:59:00 on load
 - OHLCV files: `datetime` (Datetime) column used directly, no normalization needed
 - Lazy scanning for memory efficiency: `scan_parquet().select([...]).filter(...).collect()`
-
-### EodhdProvider (`src/data/eodhd.rs`)
-- `from_env()` — Returns Some if `EODHD_API_KEY` set; else None
-- `download_options(symbol)` — Fetches from EODHD, normalizes, caches locally
-- Resumable: checks last cached date, fetches only new rows, appends to existing parquet
 
 ## Testing
 
@@ -590,7 +579,7 @@ let lazy = df.clone().lazy()
 ```
 
 ### Signal Entry/Exit
-1. OHLCV data is auto-fetched when signals are used (no manual step needed)
+1. OHLCV data is loaded from cache when signals are used
 2. Pass `entry_signal: Some(SignalSpec { ... })` in `BacktestParams`
 3. Event loop evaluates signal on each date via `signal::evaluate(ohlcv_df, spec, date)`
 4. Gates trade entry or forces position exit

@@ -27,17 +27,17 @@ use crate::engine::types::{
 use crate::signals::registry::{collect_cross_symbols, SignalSpec};
 use crate::tools;
 use crate::tools::response_types::{
-    AggregatePricesResponse, BacktestResponse, BuildSignalResponse, CheckCacheResponse,
-    CompareResponse, CorrelateResponse, DistributionResponse, PermutationTestResponse,
-    RawPricesResponse, RegimeDetectResponse, RollingMetricResponse, StatusResponse,
-    StockBacktestResponse, StrategiesResponse, SweepResponse, WalkForwardResponse,
+    AggregatePricesResponse, BacktestResponse, BuildSignalResponse, CompareResponse,
+    CorrelateResponse, DistributionResponse, PermutationTestResponse, RawPricesResponse,
+    RegimeDetectResponse, RollingMetricResponse, StockBacktestResponse, StrategiesResponse,
+    SweepResponse, WalkForwardResponse,
 };
 use params::{
-    resolve_leg_deltas, resolve_sweep_strategies, validate_category_read, validation_err,
-    AggregatePricesParams, BacktestBaseParams, BuildSignalParams, CheckCacheParams,
-    CompareStrategiesParams, CorrelateParams, DistributionParams, GetRawPricesParams,
-    ParameterSweepParams, PermutationTestParams, RegimeDetectParams, RollingMetricParams,
-    RunBacktestParams, RunStockBacktestParams, WalkForwardParams,
+    resolve_leg_deltas, resolve_sweep_strategies, validation_err, AggregatePricesParams,
+    BacktestBaseParams, BuildSignalParams, CompareStrategiesParams, CorrelateParams,
+    DistributionParams, GetRawPricesParams, ParameterSweepParams, PermutationTestParams,
+    RegimeDetectParams, RollingMetricParams, RunBacktestParams, RunStockBacktestParams,
+    WalkForwardParams,
 };
 use sanitize::{SanitizedJson, SanitizedResult};
 
@@ -55,7 +55,7 @@ struct StockResolvedParams {
 pub struct OptopsyServer {
     /// Multi-symbol in-memory data storage, keyed by uppercase ticker.
     pub data: Arc<RwLock<LoadedData>>,
-    /// Shared data layer for local Parquet cache and optional S3 backend.
+    /// Shared data layer for local Parquet cache.
     pub cache: Arc<CachedStore>,
     tool_router: ToolRouter<Self>,
 }
@@ -612,18 +612,6 @@ impl OptopsyServer {
     #[tool(name = "list_strategies", annotations(read_only_hint = true))]
     async fn list_strategies(&self) -> SanitizedJson<StrategiesResponse> {
         SanitizedJson(tools::strategies::execute())
-    }
-
-    /// Get status of currently loaded data.
-    ///
-    /// **When to use**: Check what symbol is currently loaded, row count, available columns
-    /// **Prerequisites**: None (works with or without loaded data)
-    /// **How it works**: Returns details about the in-memory `DataFrame` (symbol, rows, columns)
-    /// **Next tool**: Proceed with `suggest_parameters()` or `run_options_backtest()`
-    /// **Example usage**: After loading SPY, call this to confirm it's loaded and see column names
-    #[tool(name = "get_loaded_symbol", annotations(read_only_hint = true))]
-    async fn get_loaded_symbol(&self) -> SanitizedJson<StatusResponse> {
-        SanitizedJson(tools::status::execute(&self.data).await)
     }
 
     /// Build, validate, save, list, search, and manage signals.
@@ -1648,34 +1636,6 @@ impl OptopsyServer {
                     .map_err(|e| format!("Compare task panicked: {e}"))?
                     .map_err(|e| format!("Error: {e}"))
                 }
-            }
-            .await,
-        )
-    }
-
-    /// Check if cached Parquet data exists and when it was last updated.
-    ///
-    /// **When to use**: To avoid redundant downloads or to verify data staleness
-    /// **Prerequisites**: None
-    ///
-    /// **Returns**:
-    ///   - Cache exists (boolean)
-    ///   - File path (if exists)
-    ///   - File size and row count
-    ///   - Last update timestamp
-    #[tool(name = "check_cache_status", annotations(read_only_hint = true))]
-    async fn check_cache_status(
-        &self,
-        Parameters(params): Parameters<CheckCacheParams>,
-    ) -> SanitizedResult<CheckCacheResponse, String> {
-        SanitizedResult(
-            async {
-                params
-                    .validate()
-                    .map_err(|e| validation_err("check_cache_status", e))?;
-                let category = validate_category_read(&params.category)?;
-                tools::cache_status::execute(&self.cache, &params.symbol, category)
-                    .map_err(|e| format!("Error: {e}"))
             }
             .await,
         )

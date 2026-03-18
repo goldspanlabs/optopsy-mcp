@@ -1,7 +1,7 @@
 //! Data layer for loading, caching, and normalizing options chain data.
 //!
 //! Provides a `DataStore` trait with a `CachedStore` implementation that uses
-//! local Parquet files with optional S3 fetch-on-miss.
+//! local Parquet files (errors if data not found in cache).
 
 pub mod cache;
 pub mod parquet;
