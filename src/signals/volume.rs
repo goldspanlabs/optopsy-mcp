@@ -57,7 +57,25 @@ mod tests {
         let low = vec![100.0, 102.0, 101.0, 103.0, 105.0];
         let volume = vec![1000.0, 1500.0, 1200.0, 900.0, 1300.0];
         let result = compute_cmf(&close, &high, &low, &volume, 3);
-        assert!(!result.is_empty());
+        // 5 bars, window=3 → 3 CMF values (indices 0..=2)
+        assert_eq!(result.len(), 3);
+        // Hand-calculate first window (bars 0-2):
+        //   MFV[0] = ((102-100)-(103-102))/(103-100) * 1000 = (2-1)/3 * 1000 = 333.33
+        //   MFV[1] = ((104-102)-(105-104))/(105-102) * 1500 = (2-1)/3 * 1500 = 500.00
+        //   MFV[2] = ((103-101)-(104-103))/(104-101) * 1200 = (2-1)/3 * 1200 = 400.00
+        //   CMF = (333.33 + 500.00 + 400.00) / (1000 + 1500 + 1200) = 1233.33 / 3700 ≈ 0.3333
+        assert!(
+            (result[0] - 1.0 / 3.0).abs() < 1e-10,
+            "first CMF window should be ~0.3333, got {}",
+            result[0]
+        );
+        // All values should be in [-1, 1] by construction
+        for (i, &v) in result.iter().enumerate() {
+            assert!(
+                (-1.0..=1.0).contains(&v),
+                "CMF[{i}] = {v} should be in [-1, 1]"
+            );
+        }
     }
 
     #[test]

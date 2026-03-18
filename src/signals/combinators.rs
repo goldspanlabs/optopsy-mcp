@@ -109,7 +109,7 @@ mod tests {
     }
 
     #[test]
-    fn and_signal_with_nulls() {
+    fn and_signal_empty_dataframe() {
         let signal = AndSignal {
             left: Box::new(ConstSignal {
                 values: vec![true, true],
@@ -118,11 +118,9 @@ mod tests {
                 values: vec![true, true],
             }),
         };
-        // Evaluate on a minimal DataFrame
+        // Evaluate on an empty DataFrame — should not panic
         let df = df! { "x" => Vec::<f64>::new() }.unwrap();
-        // Empty DF produces empty result (0 rows)
         let result = signal.evaluate(&df);
-        // This should work because both signals produce 0-length bool series
         assert!(result.is_ok());
     }
 

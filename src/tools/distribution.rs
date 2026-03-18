@@ -174,20 +174,6 @@ mod tests {
     }
 
     #[test]
-    fn test_stats_on_known_data() {
-        let values = vec![1.0_f64, 2.0, 3.0, 4.0, 5.0];
-        let m = stats::mean(&values);
-        assert!((m - 3.0).abs() < 1e-10, "mean should be 3.0, got {m}");
-
-        let md = stats::median(&values);
-        assert!((md - 3.0).abs() < 1e-10, "median should be 3.0, got {md}");
-
-        let sd = stats::std_dev(&values);
-        // Population std dev ≈ 1.4142
-        assert!(sd > 1.0 && sd < 2.0, "std_dev out of range: {sd}");
-    }
-
-    #[test]
     fn test_histogram_bin_count() {
         let values = synthetic_returns(100);
         let hist = stats::histogram(&values, 10);

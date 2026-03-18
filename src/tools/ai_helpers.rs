@@ -537,6 +537,26 @@ mod tests {
     }
 
     #[test]
+    fn subsample_respects_max() {
+        let data: Vec<i32> = (0..1000).collect();
+        let result = subsample_to_max(data, 500);
+        assert_eq!(result.len(), 500);
+        assert_eq!(result[0], 0);
+        assert_eq!(result[499], 999);
+    }
+
+    #[test]
+    fn subsample_smaller_than_max() {
+        let data: Vec<i32> = (0..100).collect();
+        let result = subsample_to_max(data, 500);
+        assert_eq!(
+            result.len(),
+            100,
+            "should not change if already within limit"
+        );
+    }
+
+    #[test]
     fn timestamp_string_all_non_intraday_match_date_string() {
         let epoch = 1_718_461_800;
         let date_only = epoch_to_date_string(epoch);

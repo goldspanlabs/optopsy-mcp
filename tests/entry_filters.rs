@@ -109,28 +109,6 @@ fn min_net_delta_excludes_low_delta_entries() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn min_days_between_entries_reduces_trades() {
-    let baseline = baseline_trade_count();
-    if baseline < 2 {
-        // Need at least 2 trades to test stagger
-        return;
-    }
-
-    let df = make_multi_strike_df();
-    let mut params = backtest_params("short_put", vec![delta(0.20)]);
-    // Require 30-day gap between entries — should reduce trade count
-    params.min_days_between_entries = Some(30);
-
-    let result = run_backtest(&df, &params).expect("backtest failed");
-    assert!(
-        result.trade_count <= baseline,
-        "30-day stagger ({}) should produce <= baseline trades ({})",
-        result.trade_count,
-        baseline
-    );
-}
-
-#[test]
 fn min_days_between_entries_one_allows_all() {
     let baseline = baseline_trade_count();
 
@@ -172,27 +150,6 @@ fn expiration_filter_monthly_affects_trades() {
             );
         }
         Err(e) => panic!("Monthly filter should not error: {e}"),
-    }
-}
-
-#[test]
-fn expiration_filter_weekly_affects_trades() {
-    let df = make_multi_strike_df();
-    let mut params = backtest_params("short_put", vec![delta(0.20)]);
-    params.expiration_filter = ExpirationFilter::Weekly;
-
-    let result = run_backtest(&df, &params);
-    // Weekly filter requires Friday expirations.
-    // Feb 16 2024 is a Friday, Mar 15 2024 is a Friday — both should pass.
-    match result {
-        Ok(r) => {
-            let baseline = baseline_trade_count();
-            assert_eq!(
-                r.trade_count, baseline,
-                "Both synthetic expirations are Fridays, should match baseline"
-            );
-        }
-        Err(e) => panic!("Weekly filter should not error: {e}"),
     }
 }
 

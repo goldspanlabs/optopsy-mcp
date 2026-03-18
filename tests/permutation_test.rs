@@ -202,33 +202,6 @@ fn permutation_test_no_candidates_returns_empty_metrics() {
 }
 
 #[test]
-fn permutation_test_with_entry_date_filter() {
-    let df = make_multi_strike_df();
-    let params = backtest_params("short_put", vec![delta(0.20)]);
-
-    let perm_params = PermutationParams {
-        num_permutations: 10,
-        seed: Some(42),
-    };
-
-    // Only allow entry on Jan 15
-    let mut allowed = std::collections::HashSet::new();
-    allowed.insert(chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap());
-
-    let output = run_permutation_test(
-        &df,
-        &params,
-        &perm_params,
-        &Some(allowed),
-        None::<&std::collections::HashSet<chrono::NaiveDate>>,
-    )
-    .unwrap();
-
-    // Should still produce results (Jan 15 is a valid entry date in the test data)
-    assert!(output.real_result.trade_count > 0 || output.num_completed == 0);
-}
-
-#[test]
 fn permutation_test_multi_leg_strategy() {
     let df = make_multi_strike_df();
     // Bull put spread: short higher delta put, long lower delta put

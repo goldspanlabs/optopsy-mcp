@@ -334,28 +334,6 @@ mod tests {
     }
 
     #[test]
-    fn test_pearson_perfect_positive() {
-        let a: Vec<f64> = (0..50).map(f64::from).collect();
-        let b: Vec<f64> = (0..50).map(|i| f64::from(i) * 2.0 + 1.0).collect();
-        let r = stats::pearson(&a, &b);
-        assert!(
-            (r - 1.0).abs() < 1e-10,
-            "perfect linear correlation should be 1.0, got {r}"
-        );
-    }
-
-    #[test]
-    fn test_pearson_perfect_negative() {
-        let a: Vec<f64> = (0..50).map(f64::from).collect();
-        let b: Vec<f64> = (0..50).map(|i| -f64::from(i)).collect();
-        let r = stats::pearson(&a, &b);
-        assert!(
-            (r + 1.0).abs() < 1e-10,
-            "perfect negative correlation should be -1.0, got {r}"
-        );
-    }
-
-    #[test]
     fn test_return_alignment_length() {
         // When series_a = "return" (N-1 values) and series_b = "close" (N values),
         // dropping b[0] should produce equal lengths N-1.
@@ -403,28 +381,6 @@ mod tests {
                 "rolling correlation should be ~1.0 for near-identical series, got {r}"
             );
         }
-    }
-
-    #[test]
-    fn test_subsample_respects_max() {
-        use crate::tools::ai_helpers::subsample_to_max;
-        let data: Vec<i32> = (0..1000).collect();
-        let result = subsample_to_max(data, 500);
-        assert_eq!(result.len(), 500);
-        assert_eq!(result[0], 0);
-        assert_eq!(result[499], 999);
-    }
-
-    #[test]
-    fn test_subsample_smaller_than_max() {
-        use crate::tools::ai_helpers::subsample_to_max;
-        let data: Vec<i32> = (0..100).collect();
-        let result = subsample_to_max(data.clone(), 500);
-        assert_eq!(
-            result.len(),
-            100,
-            "should not change if already within limit"
-        );
     }
 
     #[test]

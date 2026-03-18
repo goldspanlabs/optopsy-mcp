@@ -112,13 +112,20 @@ mod tests {
     }
 
     #[test]
-    fn jarque_bera_normal_like() {
-        // Roughly normal data should not reject (high p-value)
+    fn jarque_bera_uniform_data_rejects_normality() {
+        // Linear ramp is uniform-like (non-zero kurtosis), so JB should reject normality.
         let data: Vec<f64> = (0..100).map(|i| (f64::from(i) - 50.0) / 20.0).collect();
         let result = jarque_bera(&data).unwrap();
-        // Uniform-ish data won't be perfectly normal, but JB should be moderate
-        assert!(result.statistic >= 0.0);
-        assert!(result.p_value >= 0.0 && result.p_value <= 1.0);
+        assert!(
+            result.statistic > 0.0,
+            "JB stat should be positive for non-normal data"
+        );
+        // Uniform distribution has negative excess kurtosis → JB rejects normality
+        assert!(
+            result.p_value < 0.05,
+            "uniform-like data should reject normality, got p={}",
+            result.p_value
+        );
     }
 
     #[test]

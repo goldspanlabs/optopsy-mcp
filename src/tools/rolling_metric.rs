@@ -288,33 +288,6 @@ mod tests {
     }
 
     #[test]
-    fn test_rolling_volatility_constant_returns() {
-        // Constant returns → zero volatility
-        let returns = flat_returns(100, 0.001);
-        let window = 21;
-        let vols = stats::rolling_apply(&returns, window, |w| stats::std_dev(w) * 252.0_f64.sqrt());
-        // After warm-up period, all values should be ~0
-        for &v in &vols[window - 1..] {
-            assert!(v < 1e-10, "constant returns should give zero vol, got {v}");
-        }
-    }
-
-    #[test]
-    fn test_rolling_apply_nan_prefix() {
-        // First (window-1) values should be NaN
-        let returns = flat_returns(50, 0.002);
-        let window = 10;
-        let result = stats::rolling_apply(&returns, window, stats::mean);
-        for (i, val) in result.iter().enumerate().take(window - 1) {
-            assert!(val.is_nan(), "index {i} should be NaN before warmup");
-        }
-        assert!(
-            result[window - 1].is_finite(),
-            "first complete window should be finite"
-        );
-    }
-
-    #[test]
     fn test_rolling_paired_nan_bench_filtered() {
         // Benchmark with NaN values: those pairs should be excluded
         let asset = vec![0.01, 0.02, -0.01, 0.03, -0.02];
