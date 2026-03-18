@@ -215,7 +215,7 @@ pub fn execute(
 }
 
 /// Load OHLCV parquet from cache and return raw prices.
-/// Auto-fetches from Yahoo Finance on cache miss.
+/// Reads from the local Parquet cache.
 pub async fn load_and_execute(
     cache: &Arc<CachedStore>,
     symbol: &str,

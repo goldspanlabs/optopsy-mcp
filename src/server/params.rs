@@ -197,11 +197,11 @@ pub struct BacktestBaseParams {
     #[garde(skip)]
     pub selector: Option<TradeSelector>,
     /// Entry signal — only open trades on dates where this TA signal fires.
-    /// Requires OHLCV data (auto-fetched when needed).
+    /// Requires OHLCV data (loaded from cache when needed).
     #[garde(skip)]
     pub entry_signal: Option<SignalSpec>,
     /// Exit signal — close open positions on dates where this TA signal fires.
-    /// Requires OHLCV data (auto-fetched when needed).
+    /// Requires OHLCV data (loaded from cache when needed).
     #[garde(skip)]
     pub exit_signal: Option<SignalSpec>,
     /// Symbol to backtest (required if multiple symbols are loaded; optional if only one is loaded)
@@ -506,12 +506,12 @@ pub struct CompareStrategiesParams {
     #[garde(dive)]
     pub sim_params: SimParams,
     /// Entry signal — only open trades on dates where this TA signal fires.
-    /// Requires OHLCV data (auto-fetched when needed).
+    /// Requires OHLCV data (loaded from cache when needed).
     #[serde(default)]
     #[garde(skip)]
     pub entry_signal: Option<SignalSpec>,
     /// Exit signal — close open positions on dates where this TA signal fires.
-    /// Requires OHLCV data (auto-fetched when needed).
+    /// Requires OHLCV data (loaded from cache when needed).
     #[serde(default)]
     #[garde(skip)]
     pub exit_signal: Option<SignalSpec>,
@@ -809,12 +809,12 @@ pub struct SweepSimParams {
     #[garde(inner(range(min = 1)))]
     pub max_hold_days: Option<i32>,
     /// Entry signal — only open trades on dates where this TA signal fires.
-    /// Requires OHLCV data (auto-fetched when needed).
+    /// Requires OHLCV data (loaded from cache when needed).
     #[serde(default)]
     #[garde(skip)]
     pub entry_signal: Option<SignalSpec>,
     /// Exit signal — close open positions on dates where this TA signal fires.
-    /// Requires OHLCV data (auto-fetched when needed).
+    /// Requires OHLCV data (loaded from cache when needed).
     #[serde(default)]
     #[garde(skip)]
     pub exit_signal: Option<SignalSpec>,

@@ -116,7 +116,7 @@ pub fn execute() -> SignalsResponse {
         ],
         suggested_next_steps: vec![
             "[NEXT] Call build_signal({ action: \"search\", prompt: \"<signal_name>\" }) to get the JSON spec for a signal".into(),
-            "[THEN] Pass the signal JSON as entry_signal or exit_signal in run_options_backtest — OHLCV data is auto-fetched".into(),
+            "[THEN] Pass the signal JSON as entry_signal or exit_signal in run_options_backtest — OHLCV data is loaded from cache".into(),
         ],
     }
 }

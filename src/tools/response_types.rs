@@ -276,18 +276,6 @@ pub struct CheckCacheResponse {
     pub suggested_next_steps: Vec<String>,
 }
 
-/// Response for `fetch_to_parquet`
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct FetchResponse {
-    pub summary: String,
-    pub rows: usize,
-    pub symbol: String,
-    pub file_path: String,
-    pub date_range: DateRange,
-    pub columns: Vec<String>,
-    pub suggested_next_steps: Vec<String>,
-}
-
 /// A single OHLCV price bar for `get_raw_prices`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PriceBar {
@@ -400,7 +388,7 @@ pub struct ConstructSignalResponse {
     pub candidates: Vec<SignalCandidate>,
     /// JSON Schema for `SignalSpec` enum, describing all valid signal types and their parameters
     pub schema: serde_json::Value,
-    /// Default column names for OHLCV data from Yahoo Finance (e.g., {"close": "adjclose", "high": "high"})
+    /// Default column names for OHLCV data (e.g., {"close": "adjclose", "high": "high"})
     pub column_defaults: serde_json::Value,
     /// Example JSON structures showing how to combine signals using And/Or operators
     pub combinator_examples: Vec<serde_json::Value>,

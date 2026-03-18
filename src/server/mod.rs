@@ -746,7 +746,7 @@ impl OptopsyServer {
     ///
     /// **When to use**: Run a full capital-constrained backtest simulation
     /// **Prerequisites**: Data is auto-loaded from cache when you pass a symbol.
-    ///   OHLCV data is auto-fetched when signals are used.
+    ///   OHLCV data is loaded from cache when signals are used.
     /// **Next tools**: `compare_strategies()` (to test variations) or iterate on parameters
     ///
     /// **IMPORTANT**: `strategy` is REQUIRED — it defines WHAT option legs to trade.
@@ -859,7 +859,7 @@ impl OptopsyServer {
     ///
     /// **When to use**: Backtest a stock trading strategy driven by entry/exit signals
     ///   (e.g. "buy when RSI < 30, sell when RSI > 70")
-    /// **Prerequisites**: None — OHLCV data is auto-fetched from Yahoo Finance and cached
+    /// **Prerequisites**: None — OHLCV data is loaded from cache
     ///
     /// **Key difference from `run_options_backtest`**: This operates on stock prices (OHLCV bars),
     /// not options chains. No strategy/delta/DTE needed — signals drive everything.
@@ -1293,7 +1293,7 @@ impl OptopsyServer {
 
                 let strategies = resolve_sweep_strategies(params.strategies, params.direction)?;
 
-                // Auto-fetch OHLCV data if any signals are requested or any strategy has a stock leg
+                // Load OHLCV data from cache if any signals are requested or any strategy has a stock leg
                 let any_stock_leg = strategies.iter().any(|s| {
                     crate::strategies::find_strategy(&s.name)
                         .is_some_and(|def| def.has_stock_leg)
@@ -1682,11 +1682,11 @@ impl OptopsyServer {
     }
 
     /// Return raw OHLCV price data for a symbol, ready for chart generation.
-    /// Data is auto-fetched from Yahoo Finance on first access and cached locally.
+    /// Data is loaded from the local Parquet cache.
     ///
     /// **When to use**: When an LLM or user needs raw price data to generate charts
     ///   (candlestick, line, area) or perform custom analysis
-    /// **Prerequisites**: None — OHLCV data is auto-fetched and cached on first call
+    /// **Prerequisites**: None — OHLCV data is loaded from cache
     ///
     /// **Returns**: Array of `{ date, open, high, low, close, adjclose, volume }` bars.
     /// Data is evenly sampled down to `limit` points (default 500 if omitted) to avoid
@@ -1898,7 +1898,7 @@ impl ServerHandler for OptopsyServer {
                 \n  - **Options**: run_options_backtest({ strategy, symbol, ... }) — event-driven options backtest\
                 \n  - **Stocks**: run_stock_backtest({ symbol, entry_signal, ... }) — signal-driven stock backtest\
                 \n    No strategy/delta/DTE needed — entry_signal is REQUIRED, exit uses stop-loss/take-profit/exit_signal\
-                \n  - OHLCV data is auto-fetched from Yahoo Finance when needed\
+                \n  - OHLCV data is loaded from cache when needed\
                 \n\
                 \n### 3. Compare & Optimize (optional, options only)\
                 \n  - parameter_sweep — PREFERRED for optimization. Generates cartesian product of delta/DTE/slippage combos automatically.\

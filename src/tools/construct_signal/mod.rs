@@ -11,7 +11,7 @@ use crate::signals::registry::{SignalSpec, SIGNAL_CATALOG};
 use schemars::schema_for;
 use serde_json::{json, Value};
 
-// OHLCV column name conventions from Yahoo Finance
+// OHLCV column name conventions
 const DEFAULT_CLOSE: &str = "adjclose";
 const DEFAULT_OPEN: &str = "open";
 const DEFAULT_HIGH: &str = "high";
@@ -80,7 +80,7 @@ pub fn execute(prompt: &str) -> ConstructSignalResponse {
         had_real_matches && candidates.iter().any(|c| c.name.ends_with("Range"));
     let mut suggested_next_steps = vec![
         "Pick a candidate from above or use the schema to construct a custom SignalSpec".to_string(),
-        "Pass the JSON example as entry_signal or exit_signal in run_options_backtest — OHLCV data is auto-fetched when signals are used".to_string(),
+        "Pass the JSON example as entry_signal or exit_signal in run_options_backtest — OHLCV data is loaded from cache when signals are used".to_string(),
     ];
     if has_range_candidates {
         suggested_next_steps.push("Range signals use the And combinator pattern. Adjust the lower/upper thresholds (left/right) in the example to define your range.".to_string());

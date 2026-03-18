@@ -52,7 +52,7 @@ pub fn execute(
     } else {
         vec![match category {
             "etf" | "stocks" | "futures" | "indices" => format!(
-                "[NEXT] Call get_raw_prices({{ symbol: \"{upper}\" }}) — OHLCV data is auto-fetched"
+                "[NEXT] Call get_raw_prices({{ symbol: \"{upper}\" }}) — OHLCV data is loaded from cache"
             ),
             _ => format!(
                 "[NEXT] Populate the cache at {file_path} (or configure S3), then call run_options_backtest({{ strategy: \"<name>\", symbol: \"{upper}\" }})"

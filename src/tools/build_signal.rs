@@ -155,7 +155,7 @@ fn execute_create(name: &str, formula: &str, save: bool) -> BuildSignalResponse 
             vec![],
             None,
             vec![
-                "[INFO] OHLCV data is auto-fetched when signals are used in run_options_backtest".to_string(),
+                "[INFO] OHLCV data is loaded from cache when signals are used in run_options_backtest".to_string(),
                 "[NEXT]Use this signal as entry_signal or exit_signal in run_options_backtest — you MUST also provide a strategy (e.g. short_put, iron_condor). Signals filter WHEN to trade, not WHAT to trade.".to_string(),
                 format!(
                     "[TIP]Reference this signal later with: {{ \"type\": \"Saved\", \"name\": \"{name}\" }}"
@@ -170,7 +170,7 @@ fn execute_create(name: &str, formula: &str, save: bool) -> BuildSignalResponse 
             vec![],
             None,
             vec![
-                "[INFO] OHLCV data is auto-fetched when signals are used in run_options_backtest".to_string(),
+                "[INFO] OHLCV data is loaded from cache when signals are used in run_options_backtest".to_string(),
                 "[NEXT]Use this signal as entry_signal or exit_signal in run_options_backtest — you MUST also provide a strategy (e.g. short_put, iron_condor). Signals filter WHEN to trade, not WHAT to trade.".to_string(),
                 "[TIP]Call build_signal again with save=true to persist this signal".to_string(),
             ],
@@ -285,7 +285,7 @@ fn execute_get(name: &str) -> BuildSignalResponse {
             vec![],
             None,
             vec![
-                "[INFO] OHLCV data is auto-fetched when signals are used in run_options_backtest".to_string(),
+                "[INFO] OHLCV data is loaded from cache when signals are used in run_options_backtest".to_string(),
                 "[NEXT]Use this signal_spec as entry_signal or exit_signal in run_options_backtest — you MUST also provide a strategy (e.g. short_put, iron_condor). Signals filter WHEN to trade, not WHAT to trade.".to_string(),
             ],
         ),
@@ -391,7 +391,7 @@ fn execute_catalog() -> BuildSignalResponse {
         catalog: Some(catalog),
         suggested_next_steps: vec![
             "[NEXT] Call build_signal({ action: \"search\", prompt: \"<signal_name>\" }) to get the JSON spec for a signal".to_string(),
-            "[THEN] Pass the signal JSON as entry_signal or exit_signal in run_options_backtest — OHLCV data is auto-fetched".to_string(),
+            "[THEN] Pass the signal JSON as entry_signal or exit_signal in run_options_backtest — OHLCV data is loaded from cache".to_string(),
             format!("[INFO] {total} signals across {num_categories} categories: momentum, overlap, trend, volatility, volume, price, iv, datetime, utility, cross-symbol"),
         ],
     }

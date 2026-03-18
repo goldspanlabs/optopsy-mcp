@@ -24,7 +24,6 @@ ordered-float = "4"
 rustc-hash = "2"
 rust-s3 = { version = "0.37", default-features = false, features = ["tokio-rustls-tls", "fail-on-err"] }
 shellexpand = "3"
-yahoo_finance_api = "4.1"
 async-trait = "0.1"
 statrs = "0.18"
 

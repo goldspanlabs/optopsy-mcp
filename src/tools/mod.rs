@@ -13,7 +13,6 @@ pub mod compare;
 pub mod construct_signal;
 pub mod correlate;
 pub mod distribution;
-pub mod fetch;
 pub mod permutation_test;
 pub mod raw_prices;
 pub mod regime_detect;
