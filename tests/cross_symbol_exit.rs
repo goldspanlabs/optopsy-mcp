@@ -1,11 +1,11 @@
 //! Tests for cross-symbol exit signal resolution in options backtests.
 //!
 //! Validates two key properties:
-//! 1. CrossSymbol exit signals evaluate against the cross-symbol's OHLCV data (not primary)
+//! 1. `CrossSymbol` exit signals evaluate against the cross-symbol's OHLCV data (not primary)
 //! 2. Exit signals only close positions that are actually open (not fire on all days)
 //!
 //! Uses `make_multi_strike_df()` from common: 3 dates (Jan 15, Jan 22, Feb 11 2024),
-//! near-term exp Feb 16 (DTE=32 from Jan 15), exit_dte=5 → DTE exit on Feb 11.
+//! near-term exp Feb 16 (DTE=32 from Jan 15), `exit_dte=5` → DTE exit on Feb 11.
 
 use chrono::NaiveDate;
 use optopsy_mcp::engine::core::run_backtest;
