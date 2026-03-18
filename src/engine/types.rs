@@ -714,12 +714,12 @@ pub struct SimParams {
     #[garde(inner(range(min = 1)))]
     pub max_hold_days: Option<i32>,
     /// Entry signal — only open trades on dates where this TA signal fires.
-    /// Requires OHLCV data (call `fetch_to_parquet` first).
+    /// OHLCV data is auto-loaded from the local Parquet cache when signals are present.
     #[serde(default)]
     #[garde(skip)]
     pub entry_signal: Option<SignalSpec>,
     /// Exit signal — close open positions on dates where this TA signal fires.
-    /// Requires OHLCV data (call `fetch_to_parquet` first).
+    /// OHLCV data is auto-loaded from the local Parquet cache when signals are present.
     #[serde(default)]
     #[garde(skip)]
     pub exit_signal: Option<SignalSpec>,
