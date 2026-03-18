@@ -149,22 +149,22 @@ TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, tr
 
 ### Data Tools
 
-#### `check_cache_status`
-Check if Parquet cache exists for a symbol and last update time.
+#### `list_symbols`
+Search or browse symbols available in the local Parquet cache.
 
 **Parameters:**
 ```json
 {
-  "symbol": "SPY"  // Required
+  "query": "SPY"  // Optional. Case-insensitive prefix/substring search. Omit for category summary.
 }
 ```
 
-**Response:** `CheckCacheResponse`
-- `exists` — Boolean
-- `path` — Full path to parquet file (if exists)
-- `size_mb` — File size
-- `last_updated` — Timestamp
-- `row_count` — Number of records (if exists)
+**Response:** `ListSymbolsResponse`
+- `summary` — Human-readable summary or search results
+- `total` — Total symbols cached across all categories
+- `total_matches` — Number of symbols matching the query (equals `total` when no query)
+- `categories` — Array of `{ category, count, symbols }` grouped by data type (options, etf, stocks, futures, indices). `symbols` is populated only when a query is provided; empty in summary mode.
+- `suggested_next_steps` — Recommended follow-up actions
 
 #### `get_raw_prices`
 Return raw OHLCV price data for a symbol, ready for chart generation by LLMs.
@@ -185,14 +185,6 @@ OHLCV data is loaded from the local Parquet cache.
 - `date_range` — Min/max dates
 - `prices` — Array of `{ date, open, high, low, close, adjclose, volume }` bars
 - `suggested_next_steps` — Recommended next actions
-
-#### `get_loaded_symbol`
-Check what symbol is currently loaded in memory, row count, available columns.
-
-**Parameters:** None
-
-**Response:** `StatusResponse`
-- Details about the in-memory DataFrame (symbol, rows, columns)
 
 ### Strategy & Signal Tools
 

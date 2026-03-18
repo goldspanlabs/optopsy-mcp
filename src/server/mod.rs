@@ -28,16 +28,16 @@ use crate::signals::registry::{collect_cross_symbols, SignalSpec};
 use crate::tools;
 use crate::tools::response_types::{
     AggregatePricesResponse, BacktestResponse, BuildSignalResponse, CompareResponse,
-    CorrelateResponse, DistributionResponse, PermutationTestResponse, RawPricesResponse,
-    RegimeDetectResponse, RollingMetricResponse, StockBacktestResponse, StrategiesResponse,
-    SweepResponse, WalkForwardResponse,
+    CorrelateResponse, DistributionResponse, ListSymbolsResponse, PermutationTestResponse,
+    RawPricesResponse, RegimeDetectResponse, RollingMetricResponse, StockBacktestResponse,
+    StrategiesResponse, SweepResponse, WalkForwardResponse,
 };
 use params::{
     resolve_leg_deltas, resolve_sweep_strategies, validation_err, AggregatePricesParams,
     BacktestBaseParams, BuildSignalParams, CompareStrategiesParams, CorrelateParams,
-    DistributionParams, GetRawPricesParams, ParameterSweepParams, PermutationTestParams,
-    RegimeDetectParams, RollingMetricParams, RunBacktestParams, RunStockBacktestParams,
-    WalkForwardParams,
+    DistributionParams, GetRawPricesParams, ListSymbolsParams, ParameterSweepParams,
+    PermutationTestParams, RegimeDetectParams, RollingMetricParams, RunBacktestParams,
+    RunStockBacktestParams, WalkForwardParams,
 };
 use sanitize::{SanitizedJson, SanitizedResult};
 
@@ -603,6 +603,33 @@ use rmcp::handler::server::wrapper::Parameters;
 
 #[tool_router]
 impl OptopsyServer {
+    /// Search or browse symbols available in the local Parquet cache.
+    ///
+    /// **Without query**: Returns a summary of cached data — category names and counts
+    ///   (options, etf, stocks, futures, indices) — so you know what's available.
+    /// **With query**: Case-insensitive prefix/substring search across all categories.
+    ///   Returns up to 50 matching symbols with their category.
+    ///
+    /// **When to use**: To discover what data is available before running backtests or analysis.
+    /// **Prerequisites**: None (reads the cache directory)
+    /// **Next tools**: `run_options_backtest()`, `run_stock_backtest()`, or `get_raw_prices()`
+    #[tool(name = "list_symbols", annotations(read_only_hint = true))]
+    async fn list_symbols(
+        &self,
+        Parameters(params): Parameters<ListSymbolsParams>,
+    ) -> SanitizedResult<ListSymbolsResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("list_symbols", e))?;
+                tools::list_symbols::execute(&self.cache, params.query.as_deref())
+                    .map_err(|e| format!("Error: {e}"))
+            }
+            .await,
+        )
+    }
+
     /// Browse all 32 built-in options strategies grouped by category.
     ///
     /// **When to use**: To choose a strategy for analysis
@@ -1853,6 +1880,10 @@ impl ServerHandler for OptopsyServer {
                 "Backtesting engine for options and stocks. Data is auto-loaded when you call any analysis tool — \
                 just pass the symbol parameter.\
                 \n\n## WORKFLOW\
+                \n\
+                \n### 0. Discover Available Data\
+                \n  - list_symbols() — see category counts (options, etf, stocks, futures, indices)\
+                \n  - list_symbols({ query: \"SPY\" }) — search for a specific symbol across all categories\
                 \n\
                 \n### 1. Explore Strategies & Signals\
                 \n  - list_strategies() — browse all 32 option strategies by category\
