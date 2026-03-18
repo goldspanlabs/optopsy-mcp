@@ -1867,6 +1867,9 @@ impl ServerHandler for OptopsyServer {
                 just pass the symbol parameter.\
                 \n\n## WORKFLOW\
                 \n\
+                \n### 0. Discover Available Data\
+                \n  - list_symbols() — see all cached symbols grouped by category (options, etf, stocks, futures, indices)\
+                \n\
                 \n### 1. Explore Strategies & Signals\
                 \n  - list_strategies() — browse all 32 option strategies by category\
                 \n  - For built-in signals (RsiBelow, MacdBullish, etc.): construct JSON directly — see build_signal tool description\
