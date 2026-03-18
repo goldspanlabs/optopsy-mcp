@@ -146,7 +146,9 @@ pub fn run_stock_backtest(
         // Stagger check: for intraday, prefer bar-count cooldown; fall back to calendar days
         let stagger_ok = if params.interval.is_intraday() {
             match (params.min_bars_between_entries, last_entry_bar_idx) {
-                (Some(min_bars), Some(last_idx)) => (bar_idx as i32 - last_idx as i32) >= min_bars,
+                (Some(min_bars), Some(last_idx)) => {
+                    bar_idx.saturating_sub(last_idx) >= min_bars as usize
+                }
                 (Some(_), None) => true,
                 _ => match (params.min_days_between_entries, last_entry_date) {
                     (Some(min_days), Some(last)) => {
