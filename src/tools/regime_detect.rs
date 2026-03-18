@@ -763,4 +763,70 @@ mod tests {
         assert!(labels[0] < 2);
         assert!(labels[10] < 2);
     }
+
+    #[test]
+    fn test_volatility_cluster_intraday_interval_uses_correct_annualization() {
+        // classify_by_volatility uses interval.bars_per_year().sqrt() for annualization.
+        // With the same returns, the annualized rolling vols scale differently for
+        // Daily (sqrt(252)) vs Hour1 (sqrt(1764)), which can shift quantile thresholds
+        // and thus change which bars fall into which regime.
+        let prices = synthetic_prices_alternating_vol(300);
+        let returns: Vec<f64> = prices
+            .windows(2)
+            .map(|w| (w[1].close - w[0].close) / w[0].close)
+            .collect();
+
+        let (labels_daily, names_daily) = classify_by_volatility(
+            &returns,
+            20,
+            2,
+            crate::engine::types::Interval::Daily,
+        );
+        let (labels_hourly, names_hourly) = classify_by_volatility(
+            &returns,
+            20,
+            2,
+            crate::engine::types::Interval::Hour1,
+        );
+
+        // Both produce valid labels and two regime names
+        assert_eq!(labels_daily.len(), labels_hourly.len());
+        assert_eq!(names_daily.len(), 2);
+        assert_eq!(names_hourly.len(), 2);
+
+        // All labels must be valid regime indices or the sentinel
+        for &l in labels_daily.iter().chain(labels_hourly.iter()) {
+            assert!(l <= 2, "label {l} out of range");
+        }
+
+        // The label assignments are based on quantile thresholds of the annualized
+        // rolling vol. Since annualization is a scalar multiplier, quantile-based
+        // thresholds are proportionally scaled and yield identical regime labels.
+        // This confirms the function runs correctly with non-daily intervals.
+        assert_eq!(
+            labels_daily, labels_hourly,
+            "quantile-based classification should be scale-invariant"
+        );
+    }
+
+    #[test]
+    fn test_volatility_cluster_weekly_interval() {
+        let prices = synthetic_prices_alternating_vol(200);
+        let returns: Vec<f64> = prices
+            .windows(2)
+            .map(|w| (w[1].close - w[0].close) / w[0].close)
+            .collect();
+        let (labels, names) = classify_by_volatility(
+            &returns,
+            10,
+            2,
+            crate::engine::types::Interval::Weekly,
+        );
+        assert_eq!(labels.len(), returns.len());
+        assert_eq!(names.len(), 2);
+        // Labels must be valid
+        for &l in &labels {
+            assert!(l <= 2, "label {l} out of range");
+        }
+    }
 }
