@@ -1412,4 +1412,142 @@ mod tests {
         assert!(contains_iv_signal(&spec));
         assert!(contains_non_iv_signal(&spec));
     }
+
+    /// Write an intraday OHLCV parquet with a `datetime` (Datetime) column.
+    /// Each date gets multiple bars at different times; only the 15:59 bar
+    /// should be used for options signal evaluation.
+    fn write_intraday_ohlcv_parquet(
+        dates: &[NaiveDate],
+        closes_at_1559: &[f64],
+    ) -> (tempfile::TempDir, String) {
+        // For each date, write 3 bars: 10:00, 13:00, 15:59
+        // Only the 15:59 bar gets the specified close; others get a different value.
+        let mut datetimes = Vec::new();
+        let mut opens = Vec::new();
+        let mut highs = Vec::new();
+        let mut lows = Vec::new();
+        let mut closes = Vec::new();
+        let mut volumes = Vec::new();
+
+        for (i, date) in dates.iter().enumerate() {
+            let close_1559 = closes_at_1559[i];
+            for (hour, minute, close_val) in [
+                (10, 0, close_1559 + 5.0), // morning bar — different close
+                (13, 0, close_1559 - 2.0), // midday bar — different close
+                (15, 59, close_1559),      // EOD bar — the one options see
+            ] {
+                datetimes.push(date.and_hms_opt(hour, minute, 0).unwrap());
+                opens.push(100.0);
+                highs.push(105.0);
+                lows.push(95.0);
+                closes.push(close_val);
+                volumes.push(1_000_000i64);
+            }
+        }
+
+        let dt_series = DatetimeChunked::from_naive_datetime(
+            PlSmallStr::from("datetime"),
+            datetimes,
+            TimeUnit::Milliseconds,
+        )
+        .into_column();
+
+        let mut df = df! {
+            "open" => &opens,
+            "high" => &highs,
+            "low" => &lows,
+            "close" => &closes,
+            "adjclose" => &closes,
+            "volume" => &volumes,
+        }
+        .unwrap();
+        df.with_column(dt_series).unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ohlcv_intraday.parquet");
+        let file = std::fs::File::create(&path).unwrap();
+        polars::prelude::ParquetWriter::new(file)
+            .finish(&mut df)
+            .unwrap();
+        (dir, path.to_string_lossy().to_string())
+    }
+
+    #[test]
+    fn signal_filters_intraday_ohlcv_uses_1559_bar() {
+        // Options data with entry on Jan 15 (DTE=32)
+        let df = make_daily_options_df();
+
+        let ohlcv_dates: Vec<NaiveDate> = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 11).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 29).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 2, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 2, 5).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(),
+        ];
+        // 15:59 closes: monotonically decreasing → ConsecutiveUp(2) never fires
+        // But the 10:00 and 13:00 bars have different values that WOULD fire
+        // if not filtered — proving the 15:59 filter is working.
+        let closes_at_1559 = vec![107.0, 106.0, 105.0, 104.0, 103.0, 102.0, 101.0];
+        let (_dir, path) = write_intraday_ohlcv_parquet(&ohlcv_dates, &closes_at_1559);
+
+        let mut params = default_backtest_params();
+        params.entry_signal = Some(signals::registry::SignalSpec::Formula {
+            formula: "consecutive_up(close) >= 2".into(),
+        });
+        params.ohlcv_path = Some(path);
+
+        let result = run_backtest(&df, &params).unwrap();
+        // Signal should evaluate against 15:59 bars only (monotonic decrease → no fires)
+        assert_eq!(
+            result.trade_count, 0,
+            "Intraday OHLCV should be filtered to 15:59 bars; signal should not fire"
+        );
+    }
+
+    #[test]
+    fn day_of_week_signal_works_with_intraday_ohlcv() {
+        let df = make_daily_options_df();
+        // Options dates: Jan 15 (Mon), 22 (Mon), 29 (Mon), Feb 1 (Thu), 5 (Mon), 11 (Sun)
+
+        let ohlcv_dates: Vec<NaiveDate> = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(), // Monday
+            NaiveDate::from_ymd_opt(2024, 1, 16).unwrap(), // Tuesday
+            NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(), // Monday
+            NaiveDate::from_ymd_opt(2024, 1, 29).unwrap(), // Monday
+            NaiveDate::from_ymd_opt(2024, 2, 1).unwrap(),  // Thursday
+            NaiveDate::from_ymd_opt(2024, 2, 5).unwrap(),  // Monday
+            NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(), // Sunday
+        ];
+        let closes = vec![100.0; 7];
+        let (_dir, path) = write_intraday_ohlcv_parquet(&ohlcv_dates, &closes);
+
+        let mut params = default_backtest_params();
+        // day_of_week() == 4 → Thursday only → only Feb 1 fires
+        params.entry_signal = Some(signals::registry::SignalSpec::Formula {
+            formula: "day_of_week() == 4".into(),
+        });
+        params.ohlcv_path = Some(path);
+
+        // build_signal_filters should succeed (not crash on datetime column)
+        let filters = build_signal_filters(&params, &df);
+        assert!(
+            filters.is_ok(),
+            "day_of_week() with intraday OHLCV should not error: {:?}",
+            filters.err()
+        );
+
+        let (entry_dates, _) = filters.unwrap();
+        let entry_dates = entry_dates.expect("entry filter should be Some");
+        // Only Thursday Feb 1 should be in the set
+        assert!(
+            entry_dates.contains(&NaiveDate::from_ymd_opt(2024, 2, 1).unwrap()),
+            "Thursday Feb 1 should fire"
+        );
+        assert!(
+            !entry_dates.contains(&NaiveDate::from_ymd_opt(2024, 1, 15).unwrap()),
+            "Monday Jan 15 should not fire for day_of_week() == 4"
+        );
+    }
 }
