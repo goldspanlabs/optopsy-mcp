@@ -173,23 +173,17 @@ fn formula_references_iv(formula: &str) -> bool {
 /// For pure IV signals (no OHLCV path), a minimal `DataFrame` is constructed from the IV aggregation.
 /// When `CrossSymbol` variants are present, loads secondary symbol `DataFrame`s
 /// from `params.cross_ohlcv_paths` and uses `active_dates_multi` for evaluation.
-#[allow(clippy::too_many_lines)]
-pub fn build_signal_filters(
+/// Load and prepare the OHLCV `DataFrame` for signal evaluation.
+///
+/// Handles three cases: pure OHLCV signals, pure IV signals, and mixed.
+/// For intraday OHLCV data, filters to only the 15:59 bar per day to
+/// match options pricing time.
+fn load_signal_ohlcv(
     params: &BacktestParams,
     options_df: &DataFrame,
-) -> Result<(DateFilter, DateFilter)> {
-    let has_entry = params.entry_signal.is_some();
-    let has_exit = params.exit_signal.is_some();
-
-    if !has_entry && !has_exit {
-        return Ok((None, None));
-    }
-
+) -> Result<(DataFrame, &'static str)> {
     let needs_iv = params.entry_signal.as_ref().is_some_and(contains_iv_signal)
         || params.exit_signal.as_ref().is_some_and(contains_iv_signal);
-
-    // For pure IV signals, we don't require ohlcv_path.
-    // Need OHLCV only if any non-IV leaf signal exists in the spec tree.
     let needs_ohlcv = params
         .entry_signal
         .as_ref()
@@ -226,7 +220,6 @@ pub fn build_signal_filters(
             ));
         }
     } else if needs_iv {
-        // Pure IV signals only
         signals::volatility::aggregate_daily_iv(options_df)?
     } else {
         return Err(anyhow::anyhow!(
@@ -235,12 +228,9 @@ pub fn build_signal_filters(
         ));
     };
 
-    // Detect the date column name from the OHLCV DataFrame — may be "datetime" or "date"
     let date_col = stock_sim::detect_date_col(&ohlcv_df);
 
-    // For options backtests with intraday OHLCV data, filter to only the 15:59 bar
-    // per day to match options pricing time. This ensures signals evaluate against
-    // the same price context the options engine uses.
+    // For intraday OHLCV, filter to only the 15:59 bar per day to match options pricing time.
     let ohlcv_df = if date_col == "datetime" {
         ohlcv_df
             .clone()
@@ -257,6 +247,19 @@ pub fn build_signal_filters(
     } else {
         ohlcv_df
     };
+
+    Ok((ohlcv_df, date_col))
+}
+
+pub fn build_signal_filters(
+    params: &BacktestParams,
+    options_df: &DataFrame,
+) -> Result<(DateFilter, DateFilter)> {
+    if params.entry_signal.is_none() && params.exit_signal.is_none() {
+        return Ok((None, None));
+    }
+
+    let (ohlcv_df, date_col) = load_signal_ohlcv(params, options_df)?;
 
     // Check if any signal references a cross-symbol
     let has_cross = params
