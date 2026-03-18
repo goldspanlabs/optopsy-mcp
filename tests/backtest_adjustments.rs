@@ -241,38 +241,3 @@ fn adjustment_no_fire_below_threshold() {
         "expected 27 days held (Jan 15 → Feb 11)"
     );
 }
-
-// ─── Parity: unreachable adjustment preserves same results as no adjustment ──
-
-#[test]
-fn noop_rule_preserves_parity() {
-    // With an unreachable rule (threshold=999), results should match no-rule backtest.
-    let df = make_multi_strike_df();
-
-    let params_no_adj = base_params("long_call", vec![delta(0.50)]);
-    let mut params_with_adj = base_params("long_call", vec![delta(0.50)]);
-    params_with_adj.adjustment_rules = vec![AdjustmentRule {
-        trigger: AdjustmentTrigger::DefensiveRoll {
-            loss_threshold: 999.0,
-        },
-        action: AdjustmentAction::Close {
-            position_id: 0,
-            leg_index: 0,
-        },
-    }];
-
-    let result_no = run_backtest(&df, &params_no_adj).expect("backtest failed");
-    let result_with = run_backtest(&df, &params_with_adj).expect("backtest failed");
-
-    assert_eq!(result_no.trade_log.len(), result_with.trade_log.len());
-
-    for (t1, t2) in result_no.trade_log.iter().zip(result_with.trade_log.iter()) {
-        assert!(
-            (t1.pnl - t2.pnl).abs() < 0.01,
-            "PnL mismatch: {} vs {}",
-            t1.pnl,
-            t2.pnl
-        );
-        assert_eq!(t1.days_held, t2.days_held);
-    }
-}

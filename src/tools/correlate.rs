@@ -385,14 +385,6 @@ mod tests {
     }
 
     #[test]
-    fn test_close_close_alignment_length() {
-        // When both series use "close", no dropping: lengths are both N.
-        let prices_a = linear_prices(25, 100.0, 1.0);
-        let prices_b = linear_prices(25, 200.0, 1.5);
-        assert_eq!(prices_a.len(), prices_b.len());
-    }
-
-    #[test]
     fn test_rolling_correlation_window() {
         let a: Vec<f64> = (0..50).map(|i| (f64::from(i) * 0.1).sin()).collect();
         let b: Vec<f64> = (0..50).map(|i| (f64::from(i) * 0.1).sin() + 0.1).collect();

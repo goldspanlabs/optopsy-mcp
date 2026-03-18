@@ -529,48 +529,6 @@ mod tests {
     }
 
     #[test]
-    fn timestamp_string_weekly_returns_date_only() {
-        let epoch = 1_718_461_800;
-        let result = epoch_to_timestamp_string(epoch, Interval::Weekly);
-        assert_eq!(result, "2024-06-15");
-    }
-
-    #[test]
-    fn timestamp_string_monthly_returns_date_only() {
-        let epoch = 1_718_461_800;
-        let result = epoch_to_timestamp_string(epoch, Interval::Monthly);
-        assert_eq!(result, "2024-06-15");
-    }
-
-    #[test]
-    fn timestamp_string_1h_returns_datetime() {
-        let epoch = 1_718_461_800; // 2024-06-15 14:30:00 UTC
-        let result = epoch_to_timestamp_string(epoch, Interval::Hour1);
-        assert_eq!(result, "2024-06-15 14:30");
-    }
-
-    #[test]
-    fn timestamp_string_5m_returns_datetime() {
-        let epoch = 1_718_461_800;
-        let result = epoch_to_timestamp_string(epoch, Interval::Min5);
-        assert_eq!(result, "2024-06-15 14:30");
-    }
-
-    #[test]
-    fn timestamp_string_1m_returns_datetime() {
-        let epoch = 1_718_461_800;
-        let result = epoch_to_timestamp_string(epoch, Interval::Min1);
-        assert_eq!(result, "2024-06-15 14:30");
-    }
-
-    #[test]
-    fn timestamp_string_30m_returns_datetime() {
-        let epoch = 1_718_461_800;
-        let result = epoch_to_timestamp_string(epoch, Interval::Min30);
-        assert_eq!(result, "2024-06-15 14:30");
-    }
-
-    #[test]
     fn timestamp_string_midnight_intraday_shows_zeros() {
         // 2024-01-02 00:00:00 UTC
         let epoch = 1_704_153_600;

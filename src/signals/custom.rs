@@ -1457,16 +1457,6 @@ mod tests {
         assert!(validate_formula("sma(close, 20").is_err());
     }
 
-    #[test]
-    fn validate_empty_formula_errors() {
-        assert!(validate_formula("").is_err());
-    }
-
-    #[test]
-    fn validate_unknown_function_errors() {
-        assert!(validate_formula("unknown_func(close, 14) > 0").is_err());
-    }
-
     // --- extract_indicator_calls tests ---
 
     #[test]

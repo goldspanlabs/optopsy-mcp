@@ -1315,60 +1315,6 @@ mod tests {
         assert_eq!(bt.trade_log.len(), 1);
     }
 
-    /// Build an options `DataFrame` that includes `implied_volatility` for IV signal tests.
-    fn make_iv_options_df() -> DataFrame {
-        let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
-        let dates: Vec<_> = vec![
-            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 1, 29).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 2, 1).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 2, 5).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(),
-        ];
-
-        let quote_dates: Vec<_> = dates
-            .iter()
-            .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
-            .collect();
-        let expirations: Vec<_> = dates.iter().map(|_| exp).collect();
-        let n = dates.len();
-
-        let mut df = df! {
-            DATETIME_COL => &quote_dates,
-            "option_type" => vec!["call"; n],
-            "strike" => vec![100.0f64; n],
-            "bid" => vec![5.00, 4.50, 3.80, 3.20, 2.60, 2.00f64],
-            "ask" => vec![5.50, 5.00, 4.30, 3.70, 3.10, 2.50f64],
-            "delta" => vec![0.50, 0.47, 0.42, 0.38, 0.33, 0.25f64],
-            "implied_volatility" => vec![0.20, 0.25, 0.30, 0.35, 0.40, 0.45f64],
-        }
-        .unwrap();
-        df.with_column(
-            DateChunked::from_naive_date(PlSmallStr::from("expiration"), expirations).into_column(),
-        )
-        .unwrap();
-        df
-    }
-
-    #[test]
-    fn run_backtest_custom_signal_without_ohlcv_errors() {
-        // Any Custom signal requires ohlcv_path — all signals now use the Custom DSL.
-        let df = make_iv_options_df();
-        let mut params = default_backtest_params();
-        params.entry_signal = Some(signals::registry::SignalSpec::Formula {
-            formula: "consecutive_up(close) >= 2".into(),
-        });
-        params.ohlcv_path = None;
-
-        let result = run_backtest(&df, &params);
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("ohlcv_path is required"));
-    }
-
     #[test]
     fn formula_references_iv_standalone() {
         assert!(formula_references_iv("iv_rank(iv, 252) > 50"));

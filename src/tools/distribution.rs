@@ -174,14 +174,6 @@ mod tests {
     }
 
     #[test]
-    fn test_finite_filter_removes_nan() {
-        let raw: Vec<f64> = vec![1.0, f64::NAN, 2.0, f64::INFINITY, 3.0, f64::NEG_INFINITY];
-        let filtered: Vec<f64> = raw.into_iter().filter(|v| v.is_finite()).collect();
-        assert_eq!(filtered, vec![1.0, 2.0, 3.0]);
-        assert_eq!(filtered.len(), 3);
-    }
-
-    #[test]
     fn test_stats_on_known_data() {
         let values = vec![1.0_f64, 2.0, 3.0, 4.0, 5.0];
         let m = stats::mean(&values);
@@ -218,15 +210,6 @@ mod tests {
         assert!(p5 <= p25, "p5={p5} should be <= p25={p25}");
         assert!(p25 <= p75, "p25={p25} should be <= p75={p75}");
         assert!(p75 <= p95, "p75={p75} should be <= p95={p95}");
-    }
-
-    #[test]
-    fn test_min_max_correct() {
-        let values = [-3.0_f64, -1.0, 0.0, 2.0, 5.0];
-        let min_val = values.iter().copied().fold(f64::INFINITY, f64::min);
-        let max_val = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-        assert!((min_val - (-3.0)).abs() < 1e-10);
-        assert!((max_val - 5.0).abs() < 1e-10);
     }
 
     #[test]

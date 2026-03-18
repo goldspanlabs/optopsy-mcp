@@ -77,15 +77,6 @@ mod tests {
     }
 
     #[test]
-    fn and_signal_name() {
-        let signal = AndSignal {
-            left: Box::new(ConstSignal { values: vec![] }),
-            right: Box::new(ConstSignal { values: vec![] }),
-        };
-        assert_eq!(signal.name(), "and");
-    }
-
-    #[test]
     fn or_signal_either_true() {
         let signal = OrSignal {
             left: Box::new(ConstSignal {
@@ -100,15 +91,6 @@ mod tests {
         assert!(bools.get(0).unwrap());
         assert!(bools.get(1).unwrap());
         assert!(!bools.get(2).unwrap());
-    }
-
-    #[test]
-    fn or_signal_name() {
-        let signal = OrSignal {
-            left: Box::new(ConstSignal { values: vec![] }),
-            right: Box::new(ConstSignal { values: vec![] }),
-        };
-        assert_eq!(signal.name(), "or");
     }
 
     #[test]

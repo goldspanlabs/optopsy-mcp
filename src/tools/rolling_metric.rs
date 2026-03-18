@@ -357,16 +357,4 @@ mod tests {
             );
         }
     }
-
-    #[test]
-    fn test_valid_values_excludes_nan() {
-        let series_values = [f64::NAN, f64::NAN, 0.5, 0.6, 0.7];
-        let valid: Vec<f64> = series_values
-            .iter()
-            .copied()
-            .filter(|v| v.is_finite())
-            .collect();
-        assert_eq!(valid.len(), 3);
-        assert!((valid[0] - 0.5).abs() < 1e-10);
-    }
 }

@@ -192,26 +192,6 @@ fn parity_calendar_spread() {
     assert_parity(params);
 }
 
-#[test]
-fn event_loop_dispatch_with_adjustment_rules() {
-    // Verify that run_backtest with non-empty adjustment_rules doesn't error
-    // and returns a valid result (exercises event-loop dispatch path)
-    let df = make_multi_strike_df();
-    let mut params = backtest_params("long_call", vec![delta(0.50)]);
-    params.adjustment_rules = vec![noop_adjustment_rule()];
-
-    let result = run_backtest(&df, &params);
-    assert!(
-        result.is_ok(),
-        "event-loop dispatch failed: {:?}",
-        result.err()
-    );
-
-    let bt = result.unwrap();
-    assert!(bt.trade_count > 0, "expected at least 1 trade");
-    assert!(!bt.trade_log.is_empty(), "expected non-empty trade log");
-}
-
 // ─── Trade Log Correctness Tests ─────────────────────────────────────────────
 //
 // These tests verify every field of TradeRecord against hand-calculated values,

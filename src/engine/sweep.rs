@@ -1090,16 +1090,6 @@ mod tests {
     }
 
     #[test]
-    fn exit_dte_filtering() {
-        // exit_dte=30, entry_dte_range min=31 → valid (30 < 31)
-        let entry = dte_target_to_range(45); // min=31
-        assert!(30 < entry.min, "30 should be < entry.min={}", entry.min);
-
-        // exit_dte=35 should be invalid for entry_dte_target=45 (min=31)
-        assert!(35 >= entry.min);
-    }
-
-    #[test]
     fn violates_delta_ordering_inverted() {
         // bull_call_spread defaults: [0.50, 0.10] (leg0 > leg1)
         assert!(violates_delta_ordering("bull_call_spread", &[0.10, 0.50]));

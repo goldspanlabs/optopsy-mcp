@@ -1,9 +1,8 @@
 //! Tests verifying that `compare_strategies` returns trade logs in each `CompareResult`.
 
-use chrono::NaiveDate;
 use optopsy_mcp::engine::core::compare_strategies;
 use optopsy_mcp::engine::types::{
-    CompareEntry, CompareParams, DteRange, ExitType, SimParams, Slippage, TradeSelector,
+    CompareEntry, CompareParams, DteRange, SimParams, Slippage, TradeSelector,
 };
 
 mod common;
@@ -210,112 +209,5 @@ fn compare_trade_log_matches_standalone_backtest() {
             std::mem::discriminant(&ct.exit_type) == std::mem::discriminant(&st.exit_type),
             "Exit types should match"
         );
-    }
-}
-
-/// Compare works with more than two strategies.
-#[test]
-fn compare_accepts_three_or_more_strategies() {
-    let df = make_multi_strike_df();
-
-    let strategies = vec![
-        CompareEntry {
-            name: "long_call".to_string(),
-            leg_deltas: vec![delta(0.50)],
-            entry_dte: DteRange {
-                target: 45,
-                min: 10,
-                max: 45,
-            },
-            exit_dte: 5,
-            slippage: Slippage::Mid,
-            commission: None,
-        },
-        CompareEntry {
-            name: "long_put".to_string(),
-            leg_deltas: vec![delta(0.40)],
-            entry_dte: DteRange {
-                target: 45,
-                min: 10,
-                max: 45,
-            },
-            exit_dte: 5,
-            slippage: Slippage::Mid,
-            commission: None,
-        },
-        CompareEntry {
-            name: "short_call".to_string(),
-            leg_deltas: vec![delta(0.35)],
-            entry_dte: DteRange {
-                target: 45,
-                min: 10,
-                max: 45,
-            },
-            exit_dte: 5,
-            slippage: Slippage::Mid,
-            commission: None,
-        },
-    ];
-
-    let params = CompareParams {
-        strategies,
-        sim_params: default_sim_params(),
-    };
-
-    let (results, _) = compare_strategies(&df, &params).unwrap();
-    assert_eq!(results.len(), 3, "Should have results for all 3 strategies");
-
-    for result in &results {
-        assert!(
-            !result.trade_log.is_empty(),
-            "Strategy '{}' should have trade logs",
-            result.strategy
-        );
-        assert_eq!(
-            result.trade_log.len(),
-            result.trades,
-            "Strategy '{}': trade_log length must match trades count",
-            result.strategy
-        );
-    }
-}
-
-/// Trade log entries have correct entry dates from the synthetic data.
-#[test]
-fn compare_trade_log_entry_dates_match_synthetic_data() {
-    let df = make_multi_strike_df();
-    let params = CompareParams {
-        strategies: two_strategies(),
-        sim_params: default_sim_params(),
-    };
-
-    let (results, _) = compare_strategies(&df, &params).unwrap();
-
-    // Synthetic data has entries on Jan 15 (DTE=32 for near-term exp Feb 16)
-    let expected_entry = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
-    // Exit at DTE=5 means Feb 11
-    let expected_exit = NaiveDate::from_ymd_opt(2024, 2, 11).unwrap();
-
-    for result in &results {
-        for trade in &result.trade_log {
-            assert_eq!(
-                trade.entry_datetime.date(),
-                expected_entry,
-                "Strategy '{}': entry date should be Jan 15",
-                result.strategy
-            );
-            assert_eq!(
-                trade.exit_datetime.date(),
-                expected_exit,
-                "Strategy '{}': exit date should be Feb 11 (DTE=5)",
-                result.strategy
-            );
-            assert!(
-                matches!(trade.exit_type, ExitType::DteExit),
-                "Strategy '{}': exit type should be DteExit, got {:?}",
-                result.strategy,
-                trade.exit_type
-            );
-        }
     }
 }

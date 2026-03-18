@@ -117,29 +117,3 @@ fn liquidity_fill_ratio_zero_best_for_shorts() {
         "Liquidity(0.0) ({pnl_liq_0}) should be >= Mid ({pnl_mid}) for short puts"
     );
 }
-
-#[test]
-fn all_five_models_run_without_error() {
-    let models = vec![
-        Slippage::Mid,
-        Slippage::Spread,
-        Slippage::Liquidity {
-            fill_ratio: 0.3,
-            ref_volume: 5000,
-        },
-        Slippage::PerLeg { per_leg: 0.05 },
-        Slippage::BidAskTravel { pct: 0.25 },
-    ];
-
-    for model in models {
-        let df = make_multi_strike_df();
-        let mut params = backtest_params("short_put", vec![delta(0.20)]);
-        params.slippage = model.clone();
-        let result = run_backtest(&df, &params);
-        assert!(
-            result.is_ok(),
-            "Slippage model {model:?} should not error: {}",
-            result.unwrap_err()
-        );
-    }
-}

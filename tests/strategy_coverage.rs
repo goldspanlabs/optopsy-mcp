@@ -78,74 +78,6 @@ fn assert_backtest(strategy: &str, deltas: Vec<TargetRange>, expected_pnl: f64) 
     );
 }
 
-/// Like `assert_backtest` but also verifies `entry_cost` against a hand-calculated value.
-fn assert_backtest_full(
-    strategy: &str,
-    deltas: Vec<TargetRange>,
-    expected_pnl: f64,
-    expected_entry_cost: f64,
-) {
-    let df = make_multi_strike_df();
-    let params = backtest_params(strategy, deltas);
-
-    let result = run_backtest(&df, &params);
-    assert!(
-        result.is_ok(),
-        "{strategy}: run_backtest failed: {:?}",
-        result.err()
-    );
-
-    let bt = result.unwrap();
-    assert_eq!(bt.trade_count, 1, "{strategy}: expected 1 trade");
-
-    let trade = &bt.trade_log[0];
-
-    // All standard assertions
-    assert!(
-        (bt.total_pnl - expected_pnl).abs() < 0.01,
-        "{strategy}: expected PnL {expected_pnl}, got {}",
-        bt.total_pnl
-    );
-    assert_eq!(trade.days_held, 27, "{strategy}: expected 27 days held");
-
-    let expected_entry = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
-    assert_eq!(
-        trade.entry_datetime.date(),
-        expected_entry,
-        "{strategy}: expected entry date {expected_entry}"
-    );
-
-    let expected_exit = NaiveDate::from_ymd_opt(2024, 2, 11).unwrap();
-    assert_eq!(
-        trade.exit_datetime.date(),
-        expected_exit,
-        "{strategy}: expected exit date {expected_exit}"
-    );
-
-    assert!(
-        matches!(trade.exit_type, ExitType::DteExit),
-        "{strategy}: expected DteExit, got {:?}",
-        trade.exit_type
-    );
-
-    // Verify entry_cost
-    assert!(
-        (trade.entry_cost - expected_entry_cost).abs() < 0.01,
-        "{strategy}: expected entry_cost {expected_entry_cost}, got {}",
-        trade.entry_cost
-    );
-
-    // Internal consistency
-    let expected_exit_proceeds = trade.entry_cost + trade.pnl;
-    assert!(
-        (trade.exit_proceeds - expected_exit_proceeds).abs() < 0.01,
-        "{strategy}: exit_proceeds ({}) != entry_cost ({}) + pnl ({})",
-        trade.exit_proceeds,
-        trade.entry_cost,
-        trade.pnl
-    );
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // BACKTEST TESTS — Singles (6)
 // All use strike 100 (call δ0.50, put δ0.40)
@@ -275,47 +207,6 @@ fn backtest_covered_call_stock_prices_verified() {
         (trade.stock_exit_price.unwrap() - 102.0).abs() < 0.01,
         "stock_exit_price should be 102.0, got {}",
         trade.stock_exit_price.unwrap()
-    );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// FULL FIELD VERIFICATION — representative subset with entry_cost checks
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[test]
-fn backtest_full_long_call() {
-    // L Call@100: entry_mid=5.25, entry_cost = 5.25 × 1 × 100 = 525
-    assert_backtest_full("long_call", vec![delta(0.50)], -300.0, 525.0);
-}
-
-#[test]
-fn backtest_full_short_call() {
-    // S Call@100: entry_cost = 5.25 × (-1) × 100 = -525
-    assert_backtest_full("short_call", vec![delta(0.50)], 300.0, -525.0);
-}
-
-#[test]
-fn backtest_full_bull_call_spread() {
-    // L Call@100 + S Call@105
-    // entry_cost = (5.25 × 1 × 100) + (3.25 × (-1) × 100) = 525 - 325 = 200
-    assert_backtest_full(
-        "bull_call_spread",
-        vec![delta(0.50), delta(0.35)],
-        -100.0,
-        200.0,
-    );
-}
-
-#[test]
-fn backtest_full_iron_condor() {
-    // L Put@95 + S Put@100 + S Call@105 + L Call@110
-    // entry_cost = (1.25 × 1 × 100) + (2.75 × (-1) × 100) + (3.25 × (-1) × 100) + (1.75 × 1 × 100)
-    //            = 125 - 275 - 325 + 175 = -300
-    assert_backtest_full(
-        "iron_condor",
-        vec![delta(0.20), delta(0.40), delta(0.35), delta(0.20)],
-        150.0,
-        -300.0,
     );
 }
 

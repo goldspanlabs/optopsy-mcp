@@ -510,20 +510,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_signal_and_combinator() {
-        let spec = SignalSpec::And {
-            left: Box::new(SignalSpec::Formula {
-                formula: "rsi(close, 14) < 30".into(),
-            }),
-            right: Box::new(SignalSpec::Formula {
-                formula: "macd_hist(close) > 0".into(),
-            }),
-        };
-        let signal = build_signal(&spec);
-        assert_eq!(signal.name(), "and");
-    }
-
-    #[test]
     fn catalog_has_all_signals() {
         // 63 signals across 10 domain categories
         assert_eq!(SIGNAL_CATALOG.len(), 63);
@@ -584,60 +570,6 @@ mod tests {
             assert!(matches!(*signal, SignalSpec::Formula { .. }));
         } else {
             panic!("expected CrossSymbol");
-        }
-    }
-
-    #[test]
-    fn build_signal_or_combinator() {
-        let spec = SignalSpec::Or {
-            left: Box::new(SignalSpec::Formula {
-                formula: "rsi(close, 14) < 30".into(),
-            }),
-            right: Box::new(SignalSpec::Formula {
-                formula: "macd_hist(close) > 0".into(),
-            }),
-        };
-        let signal = build_signal(&spec);
-        assert_eq!(signal.name(), "or");
-    }
-
-    #[test]
-    fn signal_spec_serde_round_trip_and_combinator() {
-        let spec = SignalSpec::And {
-            left: Box::new(SignalSpec::Formula {
-                formula: "rsi(close, 14) < 30".into(),
-            }),
-            right: Box::new(SignalSpec::Formula {
-                formula: "close > sma(close, 20)".into(),
-            }),
-        };
-        let json = serde_json::to_string(&spec).unwrap();
-        let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
-        if let SignalSpec::And { left, right } = parsed {
-            assert!(matches!(*left, SignalSpec::Formula { .. }));
-            assert!(matches!(*right, SignalSpec::Formula { .. }));
-        } else {
-            panic!("expected And");
-        }
-    }
-
-    #[test]
-    fn signal_spec_serde_round_trip_or_combinator() {
-        let spec = SignalSpec::Or {
-            left: Box::new(SignalSpec::Formula {
-                formula: "open / close[1] - 1 > 0.02".into(),
-            }),
-            right: Box::new(SignalSpec::Formula {
-                formula: "open / close[1] - 1 < -0.02".into(),
-            }),
-        };
-        let json = serde_json::to_string(&spec).unwrap();
-        let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
-        if let SignalSpec::Or { left, right } = parsed {
-            assert!(matches!(*left, SignalSpec::Formula { .. }));
-            assert!(matches!(*right, SignalSpec::Formula { .. }));
-        } else {
-            panic!("expected Or");
         }
     }
 

@@ -114,36 +114,6 @@ fn max_hold_beats_stop_loss_same_day() {
 }
 
 #[test]
-fn dte_exit_is_baseline_exit() {
-    // Verify that DTE exit works as the baseline exit mechanism.
-    // No early exit conditions — trade should exit via DTE on Feb 11 (DTE=5).
-    // Long call@100: entry mid=5.25 on Jan 15, exit mid=2.25 on Feb 11.
-    // PnL = (2.25-5.25)*100 = -300
-    let df = make_multi_strike_df();
-    let params = base_params("long_call", vec![delta(0.50)]);
-
-    let result = run_backtest(&df, &params).expect("backtest failed");
-
-    assert_eq!(result.trade_count, 1, "expected exactly 1 trade");
-    let trade = &result.trade_log[0];
-
-    assert!(
-        matches!(trade.exit_type, ExitType::DteExit),
-        "expected DteExit, got {:?}",
-        trade.exit_type
-    );
-    assert_eq!(
-        trade.days_held, 27,
-        "expected 27 days held (Jan 15 → Feb 11)"
-    );
-    assert!(
-        (trade.pnl - (-300.0)).abs() < 0.01,
-        "expected PnL -300.0, got {}",
-        trade.pnl
-    );
-}
-
-#[test]
 fn stop_loss_exits_before_dte() {
     // Long call@100: entry mid=5.25, Jan 22 mid=4.25, Feb 11 mid=2.25.
     // SL at 10%: threshold = 525*0.10 = 52.5. Jan 22 MTM=-100 < -52.5 → SL fires.

@@ -544,46 +544,6 @@ async fn compare_fails_without_loaded_data() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn preload_data_populates_shared_state() {
-    // Test that load_data tool wiring works end-to-end by pre-loading data
-    // and verifying the server's shared state and response shape.
-    // Note: We use preload_data rather than cache.load_options because Polars'
-    // parquet reader internally starts a tokio runtime, which conflicts with
-    // the test's own runtime. The parquet I/O path is tested in production.
-    let (server, _tmp) = make_test_server();
-    let df = make_multi_strike_df();
-    let rows = df.height();
-    preload_data(&server, "TEST", df).await;
-
-    // Verify shared state
-    let guard = server.data.read().await;
-    assert!(!guard.is_empty());
-    let loaded_df = guard.get("TEST").expect("TEST should be in map");
-    assert_eq!(loaded_df.height(), rows);
-    assert!(loaded_df.width() > 0);
-}
-
-#[test]
-fn write_test_parquet_creates_valid_file() {
-    // Verify our test helper writes a valid parquet file that CachedStore can find
-    let tmp = TempDir::new().unwrap();
-    let cache = Arc::new(CachedStore::new(
-        tmp.path().to_path_buf(),
-        "options".to_string(),
-        None,
-    ));
-    let mut df = make_multi_strike_df();
-    let path = write_test_parquet(tmp.path(), "TEST", &mut df);
-
-    assert!(path.exists());
-    assert!(path.to_string_lossy().contains("TEST.parquet"));
-
-    // Verify cache_path resolves correctly
-    let resolved = cache.cache_path("TEST", "options").unwrap();
-    assert_eq!(path, resolved);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn run_options_backtest_returns_trades_and_metrics() {
     let (server, _tmp) = make_test_server();
     preload_data(&server, "TEST", make_multi_strike_df()).await;

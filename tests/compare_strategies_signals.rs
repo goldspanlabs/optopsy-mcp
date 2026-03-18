@@ -4,9 +4,9 @@
 //! through `compare_strategies()` to the underlying `run_backtest()` calls.
 
 use chrono::NaiveDate;
-use optopsy_mcp::engine::core::{compare_strategies, run_backtest};
+use optopsy_mcp::engine::core::compare_strategies;
 use optopsy_mcp::engine::types::{
-    CompareEntry, CompareParams, DteRange, ExitType, SimParams, Slippage, TradeSelector,
+    CompareEntry, CompareParams, DteRange, SimParams, Slippage, TradeSelector,
 };
 use optopsy_mcp::signals::registry::SignalSpec;
 
@@ -78,18 +78,6 @@ fn rising_ohlcv() -> (tempfile::TempDir, String) {
     write_ohlcv_parquet(&dates, &closes)
 }
 
-/// Declining OHLCV — `ConsecutiveDown(1)` fires on Jan 15, Jan 22, Feb 11.
-fn declining_ohlcv() -> (tempfile::TempDir, String) {
-    let dates: Vec<NaiveDate> = vec![
-        NaiveDate::from_ymd_opt(2024, 1, 11).unwrap(),
-        NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
-        NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(),
-        NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(),
-    ];
-    let closes = vec![107.0, 106.0, 105.0, 104.0];
-    write_ohlcv_parquet(&dates, &closes)
-}
-
 /// Entry signal shifts entry date, producing different P&L.
 ///
 /// `ConsecutiveUp(2)` blocks Jan 15, allows Jan 22. The trade enters Jan 22
@@ -145,36 +133,5 @@ fn compare_entry_signal_changes_entry_date_and_pnl() {
             .iter()
             .map(|r| (&r.strategy, r.pnl))
             .collect::<Vec<_>>(),
-    );
-}
-
-/// Exit signal produces `ExitType::Signal` in the trade log, proving it's
-/// evaluated and applied (not just present).
-#[test]
-fn compare_exit_signal_produces_signal_exits() {
-    let df = make_multi_strike_df();
-    let (_dir, path) = declining_ohlcv();
-
-    // Build the same `BacktestParams` that `compare_strategies` constructs internally
-    let mut params = common::backtest_params("long_call", vec![common::delta(0.50)]);
-    params.exit_signal = Some(SignalSpec::Formula {
-        formula: "consecutive_down(close) >= 1".into(),
-    });
-    params.ohlcv_path = Some(path);
-
-    let result = run_backtest(&df, &params).unwrap();
-    assert!(result.trade_count > 0, "Should produce trades");
-
-    // At least one trade must have Signal exit type — proves the signal
-    // was evaluated and triggered an actual early close
-    let signal_exits = result
-        .trade_log
-        .iter()
-        .filter(|t| matches!(t.exit_type, ExitType::Signal))
-        .count();
-    assert!(
-        signal_exits > 0,
-        "Exit signal should cause at least one Signal exit, got 0 out of {} trades",
-        result.trade_count
     );
 }

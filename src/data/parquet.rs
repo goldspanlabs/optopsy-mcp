@@ -141,11 +141,6 @@ mod tests {
     use chrono::Timelike;
 
     #[test]
-    fn datetime_col_constant() {
-        assert_eq!(DATETIME_COL, "datetime");
-    }
-
-    #[test]
     fn scalar_to_date_from_datetime() {
         let dt = NaiveDate::from_ymd_opt(2024, 1, 15)
             .unwrap()
