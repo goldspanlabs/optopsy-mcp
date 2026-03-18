@@ -470,16 +470,13 @@ fn load_underlying_prices(
         df
     };
 
-    // For intraday intervals, apply date filtering to keep response sizes manageable.
-    // When a date range is provided (e.g. from a backtest), filter to that range and
-    // subsample to at most 2000 bars. Without a date range (standalone chart), keep
-    // the last 7 calendar days and let the FE paginate backward.
+    // For intraday intervals without an explicit date range, keep only
+    // the last 7 calendar days. The FE paginates backward for older data.
+    // When a date range is provided, all bars in that range are returned.
     let df = if let Some(interval) = resample_interval {
         if interval.is_intraday() && df.column("datetime").is_ok() {
-            let mut filtered = df.clone();
-
-            // Apply date range filter if provided, otherwise default 7-day cutoff
             if let Some((start, end)) = &date_range {
+                let mut filtered = df.clone();
                 if let Some(s) = start {
                     let start_dt = s.and_hms_opt(0, 0, 0).unwrap();
                     filtered = filtered
@@ -498,26 +495,14 @@ fn load_underlying_prices(
                         .collect()
                         .unwrap_or(filtered);
                 }
+                filtered
             } else {
                 let cutoff = (chrono::Utc::now() - chrono::Duration::days(7)).naive_utc();
-                filtered = filtered
-                    .clone()
+                df.clone()
                     .lazy()
                     .filter(col("datetime").gt_eq(lit(cutoff)))
                     .collect()
-                    .unwrap_or(filtered);
-            }
-
-            // Subsample to at most 2000 bars for intraday
-            let n = filtered.height();
-            if n > 2000 {
-                let mut indices: Vec<u32> =
-                    (0..2000).map(|i| (i * (n - 1) / 1999) as u32).collect();
-                indices.dedup();
-                let idx = IdxCa::new(PlSmallStr::from("idx"), &indices);
-                filtered.clone().take(&idx).unwrap_or(filtered)
-            } else {
-                filtered
+                    .unwrap_or(df)
             }
         } else {
             df
@@ -932,21 +917,13 @@ impl OptopsyServer {
                     })
                     .transpose()?;
 
-                // Load underlying prices for chart overlay.
-                // For intraday intervals with a date range, return subsampled bars
-                // covering the full range. Without a range, return the last 7 days
-                // and let the FE paginate backward.
-                let prices_path = std::path::PathBuf::from(&ohlcv_path);
                 let interval = params.interval.unwrap_or_default();
-                let date_range = Some((start_date, end_date));
-                let underlying_prices = tokio::task::spawn_blocking(move || {
-                    load_underlying_prices(&prices_path, None, Some(interval), date_range)
-                })
-                .await
-                .unwrap_or_default();
+                // Save date strings before params fields are moved into stock_params
+                let fallback_start = params.start_date.clone();
+                let fallback_end = params.end_date.clone();
 
                 let stock_params = crate::engine::stock_sim::StockBacktestParams {
-                    symbol,
+                    symbol: symbol.clone(),
                     side: params.side.unwrap_or(crate::engine::types::Side::Long),
                     capital: params.capital,
                     quantity: params.quantity,
@@ -964,16 +941,75 @@ impl OptopsyServer {
                     cross_ohlcv_paths,
                     start_date,
                     end_date,
-                    interval: params.interval.unwrap_or_default(),
+                    interval,
                     session_filter: params.session_filter,
                 };
 
-                tokio::task::spawn_blocking(move || {
-                    tools::stock_backtest::execute(&stock_params, underlying_prices)
+                // Run the backtest first
+                let backtest_result = tokio::task::spawn_blocking(move || {
+                    tools::stock_backtest::execute(&stock_params, vec![])
                 })
                 .await
                 .map_err(|e| format!("Stock backtest task panicked: {e}"))?
-                .map_err(|e| format!("Error: {e}"))
+                .map_err(|e| format!("Error: {e}"))?;
+
+                // Load chart prices via the same path as get_raw_prices,
+                // bounded to the trade date range (first entry → last exit).
+                let trade_log = &backtest_result.trade_log;
+                let (chart_start, chart_end) = if trade_log.is_empty() {
+                    // No trades — fall back to the backtest date range
+                    (fallback_start, fallback_end)
+                } else {
+                    let first_entry = trade_log
+                        .iter()
+                        .map(|t| t.entry_datetime)
+                        .min()
+                        .map(|dt| dt.format("%Y-%m-%d").to_string());
+                    let last_exit = trade_log
+                        .iter()
+                        .map(|t| t.exit_datetime)
+                        .max()
+                        .map(|dt| dt.format("%Y-%m-%d").to_string());
+                    (first_entry, last_exit)
+                };
+
+                let cache = self.cache.clone();
+                let chart_symbol = symbol.clone();
+                let underlying_prices = tokio::task::spawn_blocking(move || {
+                    // Use a runtime handle to call the async load_and_execute
+                    let rt = tokio::runtime::Handle::current();
+                    rt.block_on(tools::raw_prices::load_and_execute(
+                        &cache,
+                        &chart_symbol,
+                        chart_start.as_deref(),
+                        chart_end.as_deref(),
+                        None, // no limit
+                        interval,
+                        None, // no tail
+                    ))
+                })
+                .await
+                .map_err(|e| format!("Price load task panicked: {e}"))?
+                .map(|resp| {
+                    // Convert PriceBar → UnderlyingPrice
+                    resp.prices
+                        .into_iter()
+                        .map(|b| tools::response_types::UnderlyingPrice {
+                            date: b.date,
+                            open: b.open,
+                            high: b.high,
+                            low: b.low,
+                            close: b.close,
+                            volume: Some(b.volume),
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+
+                // Attach prices to the backtest result
+                let mut result = backtest_result;
+                result.underlying_prices = underlying_prices;
+                Ok(result)
             }
             .await,
         )

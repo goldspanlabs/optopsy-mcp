@@ -110,18 +110,9 @@ pub fn execute(
         }
     } else if let Some(max) = limit {
         if total_rows > max && max > 0 {
-            // Use integer math to produce evenly-spaced, deduplicated indices.
-            // Always include the first and last row.
-            let mut indices: Vec<u32> = if max == 1 {
-                vec![(total_rows - 1) as u32]
-            } else {
-                (0..max)
-                    .map(|i| (i * (total_rows - 1) / (max - 1)) as u32)
-                    .collect()
-            };
-            indices.dedup();
-            let idx = IdxCa::new(PlSmallStr::from("idx"), &indices);
-            (filtered.take(&idx)?, true)
+            // Take the first N rows (head). No subsampling — the FE
+            // paginates backward via tail mode for older data.
+            (filtered.head(Some(max)), false)
         } else {
             (filtered, false)
         }
@@ -375,10 +366,10 @@ mod tests {
 
         assert_eq!(resp.total_rows, 5);
         assert_eq!(resp.returned_rows, 3);
-        assert!(resp.sampled);
-        // Should include first and last
-        assert_eq!(resp.prices[0].date, 1_704_153_600);
-        assert_eq!(resp.prices[2].date, 1_704_672_000);
+        assert!(!resp.sampled);
+        // Head truncation: first 3 rows
+        assert_eq!(resp.prices[0].date, 1_704_153_600); // 2024-01-02
+        assert_eq!(resp.prices[2].date, 1_704_326_400); // 2024-01-04
     }
 
     #[test]
@@ -436,7 +427,7 @@ mod tests {
     }
 
     #[test]
-    fn limit_one_returns_last_row() {
+    fn limit_one_returns_first_row() {
         let df = make_test_df();
         let resp = execute(
             &df,
@@ -450,14 +441,15 @@ mod tests {
         .unwrap();
 
         assert_eq!(resp.returned_rows, 1);
-        assert!(resp.sampled);
-        assert_eq!(resp.prices[0].date, 1_704_672_000);
+        assert!(!resp.sampled);
+        // Head truncation: first row
+        assert_eq!(resp.prices[0].date, 1_704_153_600); // 2024-01-02
     }
 
     #[test]
-    fn sampling_no_duplicate_indices() {
+    fn limit_returns_head_not_sampled() {
         let df = make_test_df();
-        // limit=4 from 5 rows — should produce 4 unique indices with no duplicates
+        // limit=4 from 5 rows — should return the first 4 rows
         let resp = execute(
             &df,
             "SPY",
@@ -470,14 +462,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(resp.returned_rows, 4);
-        assert!(resp.sampled);
-        // First and last should be included
-        assert_eq!(resp.prices[0].date, 1_704_153_600);
-        assert_eq!(resp.prices[3].date, 1_704_672_000);
-        // All dates should be unique
-        let dates: Vec<i64> = resp.prices.iter().map(|p| p.date).collect();
-        let mut deduped = dates.clone();
-        deduped.dedup();
-        assert_eq!(dates, deduped, "Sampling produced duplicate dates");
+        assert!(!resp.sampled);
+        assert_eq!(resp.prices[0].date, 1_704_153_600); // 2024-01-02
+        assert_eq!(resp.prices[3].date, 1_704_412_800); // 2024-01-05
     }
 }
