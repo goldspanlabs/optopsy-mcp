@@ -762,6 +762,12 @@ impl OptopsyServer {
     ///   - Equity curve (daily capital evolution)
     ///   - Performance metrics (Sharpe, Sortino, Calmar, `VaR`, max drawdown, win rate, etc.)
     ///   - AI-enriched assessment and suggested next steps
+    ///
+    /// **Dynamic sizing** (`sizing` param): When using `fixed_fractional`, `risk_per_trade`,
+    /// `kelly`, or `volatility_target` with all-short strategies (naked puts/calls, straddles,
+    /// strangles), you MUST also set `stop_loss` — the engine needs it to compute max loss
+    /// per contract. Without `stop_loss`, the tool will return an error.
+    ///
     /// **Time to run**: 5-30 seconds depending on data size
     #[tool(name = "run_options_backtest", annotations(read_only_hint = true))]
     async fn run_options_backtest(
@@ -867,6 +873,10 @@ impl OptopsyServer {
     /// **Defaults**: quantity=100 shares (1 standard lot), capital=$10,000.
     /// Ensure capital covers (quantity × `share_price`) or trades will be skipped.
     /// For high-priced stocks like SPY (~$600), use capital ≥ 60000 with quantity=100.
+    ///
+    /// **Dynamic sizing** (`sizing` param): When using `fixed_fractional`, `risk_per_trade`,
+    /// `kelly`, or `volatility_target`, you MUST also set `stop_loss` — the engine needs it
+    /// to compute max loss per trade. Without `stop_loss`, the tool will return an error.
     ///
     /// **Output**: Same format as options backtest — trade log, equity curve, performance metrics
     #[tool(name = "run_stock_backtest", annotations(read_only_hint = true))]
