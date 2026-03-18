@@ -1099,6 +1099,213 @@ fn default_regime_method() -> String {
     "volatility_cluster".to_string()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─── CorrelateParams interval deserialization ────────────────────────────
+
+    #[test]
+    fn correlate_params_interval_defaults_to_none() {
+        let json = serde_json::json!({
+            "series_a": { "symbol": "SPY", "field": "close" },
+            "series_b": { "symbol": "QQQ", "field": "close" }
+        });
+        let p: CorrelateParams = serde_json::from_value(json).unwrap();
+        assert!(p.interval.is_none(), "interval should default to None");
+        p.validate().unwrap();
+    }
+
+    #[test]
+    fn correlate_params_interval_daily_accepted() {
+        let json = serde_json::json!({
+            "series_a": { "symbol": "SPY", "field": "close" },
+            "series_b": { "symbol": "QQQ", "field": "close" },
+            "interval": "daily"
+        });
+        let p: CorrelateParams = serde_json::from_value(json).unwrap();
+        assert_eq!(p.interval, Some(Interval::Daily));
+        p.validate().unwrap();
+    }
+
+    #[test]
+    fn correlate_params_interval_1h_accepted() {
+        let json = serde_json::json!({
+            "series_a": { "symbol": "VIX", "field": "return" },
+            "series_b": { "symbol": "SPY", "field": "return" },
+            "interval": "1h"
+        });
+        let p: CorrelateParams = serde_json::from_value(json).unwrap();
+        assert_eq!(p.interval, Some(Interval::Hour1));
+        p.validate().unwrap();
+    }
+
+    #[test]
+    fn correlate_params_interval_5m_accepted() {
+        let json = serde_json::json!({
+            "series_a": { "symbol": "SPY", "field": "close" },
+            "series_b": { "symbol": "QQQ", "field": "close" },
+            "interval": "5m"
+        });
+        let p: CorrelateParams = serde_json::from_value(json).unwrap();
+        assert_eq!(p.interval, Some(Interval::Min5));
+        p.validate().unwrap();
+    }
+
+    #[test]
+    fn correlate_params_all_intervals_parse() {
+        let cases = [
+            ("1m", Interval::Min1),
+            ("5m", Interval::Min5),
+            ("30m", Interval::Min30),
+            ("1h", Interval::Hour1),
+            ("daily", Interval::Daily),
+            ("weekly", Interval::Weekly),
+            ("monthly", Interval::Monthly),
+        ];
+        for (s, expected) in cases {
+            let json = serde_json::json!({
+                "series_a": { "symbol": "SPY", "field": "close" },
+                "series_b": { "symbol": "QQQ", "field": "close" },
+                "interval": s
+            });
+            let p: CorrelateParams = serde_json::from_value(json)
+                .unwrap_or_else(|e| panic!("interval={s} should parse: {e}"));
+            assert_eq!(p.interval, Some(expected), "interval={s}");
+        }
+    }
+
+    // ─── RegimeDetectParams interval deserialization ─────────────────────────
+
+    #[test]
+    fn regime_detect_params_interval_defaults_to_none() {
+        let json = serde_json::json!({ "symbol": "SPY" });
+        let p: RegimeDetectParams = serde_json::from_value(json).unwrap();
+        assert!(p.interval.is_none(), "interval should default to None");
+        p.validate().unwrap();
+    }
+
+    #[test]
+    fn regime_detect_params_interval_daily_accepted() {
+        let json = serde_json::json!({
+            "symbol": "SPY",
+            "interval": "daily"
+        });
+        let p: RegimeDetectParams = serde_json::from_value(json).unwrap();
+        assert_eq!(p.interval, Some(Interval::Daily));
+        p.validate().unwrap();
+    }
+
+    #[test]
+    fn regime_detect_params_interval_intraday_accepted() {
+        let json = serde_json::json!({
+            "symbol": "SPY",
+            "interval": "5m"
+        });
+        let p: RegimeDetectParams = serde_json::from_value(json).unwrap();
+        assert_eq!(p.interval, Some(Interval::Min5));
+        p.validate().unwrap();
+    }
+
+    #[test]
+    fn regime_detect_params_all_intervals_parse() {
+        let cases = [
+            ("1m", Interval::Min1),
+            ("5m", Interval::Min5),
+            ("30m", Interval::Min30),
+            ("1h", Interval::Hour1),
+            ("daily", Interval::Daily),
+            ("weekly", Interval::Weekly),
+            ("monthly", Interval::Monthly),
+        ];
+        for (s, expected) in cases {
+            let json = serde_json::json!({
+                "symbol": "SPY",
+                "interval": s
+            });
+            let p: RegimeDetectParams = serde_json::from_value(json)
+                .unwrap_or_else(|e| panic!("interval={s} should parse: {e}"));
+            assert_eq!(p.interval, Some(expected), "interval={s}");
+        }
+    }
+
+    /// The handler unwraps `params.interval.unwrap_or(Interval::Daily)`.
+    /// Verify that None → Daily and explicit variants are preserved.
+    #[test]
+    fn regime_detect_params_interval_unwrap_default() {
+        let none_params = RegimeDetectParams {
+            symbol: "SPY".into(),
+            method: "volatility_cluster".into(),
+            n_regimes: 3,
+            years: 5,
+            lookback_window: 21,
+            interval: None,
+        };
+        assert_eq!(
+            none_params.interval.unwrap_or(Interval::Daily),
+            Interval::Daily
+        );
+
+        let hour_params = RegimeDetectParams {
+            symbol: "SPY".into(),
+            method: "volatility_cluster".into(),
+            n_regimes: 3,
+            years: 5,
+            lookback_window: 21,
+            interval: Some(Interval::Hour1),
+        };
+        assert_eq!(
+            hour_params.interval.unwrap_or(Interval::Daily),
+            Interval::Hour1
+        );
+    }
+
+    /// The handler unwraps `params.interval.unwrap_or(Interval::Daily)`.
+    /// Verify for CorrelateParams as well.
+    #[test]
+    fn correlate_params_interval_unwrap_default() {
+        let none_params = CorrelateParams {
+            series_a: CorrelationSeries {
+                symbol: "SPY".into(),
+                field: "close".into(),
+            },
+            series_b: CorrelationSeries {
+                symbol: "QQQ".into(),
+                field: "close".into(),
+            },
+            mode: "full".into(),
+            window: 20,
+            years: 5,
+            lag_range: None,
+            interval: None,
+        };
+        assert_eq!(
+            none_params.interval.unwrap_or(Interval::Daily),
+            Interval::Daily
+        );
+
+        let intraday_params = CorrelateParams {
+            series_a: CorrelationSeries {
+                symbol: "VIX".into(),
+                field: "return".into(),
+            },
+            series_b: CorrelationSeries {
+                symbol: "SPY".into(),
+                field: "return".into(),
+            },
+            mode: "full".into(),
+            window: 20,
+            years: 2,
+            lag_range: None,
+            interval: Some(Interval::Min30),
+        };
+        assert_eq!(
+            intraday_params.interval.unwrap_or(Interval::Daily),
+            Interval::Min30
+        );
+    }
+}
+
 fn resolve_strategy_entries(
     strats: Vec<SweepStrategyInput>,
 ) -> Result<Vec<crate::engine::sweep::SweepStrategyEntry>, String> {
