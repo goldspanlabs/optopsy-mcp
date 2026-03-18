@@ -1801,6 +1801,9 @@ impl OptopsyServer {
                     params.window,
                     params.years,
                     params.lag_range.as_ref().map(|lr| (lr.min, lr.max)),
+                    params
+                        .interval
+                        .unwrap_or(crate::engine::types::Interval::Daily),
                 )
                 .await
                 .map_err(|e| format!("Error: {e}"))
@@ -1860,6 +1863,9 @@ impl OptopsyServer {
                     params.n_regimes,
                     params.years,
                     params.lookback_window,
+                    params
+                        .interval
+                        .unwrap_or(crate::engine::types::Interval::Daily),
                 )
                 .await
                 .map_err(|e| format!("Error: {e}"))

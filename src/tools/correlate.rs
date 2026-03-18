@@ -8,7 +8,8 @@ use crate::data::cache::CachedStore;
 use crate::stats;
 use crate::tools::ai_format;
 use crate::tools::ai_helpers::{
-    compute_years_cutoff, epoch_to_date_string, pearson_p_value, subsample_to_max, validate_choice,
+    compute_years_cutoff, epoch_to_timestamp_string, pearson_p_value, subsample_to_max,
+    validate_choice,
 };
 use crate::tools::response_types::CorrelationSeries;
 use crate::tools::response_types::{
@@ -17,7 +18,11 @@ use crate::tools::response_types::{
 };
 
 /// Execute the correlate analysis.
-#[allow(clippy::too_many_lines, clippy::similar_names)]
+#[allow(
+    clippy::too_many_lines,
+    clippy::similar_names,
+    clippy::too_many_arguments
+)]
 pub async fn execute(
     cache: &Arc<CachedStore>,
     series_a: &CorrelationSeries,
@@ -26,6 +31,7 @@ pub async fn execute(
     window: usize,
     years: u32,
     lag_range: Option<(i32, i32)>,
+    interval: crate::engine::types::Interval,
 ) -> Result<CorrelateResponse> {
     validate_choice(mode, &["full", "rolling"], "mode")?;
 
@@ -39,7 +45,7 @@ pub async fn execute(
             Some(&cutoff_str),
             None,
             None,
-            crate::engine::types::Interval::Daily,
+            interval,
             None,
         )
         .await
@@ -51,7 +57,7 @@ pub async fn execute(
             Some(&cutoff_str),
             None,
             None,
-            crate::engine::types::Interval::Daily,
+            interval,
             None,
         )
         .await
@@ -196,7 +202,7 @@ pub async fn execute(
             let start = i + 1 - window;
             let r = stats::pearson(&fa[start..=i], &fb[start..=i]);
             points.push(RollingCorrelationPoint {
-                date: epoch_to_date_string(dates[i]),
+                date: epoch_to_timestamp_string(dates[i], interval),
                 correlation: r,
             });
         }
@@ -212,7 +218,7 @@ pub async fn execute(
             .map(|i| ScatterPoint {
                 x: fa[i],
                 y: fb[i],
-                date: epoch_to_date_string(dates[i]),
+                date: epoch_to_timestamp_string(dates[i], interval),
             })
             .collect();
         subsample_to_max(all, 500)
