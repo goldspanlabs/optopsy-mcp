@@ -369,6 +369,49 @@ mod tests {
     }
 
     #[test]
+    fn vol_exact_known_prices() {
+        // Prices: [100.0, 105.0, 103.0, 108.0, 106.0]
+        // Log returns:
+        //   ln(105/100) = 0.04879016416943205
+        //   ln(103/105) = -0.019231361927887644
+        //   ln(108/103) = 0.0474022388945839
+        //   ln(106/108) = -0.01869213301215252
+        // n_returns = 4
+        // mean_lr = (0.048790 + -0.019231 + 0.047402 + -0.018692) / 4 = 0.014567227030993947
+        // variance (sample, n-1 denom):
+        //   sum((r - mean)^2) / 3 = 0.001499292358851553
+        // daily_vol = sqrt(0.001499292...) = 0.038720696776421176
+        // annualized = daily_vol * sqrt(252) = 0.6146720055693048
+        let closes = vec![100.0, 105.0, 103.0, 108.0, 106.0];
+        let vol = compute_realized_vol(&closes, 10, 252.0).unwrap();
+        assert!(
+            (vol - 0.614_672_005_569_304_8).abs() < 1e-6,
+            "Expected annualized vol ≈ 0.614672, got {vol}"
+        );
+    }
+
+    #[test]
+    fn vol_respects_lookback_window() {
+        // With lookback=3, only the last 3 prices are used: [103.0, 108.0, 106.0]
+        // Log returns: ln(108/103) = 0.0474022, ln(106/108) = -0.0186921
+        // n_returns = 2, mean = 0.014355, var = (0.033047^2 + 0.033047^2) / 1
+        // Let's compute precisely:
+        let closes = vec![100.0, 105.0, 103.0, 108.0, 106.0];
+        let vol_full = compute_realized_vol(&closes, 10, 252.0).unwrap();
+        let vol_short = compute_realized_vol(&closes, 3, 252.0).unwrap();
+        // With different windows, the vol values should differ
+        assert!(
+            (vol_full - vol_short).abs() > 1e-6,
+            "Different lookback windows should produce different vol: full={vol_full}, short={vol_short}"
+        );
+        // vol_short uses only last 3 closes: [103, 108, 106]
+        // log returns: [0.04740, -0.01869], mean=0.01436
+        // var = ((0.03305)^2 + (-0.03305)^2) / 1 = 2 * 0.001092 / 1 = 0.002185
+        // daily_vol = 0.04674, annualized = 0.04674 * 15.875 = 0.7419
+        assert!(vol_short > 0.0);
+    }
+
+    #[test]
     fn vol_positive_for_varying_prices() {
         let closes: Vec<f64> = (0..60)
             .map(|i| 100.0 + (f64::from(i) * 0.1).sin() * 5.0)

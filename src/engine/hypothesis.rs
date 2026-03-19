@@ -1251,6 +1251,69 @@ mod tests {
     }
 
     #[test]
+    fn test_compute_dsr_exact() {
+        // Inputs: sharpe=2.0, n_trials=20, skew=0.0, kurt=0.0 (excess), n_obs=252
+        //
+        // Step 1: Expected max SR under null
+        //   ln_n = ln(20) = 2.995732273553991
+        //   a = sqrt(2 * ln_n) = sqrt(5.991465) = 2.4477468306808166
+        //   b = (ln(π) + ln(ln_n)) / (2 * a)
+        //     = (1.14473 + 1.09632) / (2 * 2.44775)
+        //     = 2.24105 / 4.89549
+        //     = 0.45795556920214286
+        //   expected_max_sr = a - b = 2.44775 - 0.45796 = 1.9897912614786737
+        //
+        // Step 2: Standard error of SR (Lo 2002, adjusted for non-normality)
+        //   kurt is excess (normal=0), so raw_kurt = kurt + 3, (raw_kurt-1)/4 = (kurt+2)/4
+        //   var_sr = (1 + 0.5*skew*sr + ((kurt+2)/4)*sr^2) / (n-1)
+        //          = (1 + 0 + (2/4)*4) / 251
+        //          = (1 + 2) / 251
+        //          = 3 / 251
+        //          = 0.01195219123505976
+        //   se_sr = sqrt(0.011952) = 0.10932607756185055
+        //
+        // Step 3: z-score and CDF
+        //   z = (2.0 - 1.98979) / 0.10933 = 0.01021 / 0.10933 = 0.09337880539572803
+        //   DSR = Φ(z) = 0.5371986861087584
+        let dsr = compute_dsr(2.0, 20, 0.0, 0.0, 252);
+        assert!(
+            (dsr - 0.537_198_686_108_758_4).abs() < 1e-6,
+            "Expected DSR ≈ 0.5372, got {dsr}"
+        );
+    }
+
+    #[test]
+    fn test_compute_dsr_skew_and_kurtosis_effect() {
+        // Positive skew should inflate the SE of SR (when SR > 0), reducing DSR
+        // Inputs: sharpe=2.0, n_trials=20, skew=1.0, kurt=0.0, n_obs=252
+        //
+        // expected_max_sr = 1.9897912614786737 (same as above, depends only on n_trials)
+        //
+        // var_sr = (1 + 0.5*1.0*2.0 + (2/4)*4) / 251
+        //        = (1 + 1 + 2) / 251 = 4 / 251 = 0.015936254980079681
+        // se_sr = sqrt(0.015936) = 0.12624283068996206
+        // z = (2.0 - 1.98979) / 0.12624 = 0.01021 / 0.12624 = 0.08088...
+        // DSR = Φ(0.08088) ≈ 0.53224
+        let dsr_skew = compute_dsr(2.0, 20, 1.0, 0.0, 252);
+        let dsr_normal = compute_dsr(2.0, 20, 0.0, 0.0, 252);
+        assert!(
+            dsr_skew < dsr_normal,
+            "Positive skew with positive SR should reduce DSR: skew={dsr_skew}, normal={dsr_normal}"
+        );
+
+        // High excess kurtosis should also inflate SE, reducing DSR
+        // kurt=3.0 (excess): ((3+2)/4)*sr^2 = (5/4)*4 = 5
+        // var_sr = (1 + 0 + 5) / 251 = 6/251 = 0.02390...
+        // se_sr = 0.15462..., z = 0.01021/0.15462 = 0.06605
+        // DSR = Φ(0.066) ≈ 0.5263
+        let dsr_fat = compute_dsr(2.0, 20, 0.0, 3.0, 252);
+        assert!(
+            dsr_fat < dsr_normal,
+            "Fat tails (high kurtosis) should reduce DSR: fat={dsr_fat}, normal={dsr_normal}"
+        );
+    }
+
+    #[test]
     fn test_forward_returns_purging() {
         let prices = synthetic_prices(100);
         // Dense signals: every bar → purging should kick in for horizon=5

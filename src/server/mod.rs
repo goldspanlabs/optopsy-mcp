@@ -29,16 +29,16 @@ use crate::tools;
 use crate::tools::response_types::{
     AggregatePricesResponse, BacktestResponse, BuildSignalResponse, CompareResponse,
     CorrelateResponse, DistributionResponse, HypothesisParams, HypothesisResponse,
-    ListSymbolsResponse, PermutationTestResponse, RawPricesResponse, RegimeDetectResponse,
-    RollingMetricResponse, StockBacktestResponse, StrategiesResponse, SweepResponse,
-    WalkForwardResponse,
+    ListSymbolsResponse, PermutationTestResponse, PortfolioBacktestResponse, RawPricesResponse,
+    RegimeDetectResponse, RollingMetricResponse, StockBacktestResponse, StrategiesResponse,
+    SweepResponse, WalkForwardResponse,
 };
 use params::{
     resolve_leg_deltas, resolve_sweep_strategies, validation_err, AggregatePricesParams,
     BacktestBaseParams, BuildSignalParams, CompareStrategiesParams, CorrelateParams,
     DistributionParams, GetRawPricesParams, ListSymbolsParams, ParameterSweepParams,
-    PermutationTestParams, RegimeDetectParams, RollingMetricParams, RunBacktestParams,
-    RunStockBacktestParams, WalkForwardParams,
+    PermutationTestParams, PortfolioBacktestParams, RegimeDetectParams, RollingMetricParams,
+    RunBacktestParams, RunStockBacktestParams, WalkForwardParams,
 };
 use sanitize::{SanitizedJson, SanitizedResult};
 
@@ -1950,6 +1950,111 @@ impl OptopsyServer {
                 tools::hypothesis::execute(&cache, &params)
                     .await
                     .map_err(|e| format!("Error: {e}"))
+            }
+            .await,
+        )
+    }
+
+    /// Run multiple stock strategies simultaneously and combine them into a portfolio.
+    ///
+    /// Each strategy specifies a symbol, entry signal, allocation weight, and optional exit
+    /// conditions. The tool runs individual stock backtests, then combines equity curves using
+    /// capital-weighted allocation. Returns portfolio-level metrics, per-strategy breakdowns,
+    /// and a pairwise correlation matrix showing diversification benefit.
+    ///
+    /// **When to use**: After finding profitable individual stock signals via `run_stock_backtest`,
+    /// combine them to evaluate portfolio-level risk/return and diversification.
+    ///
+    /// **Prerequisites**: OHLCV data for each symbol must be cached (`list_symbols` to check).
+    /// Each strategy needs an `entry_signal` (use `build_signal` to construct).
+    ///
+    /// **Next tools**: Adjust weights or signals based on results, then re-run.
+    #[tool(name = "portfolio_backtest", annotations(read_only_hint = true))]
+    async fn portfolio_backtest(
+        &self,
+        Parameters(params): Parameters<PortfolioBacktestParams>,
+    ) -> SanitizedResult<PortfolioBacktestResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("portfolio_backtest", e))?;
+
+                // Validate allocation weights sum to ~100%
+                let total_alloc: f64 = params.strategies.iter().map(|s| s.allocation_pct).sum();
+                if (total_alloc - 100.0).abs() > 1.0 {
+                    return Err(format!(
+                        "Allocation percentages sum to {total_alloc:.1}% — must be approximately 100%"
+                    ));
+                }
+
+                tracing::info!(
+                    strategies = params.strategies.len(),
+                    capital = params.capital,
+                    "Portfolio backtest request received"
+                );
+
+                // Parse dates once
+                let start_date = params
+                    .start_date
+                    .as_deref()
+                    .map(|s| {
+                        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                            .map_err(|_| format!("Invalid start_date \"{s}\": expected YYYY-MM-DD"))
+                    })
+                    .transpose()?;
+                let end_date = params
+                    .end_date
+                    .as_deref()
+                    .map(|s| {
+                        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                            .map_err(|_| format!("Invalid end_date \"{s}\": expected YYYY-MM-DD"))
+                    })
+                    .transpose()?;
+
+                // Resolve each strategy's OHLCV data path and cross-symbol paths
+                let mut resolved = Vec::new();
+                for config in &params.strategies {
+                    let symbol = config.symbol.to_uppercase();
+                    validate_path_segment(&symbol)
+                        .map_err(|e| format!("Invalid symbol \"{}\": {e}", config.symbol))?;
+
+                    let ohlcv_path = self.ensure_ohlcv(&symbol)?;
+
+                    let cross_ohlcv_paths = self.resolve_cross_ohlcv_paths(
+                        Some(&config.entry_signal),
+                        config.exit_signal.as_ref(),
+                        &[],
+                        &[],
+                    )?;
+
+                    resolved.push(tools::portfolio::ResolvedStrategy {
+                        symbol: symbol.clone(),
+                        side: config.side,
+                        entry_signal: config.entry_signal.clone(),
+                        exit_signal: config.exit_signal.clone(),
+                        allocation_pct: config.allocation_pct,
+                        quantity: config.quantity,
+                        stop_loss: config.stop_loss,
+                        take_profit: config.take_profit,
+                        max_hold_days: config.max_hold_days,
+                        slippage: config.slippage.clone(),
+                        ohlcv_path,
+                        cross_ohlcv_paths,
+                        start_date,
+                        end_date,
+                    });
+                }
+
+                let default_slippage = params.slippage.clone();
+                let capital = params.capital;
+
+                tokio::task::spawn_blocking(move || {
+                    tools::portfolio::execute(resolved, capital, &default_slippage)
+                })
+                .await
+                .map_err(|e| format!("Portfolio backtest task panicked: {e}"))?
+                .map_err(|e| format!("Error: {e}"))
             }
             .await,
         )

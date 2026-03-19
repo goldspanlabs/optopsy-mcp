@@ -15,6 +15,7 @@ pub mod hypothesis;
 pub mod metrics;
 pub mod multiple_comparisons;
 pub mod permutation;
+pub mod portfolio;
 pub mod positions;
 pub mod price_table;
 pub mod pricing;

@@ -145,310 +145,40 @@ TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, tr
 - `col()` needs `Into<PlSmallStr>` — deref `&&str` to `&str` with `*c`
 - `rename()` third param is `strict: bool`
 
-## MCP Tools: Detailed Reference
+## MCP Tools: Quick Reference
 
 ### Data Tools
-
-#### `list_symbols`
-Search or browse symbols available in the local Parquet cache.
-
-**Parameters:**
-```json
-{
-  "query": "SPY"  // Optional. Case-insensitive prefix/substring search. Omit for category summary.
-}
-```
-
-**Response:** `ListSymbolsResponse`
-- `summary` — Human-readable summary or search results
-- `total` — Total symbols cached across all categories
-- `total_matches` — Number of symbols matching the query (equals `total` when no query)
-- `categories` — Array of `{ category, count, symbols }` grouped by data type (options, etf, stocks, futures, indices). `symbols` is populated only when a query is provided; empty in summary mode.
-- `suggested_next_steps` — Recommended follow-up actions
-
-#### `get_raw_prices`
-Return raw OHLCV price data for a symbol, ready for chart generation by LLMs.
-OHLCV data is loaded from the local Parquet cache.
-
-**Parameters:**
-```json
-{
-  "symbol": "SPY",             // Required
-  "start_date": "2024-01-01",  // Optional. YYYY-MM-DD
-  "end_date": "2024-12-31",    // Optional. YYYY-MM-DD
-  "limit": 500                 // Optional. Max bars to return (default: 500). null for no limit.
-}
-```
-
-**Response:** `RawPricesResponse`
-- `symbol`, `total_rows`, `returned_rows`, `sampled` — Metadata
-- `date_range` — Min/max dates
-- `prices` — Array of `{ date, open, high, low, close, adjclose, volume }` bars
-- `suggested_next_steps` — Recommended next actions
+- **`list_symbols`** — Browse/search symbols in Parquet cache. Omit `query` for category summary.
+- **`get_raw_prices`** — Return OHLCV bars for charting. Default limit: 500; pass `null` for unlimited.
 
 ### Strategy & Signal Tools
+- **`list_strategies`** — List all 32 built-in strategies with leg definitions. No parameters.
+- **`build_signal`** — Signal discovery and management. Actions: `catalog`, `search`, `create`, `validate`, `list`, `get`, `delete`.
+  - Formula columns: `close`, `open`, `high`, `low`, `volume`, `adjclose`
+  - Functions: `sma`, `ema`, `std`, `max`, `min`, `abs`, `change`, `pct_change`, `rsi`, `macd_hist`, `macd_signal`, `macd_line`, `rank`, `iv_rank`, `cci`, `ppo`, `cmo`, `atr`, `stochastic`, `keltner_upper`, `keltner_lower`, `obv`, `mfi`, `tr`, `cmf`, `williams_r`, `adx`, `plus_di`, `minus_di`, `psar`, `tsi`, `vpt`, `bbands_mid`, `bbands_upper`, `bbands_lower`, `donchian_upper`, `donchian_mid`, `donchian_lower`, `supertrend`, `consecutive_up`, `consecutive_down`, `roc`, `gap`
+  - Date functions: `day_of_week()` (1=Mon..7=Sun), `month()`, `day_of_month()`, `hour()`, `minute()`, `week_of_year()`
 
-#### `list_strategies`
-List all 32 built-in strategies with leg definitions and category.
+### Backtest Tools
+- **`run_options_backtest`** — Event-driven options backtest. Requires `strategy` + `leg_deltas` + `entry_dte` + `symbol`. Options data auto-loaded from cache.
+- **`run_stock_backtest`** — Signal-driven stock backtest. `entry_signal` is REQUIRED (not optional).
+- **`portfolio_backtest`** — Run multiple stock strategies as a weighted portfolio. Min 2 strategies. Returns combined metrics + correlation matrix.
 
-**Parameters:** None
+### Optimization & Validation Tools
+- **`parameter_sweep`** — Grid search across delta/DTE/slippage/signal combos with OOS validation. Preferred for optimization.
+  - `entry_signals` (plural) goes inside `sim_params`, NOT at the top level.
+  - Use `direction` for auto strategy selection, or explicit `strategies` list.
+- **`walk_forward`** — Rolling train/test windows. Default: 252d train, 63d test, 63d step.
+- **`compare_strategies`** — Side-by-side comparison of 2-3 specific configs. Use `parameter_sweep` for grid search instead.
+- **`permutation_test`** — Sharpe significance via shuffled entry dates. Min 10 permutations.
 
-**Response:** `StrategiesResponse`
-- Array of strategy objects with `name`, `category`, `description`, `legs` (with `side`, `option_type`, `delta` ranges)
-
-#### `build_signal`
-Single entry point for discovering built-in signals and creating/managing custom formula-based signals. Dispatches via `action` field.
-
-**Actions:**
-
-| `action` | Purpose |
-|----------|---------|
-| `catalog` | Browse the full built-in signal catalog grouped by category (40+ signals) |
-| `search` | NLP search of the built-in signal catalog |
-| `validate` | Check a formula without saving |
-| `create` | Build a custom signal from a price-column formula |
-| `list` | List all saved custom signals |
-| `get` | Load a saved signal by name |
-| `delete` | Remove a saved signal by name |
-
-**Parameters (search):**
-```json
-{
-  "action": "search",
-  "prompt": "RSI oversold"   // Required. Natural-language description (1–500 chars, non-whitespace)
-}
-```
-
-**Response (search):** `BuildSignalResponse`
-- `success` — `true` when at least one candidate is found
-- `candidates` — Matching built-in signals with name, category, description, params, example
-- `schema` — Full SignalSpec JSON schema for reference
-- `column_defaults` — Default column mappings per signal type
-- `combinator_examples` — Example AND/OR combinations
-- `suggested_next_steps` — Recommended follow-up actions
-
-**Parameters (validate / create):**
-```json
-{
-  "action": "validate",          // or "create"
-  "formula": "close > sma(close, 20)",
-  "name": "my_signal",           // Required for create
-  "description": "Price above 20-day SMA",  // Optional
-  "save": true                   // Optional (create only); persists signal for reuse
-}
-```
-
-**Response (validate / create):** `BuildSignalResponse`
-- `success` — `true` if formula is valid
-- `signal_spec` — Resulting `SignalSpec` (type `Custom`) on success
-- `formula_help` — Syntax guide (columns, functions, lookback) on failure
-- `saved_signals` — Always empty for create/validate; use `action='list'` to see saved signals
-- `suggested_next_steps` — Recommended follow-up actions
-
-**Available formula columns:** `close`, `open`, `high`, `low`, `volume`, `adjclose`
-
-**Available formula functions:** `sma(col, n)`, `ema(col, n)`, `std(col, n)`, `max(col, n)`, `min(col, n)`, `abs(expr)`, `change(col, n)`, `pct_change(col, n)`
-
-**Available date/time functions (zero-argument):** `day_of_week()` (1=Mon..7=Sun), `month()` (1-12), `day_of_month()` (1-31), `hour()` (0-23), `minute()` (0-59), `week_of_year()` (1-53). These extract temporal components from the bar's date column. For daily bars, hour/minute return 0.
-
-### Analysis Tools
-
-#### `run_options_backtest`
-Full event-driven day-by-day options simulation with trade log and metrics. Options data is auto-loaded from cache when `symbol` is passed.
-
-**Parameters:**
-```json
-{
-  "strategy": "Iron Condor",
-  "leg_deltas": [
-    {"target": 0.30, "min": 0.20, "max": 0.40},
-    {"target": 0.70, "min": 0.60, "max": 0.80}
-  ],
-  "entry_dte": {"target": 45, "min": 30, "max": 60},
-  "exit_dte": 7,
-  "slippage": {"type": "Spread"},
-  "commission": null,
-
-  // Backtest-specific parameters
-  "capital": 10000.0,          // Starting equity
-  "quantity": 1,               // Contracts per trade
-  "multiplier": 100,           // Points per contract (options standard)
-  "max_positions": 5,          // Max concurrent positions
-  "max_hold_days": 30,         // Optional: force close after N days
-  "stop_loss": 0.50,           // Optional: loss threshold (pct of entry)
-  "take_profit": 0.80,         // Optional: profit target (pct of entry)
-  "sizing": null,              // Optional: dynamic position sizing (see PositionSizing enum)
-
-  "selector": "Nearest",       // Trade selector: Nearest|HighestPremium|LowestPremium|First
-  "adjustment_rules": [],      // Optional: position adjustments
-  "entry_signal": null,        // Optional: SignalSpec for entry filtering
-  "exit_signal": null,         // Optional: SignalSpec for early exit
-
-  "symbol": "SPY"              // Required. Auto-loads data from cache.
-}
-```
-
-**Response:** `BacktestResponse`
-- `summary`, `assessment`, `key_findings` — AI-enriched analysis
-- `metrics` — Performance: Sharpe, Sortino, CAGR, VaR, max_drawdown, Calmar, win_rate, profit_factor, expectancy
-- `trade_summary` — Total, winners, losers, avg P&L, best/worst trades
-- `equity_curve` — ≤50 sampled points from full curve
-- `trade_log` — All trades with entry/exit dates, P&L, days_held, exit_reason
-- `sizing_summary` — Dynamic sizing stats (when sizing is active): method, avg/min/max quantity
-- `suggested_next_steps` — Follow-up actions
-
-#### `run_stock_backtest`
-Signal-driven stock/equity backtest on OHLCV data. Entry signal is required. OHLCV data is loaded from the local Parquet cache.
-
-**Parameters:**
-```json
-{
-  "symbol": "SPY",               // Required
-  "side": "Long",                // Long or Short
-  "entry_signal": { ... },       // Required: SignalSpec for entry
-  "exit_signal": null,           // Optional: SignalSpec for exit
-  "capital": 10000.0,            // Starting equity (default: 10000)
-  "quantity": 100,               // Shares per trade (default: 100)
-  "sizing": null,                // Optional: dynamic position sizing
-  "max_positions": 1,            // Max concurrent positions (default: 1)
-  "slippage": {"type": "Mid"},   // Slippage model (default: Mid)
-  "commission": null,            // Optional: Commission config
-  "stop_loss": 0.05,             // Optional: % loss from entry to trigger exit
-  "take_profit": 0.10,           // Optional: % gain from entry to trigger exit
-  "max_hold_days": 30,           // Optional: force close after N days
-  "start_date": "2024-01-01",   // Optional: YYYY-MM-DD
-  "end_date": "2024-12-31"      // Optional: YYYY-MM-DD
-}
-```
-
-**Response:** `StockBacktestResponse`
-- `summary`, `assessment`, `key_findings` — AI-enriched analysis
-- `parameters` — Echo of input config (side, quantity, capital, slippage, signals)
-- `metrics` — Same as options: Sharpe, Sortino, CAGR, VaR, max_drawdown, etc.
-- `trade_summary` — Total, winners, losers, avg P&L, best/worst trades
-- `trade_log` — All trades with entry/exit dates, P&L, days_held, exit_reason
-- `underlying_prices` — OHLCV price overlay data
-- `suggested_next_steps` — Follow-up actions
-
-#### `compare_strategies`
-Side-by-side comparison of multiple strategies using shared sim params.
-
-**Parameters:**
-```json
-{
-  "strategies": [
-    {
-      "name": "Iron Condor",
-      "leg_deltas": [...],
-      "entry_dte": {"target": 45, "min": 30, "max": 60},
-      "exit_dte": 7,
-      "slippage": {"type": "Spread"}
-    },
-    {
-      "name": "Vertical Spread",
-      "leg_deltas": [...],
-      "entry_dte": {"target": 30, "min": 20, "max": 40},
-      "exit_dte": 5,
-      "slippage": {"type": "Mid"}
-    }
-  ],
-  "sim_params": {
-    "capital": 10000.0,
-    "quantity": 1,
-    "multiplier": 100,
-    "max_positions": 5,
-    "selector": "Nearest",
-    "stop_loss": 0.50,
-    "take_profit": 0.80,
-    "max_hold_days": 30
-  },
-  "symbol": "SPY"              // Required. Auto-loads data from cache.
-}
-```
-
-**Response:** `CompareResponse`
-- `ranking_by_sharpe`, `ranking_by_pnl` — Strategy rankings
-- `best_overall` — Recommended strategy
-- `results` — Full metrics for each strategy
-
-#### `parameter_sweep`
-Grid search across delta/DTE/slippage combos with out-of-sample validation and dimension sensitivity analysis. Preferred over `compare_strategies` for optimization.
-
-**Parameters:**
-```json
-{
-  "strategies": [
-    {
-      "name": "short_put",
-      "leg_delta_targets": [[0.15, 0.20, 0.30]]
-    }
-  ],
-  "sweep": {
-    "entry_dte_targets": [30, 45],
-    "exit_dtes": [0, 5],
-    "slippage_models": [{"type": "Mid"}, {"type": "Spread"}]
-  },
-  "sim_params": { "capital": 10000.0, "quantity": 1, "multiplier": 100, "max_positions": 3 },
-  "out_of_sample_pct": 0.3,     // Optional. 0.0 to disable OOS validation
-  "direction": "bullish",        // Optional. Auto-selects strategies by market outlook
-  "entry_signals": [],           // Optional. Signal variants to sweep
-  "exit_signals": [],            // Optional. Signal variants to sweep
-  "num_permutations": 100,       // Optional. Enable permutation-based p-values
-  "permutation_seed": 42,        // Optional. Seed for reproducible permutations
-  "symbol": "SPY"
-}
-```
-
-**Response:** `SweepResponse`
-- `ranked_results` — All combos ranked by Sharpe, with trades, PnL, p-values
-- `oos_results` — Out-of-sample validation for top combos
-- `dimension_sensitivity` — Per-dimension (strategy, delta, DTE, slippage) stats
-- `multiple_comparisons` — Bonferroni and BH-FDR corrections (when permutations enabled)
-
-#### `walk_forward`
-Rolling walk-forward analysis with train/test windows to validate strategy robustness over time.
-
-**Parameters:**
-```json
-{
-  "strategy": "short_put",
-  "leg_deltas": [{"target": 0.30, "min": 0.20, "max": 0.40}],
-  "entry_dte": {"target": 45, "min": 30, "max": 60},
-  "exit_dte": 5,
-  "slippage": {"type": "Mid"},
-  "sim_params": { "capital": 10000.0, "quantity": 1, "multiplier": 100, "max_positions": 3 },
-  "num_windows": 4,             // Number of rolling windows
-  "train_pct": 0.7,             // Train/test split ratio
-  "symbol": "SPY"
-}
-```
-
-**Response:** `WalkForwardResponse`
-- `windows` — Per-window train/test metrics
-- `summary` — Aggregate consistency metrics
-
-#### `permutation_test`
-Statistical significance test for a backtest result. Shuffles trade entry dates to build a null distribution and compute a p-value.
-
-**Parameters:**
-```json
-{
-  "strategy": "short_put",
-  "leg_deltas": [{"target": 0.30, "min": 0.20, "max": 0.40}],
-  "entry_dte": {"target": 45, "min": 30, "max": 60},
-  "exit_dte": 5,
-  "slippage": {"type": "Mid"},
-  "sim_params": { "capital": 10000.0, "quantity": 1, "multiplier": 100, "max_positions": 3 },
-  "num_permutations": 1000,
-  "seed": 42,                    // Optional. For reproducibility
-  "symbol": "SPY"
-}
-```
-
-**Response:** `PermutationTestResponse`
-- `observed_sharpe` — Original backtest Sharpe
-- `p_value` — Fraction of permutations with Sharpe ≥ observed
-- `null_distribution` — Sampled Sharpe values from permuted backtests
+### Statistics Tools
+- **`aggregate_prices`** — Group returns by `day_of_week`, `month`, `quarter`, `year`, `hour_of_day`.
+- **`distribution`** — Histogram + normality tests (Jarque-Bera, Shapiro-Wilk). Source: `price_returns` or `trade_pnl`.
+- **`correlate`** — Pearson/Spearman correlation with optional rolling window and Granger lag analysis.
+- **`rolling_metric`** — Rolling `volatility`, `sharpe`, `beta`, `correlation`, `drawdown`, etc. `benchmark` required for beta/correlation.
+- **`regime_detect`** — Detect volatility clusters, trend states, or Gaussian HMM regimes.
+- **`generate_hypotheses`** — Auto-scan for statistically significant patterns across 8 dimensions with BH-FDR correction. Results are hypotheses — validate before trusting.
+  - Dimensions: `seasonality`, `price_action`, `mean_reversion`, `volume`, `volatility_regime`, `cross_asset`, `microstructure`, `autocorrelation`
 
 ## Type System
 

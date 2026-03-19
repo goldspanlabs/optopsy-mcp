@@ -155,6 +155,71 @@ mod tests {
     }
 
     #[test]
+    fn test_skewness_exact_asymmetric() {
+        // Data: [1.0, 2.0, 2.0, 3.0, 10.0] — right-skewed
+        // n = 5, mean = (1+2+2+3+10)/5 = 3.6
+        // deviations: [-2.6, -1.6, -1.6, -0.6, 6.4]
+        // sum(d^2) = 6.76 + 2.56 + 2.56 + 0.36 + 40.96 = 53.2
+        // s = sqrt(53.2 / 4) = sqrt(13.3) = 3.646916505762094
+        // z = d / s: [-0.71285, -0.43868, -0.43868, -0.16451, 1.75472]
+        // z^3: [-0.36229, -0.08432, -0.08432, -0.00445, 5.40727]
+        // m3 = sum(z^3) / n = 4.87189 / 5 = 0.97438
+        // correction = sqrt(n*(n-1)) / (n-2) = sqrt(20) / 3 = 1.49071
+        // skewness = correction * m3 = 1.49071 * 0.97438 = 1.45162
+        let data = [1.0, 2.0, 2.0, 3.0, 10.0];
+        let result = skewness(&data);
+        assert!(
+            (result - 1.451_618_911_406_210_6).abs() < 1e-6,
+            "Expected skewness ≈ 1.451619, got {result}"
+        );
+    }
+
+    #[test]
+    fn test_kurtosis_exact_uniform_like() {
+        // Data: [1.0, 2.0, 3.0, 4.0, 5.0]
+        // n = 5, mean = 3.0
+        // s = sqrt(10/4) = 1.5811388300841898 (sample std dev, n-1 denom)
+        // z = (x - mean) / s: [-1.26491, -0.63246, 0.0, 0.63246, 1.26491]
+        // z^4: [2.56, 0.16, 0.0, 0.16, 2.56]
+        // m4 = sum(z^4) / n = 5.44 / 5 = 1.088
+        // term1 = (n-1) / ((n-2)*(n-3)) = 4 / (2*3) = 0.66667
+        // term2 = (n+1)*m4 - 3*(n-1) = 6*1.088 - 3*4 = 6.528 - 12 = -5.472
+        // kurtosis = term1 * term2 = 0.66667 * -5.472 = -3.648
+        let data = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let result = kurtosis(&data);
+        assert!(
+            (result - (-3.648)).abs() < 1e-6,
+            "Expected kurtosis ≈ -3.648, got {result}"
+        );
+    }
+
+    #[test]
+    fn test_kurtosis_exact_heavy_tail() {
+        // Data: [1.0, 1.0, 1.0, 1.0, 10.0] — one outlier, heavy tail
+        // n = 5, mean = (1+1+1+1+10)/5 = 2.8
+        // deviations: [-1.8, -1.8, -1.8, -1.8, 7.2]
+        // sum(d^2) = 4*3.24 + 51.84 = 12.96 + 51.84 = 64.8
+        // s = sqrt(64.8 / 4) = sqrt(16.2) = 4.024922359499621
+        // z = d / s: [-0.44721, -0.44721, -0.44721, -0.44721, 1.78885]
+        // z^4: [0.04, 0.04, 0.04, 0.04, 10.24] (approximately)
+        // m4 = sum(z^4) / n: let's be precise:
+        //   z_low = -1.8 / 4.024922 = -0.447214
+        //   z_low^4 = 0.447214^4 = 0.04
+        //   z_high = 7.2 / 4.024922 = 1.788854
+        //   z_high^4 = 1.788854^4 = 10.24
+        //   m4 = (4 * 0.04 + 10.24) / 5 = 10.4 / 5 = 2.08
+        // term1 = 4 / 6 = 0.66667
+        // term2 = 6 * 2.08 - 12 = 12.48 - 12 = 0.48
+        // kurtosis = 0.66667 * 0.48 = 0.32
+        let data = [1.0, 1.0, 1.0, 1.0, 10.0];
+        let result = kurtosis(&data);
+        assert!(
+            (result - 0.32).abs() < 1e-6,
+            "Expected kurtosis ≈ 0.32, got {result}"
+        );
+    }
+
+    #[test]
     fn test_identical_values() {
         let data = [3.0, 3.0, 3.0, 3.0, 3.0];
         assert_eq!(std_dev(&data), 0.0);

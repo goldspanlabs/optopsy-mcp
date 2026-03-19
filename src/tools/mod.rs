@@ -15,6 +15,7 @@ pub mod distribution;
 pub mod hypothesis;
 pub mod list_symbols;
 pub mod permutation_test;
+pub mod portfolio;
 pub mod raw_prices;
 pub mod regime_detect;
 pub mod response_types;

@@ -11,7 +11,7 @@ use serde::Deserialize;
 
 use crate::engine::types::{
     default_min_bid_ask, default_multiplier, validate_exit_dte_lt_entry_min, Commission, Direction,
-    DteRange, ExpirationFilter, Interval, SimParams, SizingConfig, Slippage, TargetRange,
+    DteRange, ExpirationFilter, Interval, Side, SimParams, SizingConfig, Slippage, TargetRange,
     TradeSelector,
 };
 use crate::signals::registry::SignalSpec;
@@ -1176,6 +1176,74 @@ fn resolve_strategy_entries(
             })
         })
         .collect()
+}
+
+// ── Portfolio backtest ─────────────────────────────────────────────
+
+/// Configuration for a single strategy within a portfolio backtest.
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+pub struct PortfolioStrategyConfig {
+    /// Ticker symbol (e.g. "SPY", "AAPL")
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
+    pub symbol: String,
+    /// Position direction: Long or Short (default: Long)
+    #[serde(default)]
+    #[garde(skip)]
+    pub side: Option<Side>,
+    /// Entry signal (required) — drives when trades open
+    #[garde(skip)]
+    pub entry_signal: SignalSpec,
+    /// Exit signal (optional) — forces position close when active
+    #[serde(default)]
+    #[garde(skip)]
+    pub exit_signal: Option<SignalSpec>,
+    /// Allocation weight as percentage of total capital (e.g. 50.0 = 50%)
+    #[garde(range(min = 0.01, max = 100.0))]
+    pub allocation_pct: f64,
+    /// Number of shares per trade (default: 100)
+    #[serde(default = "default_stock_quantity")]
+    #[garde(range(min = 1))]
+    pub quantity: i32,
+    /// Stop loss as fraction of entry price (e.g. 0.05 = 5%)
+    #[serde(default)]
+    #[garde(inner(range(min = 0.0)))]
+    pub stop_loss: Option<f64>,
+    /// Take profit as fraction of entry price (e.g. 0.10 = 10%)
+    #[serde(default)]
+    #[garde(inner(range(min = 0.0)))]
+    pub take_profit: Option<f64>,
+    /// Maximum days to hold a position
+    #[serde(default)]
+    #[garde(inner(range(min = 1)))]
+    pub max_hold_days: Option<i32>,
+    /// Slippage model override for this strategy (default: portfolio-level slippage)
+    #[serde(default)]
+    #[garde(skip)]
+    pub slippage: Option<Slippage>,
+}
+
+/// Parameters for the `portfolio_backtest` tool.
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+pub struct PortfolioBacktestParams {
+    /// List of strategies to combine (2–20)
+    #[garde(length(min = 2, max = 20), dive)]
+    pub strategies: Vec<PortfolioStrategyConfig>,
+    /// Total portfolio capital in dollars (default: 10000)
+    #[serde(default = "default_capital")]
+    #[garde(range(min = 0.01))]
+    pub capital: f64,
+    /// Default slippage model for strategies that don't specify one (default: Mid)
+    #[serde(default = "default_stock_slippage")]
+    #[garde(dive)]
+    pub slippage: Slippage,
+    /// Start date filter (YYYY-MM-DD)
+    #[serde(default)]
+    #[garde(skip)]
+    pub start_date: Option<String>,
+    /// End date filter (YYYY-MM-DD)
+    #[serde(default)]
+    #[garde(custom(validate_end_date_after_start(&self.start_date)))]
+    pub end_date: Option<String>,
 }
 
 #[cfg(test)]
