@@ -94,12 +94,12 @@ pub fn make_multi_strike_df() -> DataFrame {
         };
 
     // Near-term expiration rows
-    add_rows(&call_data_near, "call", exp_near);
-    add_rows(&put_data_near, "put", exp_near);
+    add_rows(&call_data_near, "c", exp_near);
+    add_rows(&put_data_near, "p", exp_near);
 
     // Far-term expiration rows
-    add_rows(&call_data_far, "call", exp_far);
-    add_rows(&put_data_far, "put", exp_far);
+    add_rows(&call_data_far, "c", exp_far);
+    add_rows(&put_data_far, "p", exp_far);
 
     let mut df = df! {
         DATETIME_COL => &quote_dates,

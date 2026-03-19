@@ -227,11 +227,11 @@ pub enum OptionType {
 }
 
 impl OptionType {
-    /// Return the lowercase string representation (`"call"` or `"put"`).
+    /// Return the string representation matching the raw data format (`"c"` or `"p"`).
     pub fn as_str(&self) -> &'static str {
         match self {
-            OptionType::Call => "call",
-            OptionType::Put => "put",
+            OptionType::Call => "c",
+            OptionType::Put => "p",
         }
     }
 }

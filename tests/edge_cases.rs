@@ -39,7 +39,7 @@ fn filter_option_type_on_empty_df() {
         "option_type" => Vec::<&str>::new(),
     }
     .unwrap();
-    let result = optopsy_mcp::engine::filters::filter_option_type(&df, "call").unwrap();
+    let result = optopsy_mcp::engine::filters::filter_option_type(&df, "c").unwrap();
     assert_eq!(result.height(), 0);
 }
 
@@ -184,7 +184,7 @@ fn make_many_entry_dates_df() -> DataFrame {
         for d in &dates {
             quote_dates.push(d.and_hms_opt(0, 0, 0).unwrap());
             expirations_vec.push(*exp);
-            option_types.push("call");
+            option_types.push("c");
             strikes.push(100.0);
             bids.push(price - 0.25);
             asks.push(price + 0.25);

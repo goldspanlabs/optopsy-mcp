@@ -67,7 +67,7 @@ pub(crate) fn compute_keltner_channel(
 /// Aggregate daily implied volatility from an options chain `DataFrame`.
 ///
 /// Filters to near-ATM options (absolute delta between 0.30 and 0.70), then
-/// computes the median `implied_volatility` per quote date. Returns a `DataFrame`
+/// computes the median midpoint IV `(bid_iv + ask_iv) / 2` per quote date. Returns a `DataFrame`
 /// with columns `["date", "iv"]` sorted by date.
 pub fn aggregate_daily_iv(options_df: &DataFrame) -> Result<DataFrame, PolarsError> {
     let columns: Vec<&str> = options_df
@@ -76,9 +76,9 @@ pub fn aggregate_daily_iv(options_df: &DataFrame) -> Result<DataFrame, PolarsErr
         .map(|c| c.as_str())
         .collect();
 
-    if !columns.contains(&"implied_volatility") {
+    if !columns.contains(&"bid_iv") || !columns.contains(&"ask_iv") {
         return Err(PolarsError::ComputeError(
-            "Options data does not contain an 'implied_volatility' column. \
+            "Options data does not contain 'bid_iv' and 'ask_iv' columns. \
              IV Rank/Percentile signals require options data with implied volatility."
                 .into(),
         ));
@@ -113,7 +113,9 @@ pub fn aggregate_daily_iv(options_df: &DataFrame) -> Result<DataFrame, PolarsErr
     let result = filtered
         .with_column(col(DATETIME_COL).cast(DataType::Date).alias("date"))
         .group_by([col("date")])
-        .agg([col("implied_volatility").median().alias("iv")])
+        .agg([((col("bid_iv") + col("ask_iv")) / lit(2.0))
+            .median()
+            .alias("iv")])
         .sort(["date"], SortMultipleOptions::default())
         .collect()?;
 
@@ -227,7 +229,8 @@ mod tests {
             3,
             vec![
                 dt_chunked.into_series().into(),
-                Series::new("implied_volatility".into(), &[0.20, 0.30, 0.25]).into(),
+                Series::new("bid_iv".into(), &[0.19, 0.29, 0.24]).into(),
+                Series::new("ask_iv".into(), &[0.21, 0.31, 0.26]).into(),
                 Series::new("delta".into(), &[0.50, 0.45, 0.50]).into(),
             ],
         )

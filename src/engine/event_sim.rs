@@ -664,7 +664,7 @@ mod tests {
 
         let mut df = df! {
             DATETIME_COL => &quote_dates,
-            "option_type" => &["call", "call", "call"],
+            "option_type" => &["c", "c", "c"],
             "strike" => &[100.0f64, 100.0, 100.0],
             "bid" => &[5.0f64, 3.0, 2.0],
             "ask" => &[5.50f64, 3.50, 2.50],
@@ -1260,7 +1260,7 @@ mod tests {
 
         let mut df = df! {
             DATETIME_COL => &[d1, d1, d1],
-            "option_type" => &["call", "call", "call"],
+            "option_type" => &["c", "c", "c"],
             "strike" => &[100.0f64, 105.0, 110.0],
             "bid" => &[5.0f64, 3.0, 1.5],
             "ask" => &[5.50f64, 3.50, 2.0],
@@ -1348,7 +1348,7 @@ mod tests {
 
         let mut df = df! {
             DATETIME_COL => &[d1],
-            "option_type" => &["call"],
+            "option_type" => &["c"],
             "bid" => &[5.0f64],
             "ask" => &[5.50f64],
             "delta" => &[0.50f64],
@@ -1417,7 +1417,7 @@ mod tests {
 
         let mut df = df! {
             DATETIME_COL => &[d1],
-            "option_type" => &["call"],
+            "option_type" => &["c"],
             "strike" => &[100.0f64],
             "bid" => &[0.30f64],
             "ask" => &[0.40f64],
@@ -1606,7 +1606,7 @@ mod tests {
 
         let mut df = df! {
             DATETIME_COL => &[d1],
-            "option_type" => &["call"],
+            "option_type" => &["c"],
             "strike" => &[100.0f64],
             "bid" => &[5.0f64],
             "ask" => &[5.50f64],
@@ -1675,7 +1675,7 @@ mod tests {
 
         let mut df = df! {
             DATETIME_COL => &[d1],
-            "option_type" => &["call"],
+            "option_type" => &["c"],
             "strike" => &[100.0f64],
             "bid" => &[5.0f64],
             "ask" => &[5.50f64],
@@ -1745,7 +1745,7 @@ mod tests {
 
         let mut df = df! {
             DATETIME_COL => &[d1],
-            "option_type" => &["call"],
+            "option_type" => &["c"],
             "strike" => &[100.0f64],
             "bid" => &[5.0f64],
             "ask" => &[5.50f64],
@@ -1814,7 +1814,7 @@ mod tests {
 
         let mut df = df! {
             DATETIME_COL => &[d1],
-            "option_type" => &["call"],
+            "option_type" => &["c"],
             "strike" => &[100.0f64],
             "bid" => &[5.0f64],
             "ask" => &[5.50f64],

@@ -83,8 +83,8 @@ fn build_price_table_fast(
     ) {
         for i in 0..n {
             let ot = match option_types.get(i) {
-                Some("call") => OptionType::Call,
-                Some("put") => OptionType::Put,
+                Some("c") => OptionType::Call,
+                Some("p") => OptionType::Put,
                 _ => continue,
             };
             let quote_days = q_vals[i].div_euclid(micros_per_day) + i64::from(EPOCH_DAYS_CE_OFFSET);
@@ -127,8 +127,8 @@ fn build_price_table_fast(
                 continue;
             };
             let opt_type = match ot_str {
-                "call" => OptionType::Call,
-                "put" => OptionType::Put,
+                "c" => OptionType::Call,
+                "p" => OptionType::Put,
                 _ => continue,
             };
             let qv_days = qv.div_euclid(micros_per_day) + i64::from(EPOCH_DAYS_CE_OFFSET);
@@ -179,8 +179,8 @@ fn build_price_table_slow(
             continue;
         };
         let opt_type = match opt_type_str {
-            "call" => OptionType::Call,
-            "put" => OptionType::Put,
+            "c" => OptionType::Call,
+            "p" => OptionType::Put,
             _ => continue,
         };
         let Some(bid) = bids.get(i) else { continue };
@@ -327,7 +327,7 @@ mod tests {
 
         let mut df = df! {
             DATETIME_COL => &quote_dates,
-            "option_type" => &["call", "call", "call"],
+            "option_type" => &["c", "c", "c"],
             "strike" => &[100.0f64, 100.0, 100.0],
             "bid" => &[5.0f64, 3.0, 2.0],
             "ask" => &[5.50f64, 3.50, 2.50],

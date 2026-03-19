@@ -1214,7 +1214,7 @@ mod tests {
         let qt = date.and_hms_opt(0, 0, 0).unwrap();
         let mut df = df! {
             DATETIME_COL => &[qt],
-            "option_type" => &["call"],
+            "option_type" => &["c"],
             "strike" => &[100.0f64],
             "bid" => &[5.0f64],
             "ask" => &[5.5f64],
@@ -1287,7 +1287,7 @@ mod tests {
         let qt = date.and_hms_opt(0, 0, 0).unwrap();
         let mut df = df! {
             DATETIME_COL => &[qt],
-            "option_type" => &["call"],
+            "option_type" => &["c"],
             "strike" => &[100.0f64],
             "bid" => &[5.0f64],
             "ask" => &[5.5f64],
@@ -1452,7 +1452,7 @@ mod tests {
         let qt = date.and_hms_opt(0, 0, 0).unwrap();
         let mut df = df! {
             DATETIME_COL => &[qt],
-            "option_type" => &["call"],
+            "option_type" => &["c"],
             "strike" => &[100.0f64],
             "bid" => &[5.0f64],
             "ask" => &[5.5f64],

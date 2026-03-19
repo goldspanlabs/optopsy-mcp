@@ -189,7 +189,7 @@ fn make_short_dte_df() -> DataFrame {
         if i < 3 {
             quote_dates.push(date.and_hms_opt(0, 0, 0).unwrap());
             expirations.push(exp_short);
-            option_types.push("call");
+            option_types.push("c");
             strikes.push(100.0);
             bids.push(short_bids[i]);
             asks.push(short_asks[i]);
@@ -199,7 +199,7 @@ fn make_short_dte_df() -> DataFrame {
         // Long-exp rows (all dates)
         quote_dates.push(date.and_hms_opt(0, 0, 0).unwrap());
         expirations.push(exp_long);
-        option_types.push("call");
+        option_types.push("c");
         strikes.push(100.0);
         bids.push(long_bids[i]);
         asks.push(long_asks[i]);

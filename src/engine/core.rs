@@ -880,7 +880,7 @@ mod tests {
         let n = dates.len();
         let mut df = df! {
             DATETIME_COL => &quote_dates,
-            "option_type" => vec!["call"; n],
+            "option_type" => vec!["c"; n],
             "strike" => vec![100.0f64; n],
             "bid" => &bids,
             "ask" => &asks,
@@ -919,7 +919,7 @@ mod tests {
         let n = dates.len();
         let mut df = df! {
             DATETIME_COL => &quote_dates,
-            "option_type" => vec!["call"; n],
+            "option_type" => vec!["c"; n],
             "strike" => vec![100.0f64; n],
             "bid" => &bids,
             "ask" => &asks,
@@ -1226,7 +1226,7 @@ mod tests {
             // Strike 100
             quote_dates.push(date.and_hms_opt(0, 0, 0).unwrap());
             expirations_vec.push(exp);
-            option_types.push("call");
+            option_types.push("c");
             strikes.push(100.0f64);
             bids.push(bids_100[i]);
             asks.push(asks_100[i]);
@@ -1235,7 +1235,7 @@ mod tests {
             // Strike 105
             quote_dates.push(date.and_hms_opt(0, 0, 0).unwrap());
             expirations_vec.push(exp);
-            option_types.push("call");
+            option_types.push("c");
             strikes.push(105.0f64);
             bids.push(bids_105[i]);
             asks.push(asks_105[i]);

@@ -388,7 +388,7 @@ mod tests {
         // Build base df with df! macro, then add expiration as Date column
         let mut df = df! {
             DATETIME_COL => &dates,
-            "option_type" => &["call", "call", "put", "call"],
+            "option_type" => &["c", "c", "p", "c"],
             "strike" => &[100.0f64, 105.0, 100.0, 100.0],
             "bid" => &[2.0f64, 1.5, 3.0, 0.0],
             "ask" => &[2.50f64, 2.0, 3.50, 0.50],
@@ -470,14 +470,14 @@ mod tests {
     #[test]
     fn filter_option_type_calls() {
         let df = make_options_df();
-        let result = filter_option_type(&df, "call").unwrap();
+        let result = filter_option_type(&df, "c").unwrap();
         assert_eq!(result.height(), 3);
     }
 
     #[test]
     fn filter_option_type_puts() {
         let df = make_options_df();
-        let result = filter_option_type(&df, "put").unwrap();
+        let result = filter_option_type(&df, "p").unwrap();
         assert_eq!(result.height(), 1);
     }
 
@@ -610,7 +610,7 @@ mod tests {
             .unwrap();
         let mut df = df! {
             DATETIME_COL => &[dt, dt],
-            "option_type" => &["call", "call"],
+            "option_type" => &["c", "c"],
             "strike" => &[100.0f64, 100.0],
             "bid" => &[1.0f64, 1.0],
             "ask" => &[1.5f64, 1.5],
@@ -637,7 +637,7 @@ mod tests {
             .unwrap();
         let mut df = df! {
             DATETIME_COL => &[dt, dt],
-            "option_type" => &["call", "call"],
+            "option_type" => &["c", "c"],
             "strike" => &[100.0f64, 100.0],
             "bid" => &[1.0f64, 1.0],
             "ask" => &[1.5f64, 1.5],
@@ -664,7 +664,7 @@ mod tests {
             .unwrap();
         let mut df = df! {
             DATETIME_COL => &[dt, dt],
-            "option_type" => &["call", "call"],
+            "option_type" => &["c", "c"],
             "strike" => &[100.0f64, 100.0],
             "bid" => &[1.0f64, 1.0],
             "ask" => &[1.5f64, 1.5],

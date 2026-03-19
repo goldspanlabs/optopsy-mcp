@@ -28,7 +28,7 @@ fn make_sparse_df() -> DataFrame {
 
     df! {
         "datetime" => &[datetime],
-        "option_type" => &["call"],
+        "option_type" => &["c"],
         "strike" => &[100.0],
         "bid" => &[5.0],
         "ask" => &[5.5],
