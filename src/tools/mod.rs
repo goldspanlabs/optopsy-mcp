@@ -12,6 +12,7 @@ pub mod compare;
 pub mod construct_signal;
 pub mod correlate;
 pub mod distribution;
+pub mod hypothesis;
 pub mod list_symbols;
 pub mod permutation_test;
 pub mod raw_prices;

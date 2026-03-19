@@ -11,6 +11,7 @@ pub mod core;
 pub mod event_sim;
 pub mod filters;
 pub mod hmm;
+pub mod hypothesis;
 pub mod metrics;
 pub mod multiple_comparisons;
 pub mod permutation;

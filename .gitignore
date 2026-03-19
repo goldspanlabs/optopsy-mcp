@@ -16,3 +16,4 @@ Thumbs.db
 # Environment
 .env
 .dual-graph/
+.mcp.json
