@@ -89,7 +89,7 @@ pub async fn execute(
     };
 
     // Run the hypothesis engine
-    let (total_trials, hypotheses) = generate_hypotheses(
+    let (total_trials, patterns_tested, patterns_significant, hypotheses) = generate_hypotheses(
         primary_prices,
         &config,
         &dimensions,
@@ -97,13 +97,11 @@ pub async fn execute(
         &cross_asset_prices,
     );
 
-    let patterns_significant = hypotheses.len();
-
     Ok(ai_format::format_hypotheses(
         &params.symbols,
         total_trials,
         params.significance,
-        total_trials, // patterns_tested
+        patterns_tested,
         patterns_significant,
         &hypotheses,
     ))

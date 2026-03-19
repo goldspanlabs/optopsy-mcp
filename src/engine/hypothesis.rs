@@ -52,7 +52,7 @@ pub struct HypothesisConfig {
 /// Main entry point: scan dimensions, filter by significance, compute DSR,
 /// deduplicate, score, and rank patterns.
 ///
-/// Returns `(total_trials, patterns_tested, scored_hypotheses)`.
+/// Returns `(total_trials, patterns_tested, patterns_significant_pre_dedup, scored_hypotheses)`.
 #[allow(clippy::implicit_hasher, clippy::too_many_lines)]
 pub fn generate_hypotheses(
     prices: &[PriceBar],
@@ -60,44 +60,32 @@ pub fn generate_hypotheses(
     dimensions: &[HypothesisDimension],
     regime_labels: Option<&[usize]>,
     cross_asset_prices: &HashMap<String, Vec<PriceBar>>,
-) -> (usize, Vec<ScoredHypothesis>) {
+) -> (usize, usize, usize, Vec<ScoredHypothesis>) {
     if prices.len() < 60 {
-        return (0, vec![]);
+        return (0, 0, 0, vec![]);
     }
-
-    // Precompute forward returns for all horizons
-    let forward_returns = compute_all_forward_returns(prices, &config.forward_horizons);
 
     // Run enabled scanners, collecting all raw patterns
     let mut all_patterns: Vec<RawPattern> = Vec::new();
     for &dim in dimensions {
         let patterns = match dim {
-            HypothesisDimension::Seasonality => {
-                scan_seasonality(prices, &forward_returns, &config.forward_horizons)
-            }
-            HypothesisDimension::PriceAction => {
-                scan_price_action(prices, &forward_returns, &config.forward_horizons)
-            }
+            HypothesisDimension::Seasonality => scan_seasonality(prices, &config.forward_horizons),
+            HypothesisDimension::PriceAction => scan_price_action(prices, &config.forward_horizons),
             HypothesisDimension::MeanReversion => {
-                scan_mean_reversion(prices, &forward_returns, &config.forward_horizons)
+                scan_mean_reversion(prices, &config.forward_horizons)
             }
-            HypothesisDimension::Volume => {
-                scan_volume(prices, &forward_returns, &config.forward_horizons)
-            }
+            HypothesisDimension::Volume => scan_volume(prices, &config.forward_horizons),
             HypothesisDimension::VolatilityRegime => {
-                scan_volatility_regime(prices, &forward_returns, &config.forward_horizons)
+                scan_volatility_regime(prices, &config.forward_horizons)
             }
-            HypothesisDimension::CrossAsset => scan_cross_asset(
-                prices,
-                &forward_returns,
-                &config.forward_horizons,
-                cross_asset_prices,
-            ),
+            HypothesisDimension::CrossAsset => {
+                scan_cross_asset(prices, &config.forward_horizons, cross_asset_prices)
+            }
             HypothesisDimension::Microstructure => {
-                scan_microstructure(prices, &forward_returns, &config.forward_horizons)
+                scan_microstructure(prices, &config.forward_horizons)
             }
             HypothesisDimension::Autocorrelation => {
-                scan_autocorrelation(prices, &forward_returns, &config.forward_horizons)
+                scan_autocorrelation(prices, &config.forward_horizons)
             }
             HypothesisDimension::OptionsStructure => {
                 // Options scanner requires options DataFrame — skip if not available
@@ -109,7 +97,7 @@ pub fn generate_hypotheses(
 
     let total_trials = all_patterns.len();
     if total_trials == 0 {
-        return (0, vec![]);
+        return (0, 0, 0, vec![]);
     }
 
     // Run t-test on each pattern's signal returns
@@ -128,11 +116,13 @@ pub fn generate_hypotheses(
         }
     }
 
+    let patterns_tested = valid_patterns.len();
+
     if valid_patterns.is_empty() {
-        return (total_trials, vec![]);
+        return (total_trials, patterns_tested, 0, vec![]);
     }
 
-    // Apply BH-FDR correction across ALL trials
+    // Apply BH-FDR correction across ALL tested patterns
     let bh_result = benjamini_hochberg(&labels, &p_values, config.significance);
 
     // Filter to significant patterns and compute scores
@@ -154,7 +144,7 @@ pub fn generate_hypotheses(
         };
         let skew = stats::skewness(returns);
         let kurt = stats::kurtosis(returns);
-        let dsr = compute_dsr(sharpe, total_trials, skew, kurt, n_obs);
+        let dsr = compute_dsr(sharpe, patterns_tested, skew, kurt, n_obs);
 
         let regime_stab =
             regime_labels.map(|rl| score_regime_stability(returns, &pat.signal_dates, prices, rl));
@@ -176,6 +166,8 @@ pub fn generate_hypotheses(
         });
     }
 
+    let patterns_significant = scored.len();
+
     // Deduplicate by signal date overlap
     scored = deduplicate_patterns(scored, config.dedup_threshold, prices);
 
@@ -186,53 +178,23 @@ pub fn generate_hypotheses(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    (total_trials, scored)
+    (total_trials, patterns_tested, patterns_significant, scored)
 }
 
 // ── Forward returns ─────────────────────────────────────────────────────────
 
-/// Compute forward returns for multiple horizons with purging for independence.
+/// Get forward returns for specific signal dates, returning both the surviving
+/// indices and their corresponding returns (aligned 1:1).
 ///
-/// For each horizon h, forward return at date i = close[i+h] / close[i] - 1.
-/// Purging: sub-sample every h-th observation to avoid autocorrelation from
-/// overlapping returns inflating t-test significance.
-fn compute_all_forward_returns(
-    prices: &[PriceBar],
-    horizons: &[usize],
-) -> HashMap<usize, Vec<(usize, f64)>> {
-    let closes: Vec<f64> = prices.iter().map(|p| p.close).collect();
-    let n = closes.len();
-    let mut result = HashMap::new();
-
-    for &h in horizons {
-        if h == 0 || h >= n {
-            result.insert(h, vec![]);
-            continue;
-        }
-        let mut pairs = Vec::new();
-        // Purge: step by h to get non-overlapping observations
-        let mut i = 0;
-        while i + h < n {
-            if closes[i] > 0.0 {
-                let fwd_ret = closes[i + h] / closes[i] - 1.0;
-                if fwd_ret.is_finite() {
-                    pairs.push((i, fwd_ret));
-                }
-            }
-            i += h;
-        }
-        result.insert(h, pairs);
-    }
-
-    result
-}
-
-/// Get forward returns for specific signal dates from precomputed data.
 /// When signal dates are sparse and median gap > horizon, use all signal dates
 /// (they're already non-overlapping). Otherwise use purged observations.
-fn get_signal_returns(prices: &[PriceBar], signal_indices: &[usize], horizon: usize) -> Vec<f64> {
+fn get_signal_returns(
+    prices: &[PriceBar],
+    signal_indices: &[usize],
+    horizon: usize,
+) -> (Vec<usize>, Vec<f64>) {
     if signal_indices.is_empty() || horizon == 0 {
-        return vec![];
+        return (vec![], vec![]);
     }
 
     let closes: Vec<f64> = prices.iter().map(|p| p.close).collect();
@@ -248,12 +210,14 @@ fn get_signal_returns(prices: &[PriceBar], signal_indices: &[usize], horizon: us
         true
     };
 
+    let mut used_indices = Vec::new();
     let mut returns = Vec::new();
     if skip_purge {
         for &idx in signal_indices {
             if idx + horizon < n && closes[idx] > 0.0 {
                 let ret = closes[idx + horizon] / closes[idx] - 1.0;
                 if ret.is_finite() {
+                    used_indices.push(idx);
                     returns.push(ret);
                 }
             }
@@ -270,13 +234,14 @@ fn get_signal_returns(prices: &[PriceBar], signal_indices: &[usize], horizon: us
             if idx + horizon < n && closes[idx] > 0.0 {
                 let ret = closes[idx + horizon] / closes[idx] - 1.0;
                 if ret.is_finite() {
+                    used_indices.push(idx);
                     returns.push(ret);
                     last_used = Some(idx);
                 }
             }
         }
     }
-    returns
+    (used_indices, returns)
 }
 
 // ── Statistical functions ───────────────────────────────────────────────────
@@ -529,12 +494,13 @@ fn scan_condition(
         return None;
     }
 
-    let signal_returns = get_signal_returns(prices, &signal_indices, horizon);
+    let (used_indices, signal_returns) = get_signal_returns(prices, &signal_indices, horizon);
     if signal_returns.len() < 5 {
         return None;
     }
 
-    let signal_dates: Vec<NaiveDate> = signal_indices
+    // Build dates from the indices that survived purging (aligned with signal_returns)
+    let signal_dates: Vec<NaiveDate> = used_indices
         .iter()
         .filter_map(|&i| epoch_to_naive_date(prices[i].date))
         .collect();
@@ -553,11 +519,7 @@ fn scan_condition(
 // ── Scanners ────────────────────────────────────────────────────────────────
 
 /// Seasonality: day-of-week, month, turn-of-month, quarter-end effects.
-fn scan_seasonality(
-    prices: &[PriceBar],
-    _forward_returns: &HashMap<usize, Vec<(usize, f64)>>,
-    horizons: &[usize],
-) -> Vec<RawPattern> {
+fn scan_seasonality(prices: &[PriceBar], horizons: &[usize]) -> Vec<RawPattern> {
     let mut patterns = Vec::new();
 
     for &h in horizons {
@@ -642,11 +604,7 @@ fn scan_seasonality(
 
 /// Price action: momentum, consecutive moves, large moves.
 #[allow(clippy::too_many_lines)]
-fn scan_price_action(
-    prices: &[PriceBar],
-    _forward_returns: &HashMap<usize, Vec<(usize, f64)>>,
-    horizons: &[usize],
-) -> Vec<RawPattern> {
+fn scan_price_action(prices: &[PriceBar], horizons: &[usize]) -> Vec<RawPattern> {
     let mut patterns = Vec::new();
     let closes: Vec<f64> = prices.iter().map(|p| p.close).collect();
 
@@ -766,11 +724,7 @@ fn scan_price_action(
 }
 
 /// Mean reversion: Bollinger band touches, RSI extremes, z-score extremes.
-fn scan_mean_reversion(
-    prices: &[PriceBar],
-    _forward_returns: &HashMap<usize, Vec<(usize, f64)>>,
-    horizons: &[usize],
-) -> Vec<RawPattern> {
+fn scan_mean_reversion(prices: &[PriceBar], horizons: &[usize]) -> Vec<RawPattern> {
     let mut patterns = Vec::new();
     let closes: Vec<f64> = prices.iter().map(|p| p.close).collect();
     let n = closes.len();
@@ -855,11 +809,7 @@ fn scan_mean_reversion(
 }
 
 /// Volume: volume spikes, low volume, volume trends.
-fn scan_volume(
-    prices: &[PriceBar],
-    _forward_returns: &HashMap<usize, Vec<(usize, f64)>>,
-    horizons: &[usize],
-) -> Vec<RawPattern> {
+fn scan_volume(prices: &[PriceBar], horizons: &[usize]) -> Vec<RawPattern> {
     let mut patterns = Vec::new();
     let volumes: Vec<f64> = prices.iter().map(|p| p.volume as f64).collect();
     let n = volumes.len();
@@ -916,11 +866,7 @@ fn scan_volume(
 }
 
 /// Volatility regime: high/low vol environments.
-fn scan_volatility_regime(
-    prices: &[PriceBar],
-    _forward_returns: &HashMap<usize, Vec<(usize, f64)>>,
-    horizons: &[usize],
-) -> Vec<RawPattern> {
+fn scan_volatility_regime(prices: &[PriceBar], horizons: &[usize]) -> Vec<RawPattern> {
     let mut patterns = Vec::new();
     let (_, _, returns) = prices_to_returns(prices);
 
@@ -959,7 +905,9 @@ fn scan_volatility_regime(
             HypothesisDimension::VolatilityRegime,
             "low_vol",
             SignalSpec::Formula {
-                formula: "std(close, 20) < sma(std(close, 20), 252) * 0.75".to_string(),
+                formula:
+                    "std(pct_change(close, 1), 20) < sma(std(pct_change(close, 1), 20), 252) * 0.75"
+                        .to_string(),
             },
         ) {
             patterns.push(pat);
@@ -979,7 +927,9 @@ fn scan_volatility_regime(
             HypothesisDimension::VolatilityRegime,
             "high_vol",
             SignalSpec::Formula {
-                formula: "std(close, 20) > sma(std(close, 20), 252) * 1.25".to_string(),
+                formula:
+                    "std(pct_change(close, 1), 20) > sma(std(pct_change(close, 1), 20), 252) * 1.25"
+                        .to_string(),
             },
         ) {
             patterns.push(pat);
@@ -992,7 +942,6 @@ fn scan_volatility_regime(
 /// Cross-asset: lead/lag relationships with other symbols.
 fn scan_cross_asset(
     prices: &[PriceBar],
-    _forward_returns: &HashMap<usize, Vec<(usize, f64)>>,
     horizons: &[usize],
     cross_asset_prices: &HashMap<String, Vec<PriceBar>>,
 ) -> Vec<RawPattern> {
@@ -1059,8 +1008,11 @@ fn scan_cross_asset(
                         &format!("{symbol} large move (>2%) leads target → {h}-day forward return (Granger F={f_stat:.1}, p={p_val:.4})"),
                         HypothesisDimension::CrossAsset,
                         "cross_asset",
-                        SignalSpec::Formula {
-                            formula: "abs(pct_change(close, 1)) > 0.02".to_string(),
+                        SignalSpec::CrossSymbol {
+                            symbol: symbol.clone(),
+                            signal: Box::new(SignalSpec::Formula {
+                                formula: "abs(pct_change(close, 1)) > 0.02".to_string(),
+                            }),
                         },
                     ) {
                         patterns.push(pat);
@@ -1074,11 +1026,7 @@ fn scan_cross_asset(
 }
 
 /// Microstructure: overnight gaps.
-fn scan_microstructure(
-    prices: &[PriceBar],
-    _forward_returns: &HashMap<usize, Vec<(usize, f64)>>,
-    horizons: &[usize],
-) -> Vec<RawPattern> {
+fn scan_microstructure(prices: &[PriceBar], horizons: &[usize]) -> Vec<RawPattern> {
     let mut patterns = Vec::new();
 
     for &h in horizons {
@@ -1144,7 +1092,7 @@ fn scan_microstructure(
                 HypothesisDimension::Microstructure,
                 "large_range",
                 SignalSpec::Formula {
-                    formula: "range_pct() > 2 * sma(range_pct(), 20)".to_string(),
+                    formula: "(high - low) / low > 2 * sma((high - low) / low, 20)".to_string(),
                 },
             ) {
                 patterns.push(pat);
@@ -1156,11 +1104,7 @@ fn scan_microstructure(
 }
 
 /// Autocorrelation: serial correlation patterns.
-fn scan_autocorrelation(
-    prices: &[PriceBar],
-    _forward_returns: &HashMap<usize, Vec<(usize, f64)>>,
-    horizons: &[usize],
-) -> Vec<RawPattern> {
+fn scan_autocorrelation(prices: &[PriceBar], horizons: &[usize]) -> Vec<RawPattern> {
     let mut patterns = Vec::new();
     let (_, _, returns) = prices_to_returns(prices);
 
@@ -1303,22 +1247,27 @@ mod tests {
     #[test]
     fn test_forward_returns_purging() {
         let prices = synthetic_prices(100);
-        let fwd = compute_all_forward_returns(&prices, &[5, 10]);
+        // Dense signals: every bar → purging should kick in for horizon=5
+        let signal_indices: Vec<usize> = (0..100).collect();
+        let (used_indices, returns) = get_signal_returns(&prices, &signal_indices, 5);
 
-        // With h=5, we should get ~20 observations from 100 prices (100/5)
-        let ret5 = fwd.get(&5).unwrap();
+        // Purging should space indices by at least the horizon
         assert!(
-            ret5.len() >= 15 && ret5.len() <= 20,
+            returns.len() >= 10 && returns.len() <= 25,
             "Got {} observations",
-            ret5.len()
+            returns.len()
+        );
+        assert_eq!(
+            used_indices.len(),
+            returns.len(),
+            "Indices and returns must be aligned"
         );
 
-        // All indices should be spaced by h
-        for w in ret5.windows(2) {
-            assert_eq!(
-                w[1].0 - w[0].0,
-                5,
-                "Purged indices should be spaced by horizon"
+        // All surviving indices should be spaced by at least h
+        for w in used_indices.windows(2) {
+            assert!(
+                w[1] - w[0] >= 5,
+                "Purged indices should be spaced by at least the horizon"
             );
         }
     }
@@ -1328,9 +1277,14 @@ mod tests {
         let prices = synthetic_prices(200);
         // Sparse signals: every 30 bars (well above any horizon)
         let signal_indices: Vec<usize> = (0..200).step_by(30).collect();
-        let returns = get_signal_returns(&prices, &signal_indices, 10);
+        let (used_indices, returns) = get_signal_returns(&prices, &signal_indices, 10);
         // With sparse dates (gap=30 > horizon=10), should use all signals
         assert!(returns.len() >= 5, "Sparse signals should not be purged");
+        assert_eq!(
+            used_indices.len(),
+            returns.len(),
+            "Indices and returns must be aligned"
+        );
     }
 
     #[test]
@@ -1388,8 +1342,12 @@ mod tests {
             HypothesisDimension::Seasonality,
             HypothesisDimension::PriceAction,
         ];
-        let (total_trials, _hypotheses) =
+        let (total_trials, patterns_tested, _patterns_sig, _hypotheses) =
             generate_hypotheses(&prices, &config, &dims, None, &HashMap::new());
+        assert!(
+            patterns_tested <= total_trials,
+            "patterns_tested should be <= total_trials"
+        );
         assert!(total_trials > 0, "Should generate some trials");
         // We don't assert hypotheses > 0 since synthetic data may not have significant patterns
     }

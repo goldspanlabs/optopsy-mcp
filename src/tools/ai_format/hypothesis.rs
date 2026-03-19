@@ -17,24 +17,18 @@ pub fn format_hypotheses(
 
     let summary = if hypotheses.is_empty() {
         format!(
-            "Scanned {} dimensions across {} ({} trials). \
+            "Scanned {total_trials} patterns ({patterns_tested} tested) across {}. \
              No statistically significant patterns survived BH-FDR correction at α={significance}. \
              This is expected — most random patterns are false discoveries.",
-            patterns_tested,
             symbols.join(", "),
-            total_trials,
         )
     } else {
         let top = &hypotheses[0];
         format!(
-            "Scanned {} dimensions across {} ({} trials). \
-             {} patterns survived BH-FDR correction (α={significance}), \
-             {} after deduplication. Top pattern: {} (DSR={:.2}, adj. p={:.4}).",
-            patterns_tested,
+            "Scanned {total_trials} patterns ({patterns_tested} tested) across {}. \
+             {patterns_significant} survived BH-FDR correction (α={significance}), \
+             {patterns_after_dedup} after deduplication. Top: {} (DSR={:.2}, adj. p={:.4}).",
             symbols.join(", "),
-            total_trials,
-            patterns_significant,
-            patterns_after_dedup,
             top.pattern.description,
             top.dsr,
             top.adjusted_p_value,
@@ -129,7 +123,7 @@ pub fn format_hypotheses(
             DiscoveredPattern {
                 dimension: h.pattern.dimension.to_string(),
                 description: h.pattern.description.clone(),
-                structural_basis: format!("{:?}", h.pattern.structural_basis),
+                structural_basis: h.pattern.structural_basis.to_string(),
                 structural_explanation: h.pattern.structural_basis.explanation().to_string(),
                 signal_spec: h.pattern.signal_spec.clone(),
                 forward_horizon: h.pattern.forward_horizon,

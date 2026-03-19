@@ -214,6 +214,7 @@ impl HypothesisDimension {
             Self::PriceAction,
             Self::MeanReversion,
             Self::Volume,
+            Self::VolatilityRegime,
             Self::Microstructure,
             Self::Autocorrelation,
         ]
@@ -275,6 +276,23 @@ pub enum StructuralBasis {
     SettlementMechanics,
     /// No known structural explanation
     EmpiricalOnly,
+}
+
+impl std::fmt::Display for StructuralBasis {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::VarianceRiskPremium => write!(f, "variance_risk_premium"),
+            Self::HedgingDemand => write!(f, "hedging_demand"),
+            Self::RebalancingFlows => write!(f, "rebalancing_flows"),
+            Self::LiquidityPremium => write!(f, "liquidity_premium"),
+            Self::MomentumBehavioral => write!(f, "momentum_behavioral"),
+            Self::MeanReversionStatArb => write!(f, "mean_reversion_stat_arb"),
+            Self::MacroTransmission => write!(f, "macro_transmission"),
+            Self::OvernightRiskPremium => write!(f, "overnight_risk_premium"),
+            Self::SettlementMechanics => write!(f, "settlement_mechanics"),
+            Self::EmpiricalOnly => write!(f, "empirical_only"),
+        }
+    }
 }
 
 impl StructuralBasis {

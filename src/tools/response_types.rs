@@ -826,8 +826,12 @@ fn default_dedup_threshold() -> f64 {
 #[derive(Debug, Clone, Deserialize, JsonSchema, Validate)]
 #[garde(context(()))]
 pub struct HypothesisParams {
-    /// Target symbols to scan (1-10)
-    #[garde(length(min = 1, max = 10))]
+    /// Symbols to scan (1-10). First symbol is the primary target; additional symbols
+    /// are used as cross-asset inputs for lead/lag analysis.
+    #[garde(
+        length(min = 1, max = 10),
+        inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))
+    )]
     pub symbols: Vec<String>,
     /// Dimensions to scan (None = all applicable given available data)
     #[serde(default)]
@@ -839,7 +843,7 @@ pub struct HypothesisParams {
     pub significance: f64,
     /// Forward return horizons in trading days (default: [5, 10, 20])
     #[serde(default = "default_forward_horizons")]
-    #[garde(length(min = 1, max = 5))]
+    #[garde(length(min = 1, max = 5), inner(range(min = 1, max = 252)))]
     pub forward_horizons: Vec<usize>,
     /// Years of history to scan (default: 5)
     #[serde(default = "default_analysis_years")]
