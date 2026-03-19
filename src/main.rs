@@ -13,7 +13,7 @@ use tracing_subscriber::{self, EnvFilter};
 
 use optopsy_mcp::{data, server};
 
-/// Query parameters for the `/prices/:symbol` REST endpoint.
+/// Query parameters for the `/prices/{symbol}` REST endpoint.
 #[derive(serde::Deserialize)]
 struct PricesQuery {
     start_date: Option<String>,

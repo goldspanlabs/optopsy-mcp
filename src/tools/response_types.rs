@@ -896,11 +896,11 @@ pub struct DiscoveredPattern {
 pub struct HypothesisResponse {
     pub summary: String,
     pub symbols: Vec<String>,
-    /// Total number of statistical tests performed across all dimensions
+    /// Total number of raw patterns generated across all dimensions (before filtering)
     pub total_trials: usize,
     /// Significance threshold used for BH-FDR correction
     pub significance_threshold: f64,
-    /// Number of raw patterns tested
+    /// Number of patterns that had sufficient data (>= 5 observations) for t-testing
     pub patterns_tested: usize,
     /// Number surviving BH-FDR correction
     pub patterns_significant: usize,
