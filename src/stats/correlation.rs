@@ -246,6 +246,90 @@ mod tests {
     }
 
     #[test]
+    fn spearman_exact_with_ties() {
+        // x = [1.0, 2.0, 2.0, 4.0], y = [1.0, 3.0, 3.0, 5.0]
+        //
+        // Fractional ranks for x: sort → [(1.0,0), (2.0,1), (2.0,2), (4.0,3)]
+        //   1.0 at pos 1 → rank 1
+        //   2.0 at pos 2,3 → avg rank = (2+3)/2 = 2.5
+        //   4.0 at pos 4 → rank 4
+        //   x_ranks = [1, 2.5, 2.5, 4]
+        //
+        // Fractional ranks for y: sort → [(1.0,0), (3.0,1), (3.0,2), (5.0,3)]
+        //   1.0 at pos 1 → rank 1
+        //   3.0 at pos 2,3 → avg rank = 2.5
+        //   5.0 at pos 4 → rank 4
+        //   y_ranks = [1, 2.5, 2.5, 4]
+        //
+        // Spearman = Pearson(x_ranks, y_ranks)
+        // Since x_ranks == y_ranks, Pearson = 1.0
+        let x = [1.0, 2.0, 2.0, 4.0];
+        let y = [1.0, 3.0, 3.0, 5.0];
+        let r = spearman(&x, &y);
+        assert!(
+            (r - 1.0).abs() < 1e-10,
+            "Spearman with identical rank ordering should be 1.0, got {r}"
+        );
+    }
+
+    #[test]
+    fn spearman_perfect_inverse() {
+        // x = [1, 2, 3, 4, 5], y = [5, 4, 3, 2, 1]
+        //
+        // x_ranks = [1, 2, 3, 4, 5]
+        // y_ranks = [5, 4, 3, 2, 1]
+        //
+        // Pearson of ranks: perfect negative linear relationship → -1.0
+        let x = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let y = [5.0, 4.0, 3.0, 2.0, 1.0];
+        let r = spearman(&x, &y);
+        assert!(
+            (r - (-1.0)).abs() < 1e-10,
+            "Spearman of reversed ranking should be -1.0, got {r}"
+        );
+    }
+
+    #[test]
+    fn spearman_exact_partial_ties() {
+        // x = [10, 20, 20, 30], y = [4, 1, 2, 3]
+        //
+        // x_ranks: 10→1, 20→(2+3)/2=2.5, 20→2.5, 30→4
+        //   rx = [1, 2.5, 2.5, 4]
+        //
+        // y_ranks: sort y values with indices: (1,1),(2,2),(3,3),(4,0)
+        //   1→rank 1, 2→rank 2, 3→rank 3, 4→rank 4
+        //   ry = [4, 1, 2, 3]
+        //
+        // Pearson(rx, ry) where rx=[1, 2.5, 2.5, 4], ry=[4, 1, 2, 3]
+        // mean_rx = (1+2.5+2.5+4)/4 = 10/4 = 2.5
+        // mean_ry = (4+1+2+3)/4 = 10/4 = 2.5
+        //
+        // deviations: dx = [-1.5, 0, 0, 1.5], dy = [1.5, -1.5, -0.5, 0.5]
+        //
+        // cov = sum(dx*dy)/(n-1) = ((-1.5*1.5)+(0*-1.5)+(0*-0.5)+(1.5*0.5))/3
+        //     = (-2.25 + 0 + 0 + 0.75)/3 = -1.5/3 = -0.5
+        //
+        // var_rx = sum(dx^2)/(n-1) = (2.25+0+0+2.25)/3 = 4.5/3 = 1.5
+        // std_rx = sqrt(1.5)
+        //
+        // var_ry = sum(dy^2)/(n-1) = (2.25+2.25+0.25+0.25)/3 = 5.0/3
+        // std_ry = sqrt(5.0/3)
+        //
+        // pearson = cov/(std_rx*std_ry) = -0.5 / (sqrt(1.5)*sqrt(5.0/3))
+        //         = -0.5 / sqrt(1.5 * 5.0/3) = -0.5 / sqrt(2.5)
+        //         = -0.5 / 1.58113883... = -0.31622776...
+        //         = -1/sqrt(10)
+        let x = [10.0, 20.0, 20.0, 30.0];
+        let y = [4.0, 1.0, 2.0, 3.0];
+        let r = spearman(&x, &y);
+        let expected = -1.0 / 10.0_f64.sqrt();
+        assert!(
+            (r - expected).abs() < 1e-10,
+            "Spearman: expected {expected}, got {r}"
+        );
+    }
+
+    #[test]
     fn test_covariance() {
         // numpy: np.cov([1,2,3,4,5],[2,4,6,8,10])[0,1] = 5.0
         let x = [1.0, 2.0, 3.0, 4.0, 5.0];

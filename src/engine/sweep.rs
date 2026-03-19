@@ -1657,6 +1657,102 @@ mod tests {
     }
 
     #[test]
+    fn stability_exact_asymmetric_sharpe() {
+        // Sweep grid: deltas [0.20, 0.30, 0.40], entry_dtes [30, 45], exit_dtes [0]
+        //
+        // Center strategy: delta=0.30, dte=45, exit=0 → Sharpe=2.0
+        // Neighbors:
+        //   leg_1_delta dim: delta=0.20 (Sharpe=1.5), delta=0.40 (Sharpe=0.5)
+        //   entry_dte dim:   dte=30 (Sharpe=1.8)
+        //
+        // ── leg_1_delta dimension ──
+        //   left neighbor (0.20): rel_change = |1.5 - 2.0| / max(|2.0|, 0.01) = 0.5/2.0 = 0.25
+        //   right neighbor (0.40): rel_change = |0.5 - 2.0| / max(|2.0|, 0.01) = 1.5/2.0 = 0.75
+        //   max_change = 0.75
+        //   dim_score = 1.0 - clamp(0.75, 0, 1) = 0.25
+        //
+        // ── entry_dte dimension ──
+        //   neighbor (30): rel_change = |1.8 - 2.0| / max(|2.0|, 0.01) = 0.2/2.0 = 0.10
+        //   max_change = 0.10
+        //   dim_score = 1.0 - 0.10 = 0.90
+        //
+        // overall_score = (0.25 + 0.90) / 2 = 0.575
+        // is_stable = 0.575 >= 0.7 → false
+
+        let results = vec![
+            make_sweep_result("long_call", 0.30, 45, 0, 2.0), // center (top by Sharpe)
+            make_sweep_result("long_call", 0.20, 45, 0, 1.5), // delta neighbor left
+            make_sweep_result("long_call", 0.30, 30, 0, 1.8), // DTE neighbor
+            make_sweep_result("long_call", 0.40, 45, 0, 0.5), // delta neighbor right
+            // Fill out grid so all combos exist:
+            make_sweep_result("long_call", 0.20, 30, 0, 1.0),
+            make_sweep_result("long_call", 0.40, 30, 0, 0.3),
+        ];
+        let params = make_sweep_params("long_call", vec![0.20, 0.30, 0.40], vec![30, 45], vec![0]);
+
+        let scores = compute_stability(&results, &params);
+        assert!(!scores.is_empty());
+
+        let top = &scores[0];
+
+        // Verify per-dimension scores
+        let delta_dim = top
+            .per_dimension
+            .iter()
+            .find(|d| d.dimension == "leg_1_delta")
+            .expect("should have leg_1_delta dimension");
+        // max_sharpe_change = 0.75
+        assert!(
+            (delta_dim.max_sharpe_change - 0.75).abs() < 1e-10,
+            "delta max_sharpe_change: expected 0.75, got {}",
+            delta_dim.max_sharpe_change
+        );
+        // score = 1.0 - 0.75 = 0.25
+        assert!(
+            (delta_dim.score - 0.25).abs() < 1e-10,
+            "delta score: expected 0.25, got {}",
+            delta_dim.score
+        );
+        assert_eq!(delta_dim.neighbor_count, 2);
+
+        let dte_dim = top
+            .per_dimension
+            .iter()
+            .find(|d| d.dimension == "entry_dte")
+            .expect("should have entry_dte dimension");
+        // max_sharpe_change = |1.8 - 2.0| / 2.0 = 0.10
+        assert!(
+            (dte_dim.max_sharpe_change - 0.10).abs() < 1e-10,
+            "dte max_sharpe_change: expected 0.10, got {}",
+            dte_dim.max_sharpe_change
+        );
+        // score = 1.0 - 0.10 = 0.90
+        assert!(
+            (dte_dim.score - 0.90).abs() < 1e-10,
+            "dte score: expected 0.90, got {}",
+            dte_dim.score
+        );
+        assert_eq!(dte_dim.neighbor_count, 1);
+
+        // overall_score = (0.25 + 0.90) / 2 = 0.575
+        assert!(
+            (top.overall_score - 0.575).abs() < 1e-10,
+            "overall_score: expected 0.575, got {}",
+            top.overall_score
+        );
+
+        // is_stable = 0.575 >= 0.7 → false
+        assert!(!top.is_stable, "should not be stable at 0.575");
+
+        // Warning should contain "CAUTION" (score between 0.5 and 0.7)
+        assert!(
+            top.warning.as_ref().unwrap().contains("CAUTION"),
+            "expected CAUTION warning, got: {:?}",
+            top.warning
+        );
+    }
+
+    #[test]
     fn stability_multi_dimension() {
         // Sweep across deltas AND entry DTEs
         let results = vec![

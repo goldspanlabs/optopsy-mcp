@@ -667,6 +667,143 @@ mod tests {
     }
 
     #[test]
+    fn metrics_exact_values_from_known_curve() {
+        // ── Hand-crafted equity curve ──
+        // initial_capital = 10000
+        // equity points: [10000, 10500, 9800, 10200, 10600]
+        //
+        // max_drawdown calculation (calculate_max_drawdown starts peak at initial_capital):
+        //   point 10000: peak=10000, dd=(10000-10000)/10000 = 0
+        //   point 10500: peak=10500, dd=(10500-10500)/10500 = 0
+        //   point  9800: peak=10500, dd=(10500-9800)/10500 = 700/10500 = 0.066666...
+        //   point 10200: peak=10500, dd=(10500-10200)/10500 = 300/10500 = 0.028571...
+        //   point 10600: peak=10600, dd=0
+        // max_drawdown = 700/10500 = 2/30 = 1/15
+        let curve = make_equity_curve(&[10000.0, 10500.0, 9800.0, 10200.0, 10600.0]);
+
+        // ── Hand-crafted trades ──
+        // Winners: 200, 300  (sum = 500)
+        // Losers: -100, -50  (sum = -150, abs = 150)
+        // profit_factor = 500 / 150 = 10/3 = 3.333...
+        //
+        // win_rate = 2/4 = 0.5
+        // avg_winner = 500/2 = 250
+        // avg_loser = -150/2 = -75
+        // avg_trade_pnl = (200+300-100-50)/4 = 350/4 = 87.5
+        // expectancy = 0.5 * 250 + 0.5 * (-75) = 125 - 37.5 = 87.5
+        let trades = vec![
+            make_trade(200.0, 5),
+            make_trade(300.0, 7),
+            make_trade(-100.0, 3),
+            make_trade(-50.0, 2),
+        ];
+        let m = calculate_metrics(&curve, &trades, 10000.0, 252.0).unwrap();
+
+        // max_drawdown = 700/10500 = 1/15
+        let expected_max_dd = 700.0 / 10500.0;
+        assert!(
+            (m.max_drawdown - expected_max_dd).abs() < 1e-10,
+            "max_drawdown: expected {expected_max_dd}, got {}",
+            m.max_drawdown
+        );
+
+        // profit_factor = 500/150 = 10/3
+        let expected_pf = 500.0 / 150.0;
+        assert!(
+            (m.profit_factor - expected_pf).abs() < 1e-10,
+            "profit_factor: expected {expected_pf}, got {}",
+            m.profit_factor
+        );
+
+        // win_rate = 0.5
+        assert!(
+            (m.win_rate - 0.5).abs() < 1e-10,
+            "win_rate: expected 0.5, got {}",
+            m.win_rate
+        );
+
+        // avg_winner = 250
+        assert!(
+            (m.avg_winner - 250.0).abs() < 1e-10,
+            "avg_winner: expected 250, got {}",
+            m.avg_winner
+        );
+
+        // avg_loser = -75
+        assert!(
+            (m.avg_loser - (-75.0)).abs() < 1e-10,
+            "avg_loser: expected -75, got {}",
+            m.avg_loser
+        );
+
+        // expectancy = 87.5
+        assert!(
+            (m.expectancy - 87.5).abs() < 1e-10,
+            "expectancy: expected 87.5, got {}",
+            m.expectancy
+        );
+
+        // Calmar = CAGR / max_drawdown
+        // Equity curve spans 4 calendar days (indices 0..4), which is < MIN_CALENDAR_DAYS_FOR_ANNUALIZED (25)
+        // so calmar should be 0.0
+        assert!(
+            (m.calmar - 0.0).abs() < 1e-10,
+            "calmar: expected 0.0 (too few days), got {}",
+            m.calmar
+        );
+    }
+
+    #[test]
+    fn var_95_exact_from_known_returns() {
+        // ── Build 21-point equity curve so we get exactly 20 returns ──
+        // (returns are computed from initial_capital through each equity point)
+        //
+        // We want the sorted returns to have a known worst value.
+        // Start at 10000, then:
+        //   point[0] = 10000 → return = (10000-10000)/10000 = 0.0
+        //   point[1] = 9700  → return = (9700-10000)/10000 = -0.03  (this is our worst)
+        //   point[2] = 9894  → return = (9894-9700)/9700 = 0.02
+        //   ...remaining points: small positive returns from 9894 upward
+        //
+        // Actually, the code computes returns[i] = (equity[i] - prev) / prev,
+        // starting with prev = initial_capital. So returns has equity_curve.len() elements
+        // (one per equity point, since prev starts at initial_capital).
+        //
+        // For 21 points we get 21 returns.
+        // VaR index = floor(0.05 * 21) = floor(1.05) = 1
+        // So VaR = -sorted[1] (the 2nd worst return, 0-indexed)
+        //
+        // Let's craft it so sorted returns are:
+        //   [-0.05, -0.03, 0.01, 0.01, 0.01, ... 0.01]
+        //   VaR = -sorted[1] = -(-0.03) = 0.03
+        //
+        // Build the curve:
+        //   initial_capital = 10000
+        //   eq[0] = 9500  → ret = (9500-10000)/10000 = -0.05
+        //   eq[1] = 9215  → ret = (9215-9500)/9500 = -0.03
+        //   eq[2..20]: each +1% from previous
+        let mut values = Vec::with_capacity(21);
+        values.push(9500.0); // ret = -0.05
+        values.push(9500.0 * 0.97); // ret = -0.03 → 9215.0
+        let mut prev = values[1];
+        for _ in 2..21 {
+            let next = prev * 1.01;
+            values.push(next);
+            prev = next;
+        }
+        let curve = make_equity_curve(&values);
+        let m = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
+
+        // Verify: 21 returns, sorted[0] ~ -0.05, sorted[1] = -0.03
+        // VaR index = floor(0.05 * 21) = 1, VaR = -sorted[1] = 0.03
+        assert!(
+            (m.var_95 - 0.03).abs() < 1e-10,
+            "VaR 95%: expected 0.03, got {}",
+            m.var_95
+        );
+    }
+
+    #[test]
     fn is_intraday_correct_for_all_intervals() {
         use crate::engine::types::Interval;
         assert!(!Interval::Daily.is_intraday());
