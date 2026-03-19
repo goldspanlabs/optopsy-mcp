@@ -272,9 +272,11 @@ pub fn compute_dsr(sharpe: f64, n_trials: usize, skew: f64, kurt: f64, n_obs: us
     };
 
     // Standard error of Sharpe accounting for non-normality (Lo 2002)
-    // var(SR) = [1 + (skew/2)*SR + (kurt/4)*SR²] / (n-1)
+    // var(SR) = [1 + (skew/2)*SR + ((raw_kurt-1)/4)*SR²] / (n-1)
+    // stats::kurtosis() returns excess kurtosis (normal=0), so raw_kurt = kurt + 3,
+    // and (raw_kurt - 1)/4 = (kurt + 2)/4.
     let sr2 = sharpe * sharpe;
-    let var_sr = (1.0 + 0.5 * skew * sharpe + (kurt / 4.0) * sr2) / (n - 1.0);
+    let var_sr = (1.0 + 0.5 * skew * sharpe + ((kurt + 2.0) / 4.0) * sr2) / (n - 1.0);
     let se_sr = if var_sr > 0.0 {
         var_sr.sqrt()
     } else {
