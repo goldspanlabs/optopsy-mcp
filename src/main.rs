@@ -80,7 +80,7 @@ async fn main() -> Result<()> {
                 }),
             )
             .route(
-                "/prices/:symbol",
+                "/prices/{symbol}",
                 axum::routing::get({
                     let cache = prices_cache.clone();
                     move |path, query| prices_handler(cache.clone(), path, query)
