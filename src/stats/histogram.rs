@@ -95,4 +95,115 @@ mod tests {
         let total_count: usize = bins.iter().map(|b| b.count).sum();
         assert_eq!(total_count, 6);
     }
+
+    #[test]
+    fn histogram_exact_bin_counts() {
+        // Data: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0], 5 bins
+        //
+        // Hand computation:
+        //   min = 1.0, max = 10.0, range = 9.0, width = 9.0 / 5 = 1.8
+        //
+        //   Bin 0: lower=1.0, upper=2.8  -> [1.0, 2.8): values 1.0, 2.0       -> count=2
+        //   Bin 1: lower=2.8, upper=4.6  -> [2.8, 4.6): values 3.0, 4.0       -> count=2
+        //   Bin 2: lower=4.6, upper=6.4  -> [4.6, 6.4): values 5.0, 6.0       -> count=2
+        //   Bin 3: lower=6.4, upper=8.2  -> [6.4, 8.2): values 7.0, 8.0       -> count=2
+        //   Bin 4: lower=8.2, upper=10.0 -> [8.2, 10.0]: values 9.0, 10.0     -> count=2
+        //     (10.0 maps to idx = floor((10.0-1.0)/1.8) = floor(5.0) = 5,
+        //      clamped to n_bins-1 = 4)
+        //
+        //   Each frequency = count / total = 2 / 10 = 0.2
+
+        let data = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
+        let bins = histogram(&data, 5);
+
+        assert_eq!(bins.len(), 5);
+
+        let expected_counts = [2, 2, 2, 2, 2];
+        let expected_freq = 0.2;
+        let width = 1.8;
+
+        for (i, bin) in bins.iter().enumerate() {
+            // Verify exact count
+            assert_eq!(
+                bin.count, expected_counts[i],
+                "Bin {i} count: expected {}, got {}",
+                expected_counts[i], bin.count
+            );
+
+            // Verify exact frequency: count / total = 2 / 10 = 0.2
+            assert!(
+                (bin.frequency - expected_freq).abs() < 1e-10,
+                "Bin {i} frequency: expected {expected_freq}, got {}",
+                bin.frequency
+            );
+
+            // Verify bin edges: lower = min + i * width, upper = min + (i+1) * width
+            let expected_lower = 1.0 + i as f64 * width;
+            let expected_upper = 1.0 + (i + 1) as f64 * width;
+            assert!(
+                (bin.lower - expected_lower).abs() < 1e-10,
+                "Bin {i} lower: expected {expected_lower}, got {}",
+                bin.lower
+            );
+            assert!(
+                (bin.upper - expected_upper).abs() < 1e-10,
+                "Bin {i} upper: expected {expected_upper}, got {}",
+                bin.upper
+            );
+        }
+    }
+
+    #[test]
+    fn histogram_exact_bin_counts_non_uniform() {
+        // Data: [1.0, 1.0, 1.0, 5.0, 10.0], 3 bins — skewed distribution
+        //
+        // Hand computation:
+        //   min = 1.0, max = 10.0, range = 9.0, width = 9.0 / 3 = 3.0
+        //
+        //   Bin 0: lower=1.0, upper=4.0  -> [1.0, 4.0)
+        //     values: 1.0 (idx=floor(0/3)=0), 1.0 (0), 1.0 (0)  -> count=3
+        //   Bin 1: lower=4.0, upper=7.0  -> [4.0, 7.0)
+        //     values: 5.0 (idx=floor(4/3)=floor(1.333)=1)        -> count=1
+        //   Bin 2: lower=7.0, upper=10.0 -> [7.0, 10.0]
+        //     values: 10.0 (idx=floor(9/3)=floor(3.0)=3, clamped to 2) -> count=1
+        //
+        //   Frequencies: 3/5=0.6, 1/5=0.2, 1/5=0.2
+
+        let data = [1.0, 1.0, 1.0, 5.0, 10.0];
+        let bins = histogram(&data, 3);
+
+        assert_eq!(bins.len(), 3);
+
+        let expected_counts = [3, 1, 1];
+        let expected_freqs = [0.6, 0.2, 0.2];
+        let width = 3.0;
+
+        for (i, bin) in bins.iter().enumerate() {
+            assert_eq!(
+                bin.count, expected_counts[i],
+                "Bin {i} count: expected {}, got {}",
+                expected_counts[i], bin.count
+            );
+
+            assert!(
+                (bin.frequency - expected_freqs[i]).abs() < 1e-10,
+                "Bin {i} frequency: expected {}, got {}",
+                expected_freqs[i],
+                bin.frequency
+            );
+
+            let expected_lower = 1.0 + i as f64 * width;
+            let expected_upper = 1.0 + (i + 1) as f64 * width;
+            assert!(
+                (bin.lower - expected_lower).abs() < 1e-10,
+                "Bin {i} lower: expected {expected_lower}, got {}",
+                bin.lower
+            );
+            assert!(
+                (bin.upper - expected_upper).abs() < 1e-10,
+                "Bin {i} upper: expected {expected_upper}, got {}",
+                bin.upper
+            );
+        }
+    }
 }

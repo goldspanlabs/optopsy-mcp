@@ -121,12 +121,7 @@ pub fn combine_equity_curves(
     // curve was backtested with — we normalize to returns, then reweight.
     let starting_equities: Vec<f64> = curves
         .iter()
-        .map(|(curve, weight)| {
-            curve
-                .first()
-                .map(|p| p.equity)
-                .unwrap_or(total_capital * weight)
-        })
+        .map(|(curve, weight)| curve.first().map_or(total_capital * weight, |p| p.equity))
         .collect();
 
     // Carry-forward tracker: initialized to each curve's starting equity so
@@ -386,8 +381,8 @@ mod tests {
         // Construct two deterministic sequences that are approximately uncorrelated
         // Using sin and cos at incommensurate frequencies
         let n = 200;
-        let r1: Vec<f64> = (0..n).map(|i| (i as f64 * 0.1).sin() * 0.01).collect();
-        let r2: Vec<f64> = (0..n).map(|i| (i as f64 * 0.37).cos() * 0.01).collect();
+        let r1: Vec<f64> = (0..n).map(|i| (f64::from(i) * 0.1).sin() * 0.01).collect();
+        let r2: Vec<f64> = (0..n).map(|i| (f64::from(i) * 0.37).cos() * 0.01).collect();
         let labels = vec!["A".to_string(), "B".to_string()];
         let entries = compute_correlation_matrix(&[r1, r2], &labels);
         assert_eq!(entries.len(), 1);
@@ -430,8 +425,7 @@ mod tests {
         for (i, pt) in combined.iter().enumerate() {
             assert!(
                 (pt.equity - c1[i].equity).abs() < 1e-10,
-                "single strategy with weight=1.0 should pass through, day {}",
-                i
+                "single strategy with weight=1.0 should pass through, day {i}"
             );
         }
     }
@@ -508,13 +502,13 @@ mod tests {
         let c1 = make_equity(&[(1, 1000.0), (2, 1200.0)]); // +20%
         let c2 = make_equity(&[(1, 1000.0), (2, 900.0)]); // -10%
         let c3 = make_equity(&[(1, 1000.0), (2, 1050.0)]); // +5%
-        let combined = combine_equity_curves(&[(c1, 0.5), (c2, 0.3), (c3, 0.2)], 100000.0);
+        let combined = combine_equity_curves(&[(c1, 0.5), (c2, 0.3), (c3, 0.2)], 100_000.0);
 
-        assert!((combined[0].equity - 100000.0).abs() < 1e-6);
+        assert!((combined[0].equity - 100_000.0).abs() < 1e-6);
         // Day 2: 0.5*100000*1.20 + 0.3*100000*0.90 + 0.2*100000*1.05
         //       = 60000 + 27000 + 21000 = 108000
         assert!(
-            (combined[1].equity - 108000.0).abs() < 1e-6,
+            (combined[1].equity - 108_000.0).abs() < 1e-6,
             "three-strategy weighted combo should be 108000, got {}",
             combined[1].equity
         );

@@ -232,7 +232,7 @@ fn portfolio_staggered_start_carry_forward() {
 #[test]
 fn portfolio_zero_weight_strategy_ignored() {
     let c1 = make_equity(&[(2024, 1, 2, 10000.0), (2024, 1, 3, 10100.0)]);
-    let c2 = make_equity(&[(2024, 1, 2, 999999.0), (2024, 1, 3, 0.01)]);
+    let c2 = make_equity(&[(2024, 1, 2, 999_999.0), (2024, 1, 3, 0.01)]);
 
     // c2 has weight 0 → its values should not affect the portfolio
     let combined = combine_equity_curves(&[(c1, 1.0), (c2, 0.0)], 10000.0);

@@ -209,6 +209,127 @@ fn walk_forward_multi_leg_strategy() {
     }
 }
 
+#[test]
+fn walk_forward_aggregate_stats_match_window_data() {
+    // Verify every aggregate statistic is correctly derived from individual windows.
+    // This catches bugs in the aggregate computation (compute_aggregate).
+    let df = make_multi_strike_df();
+    let params = backtest_params("short_put", vec![delta(0.20)]);
+
+    let result = run_walk_forward(&df, &params, 14, 7, None).unwrap();
+    let agg = &result.aggregate;
+    let windows = &result.windows;
+    let n = windows.len() as f64;
+
+    // 1. successful_windows == windows.len()
+    assert_eq!(agg.successful_windows, windows.len());
+
+    // 2. total_test_pnl == sum of window test_pnls
+    let sum_test_pnl: f64 = windows.iter().map(|w| w.test_pnl).sum();
+    assert!(
+        (agg.total_test_pnl - sum_test_pnl).abs() < 1e-10,
+        "total_test_pnl ({}) != sum of window test_pnls ({sum_test_pnl})",
+        agg.total_test_pnl,
+    );
+
+    // 3. avg_test_pnl == total_test_pnl / n
+    let expected_avg_pnl = sum_test_pnl / n;
+    assert!(
+        (agg.avg_test_pnl - expected_avg_pnl).abs() < 1e-10,
+        "avg_test_pnl ({}) != expected ({expected_avg_pnl})",
+        agg.avg_test_pnl,
+    );
+
+    // 4. avg_test_sharpe == mean of window test_sharpes
+    let sum_test_sharpe: f64 = windows.iter().map(|w| w.test_sharpe).sum();
+    let expected_avg_sharpe = sum_test_sharpe / n;
+    assert!(
+        (agg.avg_test_sharpe - expected_avg_sharpe).abs() < 1e-10,
+        "avg_test_sharpe ({}) != expected ({expected_avg_sharpe})",
+        agg.avg_test_sharpe,
+    );
+
+    // 5. std_test_sharpe == population stddev of test sharpes
+    //    Hand formula: sqrt( sum((s_i - mean)^2) / n )
+    let variance: f64 = windows
+        .iter()
+        .map(|w| (w.test_sharpe - expected_avg_sharpe).powi(2))
+        .sum::<f64>()
+        / n;
+    let expected_std = variance.sqrt();
+    assert!(
+        (agg.std_test_sharpe - expected_std).abs() < 1e-10,
+        "std_test_sharpe ({}) != expected ({expected_std})",
+        agg.std_test_sharpe,
+    );
+
+    // 6. pct_profitable_windows == (count of windows with test_pnl > 0) / n * 100
+    let profitable_count = windows.iter().filter(|w| w.test_pnl > 0.0).count();
+    let expected_pct = (profitable_count as f64 / n) * 100.0;
+    assert!(
+        (agg.pct_profitable_windows - expected_pct).abs() < 1e-10,
+        "pct_profitable_windows ({}) != expected ({expected_pct})",
+        agg.pct_profitable_windows,
+    );
+
+    // 7. avg_train_test_sharpe_decay == mean(train_sharpe - test_sharpe)
+    let expected_decay: f64 = windows
+        .iter()
+        .map(|w| w.train_sharpe - w.test_sharpe)
+        .sum::<f64>()
+        / n;
+    assert!(
+        (agg.avg_train_test_sharpe_decay - expected_decay).abs() < 1e-10,
+        "avg_train_test_sharpe_decay ({}) != expected ({expected_decay})",
+        agg.avg_train_test_sharpe_decay,
+    );
+}
+
+#[test]
+fn walk_forward_windows_non_overlapping_test_periods() {
+    // When step_days == test_days (the default), consecutive windows' test periods
+    // should be contiguous and non-overlapping:
+    //   window[i].test_end == window[i+1].test_start
+    //
+    // This catches bugs where the walk-forward driver incorrectly advances
+    // the cursor or computes window boundaries.
+    let df = make_multi_strike_df();
+    let params = backtest_params("short_put", vec![delta(0.20)]);
+
+    let result = run_walk_forward(&df, &params, 14, 7, None).unwrap();
+    let windows = &result.windows;
+
+    if windows.len() >= 2 {
+        for pair in windows.windows(2) {
+            let prev = &pair[0];
+            let next = &pair[1];
+
+            // With default step = test_days, consecutive test periods should be contiguous
+            assert_eq!(
+                prev.test_end, next.test_start,
+                "Window {} test_end ({}) should equal Window {} test_start ({}) \
+                 for contiguous, non-overlapping test periods",
+                prev.window_number, prev.test_end, next.window_number, next.test_start,
+            );
+
+            // Train periods should advance by step_days (== test_days == 7)
+            let train_advance = (next.train_start - prev.train_start).num_days();
+            assert_eq!(
+                train_advance, 7,
+                "Train starts should advance by step_days=7, but Window {} to {} advanced by {}",
+                prev.window_number, next.window_number, train_advance,
+            );
+        }
+    }
+
+    // Window dates should be monotonically increasing
+    for w in windows {
+        assert!(w.train_start < w.train_end, "train_start < train_end");
+        assert!(w.train_end <= w.test_start, "train_end <= test_start");
+        assert!(w.test_start < w.test_end, "test_start < test_end");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Stock walk-forward tests
 // ---------------------------------------------------------------------------

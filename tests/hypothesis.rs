@@ -249,6 +249,140 @@ async fn generate_hypotheses_unknown_symbol_errors() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hypothesis_detects_injected_day_of_week_pattern() {
+    // Inject a STRONG deterministic Monday pattern:
+    //   - Monday close -> Tuesday close: always +2% return
+    //   - All other day-to-day returns: 0% (flat)
+    //
+    // With ~3 years of weekdays (~780 bars, ~156 Mondays), the Monday 1-day
+    // forward return should be strongly significant.
+    //
+    // The seasonality scanner tests each day-of-week with horizon=1:
+    //   For Monday: forward return = close[Mon+1] / close[Mon] - 1.0 = +0.02 every time
+    //   For other days: forward return = 0.0 every time
+    //
+    // The Monday pattern should pass the t-test (constant +2% vs H0: mean=0)
+    // and survive BH-FDR correction.
+
+    let dir = tempfile::tempdir().unwrap();
+    let etf_dir = dir.path().join("etf");
+    std::fs::create_dir_all(&etf_dir).unwrap();
+
+    let base_date = NaiveDate::from_ymd_opt(2022, 1, 3).unwrap(); // a Monday
+    let mut dates = Vec::new();
+    let mut closes = Vec::new();
+    let mut opens = Vec::new();
+    let mut highs = Vec::new();
+    let mut lows = Vec::new();
+    let mut volumes = Vec::new();
+
+    let mut price = 100.0_f64;
+    for i in 0..1500 {
+        // ~4+ years of calendar days -> ~1000+ weekdays
+        let date = base_date + chrono::Duration::days(i);
+        if date.weekday() == chrono::Weekday::Sat || date.weekday() == chrono::Weekday::Sun {
+            continue;
+        }
+
+        // On Tuesdays, the previous day was Monday, so this close should be +2% from Monday.
+        // On all other days, price stays flat.
+        if date.weekday() == chrono::Weekday::Tue {
+            price *= 1.02; // +2% return from Monday close to Tuesday close
+        }
+        // All other day-to-day transitions: 0% return (price unchanged)
+
+        dates.push(date);
+        opens.push(price * 0.999);
+        highs.push(price * 1.005);
+        lows.push(price * 0.995);
+        closes.push(price);
+        volumes.push(1_000_000i64);
+    }
+
+    let n = dates.len();
+    assert!(n >= 500, "Need at least 500 bars, got {n}");
+
+    let mut df = df! {
+        "open" => &opens,
+        "high" => &highs,
+        "low" => &lows,
+        "close" => &closes,
+        "adjclose" => &closes,
+        "volume" => &volumes,
+    }
+    .unwrap();
+    df.with_column(DateChunked::from_naive_date(PlSmallStr::from("date"), dates).into_column())
+        .unwrap();
+
+    let path = etf_dir.join("INJECT.parquet");
+    let file = std::fs::File::create(&path).unwrap();
+    ParquetWriter::new(file).finish(&mut df).unwrap();
+
+    let cache = Arc::new(CachedStore::new(
+        dir.path().to_path_buf(),
+        "options".to_string(),
+    ));
+
+    let params = HypothesisParams {
+        symbols: vec!["INJECT".to_string()],
+        dimensions: Some(vec![
+            optopsy_mcp::engine::types::HypothesisDimension::Seasonality,
+        ]),
+        significance: 0.10,
+        forward_horizons: vec![1], // 1-day forward return to capture Mon->Tue
+        years: 5,
+        dedup_threshold: 0.9, // minimal dedup
+    };
+
+    let result = optopsy_mcp::tools::hypothesis::execute(&cache, &params)
+        .await
+        .expect("hypothesis engine should succeed on injected data");
+
+    // With a deterministic +2% Monday->Tuesday return across ~156 observations,
+    // the engine must detect at least one significant hypothesis.
+    assert!(
+        !result.hypotheses.is_empty(),
+        "Expected at least one hypothesis from injected Monday pattern, \
+         but got 0. total_trials={}, patterns_tested={}, patterns_significant={}",
+        result.total_trials,
+        result.patterns_tested,
+        result.patterns_significant,
+    );
+
+    // Find the Monday seasonality hypothesis
+    let monday_hyp = result
+        .hypotheses
+        .iter()
+        .find(|h| h.dimension == "seasonality" && h.description.to_lowercase().contains("monday"));
+
+    assert!(
+        monday_hyp.is_some(),
+        "Expected a 'Monday' seasonality hypothesis among: {:?}",
+        result
+            .hypotheses
+            .iter()
+            .map(|h| format!("[{}] {}", h.dimension, h.description))
+            .collect::<Vec<_>>()
+    );
+
+    let hyp = monday_hyp.unwrap();
+
+    // The Monday 1-day forward return is always +2%, so effect_size should be positive
+    assert!(
+        hyp.effect_size > 0.0,
+        "Monday hypothesis effect_size should be positive (strong +2% signal), got {}",
+        hyp.effect_size,
+    );
+
+    // Should be statistically significant after BH-FDR correction
+    assert!(
+        hyp.adjusted_p_value < 0.10,
+        "Monday hypothesis adjusted_p_value should be < 0.10, got {}",
+        hyp.adjusted_p_value,
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn generate_hypotheses_multi_symbol_cross_asset() {
     let dir = tempfile::tempdir().unwrap();
     let etf_dir = dir.path().join("etf");
