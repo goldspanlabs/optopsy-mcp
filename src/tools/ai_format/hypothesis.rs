@@ -142,7 +142,7 @@ pub fn format_hypotheses(
 
     HypothesisResponse {
         summary,
-        symbols: symbols.to_vec(),
+        symbols: symbols.iter().map(|s| s.to_uppercase()).collect(),
         total_trials,
         significance_threshold: significance,
         patterns_tested,

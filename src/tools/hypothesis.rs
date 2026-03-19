@@ -17,6 +17,10 @@ pub async fn execute(
     cache: &Arc<CachedStore>,
     params: &HypothesisParams,
 ) -> Result<HypothesisResponse> {
+    if params.symbols.is_empty() {
+        anyhow::bail!("symbols must not be empty");
+    }
+
     let config = HypothesisConfig {
         forward_horizons: params.forward_horizons.clone(),
         significance: params.significance,
@@ -128,7 +132,7 @@ fn compute_regime_labels(returns: &[f64]) -> (Vec<usize>, Vec<String>, usize) {
         .collect();
     if valid_vols.is_empty() {
         return (
-            vec![n_regimes; returns.len()],
+            vec![0; returns.len()],
             vec!["Low Vol".into(), "High Vol".into()],
             n_regimes,
         );
@@ -136,13 +140,15 @@ fn compute_regime_labels(returns: &[f64]) -> (Vec<usize>, Vec<String>, usize) {
 
     let median_vol = crate::stats::median(&valid_vols);
 
+    // Map non-finite vols to regime 0 (low vol) to avoid creating a phantom
+    // third regime that would distort stability scoring.
     let labels: Vec<usize> = rolling_vol
         .iter()
         .map(|&v| {
             if v.is_finite() {
                 usize::from(v > median_vol)
             } else {
-                n_regimes // sentinel
+                0
             }
         })
         .collect();
