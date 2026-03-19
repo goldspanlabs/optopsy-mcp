@@ -28,9 +28,10 @@ use crate::signals::registry::{collect_cross_symbols, SignalSpec};
 use crate::tools;
 use crate::tools::response_types::{
     AggregatePricesResponse, BacktestResponse, BuildSignalResponse, CompareResponse,
-    CorrelateResponse, DistributionResponse, ListSymbolsResponse, PermutationTestResponse,
-    RawPricesResponse, RegimeDetectResponse, RollingMetricResponse, StockBacktestResponse,
-    StrategiesResponse, SweepResponse, WalkForwardResponse,
+    CorrelateResponse, DistributionResponse, HypothesisParams, HypothesisResponse,
+    ListSymbolsResponse, PermutationTestResponse, RawPricesResponse, RegimeDetectResponse,
+    RollingMetricResponse, StockBacktestResponse, StrategiesResponse, SweepResponse,
+    WalkForwardResponse,
 };
 use params::{
     resolve_leg_deltas, resolve_sweep_strategies, validation_err, AggregatePricesParams,
@@ -1900,6 +1901,59 @@ impl OptopsyServer {
             .await,
         )
     }
+
+    /// Scan multiple dimensions for statistically significant trading patterns.
+    ///
+    /// Applies BH-FDR correction to control false discoveries, computes Deflated Sharpe Ratios,
+    /// deduplicates overlapping signals, and ranks hypotheses by a composite score
+    /// (structural weight × DSR × regime stability).
+    ///
+    /// **When to use**: To discover potential trading patterns before building backtests.
+    /// Results are HYPOTHESES to investigate — not confirmed strategies.
+    ///
+    /// **Dimensions scanned**: seasonality (day-of-week, month, turn-of-month),
+    /// price action (momentum, consecutive moves), mean reversion (Bollinger, z-score),
+    /// volume (spikes, low volume), volatility regime, cross-asset lead/lag,
+    /// microstructure (gaps, intraday range), autocorrelation.
+    ///
+    /// **Output**: Ranked patterns with deployable signal specs that can be passed directly
+    /// to `run_stock_backtest` or `run_options_backtest` for validation.
+    ///
+    /// **Time to run**: 5-15 seconds depending on number of symbols and dimensions.
+    #[tool(name = "generate_hypotheses", annotations(read_only_hint = true))]
+    async fn generate_hypotheses(
+        &self,
+        Parameters(params): Parameters<HypothesisParams>,
+    ) -> SanitizedResult<HypothesisResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("generate_hypotheses", e))?;
+
+                tracing::info!(
+                    symbols = ?params.symbols,
+                    dimensions = ?params.dimensions,
+                    significance = params.significance,
+                    "Hypothesis generation request received"
+                );
+
+                let cache = self.cache.clone();
+                // Validate all symbols have OHLCV data
+                for sym in &params.symbols {
+                    let upper = sym.to_uppercase();
+                    validate_path_segment(&upper)
+                        .map_err(|e| format!("Invalid symbol \"{sym}\": {e}"))?;
+                    self.ensure_ohlcv(&upper)?;
+                }
+
+                tools::hypothesis::execute(&cache, &params)
+                    .await
+                    .map_err(|e| format!("Error: {e}"))
+            }
+            .await,
+        )
+    }
 }
 
 #[tool_handler]
@@ -1945,7 +1999,11 @@ impl ServerHandler for OptopsyServer {
                 \n  - compare_strategies — use for manual side-by-side comparison of 2-3 specific configurations\
                 \n    you've already chosen. NOT for grid search (use parameter_sweep instead).\
                 \n\
-                \n### 4. Evaluate Strategy Viability\
+                \n### 4. Discover Patterns (optional)\
+                \n  - generate_hypotheses({ symbols: [\"SPY\"] }) — scan for statistically significant patterns\
+                \n  - Results are HYPOTHESES — validate with backtest + walk_forward before trusting\
+                \n\
+                \n### 5. Evaluate Strategy Viability\
                 \n  When a user asks you to test/evaluate if a strategy is viable, follow this reasoning loop:\
                 \n\
                 \n  **Step 1: Build the signals**\
