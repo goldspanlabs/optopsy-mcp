@@ -169,110 +169,37 @@ pub fn granger_f_test(cause: &[f64], effect: &[f64], lag_order: usize) -> Option
     Some((f_stat, p_value))
 }
 
-/// Solve OLS via normal equations (X^T X) beta = X^T y, return RSS.
+/// Solve OLS via SVD decomposition (nalgebra) and return RSS.
 ///
 /// `x_flat` is the design matrix in row-major order, `n_cols` columns per row.
-#[allow(clippy::needless_range_loop)]
+/// SVD is numerically stable for near-collinear regressors, unlike normal equations.
+///
+/// Returns `None` if the matrix is rank-deficient (singular) or the solve fails,
+/// preserving the caller's assumption that `None` means degenerate data.
 fn ols_rss(x_flat: &[f64], n_cols: usize, y: &[f64]) -> Option<f64> {
     let n_rows = y.len();
     if n_rows < n_cols {
         return None;
     }
 
-    // Compute X^T X (n_cols x n_cols)
-    let mut xtx = vec![0.0; n_cols * n_cols];
-    for row in 0..n_rows {
-        let base = row * n_cols;
-        for i in 0..n_cols {
-            for j in i..n_cols {
-                let val = x_flat[base + i] * x_flat[base + j];
-                xtx[i * n_cols + j] += val;
-                if i != j {
-                    xtx[j * n_cols + i] += val;
-                }
-            }
-        }
+    let x_mat = nalgebra::DMatrix::from_fn(n_rows, n_cols, |r, c| x_flat[r * n_cols + c]);
+    let y_vec = nalgebra::DVector::from_row_slice(y);
+
+    // SVD-based least squares: numerically stable even for near-singular X.
+    let svd = x_mat.clone().svd(true, true);
+
+    // Check effective rank — if the matrix is rank-deficient, return None so
+    // callers (Granger F-test) don't produce meaningless statistics.
+    let rank = svd.rank(1e-10);
+    if rank < n_cols {
+        return None;
     }
 
-    // Compute X^T y (n_cols)
-    let mut xty = vec![0.0; n_cols];
-    for (row_idx, &yi) in y.iter().enumerate() {
-        let base = row_idx * n_cols;
-        for i in 0..n_cols {
-            xty[i] += x_flat[base + i] * yi;
-        }
-    }
+    let beta = svd.solve(&y_vec, 1e-12).ok()?;
 
-    // Solve via Gaussian elimination with partial pivoting
-    let beta = solve_linear_system(&mut xtx, n_cols, &mut xty)?;
-
-    // Compute RSS = sum((y - X*beta)^2)
-    let mut rss = 0.0;
-    for (row_idx, &yi) in y.iter().enumerate() {
-        let base = row_idx * n_cols;
-        let mut pred = 0.0;
-        for j in 0..n_cols {
-            pred += x_flat[base + j] * beta[j];
-        }
-        rss += (yi - pred).powi(2);
-    }
-
-    Some(rss)
-}
-
-/// Gaussian elimination with partial pivoting. Modifies inputs in place.
-/// Returns None if matrix is singular.
-fn solve_linear_system(a: &mut [f64], n: usize, b: &mut [f64]) -> Option<Vec<f64>> {
-    // Forward elimination
-    for col in 0..n {
-        // Partial pivoting
-        let mut max_row = col;
-        let mut max_val = a[col * n + col].abs();
-        for row in (col + 1)..n {
-            let val = a[row * n + col].abs();
-            if val > max_val {
-                max_val = val;
-                max_row = row;
-            }
-        }
-        if max_val < 1e-15 {
-            return None; // singular
-        }
-
-        // Swap rows
-        if max_row != col {
-            for j in 0..n {
-                a.swap(col * n + j, max_row * n + j);
-            }
-            b.swap(col, max_row);
-        }
-
-        // Eliminate below
-        let pivot = a[col * n + col];
-        for row in (col + 1)..n {
-            let factor = a[row * n + col] / pivot;
-            for j in col..n {
-                a[row * n + j] -= factor * a[col * n + j];
-            }
-            b[row] -= factor * b[col];
-        }
-    }
-
-    // Back substitution
-    let mut x = vec![0.0; n];
-    for col in (0..n).rev() {
-        let mut sum = b[col];
-        for j in (col + 1)..n {
-            sum -= a[col * n + j] * x[j];
-        }
-        let diag = a[col * n + col];
-        if diag.abs() < 1e-15 {
-            return None;
-        }
-        x[col] = sum / diag;
-    }
-
-    Some(x)
+    // Compute RSS = ||y - X * beta||^2
+    let residuals = y_vec - x_mat * beta;
+    Some(residuals.dot(&residuals))
 }
 
 #[cfg(test)]
@@ -475,7 +402,9 @@ mod tests {
 
     #[test]
     fn test_ols_rss_singular_matrix() {
-        // All-identical rows → singular X^T X
+        // All-identical rows → rank-deficient X^T X.
+        // ols_rss checks effective rank and returns None for degenerate matrices,
+        // preventing callers (Granger F-test) from producing meaningless results.
         let x_flat = vec![1.0, 1.0, 1.0, 1.0, 1.0, 1.0]; // 3 rows × 2 cols, all same
         let y = vec![1.0, 2.0, 3.0];
         let rss = ols_rss(&x_flat, 2, &y);
@@ -483,17 +412,53 @@ mod tests {
     }
 
     #[test]
-    fn test_solve_linear_system_2x2() {
-        // [2, 1] [x]   [5]
-        // [1, 3] [y] = [10]
-        // Solution: x=1, y=3
-        let mut a = vec![2.0, 1.0, 1.0, 3.0];
-        let mut b = vec![5.0, 10.0];
-        let result = solve_linear_system(&mut a, 2, &mut b);
-        assert!(result.is_some());
-        let x = result.unwrap();
-        assert!((x[0] - 1.0).abs() < 1e-10, "x should be 1, got {}", x[0]);
-        assert!((x[1] - 3.0).abs() < 1e-10, "y should be 3, got {}", x[1]);
+    fn test_ols_rss_svd_solves_2x2() {
+        // y = x + 3 for x = [1, 2, 3, 4, 5]
+        let x_flat = vec![1.0, 1.0, 1.0, 2.0, 1.0, 3.0, 1.0, 4.0, 1.0, 5.0];
+        let y = vec![4.0, 5.0, 6.0, 7.0, 8.0];
+        let rss = ols_rss(&x_flat, 2, &y);
+        assert!(rss.is_some(), "should solve");
+        assert!(rss.unwrap() < 1e-10, "perfect fit should have RSS ≈ 0");
+    }
+
+    #[test]
+    fn test_ols_rss_high_condition_number() {
+        // Three regressors with high condition number: intercept, x, x^2.
+        // Not collinear but ill-conditioned for large x.
+        let n = 100;
+        let mut x_flat = Vec::with_capacity(n * 3);
+        let mut y = Vec::with_capacity(n);
+        for i in 0..n {
+            let xi = i as f64 * 0.1;
+            x_flat.push(1.0);
+            x_flat.push(xi);
+            x_flat.push(xi * xi);
+            y.push(1.0 + 2.0 * xi + 0.5 * xi * xi); // y = 1 + 2x + 0.5x^2
+        }
+        let rss = ols_rss(&x_flat, 3, &y);
+        assert!(rss.is_some(), "SVD should handle ill-conditioned matrices");
+        assert!(rss.unwrap().is_finite(), "RSS should be finite");
+        assert!(
+            rss.unwrap() < 1e-6,
+            "RSS should be small for exact polynomial fit"
+        );
+    }
+
+    #[test]
+    fn test_ols_rss_truly_collinear_returns_none() {
+        // Column 3 = column 2 + tiny epsilon → effectively rank-deficient
+        let n = 100;
+        let mut x_flat = Vec::with_capacity(n * 3);
+        let mut y = Vec::with_capacity(n);
+        for i in 0..n {
+            let xi = i as f64 * 0.01;
+            x_flat.push(1.0);
+            x_flat.push(xi);
+            x_flat.push(xi + 1e-12);
+            y.push(2.0 * xi + 1.0);
+        }
+        let rss = ols_rss(&x_flat, 3, &y);
+        assert!(rss.is_none(), "truly collinear matrix should return None");
     }
 
     #[test]

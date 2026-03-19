@@ -1698,6 +1698,7 @@ dependencies = [
  "axum",
  "chrono",
  "garde",
+ "nalgebra",
  "ordered-float",
  "polars",
  "rand 0.9.2",
