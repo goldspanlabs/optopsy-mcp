@@ -23,11 +23,16 @@ pub async fn execute(
         dedup_threshold: params.dedup_threshold,
     };
 
-    // Determine which dimensions to scan
-    let dimensions: Vec<HypothesisDimension> = params
-        .dimensions
-        .clone()
-        .unwrap_or_else(|| HypothesisDimension::ohlcv_dimensions().to_vec());
+    // Determine which dimensions to scan.
+    // When dimensions is None, default to OHLCV-only dimensions plus CrossAsset
+    // when multiple symbols are provided.
+    let dimensions: Vec<HypothesisDimension> = params.dimensions.clone().unwrap_or_else(|| {
+        let mut dims = HypothesisDimension::ohlcv_dimensions().to_vec();
+        if params.symbols.len() > 1 {
+            dims.push(HypothesisDimension::CrossAsset);
+        }
+        dims
+    });
 
     let cutoff_str = compute_years_cutoff(params.years);
 

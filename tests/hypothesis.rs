@@ -153,7 +153,7 @@ async fn generate_hypotheses_signal_specs_are_deployable() {
         dimensions: Some(vec![
             optopsy_mcp::engine::types::HypothesisDimension::Seasonality,
         ]),
-        significance: 0.50, // very relaxed to ensure we get some patterns
+        significance: 0.20, // relaxed (max allowed) to ensure we get some patterns
         forward_horizons: vec![5],
         years: 5,
         dedup_threshold: 0.9, // minimal dedup

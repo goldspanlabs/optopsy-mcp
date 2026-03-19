@@ -78,9 +78,12 @@ pub fn generate_hypotheses(
             HypothesisDimension::VolatilityRegime => {
                 scan_volatility_regime(prices, &config.forward_horizons)
             }
-            HypothesisDimension::CrossAsset => {
-                scan_cross_asset(prices, &config.forward_horizons, cross_asset_prices)
-            }
+            HypothesisDimension::CrossAsset => scan_cross_asset(
+                prices,
+                &config.forward_horizons,
+                cross_asset_prices,
+                config.significance,
+            ),
             HypothesisDimension::Microstructure => {
                 scan_microstructure(prices, &config.forward_horizons)
             }
@@ -585,12 +588,12 @@ fn scan_seasonality(prices: &[PriceBar], horizons: &[usize]) -> Vec<RawPattern> 
             }
         }
 
-        // Turn of month (last 3 + first 3 trading days)
+        // Turn of month (calendar day >= 28 or <= 3)
         if let Some(pat) = scan_condition(
             prices,
             |i, p| epoch_to_naive_date(p[i].date).is_some_and(|d| d.day() >= 28 || d.day() <= 3),
             h,
-            &format!("Turn-of-month {h}-day forward return"),
+            &format!("Turn-of-month (day >= 28 or <= 3) {h}-day forward return"),
             HypothesisDimension::Seasonality,
             "month",
             SignalSpec::Formula {
@@ -946,6 +949,7 @@ fn scan_cross_asset(
     prices: &[PriceBar],
     horizons: &[usize],
     cross_asset_prices: &HashMap<String, Vec<PriceBar>>,
+    significance: f64,
 ) -> Vec<RawPattern> {
     let mut patterns = Vec::new();
 
@@ -989,7 +993,7 @@ fn scan_cross_asset(
 
         // Test Granger causality: does cross-asset lead target?
         if let Some((f_stat, p_val)) = stats::granger_f_test(&aligned_other, &aligned_target, 5) {
-            if p_val < 0.05 {
+            if p_val < significance {
                 for &h in horizons {
                     // Cross-asset spike leads target
                     if let Some(pat) = scan_condition(
