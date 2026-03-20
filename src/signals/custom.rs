@@ -600,7 +600,15 @@ impl Parser {
                     }
                 }
                 // Check for dot accessor: ident "." ident → cross-symbol column
+                // Only allow dot-access for cross-symbol references (not primary columns)
                 else if self.peek() == Some(&Token::Dot) {
+                    let name_lower = name.to_lowercase();
+                    if VALID_COLUMNS.contains(&name_lower.as_str()) {
+                        return Err(format!(
+                            "Dot accessor not allowed on primary column '{name}'. \
+                             Use '{name}' directly, or did you mean a cross-symbol reference?"
+                        ));
+                    }
                     let sym = name.to_uppercase();
                     self.advance(); // consume Dot
                     match self.advance() {
@@ -2240,5 +2248,12 @@ mod tests {
         let tokens = tokenize("close > 1.5").unwrap();
         assert_eq!(tokens.len(), 3);
         assert_eq!(tokens[2], Token::Number(1.5));
+    }
+
+    #[test]
+    fn primary_column_dot_access_rejected() {
+        // close.high should error — close is a primary column, not a cross-symbol
+        assert!(validate_formula("close.high > 0").is_err());
+        assert!(validate_formula("volume.low > 0").is_err());
     }
 }

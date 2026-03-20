@@ -198,3 +198,34 @@ fn cross_symbol_exit_only_closes_open_positions() {
     assert_eq!(result.trade_log[0].days_held, 7);
     assert_eq!(result.trade_log[1].days_held, 20);
 }
+
+// ─── Test: Missing cross_ohlcv_paths errors cleanly ─────────────────────────
+
+#[test]
+fn missing_cross_ohlcv_paths_errors() {
+    // Exit signal references VIX via formula syntax, but cross_ohlcv_paths is empty.
+    // The engine should error with a clear message, not panic.
+    let df = make_multi_strike_df();
+    let dates = ohlcv_dates();
+
+    let (_spy_dir, spy_path) = write_ohlcv_parquet(&dates, &[450.0, 450.0, 450.0]);
+
+    let mut params = base_params("short_put", vec![delta(0.40)]);
+    params.ohlcv_path = Some(spy_path);
+    // cross_ohlcv_paths is empty — no VIX data
+    params.exit_signal = Some(SignalSpec::Formula {
+        formula: "VIX > 30".into(),
+    });
+
+    let result = run_backtest(&df, &params);
+
+    assert!(
+        result.is_err(),
+        "expected error when cross_ohlcv_paths is missing VIX data"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("VIX"),
+        "error should mention VIX, got: {err_msg}"
+    );
+}

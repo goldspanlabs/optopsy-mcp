@@ -202,15 +202,37 @@ pub fn active_dates_multi<S: std::hash::BuildHasher>(
     cross_dfs: &HashMap<String, DataFrame, S>,
     date_col: &str,
 ) -> Result<HashSet<NaiveDate>> {
+    active_dates_multi_depth(spec, primary_df, cross_dfs, date_col, 0)
+}
+
+/// Max recursion depth for `Saved` signal resolution (consistent with `build_signal_depth`).
+const MAX_MULTI_DEPTH: usize = 8;
+
+fn active_dates_multi_depth<S: std::hash::BuildHasher>(
+    spec: &SignalSpec,
+    primary_df: &DataFrame,
+    cross_dfs: &HashMap<String, DataFrame, S>,
+    date_col: &str,
+    depth: usize,
+) -> Result<HashSet<NaiveDate>> {
+    if depth > MAX_MULTI_DEPTH {
+        anyhow::bail!(
+            "Signal recursion limit ({MAX_MULTI_DEPTH}) exceeded — possible cycle in Saved signal references"
+        );
+    }
     match spec {
         SignalSpec::And { left, right } => {
-            let left_dates = active_dates_multi(left, primary_df, cross_dfs, date_col)?;
-            let right_dates = active_dates_multi(right, primary_df, cross_dfs, date_col)?;
+            let left_dates =
+                active_dates_multi_depth(left, primary_df, cross_dfs, date_col, depth)?;
+            let right_dates =
+                active_dates_multi_depth(right, primary_df, cross_dfs, date_col, depth)?;
             Ok(left_dates.intersection(&right_dates).copied().collect())
         }
         SignalSpec::Or { left, right } => {
-            let left_dates = active_dates_multi(left, primary_df, cross_dfs, date_col)?;
-            let right_dates = active_dates_multi(right, primary_df, cross_dfs, date_col)?;
+            let left_dates =
+                active_dates_multi_depth(left, primary_df, cross_dfs, date_col, depth)?;
+            let right_dates =
+                active_dates_multi_depth(right, primary_df, cross_dfs, date_col, depth)?;
             Ok(left_dates.union(&right_dates).copied().collect())
         }
         // Formula with potential cross-symbol references
@@ -223,9 +245,11 @@ pub fn active_dates_multi<S: std::hash::BuildHasher>(
                 active_dates(spec, &joined, date_col)
             }
         }
-        // Saved: load the inner spec and recurse to handle cross-symbol refs
+        // Saved: load the inner spec and recurse with incremented depth
         SignalSpec::Saved { name } => match storage::load_signal(name) {
-            Ok((loaded, _)) => active_dates_multi(&loaded, primary_df, cross_dfs, date_col),
+            Ok((loaded, _)) => {
+                active_dates_multi_depth(&loaded, primary_df, cross_dfs, date_col, depth + 1)
+            }
             Err(_) => active_dates(spec, primary_df, date_col),
         },
     }
@@ -269,15 +293,34 @@ pub fn active_datetimes_multi<S: std::hash::BuildHasher>(
     cross_dfs: &HashMap<String, DataFrame, S>,
     date_col: &str,
 ) -> Result<HashSet<NaiveDateTime>> {
+    active_datetimes_multi_depth(spec, primary_df, cross_dfs, date_col, 0)
+}
+
+fn active_datetimes_multi_depth<S: std::hash::BuildHasher>(
+    spec: &SignalSpec,
+    primary_df: &DataFrame,
+    cross_dfs: &HashMap<String, DataFrame, S>,
+    date_col: &str,
+    depth: usize,
+) -> Result<HashSet<NaiveDateTime>> {
+    if depth > MAX_MULTI_DEPTH {
+        anyhow::bail!(
+            "Signal recursion limit ({MAX_MULTI_DEPTH}) exceeded — possible cycle in Saved signal references"
+        );
+    }
     match spec {
         SignalSpec::And { left, right } => {
-            let left_dts = active_datetimes_multi(left, primary_df, cross_dfs, date_col)?;
-            let right_dts = active_datetimes_multi(right, primary_df, cross_dfs, date_col)?;
+            let left_dts =
+                active_datetimes_multi_depth(left, primary_df, cross_dfs, date_col, depth)?;
+            let right_dts =
+                active_datetimes_multi_depth(right, primary_df, cross_dfs, date_col, depth)?;
             Ok(intersect_mixed_granularity(&left_dts, &right_dts))
         }
         SignalSpec::Or { left, right } => {
-            let left_dts = active_datetimes_multi(left, primary_df, cross_dfs, date_col)?;
-            let right_dts = active_datetimes_multi(right, primary_df, cross_dfs, date_col)?;
+            let left_dts =
+                active_datetimes_multi_depth(left, primary_df, cross_dfs, date_col, depth)?;
+            let right_dts =
+                active_datetimes_multi_depth(right, primary_df, cross_dfs, date_col, depth)?;
             Ok(union_mixed_granularity(&left_dts, &right_dts))
         }
         // Formula with potential cross-symbol references
@@ -290,9 +333,11 @@ pub fn active_datetimes_multi<S: std::hash::BuildHasher>(
                 active_datetimes(spec, &joined, date_col)
             }
         }
-        // Saved: load the inner spec and recurse to handle cross-symbol refs
+        // Saved: load the inner spec and recurse with incremented depth
         SignalSpec::Saved { name } => match storage::load_signal(name) {
-            Ok((loaded, _)) => active_datetimes_multi(&loaded, primary_df, cross_dfs, date_col),
+            Ok((loaded, _)) => {
+                active_datetimes_multi_depth(&loaded, primary_df, cross_dfs, date_col, depth + 1)
+            }
             Err(_) => active_datetimes(spec, primary_df, date_col),
         },
     }
