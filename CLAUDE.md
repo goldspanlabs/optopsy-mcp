@@ -161,6 +161,7 @@ TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, tr
 ### Backtest Tools
 - **`run_options_backtest`** — Event-driven options backtest. Requires `strategy` + `leg_deltas` + `entry_dte` + `symbol`. Options data auto-loaded from cache.
 - **`run_stock_backtest`** — Signal-driven stock backtest. `entry_signal` is REQUIRED (not optional).
+  - **Intraday data cap**: When no `start_date` is specified and the interval is intraday, a default lookback cap is applied to avoid loading 10+ years of minute/hourly data: 1m=6mo, 5m=1yr, 10-30m=2yr, 1-4h=3yr. Override by passing explicit `start_date`.
 - **`portfolio_backtest`** — Run multiple stock strategies as a weighted portfolio. Min 2 strategies. Returns combined metrics + correlation matrix.
 
 ### Optimization & Validation Tools

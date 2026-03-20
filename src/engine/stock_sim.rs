@@ -1348,8 +1348,40 @@ pub fn bar_date_range(bars: &[Bar]) -> Option<(NaiveDate, NaiveDate)> {
     Some((min, max))
 }
 
+/// Compute the effective start date for a stock data load, applying an
+/// intraday lookback cap when `start_date` is `None`.
+///
+/// The cap is anchored to `end_date` when it is provided (common for
+/// historical analyses), falling back to `Utc::now()` otherwise. This
+/// guarantees that `effective_start <= end_date` regardless of the anchor.
+/// When `start_date` is `Some`, it is returned unchanged.
+pub fn compute_effective_start(
+    interval: Interval,
+    start_date: Option<NaiveDate>,
+    end_date: Option<NaiveDate>,
+) -> Option<NaiveDate> {
+    start_date.or_else(|| {
+        interval.default_intraday_lookback_days().map(|days| {
+            let anchor = end_date.unwrap_or_else(|| chrono::Utc::now().date_naive());
+            let cap = anchor - chrono::Duration::days(days);
+            tracing::info!(
+                interval = %interval,
+                lookback_days = days,
+                anchor_date = %anchor,
+                effective_start = %cap,
+                "Applying default intraday lookback cap (no start_date specified)"
+            );
+            cap
+        })
+    })
+}
+
 /// Load OHLCV data, apply session filter, resample, and extract bars.
 /// Returns `(bars, ohlcv_df)` — the `DataFrame` is needed for signal evaluation.
+///
+/// When `start_date` is `None` and the interval is intraday, a default lookback
+/// cap is applied to avoid loading 10+ years of minute/hourly data. The cap
+/// varies by interval (see [`Interval::default_intraday_lookback_days`]).
 pub fn prepare_stock_data(
     ohlcv_path: &str,
     interval: Interval,
@@ -1357,7 +1389,8 @@ pub fn prepare_stock_data(
     start_date: Option<NaiveDate>,
     end_date: Option<NaiveDate>,
 ) -> Result<(Vec<Bar>, polars::prelude::DataFrame)> {
-    let df = load_ohlcv_df(ohlcv_path, start_date, end_date)?;
+    let effective_start = compute_effective_start(interval, start_date, end_date);
+    let df = load_ohlcv_df(ohlcv_path, effective_start, end_date)?;
     let df = filter_session(&df, session_filter)?;
     let df = resample_ohlcv(&df, interval)?;
     let bars = bars_from_df(&df)?;
