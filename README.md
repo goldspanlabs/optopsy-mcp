@@ -106,9 +106,9 @@ Add to your Claude Desktop config (`claude_desktop_config.json`):
 }
 ```
 
-Populate the data cache with [inflow](https://github.com/goldspanlabs/inflow) before your first session — see the [Data](#data) section below.
+Place your Parquet data files in `~/.optopsy/cache/` before your first session — see the [Data](#data) section below.
 
-By default, data is read from `~/.optopsy/cache`. To change this, set `DATA_ROOT` in the config:
+To change the cache directory, set `DATA_ROOT` in the config:
 
 ```json
 {
@@ -157,11 +157,9 @@ Supports lookback (`close[1]`), date/time functions (`day_of_week()`, `month()`,
 
 ## Data
 
-optopsy-mcp reads options chains and OHLCV prices from a local Parquet cache at `~/.optopsy/cache/`. Use [**inflow**](https://github.com/goldspanlabs/inflow) to download and manage that data.
+optopsy-mcp reads options chains and OHLCV prices from a local Parquet cache. Place your Parquet files directly into the cache directory — any file matching the expected schema will be picked up automatically.
 
-### inflow (recommended)
-
-[inflow](https://github.com/goldspanlabs/inflow) is a standalone CLI for downloading and caching market data — options chains from EODHD and OHLCV prices from Yahoo Finance. It writes directly to the same `~/.optopsy/cache/` directory that optopsy-mcp reads from, with concurrent downloads, resume support, and rate limiting. See the [inflow README](https://github.com/goldspanlabs/inflow) for installation and usage.
+The default cache directory is `~/.optopsy/cache/`. To use a different location, set the `DATA_ROOT` environment variable.
 
 ### Cache layout
 
@@ -177,23 +175,32 @@ optopsy-mcp reads options chains and OHLCV prices from a local Parquet cache at 
     └── ...
 ```
 
-### Manual data
+### Parquet schemas
 
-You can also place any Parquet file matching the expected schema directly into the cache directory.
-
-### Parquet schema
-
-Minimum required columns for options chain data:
+#### Options data (`options/*.parquet`)
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `date` | Date | Trading date (cast to `datetime` at 15:59 on load) |
+| `datetime` | Datetime | Quote timestamp (intraday resolution supported) |
 | `expiration` | Date/Datetime | Option expiration date |
 | `strike` | Float64 | Strike price |
 | `option_type` | String | `"call"` or `"put"` |
 | `bid` | Float64 | Bid price |
 | `ask` | Float64 | Ask price |
 | `delta` | Float64 | Option delta |
+
+> **Note:** If your data has a `date` (Date) column instead of `datetime`, it will be automatically cast to a Datetime at 15:59:00 on load.
+
+#### Price data (`prices/*.parquet`)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `datetime` | Datetime | Bar timestamp (intraday resolution supported) |
+| `open` | Float64 | Open price |
+| `high` | Float64 | High price |
+| `low` | Float64 | Low price |
+| `close` | Float64 | Close price |
+| `volume` | Int64/Float64 | Volume |
 
 ## Development
 
