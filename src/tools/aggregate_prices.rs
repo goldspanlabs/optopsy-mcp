@@ -125,7 +125,7 @@ pub async fn execute(
                 let h = hour.unwrap_or(0);
                 format!("{h:02}:00")
             }
-            _ => unreachable!(),
+            _ => unreachable!("group_by already validated against known values"),
         };
 
         let value = match metric {
@@ -156,7 +156,7 @@ pub async fn execute(
                 (prices[i].high - prices[i].low) / prices[i].low * 100.0
             }
             "volume" => prices[i].volume as f64,
-            _ => unreachable!(),
+            _ => unreachable!("metric already validated against known values"),
         };
         bar_data.push((bucket_label, value));
     }

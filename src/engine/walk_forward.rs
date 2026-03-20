@@ -54,8 +54,12 @@ pub struct WalkForwardResult {
 /// with its existing time unit, e.g. microseconds/milliseconds/nanoseconds) using
 /// midnight-boundary `NaiveDateTimes`, avoiding an expensive per-window cast to `Date`.
 fn slice_by_date_range(df: &DataFrame, start: NaiveDate, end: NaiveDate) -> Result<DataFrame> {
-    let start_dt: NaiveDateTime = start.and_hms_opt(0, 0, 0).unwrap();
-    let end_dt: NaiveDateTime = end.and_hms_opt(0, 0, 0).unwrap();
+    let start_dt: NaiveDateTime = start
+        .and_hms_opt(0, 0, 0)
+        .expect("midnight datetime for walk-forward start");
+    let end_dt: NaiveDateTime = end
+        .and_hms_opt(0, 0, 0)
+        .expect("midnight datetime for walk-forward end");
     Ok(df
         .clone()
         .lazy()

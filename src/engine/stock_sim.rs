@@ -1059,7 +1059,9 @@ pub fn load_ohlcv_df(
     if let Some(start) = start_date {
         if date_col_name == "datetime" {
             // Promote NaiveDate to midnight NaiveDateTime for Datetime column comparison
-            let start_dt = start.and_hms_opt(0, 0, 0).unwrap();
+            let start_dt = start
+                .and_hms_opt(0, 0, 0)
+                .expect("midnight datetime for start_date filter");
             lazy = lazy.filter(col(date_col_name).gt_eq(lit(start_dt)));
         } else {
             lazy = lazy.filter(col(date_col_name).gt_eq(lit(start)));
@@ -1068,7 +1070,11 @@ pub fn load_ohlcv_df(
     if let Some(end) = end_date {
         if date_col_name == "datetime" {
             // Use next day at midnight with < to include all bars on the end date
-            let end_next = end.succ_opt().unwrap_or(end).and_hms_opt(0, 0, 0).unwrap();
+            let end_next = end
+                .succ_opt()
+                .unwrap_or(end)
+                .and_hms_opt(0, 0, 0)
+                .expect("midnight datetime for end_date filter");
             lazy = lazy.filter(col(date_col_name).lt(lit(end_next)));
         } else {
             lazy = lazy.filter(col(date_col_name).lt_eq(lit(end)));
@@ -1159,7 +1165,9 @@ pub fn bars_from_df(df: &polars::prelude::DataFrame) -> Result<Vec<Bar>> {
         let Some(date) = NaiveDate::from_num_days_from_ce_opt(days + epoch_offset) else {
             continue;
         };
-        let datetime = date.and_hms_opt(0, 0, 0).unwrap();
+        let datetime = date
+            .and_hms_opt(0, 0, 0)
+            .expect("midnight datetime for OHLCV date conversion");
 
         let open = opens.get(i).unwrap_or(0.0);
         let high = highs.get(i).unwrap_or(0.0);
@@ -1214,7 +1222,10 @@ pub fn detect_date_col(df: &polars::prelude::DataFrame) -> &'static str {
 fn dates_to_datetimes(dates: HashSet<NaiveDate>) -> HashSet<NaiveDateTime> {
     dates
         .into_iter()
-        .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
+        .map(|d| {
+            d.and_hms_opt(0, 0, 0)
+                .expect("midnight datetime for signal date conversion")
+        })
         .collect()
 }
 

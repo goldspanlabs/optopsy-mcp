@@ -73,7 +73,7 @@ pub async fn execute(
             (l, n, None)
         }
         "hmm" => classify_by_hmm(&returns, n_regimes),
-        _ => unreachable!(),
+        _ => unreachable!("method already validated against known values"),
     };
 
     // Build regime series (skip leading NaN window)

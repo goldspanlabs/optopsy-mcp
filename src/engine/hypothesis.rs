@@ -571,7 +571,7 @@ fn scan_seasonality(prices: &[PriceBar], horizons: &[usize]) -> Vec<RawPattern> 
                 10 => "October",
                 11 => "November",
                 12 => "December",
-                _ => unreachable!(),
+                _ => unreachable!("month range is 1..=12, all variants covered"),
             };
             if let Some(pat) = scan_condition(
                 prices,

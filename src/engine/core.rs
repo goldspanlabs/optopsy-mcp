@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use chrono::NaiveDate;
 use polars::prelude::*;
 
@@ -23,17 +23,20 @@ type DateFilter = Option<HashSet<NaiveDate>>;
 /// Load OHLCV close prices into a `BTreeMap<NaiveDate, f64>` for sizing or stock-leg strategies.
 ///
 /// Loads when the backtest has dynamic sizing configured or when the strategy has a stock leg.
-/// Returns `None` if neither condition is met or OHLCV data cannot be loaded.
+/// Returns `Ok(None)` if neither condition is met (sizing not configured and no stock leg).
+/// Returns an error if OHLCV data is required but cannot be loaded or parsed.
 fn load_ohlcv_closes(
     params: &BacktestParams,
     strategy_def: &StrategyDef,
-) -> Option<std::collections::BTreeMap<NaiveDate, f64>> {
+) -> Result<Option<std::collections::BTreeMap<NaiveDate, f64>>> {
     if params.sizing.is_none() && !strategy_def.has_stock_leg {
-        return None;
+        return Ok(None);
     }
 
-    let ohlcv_path = params.ohlcv_path.as_ref()?;
-    let df = load_ohlcv(ohlcv_path).ok()?;
+    let Some(ohlcv_path) = params.ohlcv_path.as_ref() else {
+        return Ok(None);
+    };
+    let df = load_ohlcv(ohlcv_path).context("failed to load OHLCV parquet for close prices")?;
 
     let mut closes_map = std::collections::BTreeMap::new();
 
@@ -53,9 +56,15 @@ fn load_ohlcv_closes(
                 polars::prelude::SortMultipleOptions::default(),
             )
             .collect()
-            .ok()?;
-        let closes = sorted.column("close").ok()?.f64().ok()?;
-        let dt_col_ref = sorted.column("datetime").ok()?;
+            .context("failed to sort OHLCV data by datetime")?;
+        let closes = sorted
+            .column("close")
+            .context("OHLCV data missing 'close' column")?
+            .f64()
+            .context("'close' column is not f64 dtype")?;
+        let dt_col_ref = sorted
+            .column("datetime")
+            .context("OHLCV data missing 'datetime' column")?;
         for i in 0..sorted.height() {
             let Ok(ndt) = super::price_table::extract_datetime_from_column(dt_col_ref, i) else {
                 continue;
@@ -70,8 +79,16 @@ fn load_ohlcv_closes(
         }
     } else {
         // Daily path: "date" Date column
-        let closes = df.column("close").ok()?.f64().ok()?;
-        let dates = df.column("date").ok()?.date().ok()?;
+        let closes = df
+            .column("close")
+            .context("OHLCV data missing 'close' column")?
+            .f64()
+            .context("'close' column is not f64 dtype")?;
+        let dates = df
+            .column("date")
+            .context("OHLCV data missing 'date' column")?
+            .date()
+            .context("'date' column is not Date dtype")?;
         for i in 0..df.height() {
             let Some(days) = dates.phys.get(i) else {
                 continue;
@@ -90,9 +107,9 @@ fn load_ohlcv_closes(
     }
 
     if closes_map.is_empty() {
-        None
+        Ok(None)
     } else {
-        Some(closes_map)
+        Ok(Some(closes_map))
     }
 }
 
@@ -400,7 +417,7 @@ fn run_event_loop_path(
     }
 
     // Load OHLCV closes when dynamic sizing or stock-leg strategy needs price data
-    let ohlcv_closes = load_ohlcv_closes(params, strategy_def);
+    let ohlcv_closes = load_ohlcv_closes(params, strategy_def)?;
 
     let ctx = crate::engine::sim_types::SimContext {
         price_table: &price_table,

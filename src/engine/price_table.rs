@@ -266,7 +266,9 @@ pub(crate) fn extract_datetime_from_column(
     match col.dtype() {
         DataType::Date => {
             let date = extract_date_from_column(col, idx)?;
-            Ok(date.and_hms_opt(0, 0, 0).unwrap())
+            Ok(date
+                .and_hms_opt(0, 0, 0)
+                .expect("midnight datetime for Date column extraction"))
         }
         DataType::Datetime(tu, _) => {
             let val = col.datetime()?.phys.get(idx);
@@ -295,8 +297,10 @@ pub(crate) fn extract_datetime_from_column(
             match str_val {
                 Some(s) => chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
                     .or_else(|_| {
-                        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                            .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
+                        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").map(|d| {
+                            d.and_hms_opt(0, 0, 0)
+                                .expect("midnight datetime for string date parsing")
+                        })
                     })
                     .map_err(|e| anyhow::anyhow!("Cannot parse datetime '{s}': {e}")),
                 None => bail!("Null string datetime at index {idx}"),

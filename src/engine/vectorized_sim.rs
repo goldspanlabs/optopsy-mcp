@@ -639,8 +639,14 @@ fn build_outputs(
         // Apply commission (entry + exit)
         pnl -= commission.calculate(total_contracts) * 2.0;
 
-        let entry_dt = trade.entry_date.and_hms_opt(0, 0, 0).unwrap();
-        let exit_dt = trade.exit_date.and_hms_opt(0, 0, 0).unwrap();
+        let entry_dt = trade
+            .entry_date
+            .and_hms_opt(0, 0, 0)
+            .expect("midnight datetime for entry_date");
+        let exit_dt = trade
+            .exit_date
+            .and_hms_opt(0, 0, 0)
+            .expect("midnight datetime for exit_date");
         let days_held = (trade.exit_date - trade.entry_date).num_days();
 
         let leg_details: Vec<LegDetail> = trade
@@ -746,7 +752,9 @@ fn build_equity_curve(
         }
 
         equity_curve.push(EquityPoint {
-            datetime: day.and_hms_opt(0, 0, 0).unwrap(),
+            datetime: day
+                .and_hms_opt(0, 0, 0)
+                .expect("midnight datetime for equity curve day"),
             equity: realized_equity + unrealized,
         });
     }

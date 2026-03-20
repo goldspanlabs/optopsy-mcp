@@ -24,7 +24,7 @@ pub fn median(data: &[f64]) -> f64 {
     if sorted.is_empty() {
         return 0.0;
     }
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mid = sorted.len() / 2;
     if sorted.len().is_multiple_of(2) {
         f64::midpoint(sorted[mid - 1], sorted[mid])
@@ -40,7 +40,7 @@ pub fn percentile(data: &[f64], pct: f64) -> f64 {
     if sorted.is_empty() {
         return 0.0;
     }
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let n = sorted.len();
     if n == 1 {
         return sorted[0];
