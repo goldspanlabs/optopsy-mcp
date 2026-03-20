@@ -195,7 +195,7 @@ For a backtest with entry signal `hmm_regime(SPY, 3, 5) == bullish and rsi(close
 
 - Double underscore prefix signals internal/computed columns
 - `fit_years` is included to avoid collisions when the same symbol/n_regimes pair is used with different fit windows
-- `threshold` is encoded as an integer (65 for 0.65) to keep column names clean
+- `threshold` is encoded as `(threshold * 100.0).round() as u32` (e.g., 0.65 → 65, 0.8 → 80). Only two decimal places are significant; values like 0.651 round to 65 same as 0.65
 - If the same full tuple appears in both entry and exit signals, the column is computed once and reused
 
 ## Code Changes
