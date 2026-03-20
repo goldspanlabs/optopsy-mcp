@@ -64,11 +64,10 @@ pub fn execute(
     let result =
         stock_sim::run_stock_backtest(&bars, params, entry_dates.as_ref(), exit_dates.as_ref())?;
 
-    let elapsed = start.elapsed();
-    tracing::info!(
-        elapsed_ms = elapsed.as_millis(),
-        trades = result.trade_count,
-        "Stock backtest engine finished"
+    super::macros::log_elapsed!(
+        start,
+        "Stock backtest engine finished",
+        trades = result.trade_count
     );
 
     Ok(ai_format::format_stock_backtest(

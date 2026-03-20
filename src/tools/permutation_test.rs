@@ -30,11 +30,10 @@ pub fn execute<S1: BuildHasher, S2: BuildHasher>(
 ) -> Result<PermutationTestResponse> {
     let start = std::time::Instant::now();
     let output = run_permutation_test(df, params, perm_params, entry_dates, exit_dates)?;
-    let elapsed = start.elapsed();
-    tracing::info!(
-        elapsed_ms = elapsed.as_millis(),
-        permutations = output.num_completed,
-        "Permutation test finished"
+    super::macros::log_elapsed!(
+        start,
+        "Permutation test finished",
+        permutations = output.num_completed
     );
     Ok(ai_format::format_permutation_test(output, params))
 }
@@ -51,11 +50,10 @@ pub fn execute_stock(
 ) -> Result<PermutationTestResponse> {
     let start = std::time::Instant::now();
     let output = run_stock_permutation_test(bars, params, entry_dates, exit_dates, perm_params)?;
-    let elapsed = start.elapsed();
-    tracing::info!(
-        elapsed_ms = elapsed.as_millis(),
-        permutations = output.num_completed,
-        "Stock permutation test finished"
+    super::macros::log_elapsed!(
+        start,
+        "Stock permutation test finished",
+        permutations = output.num_completed
     );
     Ok(ai_format::format_permutation_test_stock(
         output, label, params,

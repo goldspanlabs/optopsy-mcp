@@ -23,11 +23,6 @@ pub fn execute(df: &DataFrame, params: &CompareParams) -> Result<CompareResponse
 pub fn execute_stock(entries: &[StockCompareEntry]) -> Result<CompareResponse> {
     let start = std::time::Instant::now();
     let results = crate::engine::core::compare_stock_strategies(entries)?;
-    let elapsed = start.elapsed();
-    tracing::info!(
-        elapsed_ms = elapsed.as_millis(),
-        entries = entries.len(),
-        "Stock compare finished"
-    );
+    super::macros::log_elapsed!(start, "Stock compare finished", entries = entries.len());
     Ok(ai_format::format_stock_compare(results, entries))
 }

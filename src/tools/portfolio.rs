@@ -163,11 +163,10 @@ pub fn execute(
 
     let portfolio_metrics = calculate_metrics(&combined_curve, &all_trades, capital, 252.0)?;
 
-    let elapsed = start.elapsed();
-    tracing::info!(
-        elapsed_ms = elapsed.as_millis(),
-        strategies = strategies.len(),
-        "Portfolio backtest finished"
+    super::macros::log_elapsed!(
+        start,
+        "Portfolio backtest finished",
+        strategies = strategies.len()
     );
 
     Ok(ai_format::format_portfolio(

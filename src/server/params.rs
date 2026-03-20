@@ -21,6 +21,11 @@ pub(crate) fn validation_err(tool: &str, e: impl std::fmt::Display) -> String {
     format!("[{tool}] Validation error: {e}")
 }
 
+/// Format a tool execution error for MCP responses.
+pub(crate) fn tool_err(e: impl std::fmt::Display) -> String {
+    format!("Error: {e}")
+}
+
 /// Validate that `end_date >= start_date` when both are present.
 /// Signature uses `&Option<String>` because garde's `custom()` passes `&self.field`.
 #[allow(clippy::ref_option)]

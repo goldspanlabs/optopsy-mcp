@@ -22,11 +22,10 @@ pub fn execute(
 ) -> Result<BacktestResponse> {
     let start = std::time::Instant::now();
     let result = crate::engine::core::run_backtest(df, params)?;
-    let elapsed = start.elapsed();
-    tracing::info!(
-        elapsed_ms = elapsed.as_millis(),
-        trades = result.trade_count,
-        "Backtest engine finished"
+    super::macros::log_elapsed!(
+        start,
+        "Backtest engine finished",
+        trades = result.trade_count
     );
 
     // Compute raw indicator data for charting from signals (if OHLCV data available)

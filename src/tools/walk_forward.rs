@@ -26,11 +26,10 @@ pub fn execute(
 ) -> Result<WalkForwardResponse> {
     let start = std::time::Instant::now();
     let result = walk_forward::run_walk_forward(df, params, train_days, test_days, step_days)?;
-    let elapsed = start.elapsed();
-    tracing::info!(
-        elapsed_ms = elapsed.as_millis(),
-        windows = result.windows.len(),
-        "Walk-forward analysis finished"
+    super::macros::log_elapsed!(
+        start,
+        "Walk-forward analysis finished",
+        windows = result.windows.len()
     );
     Ok(ai_format::format_walk_forward(
         &result,
@@ -64,11 +63,10 @@ pub fn execute_stock(
         test_days,
         step_days,
     )?;
-    let elapsed = start.elapsed();
-    tracing::info!(
-        elapsed_ms = elapsed.as_millis(),
-        windows = result.windows.len(),
-        "Stock walk-forward analysis finished"
+    super::macros::log_elapsed!(
+        start,
+        "Stock walk-forward analysis finished",
+        windows = result.windows.len()
     );
     Ok(ai_format::format_walk_forward(
         &result,

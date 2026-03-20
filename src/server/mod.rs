@@ -37,7 +37,7 @@ use crate::tools::response_types::{
     StockBacktestResponse, StrategiesResponse, SweepResponse, WalkForwardResponse,
 };
 use params::{
-    resolve_leg_deltas, resolve_sweep_strategies, validation_err, AggregatePricesParams,
+    resolve_leg_deltas, resolve_sweep_strategies, tool_err, validation_err, AggregatePricesParams,
     BacktestBaseParams, BenchmarkAnalysisParams, BuildSignalParams, CointegrationParams,
     CompareStrategiesParams, CorrelateParams, DistributionParams, DrawdownAnalysisParams,
     FactorAttributionParams, GetRawPricesParams, ListSymbolsParams, MonteCarloParams,
@@ -286,8 +286,7 @@ impl OptopsyServer {
     ///
     /// Ensures OHLCV data is available, builds `StockBacktestParams`, and prepares
     /// bars + signal filters. Returns everything needed to run a stock backtest.
-    #[allow(clippy::unused_async)] // ensure_ohlcv became sync; callers still .await this
-    async fn resolve_stock_backtest_params(
+    fn resolve_stock_backtest_params(
         &self,
         base: BacktestBaseParams,
     ) -> Result<StockResolvedParams, String> {
@@ -635,8 +634,7 @@ impl OptopsyServer {
                 params
                     .validate()
                     .map_err(|e| validation_err("list_symbols", e))?;
-                tools::list_symbols::execute(&self.cache, params.query.as_deref())
-                    .map_err(|e| format!("Error: {e}"))
+                tools::list_symbols::execute(&self.cache, params.query.as_deref()).map_err(tool_err)
             }
             .await,
         )
@@ -893,7 +891,7 @@ impl OptopsyServer {
                 })
                 .await
                 .map_err(|e| format!("Backtest task panicked: {e}"))?
-                .map_err(|e| format!("Error: {e}"))
+                .map_err(tool_err)
             }
             .await,
         )
@@ -1008,7 +1006,7 @@ impl OptopsyServer {
                 })
                 .await
                 .map_err(|e| format!("Stock backtest task panicked: {e}"))?
-                .map_err(|e| format!("Error: {e}"))?;
+                .map_err(tool_err)?;
 
                 // Load chart prices via the same path as get_raw_prices,
                 // bounded to the trade date range (first entry → last exit).
@@ -1111,7 +1109,7 @@ impl OptopsyServer {
                 };
 
                 if is_stock {
-                    let resolved = self.resolve_stock_backtest_params(params.base).await?;
+                    let resolved = self.resolve_stock_backtest_params(params.base)?;
                     let label = resolved.symbol.clone();
 
                     tokio::task::spawn_blocking(move || {
@@ -1143,7 +1141,7 @@ impl OptopsyServer {
                     })
                     .await
                     .map_err(|e| format!("Permutation test task panicked: {e}"))?
-                    .map_err(|e| format!("Error: {e}"))
+                    .map_err(tool_err)
                 } else {
                     let (_symbol, df, backtest_params) =
                         self.resolve_backtest_params(params.base).await?;
@@ -1161,7 +1159,7 @@ impl OptopsyServer {
                     })
                     .await
                     .map_err(|e| format!("Permutation test task panicked: {e}"))?
-                    .map_err(|e| format!("Error: {e}"))
+                    .map_err(tool_err)
                 }
             }
             .await,
@@ -1316,7 +1314,7 @@ impl OptopsyServer {
                 tokio::task::spawn_blocking(move || tools::sweep::execute_stock(&sweep_params))
                     .await
                     .map_err(|e| format!("Stock sweep task panicked: {e}"))?
-                    .map_err(|e| format!("Error: {e}"))
+                    .map_err(tool_err)
             } else {
                 // ── Options mode ────────────────────────────────────────
                 // Validate: singular and plural signal fields are mutually exclusive
@@ -1409,7 +1407,7 @@ impl OptopsyServer {
                 tokio::task::spawn_blocking(move || tools::sweep::execute(&df, &sweep_params))
                     .await
                     .map_err(|e| format!("Sweep task panicked: {e}"))?
-                    .map_err(|e| format!("Error: {e}"))
+                    .map_err(tool_err)
             }
         }.await)
     }
@@ -1459,7 +1457,7 @@ impl OptopsyServer {
                 );
 
                 if is_stock {
-                    let resolved = self.resolve_stock_backtest_params(params.base).await?;
+                    let resolved = self.resolve_stock_backtest_params(params.base)?;
                     let label = resolved.symbol.clone();
 
                     tokio::task::spawn_blocking(move || {
@@ -1494,7 +1492,7 @@ impl OptopsyServer {
                     })
                     .await
                     .map_err(|e| format!("Walk-forward task panicked: {e}"))?
-                    .map_err(|e| format!("Error: {e}"))
+                    .map_err(tool_err)
                 } else {
                     let (_symbol, df, backtest_params) =
                         self.resolve_backtest_params(params.base).await?;
@@ -1510,7 +1508,7 @@ impl OptopsyServer {
                     })
                     .await
                     .map_err(|e| format!("Walk-forward task panicked: {e}"))?
-                    .map_err(|e| format!("Error: {e}"))
+                    .map_err(tool_err)
                 }
             }
             .await,
@@ -1646,7 +1644,7 @@ impl OptopsyServer {
                     tokio::task::spawn_blocking(move || tools::compare::execute_stock(&entries))
                         .await
                         .map_err(|e| format!("Stock compare task panicked: {e}"))?
-                        .map_err(|e| format!("Error: {e}"))
+                        .map_err(tool_err)
                 } else {
                     // ── Options mode ────────────────────────────────────────
                     let strategies = params.strategies.ok_or_else(|| {
@@ -1707,7 +1705,7 @@ impl OptopsyServer {
                     })
                     .await
                     .map_err(|e| format!("Compare task panicked: {e}"))?
-                    .map_err(|e| format!("Error: {e}"))
+                    .map_err(tool_err)
                 }
             }
             .await,
@@ -1750,7 +1748,7 @@ impl OptopsyServer {
                     params.tail,
                 )
                 .await
-                .map_err(|e| format!("Error: {e}"))
+                .map_err(tool_err)
             }
             .await,
         )
@@ -1785,7 +1783,7 @@ impl OptopsyServer {
                     params.end_date.as_deref(),
                 )
                 .await
-                .map_err(|e| format!("Error: {e}"))
+                .map_err(tool_err)
             }
             .await,
         )
@@ -1807,7 +1805,7 @@ impl OptopsyServer {
                     .map_err(|e| validation_err("distribution", e))?;
                 tools::distribution::execute(&self.cache, &params.source, params.n_bins)
                     .await
-                    .map_err(|e| format!("Error: {e}"))
+                    .map_err(tool_err)
             }
             .await,
         )
@@ -1839,7 +1837,7 @@ impl OptopsyServer {
                         .unwrap_or(crate::engine::types::Interval::Daily),
                 )
                 .await
-                .map_err(|e| format!("Error: {e}"))
+                .map_err(tool_err)
             }
             .await,
         )
@@ -1868,7 +1866,7 @@ impl OptopsyServer {
                     params.years,
                 )
                 .await
-                .map_err(|e| format!("Error: {e}"))
+                .map_err(tool_err)
             }
             .await,
         )
@@ -1901,7 +1899,7 @@ impl OptopsyServer {
                         .unwrap_or(crate::engine::types::Interval::Daily),
                 )
                 .await
-                .map_err(|e| format!("Error: {e}"))
+                .map_err(tool_err)
             }
             .await,
         )
@@ -1954,7 +1952,7 @@ impl OptopsyServer {
 
                 tools::hypothesis::execute(&cache, &params)
                     .await
-                    .map_err(|e| format!("Error: {e}"))
+                    .map_err(tool_err)
             }
             .await,
         )
@@ -2059,7 +2057,7 @@ impl OptopsyServer {
                 })
                 .await
                 .map_err(|e| format!("Portfolio backtest task panicked: {e}"))?
-                .map_err(|e| format!("Error: {e}"))
+                .map_err(tool_err)
             }
             .await,
         )
@@ -2089,7 +2087,7 @@ impl OptopsyServer {
                     .map_err(|e| validation_err("drawdown_analysis", e))?;
                 tools::drawdown_analysis::execute(&self.cache, &params.symbol, params.years)
                     .await
-                    .map_err(|e| format!("Error: {e}"))
+                    .map_err(tool_err)
             }
             .await,
         )
@@ -2124,7 +2122,7 @@ impl OptopsyServer {
                     params.years,
                 )
                 .await
-                .map_err(|e| format!("Error: {e}"))
+                .map_err(tool_err)
             }
             .await,
         )
@@ -2162,7 +2160,7 @@ impl OptopsyServer {
                     params.seed,
                 )
                 .await
-                .map_err(|e| format!("Error: {e}"))
+                .map_err(tool_err)
             }
             .await,
         )
@@ -2197,7 +2195,7 @@ impl OptopsyServer {
                     params.years,
                 )
                 .await
-                .map_err(|e| format!("Error: {e}"))
+                .map_err(tool_err)
             }
             .await,
         )
@@ -2233,7 +2231,7 @@ impl OptopsyServer {
                     params.risk_free_rate,
                 )
                 .await
-                .map_err(|e| format!("Error: {e}"))
+                .map_err(tool_err)
             }
             .await,
         )
@@ -2265,7 +2263,7 @@ impl OptopsyServer {
                     params.years,
                 )
                 .await
-                .map_err(|e| format!("Error: {e}"))
+                .map_err(tool_err)
             }
             .await,
         )

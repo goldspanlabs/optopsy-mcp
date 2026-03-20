@@ -22,11 +22,10 @@ pub fn execute(df: &DataFrame, params: &SweepParams) -> Result<SweepResponse> {
 pub fn execute_stock(params: &StockSweepParams) -> Result<SweepResponse> {
     let start = std::time::Instant::now();
     let output = crate::engine::sweep::run_stock_sweep(params)?;
-    let elapsed = start.elapsed();
-    tracing::info!(
-        elapsed_ms = elapsed.as_millis(),
-        combinations = output.combinations_run,
-        "Stock parameter sweep finished"
+    super::macros::log_elapsed!(
+        start,
+        "Stock parameter sweep finished",
+        combinations = output.combinations_run
     );
     Ok(ai_format::format_sweep(output))
 }
