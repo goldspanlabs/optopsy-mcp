@@ -85,6 +85,22 @@ impl Interval {
         )
     }
 
+    /// Default lookback in calendar days for intraday intervals when no date range
+    /// is specified. Returns `None` for daily/weekly/monthly (no limit needed).
+    ///
+    /// Prevents loading 10+ years of minute/hourly data when the user doesn't
+    /// specify explicit `start_date`/`end_date`. Shorter intervals get tighter caps
+    /// because the bar count grows proportionally.
+    pub fn default_intraday_lookback_days(self) -> Option<i64> {
+        match self {
+            Self::Min1 => Some(180), // ~6 months — ~75K bars
+            Self::Min5 => Some(365), // ~1 year — ~20K bars
+            Self::Min10 | Self::Min15 | Self::Min30 => Some(730), // ~2 years
+            Self::Hour1 | Self::Hour4 => Some(1095), // ~3 years
+            Self::Daily | Self::Weekly | Self::Monthly => None,
+        }
+    }
+
     /// Fraction of bar range used as synthetic bid-ask spread for slippage.
     ///
     /// Wider bars (daily) have a larger fraction because the range is proportionally

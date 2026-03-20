@@ -24,7 +24,25 @@ pub fn execute(
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("ohlcv_path is required for stock backtest"))?;
 
-    let ohlcv_df = stock_sim::load_ohlcv_df(ohlcv_path, params.start_date, params.end_date)?;
+    // Apply a default lookback cap for intraday intervals when no start date is
+    // specified, preventing loading millions of bars from multi-year datasets.
+    let effective_start = params.start_date.or_else(|| {
+        params
+            .interval
+            .default_intraday_lookback_days()
+            .map(|days| {
+                let cap = chrono::Utc::now().date_naive() - chrono::Duration::days(days);
+                tracing::info!(
+                    interval = %params.interval,
+                    lookback_days = days,
+                    effective_start = %cap,
+                    "Applying default intraday lookback cap (no start_date specified)"
+                );
+                cap
+            })
+    });
+
+    let ohlcv_df = stock_sim::load_ohlcv_df(ohlcv_path, effective_start, params.end_date)?;
 
     // Apply session filter BEFORE resampling so that out-of-session rows don't
     // pollute aggregated OHLC values. This applies whenever the *source* data is

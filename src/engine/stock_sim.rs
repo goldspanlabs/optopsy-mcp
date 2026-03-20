@@ -1350,6 +1350,10 @@ pub fn bar_date_range(bars: &[Bar]) -> Option<(NaiveDate, NaiveDate)> {
 
 /// Load OHLCV data, apply session filter, resample, and extract bars.
 /// Returns `(bars, ohlcv_df)` — the `DataFrame` is needed for signal evaluation.
+///
+/// When `start_date` is `None` and the interval is intraday, a default lookback
+/// cap is applied to avoid loading 10+ years of minute/hourly data. The cap
+/// varies by interval (see [`Interval::default_intraday_lookback_days`]).
 pub fn prepare_stock_data(
     ohlcv_path: &str,
     interval: Interval,
@@ -1357,7 +1361,21 @@ pub fn prepare_stock_data(
     start_date: Option<NaiveDate>,
     end_date: Option<NaiveDate>,
 ) -> Result<(Vec<Bar>, polars::prelude::DataFrame)> {
-    let df = load_ohlcv_df(ohlcv_path, start_date, end_date)?;
+    // Apply a default lookback cap for intraday intervals when no start date is
+    // specified. This prevents loading millions of bars from multi-year datasets.
+    let effective_start = start_date.or_else(|| {
+        interval.default_intraday_lookback_days().map(|days| {
+            let cap = chrono::Utc::now().date_naive() - chrono::Duration::days(days);
+            tracing::info!(
+                interval = %interval,
+                lookback_days = days,
+                effective_start = %cap,
+                "Applying default intraday lookback cap (no start_date specified)"
+            );
+            cap
+        })
+    });
+    let df = load_ohlcv_df(ohlcv_path, effective_start, end_date)?;
     let df = filter_session(&df, session_filter)?;
     let df = resample_ohlcv(&df, interval)?;
     let bars = bars_from_df(&df)?;
