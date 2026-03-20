@@ -6,6 +6,8 @@
 mod params;
 mod sanitize;
 
+pub use params::FactorProxies;
+
 use garde::Validate;
 use polars::prelude::*;
 

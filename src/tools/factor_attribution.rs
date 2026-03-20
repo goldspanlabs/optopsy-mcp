@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use std::sync::Arc;
 
 use crate::data::cache::CachedStore;
-use crate::server::params::FactorProxies;
+use crate::server::FactorProxies;
 use crate::tools::response_types::{FactorAttributionResponse, FactorExposure};
 
 /// Execute the factor attribution analysis.
