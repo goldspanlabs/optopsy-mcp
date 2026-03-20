@@ -994,6 +994,14 @@ pub struct PerformanceMetrics {
     pub calmar: f64,
     /// Value at Risk at the 95% confidence level (5th percentile of daily returns).
     pub var_95: f64,
+    /// Conditional Value at Risk (Expected Shortfall) at 95% — mean loss beyond VaR.
+    /// More conservative than VaR for fat-tailed distributions (options strategies).
+    #[serde(default)]
+    pub cvar_95: f64,
+    /// Historical (non-parametric) VaR at 95% — uses empirical percentile without
+    /// assuming normality.
+    #[serde(default)]
+    pub historical_var_95: f64,
     pub total_return_pct: f64,
     pub cagr: f64,
     pub avg_trade_pnl: f64,
@@ -1004,6 +1012,18 @@ pub struct PerformanceMetrics {
     pub max_consecutive_losses: usize,
     /// Expected value per trade: `win_rate * avg_winner + (1 - win_rate) * avg_loser`.
     pub expectancy: f64,
+    /// Ulcer Index — root-mean-square of drawdowns, emphasizing sustained drawdown pain.
+    #[serde(default)]
+    pub ulcer_index: f64,
+    /// Pain Ratio — excess return / Ulcer Index (drawdown-adjusted return).
+    #[serde(default)]
+    pub pain_ratio: f64,
+    /// Average drawdown duration in bars (how long drawdowns last on average).
+    #[serde(default)]
+    pub avg_drawdown_duration: f64,
+    /// Maximum drawdown duration in bars (longest single drawdown episode).
+    #[serde(default)]
+    pub max_drawdown_duration: usize,
 }
 
 /// Single point on the equity curve representing portfolio value at a moment in time.
