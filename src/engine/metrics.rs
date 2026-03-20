@@ -24,6 +24,8 @@ pub(crate) const DEFAULT_METRICS: PerformanceMetrics = PerformanceMetrics {
     profit_factor: 0.0,
     calmar: 0.0,
     var_95: 0.0,
+    cvar_95: 0.0,
+    historical_var_95: 0.0,
     total_return_pct: 0.0,
     cagr: 0.0,
     avg_trade_pnl: 0.0,
@@ -32,6 +34,10 @@ pub(crate) const DEFAULT_METRICS: PerformanceMetrics = PerformanceMetrics {
     avg_days_held: 0.0,
     max_consecutive_losses: 0,
     expectancy: 0.0,
+    ulcer_index: 0.0,
+    pain_ratio: 0.0,
+    avg_drawdown_duration: 0.0,
+    max_drawdown_duration: 0,
 };
 
 /// Trade-level metrics extracted from the trade log.
@@ -64,39 +70,62 @@ pub fn calculate_metrics(
     let tm = compute_trade_metrics(trade_log);
 
     // Equity-curve-derived metrics require at least 2 points
-    let (sharpe, sortino, max_drawdown, var_95, total_return_pct, cagr, calmar) =
-        if equity_curve.len() < 2 {
-            (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-        } else {
-            compute_equity_metrics(equity_curve, initial_capital, bars_per_year)
-        };
+    let em = if equity_curve.len() < 2 {
+        EquityMetrics::default()
+    } else {
+        compute_equity_metrics(equity_curve, initial_capital, bars_per_year)
+    };
 
     Ok(PerformanceMetrics {
-        sharpe,
-        sortino,
-        max_drawdown,
+        sharpe: em.sharpe,
+        sortino: em.sortino,
+        max_drawdown: em.max_drawdown,
         win_rate: tm.win_rate,
         profit_factor: tm.profit_factor,
-        calmar,
-        var_95,
-        total_return_pct,
-        cagr,
+        calmar: em.calmar,
+        var_95: em.var_95,
+        cvar_95: em.cvar_95,
+        historical_var_95: em.historical_var_95,
+        total_return_pct: em.total_return_pct,
+        cagr: em.cagr,
         avg_trade_pnl: tm.avg_trade_pnl,
         avg_winner: tm.avg_winner,
         avg_loser: tm.avg_loser,
         avg_days_held: tm.avg_days_held,
         max_consecutive_losses: tm.max_consecutive_losses,
         expectancy: tm.expectancy,
+        ulcer_index: em.ulcer_index,
+        pain_ratio: em.pain_ratio,
+        avg_drawdown_duration: em.avg_drawdown_duration,
+        max_drawdown_duration: em.max_drawdown_duration,
     })
 }
 
-/// Compute equity-curve-derived metrics (Sharpe, Sortino, max DD, `VaR`, total return, CAGR, Calmar).
+/// All equity-curve-derived metrics bundled together.
+#[derive(Default)]
+struct EquityMetrics {
+    sharpe: f64,
+    sortino: f64,
+    max_drawdown: f64,
+    var_95: f64,
+    cvar_95: f64,
+    historical_var_95: f64,
+    total_return_pct: f64,
+    cagr: f64,
+    calmar: f64,
+    ulcer_index: f64,
+    pain_ratio: f64,
+    avg_drawdown_duration: f64,
+    max_drawdown_duration: usize,
+}
+
+/// Compute equity-curve-derived metrics (Sharpe, Sortino, max DD, `VaR`, `CVaR`, total return, CAGR, Calmar, drawdown stats).
 /// Assumes `equity_curve.len() >= 2`.
 fn compute_equity_metrics(
     equity_curve: &[EquityPoint],
     initial_capital: f64,
     bars_per_year: f64,
-) -> (f64, f64, f64, f64, f64, f64, f64) {
+) -> EquityMetrics {
     let mut returns = Vec::new();
     let mut prev_equity = initial_capital;
     for point in equity_curve {
@@ -107,7 +136,7 @@ fn compute_equity_metrics(
     }
 
     if returns.is_empty() {
-        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+        return EquityMetrics::default();
     }
 
     let mean_return = returns.iter().sum::<f64>() / returns.len() as f64;
@@ -140,6 +169,20 @@ fn compute_equity_metrics(
 
     let max_drawdown = calculate_max_drawdown(equity_curve, initial_capital);
     let var_95 = calculate_var(&returns, 0.05);
+    let cvar_95 = calculate_cvar(&returns, 0.05);
+    let historical_var_95 = calculate_historical_var(&returns, 0.05);
+
+    // Drawdown distribution analysis
+    let dd_stats = calculate_drawdown_stats(equity_curve, initial_capital);
+
+    // Ulcer Index: root-mean-square of drawdown percentages
+    let ulcer_index = dd_stats.ulcer_index;
+    // Pain Ratio: annualized excess return / Ulcer Index
+    let pain_ratio = if ulcer_index > 0.0 {
+        (mean_return * bars_per_year) / ulcer_index
+    } else {
+        0.0
+    };
 
     let final_equity = equity_curve
         .last()
@@ -165,15 +208,21 @@ fn compute_equity_metrics(
         (0.0, 0.0)
     };
 
-    (
+    EquityMetrics {
         sharpe,
         sortino,
         max_drawdown,
         var_95,
+        cvar_95,
+        historical_var_95,
         total_return_pct,
         cagr,
         calmar,
-    )
+        ulcer_index,
+        pain_ratio,
+        avg_drawdown_duration: dd_stats.avg_drawdown_duration,
+        max_drawdown_duration: dd_stats.max_drawdown_duration,
+    }
 }
 
 fn compute_trade_metrics(trade_log: &[TradeRecord]) -> TradeMetrics {
@@ -296,6 +345,134 @@ fn calculate_max_drawdown(equity_curve: &[EquityPoint], initial_capital: f64) ->
     }
 
     max_dd
+}
+
+/// Drawdown distribution statistics.
+struct DrawdownStats {
+    ulcer_index: f64,
+    avg_drawdown_duration: f64,
+    max_drawdown_duration: usize,
+}
+
+/// Calculate drawdown distribution statistics from the equity curve.
+///
+/// Tracks all drawdown episodes (peak-to-recovery), computing:
+/// - Ulcer Index: RMS of per-bar drawdown percentages (emphasizes sustained pain)
+/// - Average drawdown duration (bars)
+/// - Maximum drawdown duration (bars)
+fn calculate_drawdown_stats(equity_curve: &[EquityPoint], initial_capital: f64) -> DrawdownStats {
+    if equity_curve.is_empty() {
+        return DrawdownStats {
+            ulcer_index: 0.0,
+            avg_drawdown_duration: 0.0,
+            max_drawdown_duration: 0,
+        };
+    }
+
+    let mut peak = initial_capital;
+    let mut dd_sq_sum = 0.0;
+    let mut n_bars = 0usize;
+    let mut current_dd_duration = 0usize;
+    let mut max_dd_duration = 0usize;
+    let mut dd_durations = Vec::new();
+
+    for point in equity_curve {
+        if point.equity >= peak {
+            // New peak — close any active drawdown episode
+            if current_dd_duration > 0 {
+                dd_durations.push(current_dd_duration);
+                current_dd_duration = 0;
+            }
+            peak = point.equity;
+        } else {
+            // In drawdown
+            current_dd_duration += 1;
+            if current_dd_duration > max_dd_duration {
+                max_dd_duration = current_dd_duration;
+            }
+        }
+
+        let dd_pct = if peak > 0.0 {
+            (peak - point.equity) / peak * 100.0
+        } else {
+            0.0
+        };
+        dd_sq_sum += dd_pct * dd_pct;
+        n_bars += 1;
+    }
+
+    // Close trailing drawdown if we ended in one
+    if current_dd_duration > 0 {
+        dd_durations.push(current_dd_duration);
+    }
+
+    let ulcer_index = if n_bars > 0 {
+        (dd_sq_sum / n_bars as f64).sqrt()
+    } else {
+        0.0
+    };
+
+    let avg_drawdown_duration = if dd_durations.is_empty() {
+        0.0
+    } else {
+        dd_durations.iter().sum::<usize>() as f64 / dd_durations.len() as f64
+    };
+
+    DrawdownStats {
+        ulcer_index,
+        avg_drawdown_duration,
+        max_drawdown_duration: max_dd_duration,
+    }
+}
+
+/// Calculate Conditional Value at Risk (Expected Shortfall) at a given confidence level.
+///
+/// `CVaR` is the expected loss given that we are in the tail beyond `VaR`.
+/// For a 5% confidence level, `CVaR` = mean of the worst 5% of returns.
+/// This is more conservative than `VaR` and better captures tail risk for
+/// fat-tailed distributions common in options strategies.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+fn calculate_cvar(returns: &[f64], confidence: f64) -> f64 {
+    if returns.is_empty() {
+        return 0.0;
+    }
+    let mut sorted = returns.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    let cutoff = (confidence * sorted.len() as f64).ceil() as usize;
+    let cutoff = cutoff.max(1).min(sorted.len());
+
+    let tail_mean = sorted[..cutoff].iter().sum::<f64>() / cutoff as f64;
+    -tail_mean // Report as positive number like VaR
+}
+
+/// Calculate historical (non-parametric) `VaR` using linear interpolation.
+///
+/// Unlike the parametric `VaR` which floors the index, this uses proper
+/// linear interpolation between order statistics for a smoother estimate.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+fn calculate_historical_var(returns: &[f64], confidence: f64) -> f64 {
+    if returns.is_empty() {
+        return 0.0;
+    }
+    let mut sorted = returns.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    let pos = confidence * (sorted.len() - 1) as f64;
+    let lo = pos.floor() as usize;
+    let hi = (lo + 1).min(sorted.len() - 1);
+    let frac = pos - lo as f64;
+
+    let interpolated = sorted[lo] + frac * (sorted[hi] - sorted[lo]);
+    -interpolated // Report as positive number
 }
 
 #[allow(
@@ -800,6 +977,109 @@ mod tests {
             (m.var_95 - 0.03).abs() < 1e-10,
             "VaR 95%: expected 0.03, got {}",
             m.var_95
+        );
+    }
+
+    // ─── CVaR / Expected Shortfall ──────────────────────────────────
+
+    #[test]
+    fn cvar_empty_returns_zero() {
+        assert!((calculate_cvar(&[], 0.05) - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn cvar_single_return() {
+        // One return: tail is that single value
+        assert!((calculate_cvar(&[-0.05], 0.05) - 0.05).abs() < 1e-10);
+    }
+
+    #[test]
+    fn cvar_known_distribution() {
+        // Returns: [-0.10, -0.05, -0.02, 0.01, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08]
+        // Sorted: [-0.10, -0.05, -0.02, 0.01, ...]
+        // 5% of 10 = 0.5, ceil = 1 → tail = [-0.10] → CVaR = 0.10
+        let returns = vec![
+            -0.10, -0.05, -0.02, 0.01, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08,
+        ];
+        let cvar = calculate_cvar(&returns, 0.05);
+        assert!((cvar - 0.10).abs() < 1e-10, "cvar={cvar}");
+    }
+
+    #[test]
+    fn cvar_larger_tail() {
+        // 20% of 10 = 2 → tail = [-0.10, -0.05] → mean = -0.075 → CVaR = 0.075
+        let returns = vec![
+            -0.10, -0.05, -0.02, 0.01, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08,
+        ];
+        let cvar = calculate_cvar(&returns, 0.20);
+        assert!((cvar - 0.075).abs() < 1e-10, "cvar={cvar}");
+    }
+
+    #[test]
+    fn cvar_gte_var() {
+        // CVaR should always be >= VaR (it includes the tail beyond VaR)
+        let returns = vec![
+            -0.10, -0.05, -0.02, 0.01, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08,
+        ];
+        let var = calculate_var(&returns, 0.05);
+        let cvar = calculate_cvar(&returns, 0.05);
+        assert!(cvar >= var, "cvar={cvar} should be >= var={var}");
+    }
+
+    // ─── Historical VaR ─────────────────────────────────────────────
+
+    #[test]
+    fn historical_var_empty_returns_zero() {
+        assert!((calculate_historical_var(&[], 0.05) - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn historical_var_interpolation() {
+        // 10 returns sorted: [-0.10, -0.05, -0.02, 0.01, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08]
+        // pos = 0.05 * 9 = 0.45, lo=0, hi=1, frac=0.45
+        // interpolated = -0.10 + 0.45 * (-0.05 - (-0.10)) = -0.10 + 0.45*0.05 = -0.0775
+        // VaR = 0.0775
+        let returns = vec![
+            -0.10, -0.05, -0.02, 0.01, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08,
+        ];
+        let var = calculate_historical_var(&returns, 0.05);
+        assert!((var - 0.0775).abs() < 1e-10, "var={var}");
+    }
+
+    #[test]
+    fn historical_var_single_return() {
+        // pos = 0.05 * 0 = 0, lo=0, hi=0 → sorted[0] = -0.03 → VaR = 0.03
+        let var = calculate_historical_var(&[-0.03], 0.05);
+        assert!((var - 0.03).abs() < 1e-10, "var={var}");
+    }
+
+    // ─── Integration: new metrics in calculate_metrics ───────────────
+
+    #[test]
+    fn cvar_95_in_metrics() {
+        // Build curve with 21 returns: 2 losses, 19 gains
+        let mut values = Vec::with_capacity(21);
+        values.push(9500.0); // ret = -0.05
+        values.push(9500.0 * 0.97); // ret = -0.03
+        let mut prev = values[1];
+        for _ in 2..21 {
+            let next = prev * 1.01;
+            values.push(next);
+            prev = next;
+        }
+        let curve = make_equity_curve(&values);
+        let m = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
+        // CVaR should be >= VaR
+        assert!(
+            m.cvar_95 >= m.var_95,
+            "CVaR 95% {} should be >= VaR 95% {}",
+            m.cvar_95,
+            m.var_95
+        );
+        assert!(m.cvar_95 > 0.0, "CVaR should be positive");
+        assert!(
+            m.historical_var_95 > 0.0,
+            "Historical VaR should be positive"
         );
     }
 
