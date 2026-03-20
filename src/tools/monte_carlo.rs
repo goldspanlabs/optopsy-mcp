@@ -19,6 +19,7 @@ use crate::tools::response_types::{
 const BLOCK_SIZE: usize = 21;
 
 /// Execute Monte Carlo simulation.
+#[allow(clippy::too_many_lines, clippy::similar_names)]
 pub async fn execute(
     cache: &Arc<CachedStore>,
     symbol: &str,
@@ -29,8 +30,7 @@ pub async fn execute(
     seed: Option<u64>,
 ) -> Result<MonteCarloResponse> {
     let upper = symbol.to_uppercase();
-    let cutoff =
-        chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
+    let cutoff = chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
     let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
 
     let resp = crate::tools::raw_prices::load_and_execute(
@@ -77,8 +77,7 @@ pub async fn execute(
     let mut max_drawdowns = Vec::with_capacity(n_simulations);
 
     for _ in 0..n_simulations {
-        let (terminal, max_dd) =
-            simulate_path(&returns, horizon_days, initial_capital, &mut rng);
+        let (terminal, max_dd) = simulate_path(&returns, horizon_days, initial_capital, &mut rng);
         terminal_values.push(terminal);
         max_drawdowns.push(max_dd);
     }
@@ -94,8 +93,8 @@ pub async fn execute(
         .iter()
         .zip(labels.iter())
         .map(|(&pct, &label)| {
-            let idx =
-                ((pct / 100.0 * terminal_values.len() as f64).floor() as usize).min(terminal_values.len() - 1);
+            let idx = ((pct / 100.0 * terminal_values.len() as f64).floor() as usize)
+                .min(terminal_values.len() - 1);
             let tv = terminal_values[idx];
             MonteCarloPercentilePath {
                 label: label.to_string(),
@@ -107,18 +106,26 @@ pub async fn execute(
         .collect();
 
     // Ruin analysis
-    let prob_loss_10 =
-        terminal_values.iter().filter(|&&v| v < initial_capital * 0.9).count() as f64
-            / n_simulations as f64;
-    let prob_loss_25 =
-        terminal_values.iter().filter(|&&v| v < initial_capital * 0.75).count() as f64
-            / n_simulations as f64;
-    let prob_loss_50 =
-        terminal_values.iter().filter(|&&v| v < initial_capital * 0.5).count() as f64
-            / n_simulations as f64;
-    let prob_negative =
-        terminal_values.iter().filter(|&&v| v < initial_capital).count() as f64
-            / n_simulations as f64;
+    let prob_loss_10 = terminal_values
+        .iter()
+        .filter(|&&v| v < initial_capital * 0.9)
+        .count() as f64
+        / n_simulations as f64;
+    let prob_loss_25 = terminal_values
+        .iter()
+        .filter(|&&v| v < initial_capital * 0.75)
+        .count() as f64
+        / n_simulations as f64;
+    let prob_loss_50 = terminal_values
+        .iter()
+        .filter(|&&v| v < initial_capital * 0.5)
+        .count() as f64
+        / n_simulations as f64;
+    let prob_negative = terminal_values
+        .iter()
+        .filter(|&&v| v < initial_capital)
+        .count() as f64
+        / n_simulations as f64;
 
     let ruin_analysis = RuinAnalysis {
         prob_loss_10pct: prob_loss_10,
@@ -144,7 +151,10 @@ pub async fn execute(
 
     // Terminal histogram
     let hist = stats::histogram(
-        &terminal_values.iter().map(|v| (v - initial_capital) / initial_capital * 100.0).collect::<Vec<_>>(),
+        &terminal_values
+            .iter()
+            .map(|v| (v - initial_capital) / initial_capital * 100.0)
+            .collect::<Vec<_>>(),
         30,
     );
     let terminal_histogram: Vec<HistogramBin> = hist
@@ -189,9 +199,7 @@ pub async fn execute(
             dd_p95 * 100.0,
             dd_worst * 100.0,
         ),
-        format!(
-            "Block bootstrap with {BLOCK_SIZE}-day blocks preserves autocorrelation structure"
-        ),
+        format!("Block bootstrap with {BLOCK_SIZE}-day blocks preserves autocorrelation structure"),
     ];
 
     let suggested_next_steps = vec![
@@ -221,7 +229,7 @@ pub async fn execute(
 }
 
 /// Simulate one equity path using block bootstrap resampling.
-/// Returns (terminal_equity, max_drawdown_fraction).
+/// Returns (`terminal_equity`, `max_drawdown_fraction`).
 fn simulate_path(
     returns: &[f64],
     horizon: usize,
@@ -260,4 +268,98 @@ fn simulate_path(
     }
 
     (equity, max_dd)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::SeedableRng;
+
+    #[test]
+    fn simulate_path_zero_returns() {
+        let returns = vec![0.0; 100];
+        let mut rng = StdRng::seed_from_u64(42);
+        let (terminal, max_dd) = simulate_path(&returns, 50, 10000.0, &mut rng);
+        assert!(
+            (terminal - 10000.0).abs() < 1e-10,
+            "terminal={terminal}, expected 10000"
+        );
+        assert!(max_dd.abs() < 1e-10, "max_dd={max_dd}, expected 0");
+    }
+
+    #[test]
+    fn simulate_path_all_positive_returns() {
+        // All returns are identical (+1%), so regardless of which blocks are
+        // resampled, every day compounds at +1%. This verifies the equity
+        // compounding logic and that drawdown stays zero when equity only rises.
+        let returns = vec![0.01; 100];
+        let mut rng = StdRng::seed_from_u64(42);
+        let (terminal, max_dd) = simulate_path(&returns, 10, 10000.0, &mut rng);
+        let expected = 10000.0 * 1.01_f64.powi(10);
+        assert!(
+            (terminal - expected).abs() < 1e-6,
+            "terminal={terminal}, expected={expected}"
+        );
+        assert!(
+            max_dd.abs() < 1e-10,
+            "max_dd={max_dd}, expected 0 with only positive returns"
+        );
+    }
+
+    #[test]
+    fn simulate_path_deterministic_with_seed() {
+        let returns = vec![0.01, -0.02, 0.015, -0.005, 0.03, -0.01, 0.005, 0.02];
+        let mut rng1 = StdRng::seed_from_u64(99);
+        let mut rng2 = StdRng::seed_from_u64(99);
+        let (t1, dd1) = simulate_path(&returns, 30, 10000.0, &mut rng1);
+        let (t2, dd2) = simulate_path(&returns, 30, 10000.0, &mut rng2);
+        assert!(
+            (t1 - t2).abs() < 1e-10,
+            "same seed should produce same result"
+        );
+        assert!((dd1 - dd2).abs() < 1e-10);
+    }
+
+    #[test]
+    fn simulate_path_drawdown_tracked() {
+        // First half down, second half up
+        let returns = vec![-0.05, -0.05, -0.05, 0.10, 0.10, 0.10];
+        let mut rng = StdRng::seed_from_u64(1);
+        let (_terminal, max_dd) = simulate_path(&returns, 6, 10000.0, &mut rng);
+        assert!(max_dd > 0.0, "should detect a drawdown");
+        assert!(max_dd <= 1.0, "drawdown fraction should be <= 1");
+    }
+
+    #[test]
+    fn simulate_path_horizon_respected() {
+        // With uniform returns, the terminal value depends only on horizon length.
+        // 5 days at +1% = 1.01^5, regardless of 1000 available returns.
+        let returns = vec![0.01; 1000];
+        let mut rng = StdRng::seed_from_u64(42);
+        let (terminal, _) = simulate_path(&returns, 5, 10000.0, &mut rng);
+        let expected = 10000.0 * 1.01_f64.powi(5);
+        assert!(
+            (terminal - expected).abs() < 1e-6,
+            "terminal={terminal}, expected ~{expected}"
+        );
+    }
+
+    #[test]
+    fn simulate_path_block_resampling_shuffles() {
+        // With non-uniform returns, different seeds should produce different
+        // terminal values, confirming that block resampling actually randomizes.
+        let returns = vec![
+            0.05, -0.03, 0.02, -0.01, 0.04, -0.02, 0.01, 0.03, -0.04, 0.02, 0.01, -0.01, 0.03,
+            -0.02, 0.05, -0.03, 0.02, 0.01, -0.01, 0.04, -0.02, 0.03, 0.01, -0.03, 0.02, -0.01,
+            0.04, 0.01, -0.02, 0.03,
+        ];
+        let mut rng1 = StdRng::seed_from_u64(1);
+        let mut rng2 = StdRng::seed_from_u64(999);
+        let (t1, _) = simulate_path(&returns, 60, 10000.0, &mut rng1);
+        let (t2, _) = simulate_path(&returns, 60, 10000.0, &mut rng2);
+        assert!(
+            (t1 - t2).abs() > 1e-6,
+            "different seeds should produce different paths: t1={t1}, t2={t2}"
+        );
+    }
 }

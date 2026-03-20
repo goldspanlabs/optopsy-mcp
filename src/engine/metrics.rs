@@ -119,7 +119,7 @@ struct EquityMetrics {
     max_drawdown_duration: usize,
 }
 
-/// Compute equity-curve-derived metrics (Sharpe, Sortino, max DD, `VaR`, CVaR, total return, CAGR, Calmar, drawdown stats).
+/// Compute equity-curve-derived metrics (Sharpe, Sortino, max DD, `VaR`, `CVaR`, total return, CAGR, Calmar, drawdown stats).
 /// Assumes `equity_curve.len() >= 2`.
 fn compute_equity_metrics(
     equity_curve: &[EquityPoint],
@@ -427,9 +427,9 @@ fn calculate_drawdown_stats(equity_curve: &[EquityPoint], initial_capital: f64) 
 
 /// Calculate Conditional Value at Risk (Expected Shortfall) at a given confidence level.
 ///
-/// CVaR is the expected loss given that we are in the tail beyond VaR.
-/// For a 5% confidence level, CVaR = mean of the worst 5% of returns.
-/// This is more conservative than VaR and better captures tail risk for
+/// `CVaR` is the expected loss given that we are in the tail beyond `VaR`.
+/// For a 5% confidence level, `CVaR` = mean of the worst 5% of returns.
+/// This is more conservative than `VaR` and better captures tail risk for
 /// fat-tailed distributions common in options strategies.
 #[allow(
     clippy::cast_precision_loss,
@@ -450,9 +450,9 @@ fn calculate_cvar(returns: &[f64], confidence: f64) -> f64 {
     -tail_mean // Report as positive number like VaR
 }
 
-/// Calculate historical (non-parametric) VaR using linear interpolation.
+/// Calculate historical (non-parametric) `VaR` using linear interpolation.
 ///
-/// Unlike the parametric VaR which floors the index, this uses proper
+/// Unlike the parametric `VaR` which floors the index, this uses proper
 /// linear interpolation between order statistics for a smoother estimate.
 #[allow(
     clippy::cast_precision_loss,
@@ -977,6 +977,109 @@ mod tests {
             (m.var_95 - 0.03).abs() < 1e-10,
             "VaR 95%: expected 0.03, got {}",
             m.var_95
+        );
+    }
+
+    // ─── CVaR / Expected Shortfall ──────────────────────────────────
+
+    #[test]
+    fn cvar_empty_returns_zero() {
+        assert!((calculate_cvar(&[], 0.05) - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn cvar_single_return() {
+        // One return: tail is that single value
+        assert!((calculate_cvar(&[-0.05], 0.05) - 0.05).abs() < 1e-10);
+    }
+
+    #[test]
+    fn cvar_known_distribution() {
+        // Returns: [-0.10, -0.05, -0.02, 0.01, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08]
+        // Sorted: [-0.10, -0.05, -0.02, 0.01, ...]
+        // 5% of 10 = 0.5, ceil = 1 → tail = [-0.10] → CVaR = 0.10
+        let returns = vec![
+            -0.10, -0.05, -0.02, 0.01, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08,
+        ];
+        let cvar = calculate_cvar(&returns, 0.05);
+        assert!((cvar - 0.10).abs() < 1e-10, "cvar={cvar}");
+    }
+
+    #[test]
+    fn cvar_larger_tail() {
+        // 20% of 10 = 2 → tail = [-0.10, -0.05] → mean = -0.075 → CVaR = 0.075
+        let returns = vec![
+            -0.10, -0.05, -0.02, 0.01, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08,
+        ];
+        let cvar = calculate_cvar(&returns, 0.20);
+        assert!((cvar - 0.075).abs() < 1e-10, "cvar={cvar}");
+    }
+
+    #[test]
+    fn cvar_gte_var() {
+        // CVaR should always be >= VaR (it includes the tail beyond VaR)
+        let returns = vec![
+            -0.10, -0.05, -0.02, 0.01, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08,
+        ];
+        let var = calculate_var(&returns, 0.05);
+        let cvar = calculate_cvar(&returns, 0.05);
+        assert!(cvar >= var, "cvar={cvar} should be >= var={var}");
+    }
+
+    // ─── Historical VaR ─────────────────────────────────────────────
+
+    #[test]
+    fn historical_var_empty_returns_zero() {
+        assert!((calculate_historical_var(&[], 0.05) - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn historical_var_interpolation() {
+        // 10 returns sorted: [-0.10, -0.05, -0.02, 0.01, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08]
+        // pos = 0.05 * 9 = 0.45, lo=0, hi=1, frac=0.45
+        // interpolated = -0.10 + 0.45 * (-0.05 - (-0.10)) = -0.10 + 0.45*0.05 = -0.0775
+        // VaR = 0.0775
+        let returns = vec![
+            -0.10, -0.05, -0.02, 0.01, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08,
+        ];
+        let var = calculate_historical_var(&returns, 0.05);
+        assert!((var - 0.0775).abs() < 1e-10, "var={var}");
+    }
+
+    #[test]
+    fn historical_var_single_return() {
+        // pos = 0.05 * 0 = 0, lo=0, hi=0 → sorted[0] = -0.03 → VaR = 0.03
+        let var = calculate_historical_var(&[-0.03], 0.05);
+        assert!((var - 0.03).abs() < 1e-10, "var={var}");
+    }
+
+    // ─── Integration: new metrics in calculate_metrics ───────────────
+
+    #[test]
+    fn cvar_95_in_metrics() {
+        // Build curve with 21 returns: 2 losses, 19 gains
+        let mut values = Vec::with_capacity(21);
+        values.push(9500.0); // ret = -0.05
+        values.push(9500.0 * 0.97); // ret = -0.03
+        let mut prev = values[1];
+        for _ in 2..21 {
+            let next = prev * 1.01;
+            values.push(next);
+            prev = next;
+        }
+        let curve = make_equity_curve(&values);
+        let m = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
+        // CVaR should be >= VaR
+        assert!(
+            m.cvar_95 >= m.var_95,
+            "CVaR 95% {} should be >= VaR 95% {}",
+            m.cvar_95,
+            m.var_95
+        );
+        assert!(m.cvar_95 > 0.0, "CVaR should be positive");
+        assert!(
+            m.historical_var_95 > 0.0,
+            "Historical VaR should be positive"
         );
     }
 

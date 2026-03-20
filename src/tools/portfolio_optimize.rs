@@ -15,6 +15,7 @@ use crate::tools::response_types::{
 const DEFAULT_METHODS: &[&str] = &["risk_parity", "min_variance", "max_sharpe"];
 
 /// Execute portfolio optimization.
+#[allow(clippy::too_many_lines)]
 pub async fn execute(
     cache: &Arc<CachedStore>,
     symbols: &[String],
@@ -22,8 +23,7 @@ pub async fn execute(
     years: u32,
     risk_free_rate: f64,
 ) -> Result<PortfolioOptimizeResponse> {
-    let cutoff =
-        chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
+    let cutoff = chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
     let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
 
     // Load returns for all symbols
@@ -58,7 +58,10 @@ pub async fn execute(
             .collect();
 
         if returns.len() < 30 {
-            anyhow::bail!("Insufficient data for {upper}: {} observations (need 30)", returns.len());
+            anyhow::bail!(
+                "Insufficient data for {upper}: {} observations (need 30)",
+                returns.len()
+            );
         }
 
         all_returns.push(returns);
@@ -143,9 +146,10 @@ pub async fn execute(
         .collect();
 
     // Run requested optimization methods
-    let method_list: Vec<&str> = methods
-        .map(|m| m.iter().map(String::as_str).collect())
-        .unwrap_or_else(|| DEFAULT_METHODS.to_vec());
+    let method_list: Vec<&str> = methods.map_or_else(
+        || DEFAULT_METHODS.to_vec(),
+        |m| m.iter().map(String::as_str).collect(),
+    );
 
     let mut optimizations = Vec::new();
 
@@ -193,13 +197,11 @@ pub async fn execute(
     }
 
     // Summary
-    let best = optimizations
-        .iter()
-        .max_by(|a, b| {
-            a.expected_sharpe
-                .partial_cmp(&b.expected_sharpe)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+    let best = optimizations.iter().max_by(|a, b| {
+        a.expected_sharpe
+            .partial_cmp(&b.expected_sharpe)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let summary = format!(
         "Portfolio optimization for {} assets over {} observations. \
@@ -319,7 +321,7 @@ fn min_variance_weights(cov: &[Vec<f64>]) -> Vec<f64> {
 }
 
 /// Maximum Sharpe ratio portfolio (tangency portfolio):
-/// w* = (Σ^{-1} * (μ - r_f)) / (1' * Σ^{-1} * (μ - r_f))
+/// `w* = (Σ^{-1} * (μ - r_f)) / (1' * Σ^{-1} * (μ - r_f))`
 fn max_sharpe_weights(expected_returns: &[f64], cov: &[Vec<f64>], risk_free: f64) -> Vec<f64> {
     let n = cov.len();
     let excess: Vec<f64> = expected_returns.iter().map(|r| r - risk_free).collect();
@@ -346,5 +348,152 @@ fn max_sharpe_weights(expected_returns: &[f64], cov: &[Vec<f64>], risk_free: f64
             }
         }
         None => vec![1.0 / n as f64; n],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─── portfolio_volatility ────────────────────────────────────────
+
+    #[test]
+    fn portfolio_vol_single_asset() {
+        let cov = vec![vec![0.04]]; // vol = 0.2
+        let weights = vec![1.0];
+        let vol = portfolio_volatility(&weights, &cov);
+        assert!((vol - 0.2).abs() < 1e-10, "vol={vol}");
+    }
+
+    #[test]
+    fn portfolio_vol_equal_weight_uncorrelated() {
+        // Two uncorrelated assets with var=0.04 each, equal weight
+        // port_var = 0.5^2 * 0.04 + 0.5^2 * 0.04 = 0.02
+        let cov = vec![vec![0.04, 0.0], vec![0.0, 0.04]];
+        let weights = vec![0.5, 0.5];
+        let vol = portfolio_volatility(&weights, &cov);
+        let expected = 0.02_f64.sqrt();
+        assert!(
+            (vol - expected).abs() < 1e-10,
+            "vol={vol}, expected={expected}"
+        );
+    }
+
+    #[test]
+    fn portfolio_vol_perfectly_correlated() {
+        // Two assets perfectly correlated, same vol (0.2)
+        let cov = vec![vec![0.04, 0.04], vec![0.04, 0.04]];
+        let weights = vec![0.5, 0.5];
+        let vol = portfolio_volatility(&weights, &cov);
+        assert!((vol - 0.2).abs() < 1e-10, "vol={vol}");
+    }
+
+    // ─── risk_parity_weights ─────────────────────────────────────────
+
+    #[test]
+    fn risk_parity_equal_vol_equal_weights() {
+        let cov = vec![vec![0.04, 0.0], vec![0.0, 0.04]];
+        let w = risk_parity_weights(&cov);
+        assert!((w[0] - 0.5).abs() < 1e-10, "w0={}", w[0]);
+        assert!((w[1] - 0.5).abs() < 1e-10, "w1={}", w[1]);
+    }
+
+    #[test]
+    fn risk_parity_unequal_vol() {
+        // Asset 1: vol=0.2, Asset 2: vol=0.4
+        // inv_vol: [5, 2.5], total=7.5 → weights [2/3, 1/3]
+        let cov = vec![vec![0.04, 0.0], vec![0.0, 0.16]];
+        let w = risk_parity_weights(&cov);
+        assert!((w[0] - 2.0 / 3.0).abs() < 1e-10, "w0={}", w[0]);
+        assert!((w[1] - 1.0 / 3.0).abs() < 1e-10, "w1={}", w[1]);
+    }
+
+    #[test]
+    fn risk_parity_sums_to_one() {
+        let cov = vec![
+            vec![0.04, 0.01, 0.005],
+            vec![0.01, 0.09, 0.02],
+            vec![0.005, 0.02, 0.16],
+        ];
+        let w = risk_parity_weights(&cov);
+        let sum: f64 = w.iter().sum();
+        assert!((sum - 1.0).abs() < 1e-10, "sum={sum}");
+    }
+
+    // ─── min_variance_weights ────────────────────────────────────────
+
+    #[test]
+    fn min_variance_uncorrelated_equal_vol() {
+        let cov = vec![vec![0.04, 0.0], vec![0.0, 0.04]];
+        let w = min_variance_weights(&cov);
+        assert!((w[0] - 0.5).abs() < 1e-6, "w0={}", w[0]);
+        assert!((w[1] - 0.5).abs() < 1e-6, "w1={}", w[1]);
+    }
+
+    #[test]
+    fn min_variance_sums_to_one() {
+        let cov = vec![
+            vec![0.04, 0.01, 0.005],
+            vec![0.01, 0.09, 0.02],
+            vec![0.005, 0.02, 0.16],
+        ];
+        let w = min_variance_weights(&cov);
+        let sum: f64 = w.iter().sum();
+        assert!((sum - 1.0).abs() < 1e-6, "sum={sum}");
+    }
+
+    #[test]
+    fn min_variance_no_negative_weights() {
+        let cov = vec![
+            vec![0.04, 0.01, 0.005],
+            vec![0.01, 0.09, 0.02],
+            vec![0.005, 0.02, 0.16],
+        ];
+        let w = min_variance_weights(&cov);
+        for (i, &wi) in w.iter().enumerate() {
+            assert!(wi >= 0.0, "w[{i}]={wi} is negative");
+        }
+    }
+
+    #[test]
+    fn min_variance_prefers_low_vol_asset() {
+        let cov = vec![vec![0.01, 0.0], vec![0.0, 0.16]];
+        let w = min_variance_weights(&cov);
+        assert!(w[0] > w[1], "w0={} should be > w1={}", w[0], w[1]);
+    }
+
+    // ─── max_sharpe_weights ──────────────────────────────────────────
+
+    #[test]
+    fn max_sharpe_sums_to_one() {
+        let returns = vec![0.10, 0.15, 0.08];
+        let cov = vec![
+            vec![0.04, 0.01, 0.005],
+            vec![0.01, 0.09, 0.02],
+            vec![0.005, 0.02, 0.16],
+        ];
+        let w = max_sharpe_weights(&returns, &cov, 0.02);
+        let sum: f64 = w.iter().sum();
+        assert!((sum - 1.0).abs() < 1e-6, "sum={sum}");
+    }
+
+    #[test]
+    fn max_sharpe_no_negative_weights() {
+        let returns = vec![0.10, 0.15];
+        let cov = vec![vec![0.04, 0.01], vec![0.01, 0.09]];
+        let w = max_sharpe_weights(&returns, &cov, 0.02);
+        for (i, &wi) in w.iter().enumerate() {
+            assert!(wi >= 0.0, "w[{i}]={wi}");
+        }
+    }
+
+    #[test]
+    fn max_sharpe_favors_high_sharpe_asset() {
+        // Asset 1: return=0.20, vol=0.20 → Sharpe=0.90
+        // Asset 2: return=0.10, vol=0.30 → Sharpe=0.27
+        let returns = vec![0.20, 0.10];
+        let cov = vec![vec![0.04, 0.005], vec![0.005, 0.09]];
+        let w = max_sharpe_weights(&returns, &cov, 0.02);
+        assert!(w[0] > w[1], "w0={} should be > w1={}", w[0], w[1]);
     }
 }

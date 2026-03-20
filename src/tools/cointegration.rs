@@ -14,6 +14,7 @@ use crate::tools::response_types::{
 };
 
 /// Execute the cointegration test.
+#[allow(clippy::too_many_lines)]
 pub async fn execute(
     cache: &Arc<CachedStore>,
     symbol_a: &str,
@@ -22,8 +23,7 @@ pub async fn execute(
 ) -> Result<CointegrationResponse> {
     let upper_a = symbol_a.to_uppercase();
     let upper_b = symbol_b.to_uppercase();
-    let cutoff =
-        chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
+    let cutoff = chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
     let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
 
     // Load both price series
@@ -93,8 +93,11 @@ pub async fn execute(
     // Spread statistics
     let spread_mean = spread.iter().sum::<f64>() / spread.len() as f64;
     let spread_std = {
-        let variance =
-            spread.iter().map(|s| (s - spread_mean).powi(2)).sum::<f64>() / (n - 1) as f64;
+        let variance = spread
+            .iter()
+            .map(|s| (s - spread_mean).powi(2))
+            .sum::<f64>()
+            / (n - 1) as f64;
         variance.sqrt()
     };
     let current_spread = *spread.last().unwrap_or(&0.0);
@@ -256,6 +259,7 @@ pub async fn execute(
 }
 
 /// OLS regression: y = alpha + beta * x. Returns (intercept, slope, R²).
+#[allow(clippy::similar_names)]
 fn ols_regression(x: &[f64], y: &[f64]) -> (f64, f64, f64) {
     let n = x.len() as f64;
     let sum_x: f64 = x.iter().sum();
@@ -291,8 +295,10 @@ fn ols_regression(x: &[f64], y: &[f64]) -> (f64, f64, f64) {
 /// Augmented Dickey-Fuller test for stationarity.
 ///
 /// Tests H0: series has a unit root (non-stationary) vs H1: stationary.
+#[allow(clippy::doc_markdown)]
 /// Uses a simple ADF(1) specification: Δy_t = a + γ * y_{t-1} + δ * Δy_{t-1} + ε_t
 /// and compares the t-statistic of γ to MacKinnon critical values.
+#[allow(clippy::similar_names)]
 fn adf_test(series: &[f64]) -> AdfTestResult {
     let n = series.len();
     if n < 10 {
@@ -368,7 +374,7 @@ fn adf_test(series: &[f64]) -> AdfTestResult {
 
     // Variance of gamma is sigma^2 * (X'X)^{-1}[1,1]
     let xtx_inv = invert_3x3(&xtx);
-    let var_gamma = sigma_sq * xtx_inv[1 * k + 1];
+    let var_gamma = sigma_sq * xtx_inv[k + 1];
     let se_gamma = var_gamma.abs().sqrt();
 
     let t_stat = if se_gamma > 0.0 {
@@ -399,24 +405,20 @@ fn adf_test(series: &[f64]) -> AdfTestResult {
 
 /// Solve a 3x3 linear system Ax = b using Cramer's rule.
 fn solve_3x3(a: &[f64], b: &[f64]) -> Vec<f64> {
-    let det = a[0] * (a[4] * a[8] - a[5] * a[7])
-        - a[1] * (a[3] * a[8] - a[5] * a[6])
+    let det = a[0] * (a[4] * a[8] - a[5] * a[7]) - a[1] * (a[3] * a[8] - a[5] * a[6])
         + a[2] * (a[3] * a[7] - a[4] * a[6]);
 
     if det.abs() < 1e-15 {
         return vec![0.0; 3];
     }
 
-    let d1 = b[0] * (a[4] * a[8] - a[5] * a[7])
-        - a[1] * (b[1] * a[8] - a[5] * b[2])
+    let d1 = b[0] * (a[4] * a[8] - a[5] * a[7]) - a[1] * (b[1] * a[8] - a[5] * b[2])
         + a[2] * (b[1] * a[7] - a[4] * b[2]);
 
-    let d2 = a[0] * (b[1] * a[8] - a[5] * b[2])
-        - b[0] * (a[3] * a[8] - a[5] * a[6])
+    let d2 = a[0] * (b[1] * a[8] - a[5] * b[2]) - b[0] * (a[3] * a[8] - a[5] * a[6])
         + a[2] * (a[3] * b[2] - b[1] * a[6]);
 
-    let d3 = a[0] * (a[4] * b[2] - b[1] * a[7])
-        - a[1] * (a[3] * b[2] - b[1] * a[6])
+    let d3 = a[0] * (a[4] * b[2] - b[1] * a[7]) - a[1] * (a[3] * b[2] - b[1] * a[6])
         + b[0] * (a[3] * a[7] - a[4] * a[6]);
 
     vec![d1 / det, d2 / det, d3 / det]
@@ -424,8 +426,7 @@ fn solve_3x3(a: &[f64], b: &[f64]) -> Vec<f64> {
 
 /// Invert a 3x3 matrix stored as a flat 9-element array.
 fn invert_3x3(a: &[f64]) -> Vec<f64> {
-    let det = a[0] * (a[4] * a[8] - a[5] * a[7])
-        - a[1] * (a[3] * a[8] - a[5] * a[6])
+    let det = a[0] * (a[4] * a[8] - a[5] * a[7]) - a[1] * (a[3] * a[8] - a[5] * a[6])
         + a[2] * (a[3] * a[7] - a[4] * a[6]);
 
     if det.abs() < 1e-15 {
@@ -446,7 +447,7 @@ fn invert_3x3(a: &[f64]) -> Vec<f64> {
     ]
 }
 
-/// Approximate ADF p-value using MacKinnon (1994) response surface.
+/// Approximate ADF p-value using `MacKinnon` (1994) response surface.
 /// This is a simplified interpolation for the "constant, no trend" case.
 fn approximate_adf_pvalue(t_stat: f64, _n_obs: usize) -> f64 {
     // Simplified lookup based on MacKinnon critical values:
@@ -480,8 +481,10 @@ fn approximate_adf_pvalue(t_stat: f64, _n_obs: usize) -> f64 {
 
 /// Compute the half-life of mean reversion from an AR(1) model on the spread.
 ///
-/// Fits: spread_t = phi * spread_{t-1} + epsilon_t
+#[allow(clippy::doc_markdown)]
+/// Fits: `spread_t` = phi * `spread_{t-1}` + `epsilon_t`
 /// Half-life = -ln(2) / ln(phi) days (only defined when 0 < phi < 1).
+#[allow(clippy::similar_names)]
 fn compute_half_life(spread: &[f64]) -> Option<f64> {
     if spread.len() < 10 {
         return None;
@@ -510,5 +513,237 @@ fn compute_half_life(spread: &[f64]) -> Option<f64> {
         Some(-2.0_f64.ln() / phi.ln())
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─── ols_regression ─────────────────────────────────────────────
+
+    #[test]
+    fn ols_perfect_linear() {
+        // y = 2 + 3*x → intercept=2, slope=3, R²=1
+        let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let y: Vec<f64> = x.iter().map(|xi| 2.0 + 3.0 * xi).collect();
+        let (alpha, beta, r2) = ols_regression(&x, &y);
+        assert!((alpha - 2.0).abs() < 1e-10, "intercept={alpha}");
+        assert!((beta - 3.0).abs() < 1e-10, "slope={beta}");
+        assert!((r2 - 1.0).abs() < 1e-10, "R²={r2}");
+    }
+
+    #[test]
+    fn ols_with_noise() {
+        // x=[1,2,3,4,5], y=[3,5,8,9,11] (perfect y=1+2x would be [3,5,7,9,11])
+        // Exact OLS: alpha=1.2, beta=2.0, R²=0.98039...
+        let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let y = vec![3.0, 5.0, 8.0, 9.0, 11.0];
+        let (alpha, beta, r2) = ols_regression(&x, &y);
+        assert!((beta - 2.0).abs() < 1e-10, "slope={beta}");
+        assert!((alpha - 1.2).abs() < 1e-10, "intercept={alpha}");
+        assert!((r2 - 50.0 / 51.0).abs() < 1e-10, "R²={r2}");
+    }
+
+    #[test]
+    fn ols_flat_x_returns_zero_slope() {
+        let x = vec![5.0; 10];
+        let y = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
+        let (_alpha, beta, _r2) = ols_regression(&x, &y);
+        assert!((beta - 0.0).abs() < 1e-10);
+    }
+
+    // ─── solve_3x3 ──────────────────────────────────────────────────
+
+    #[test]
+    fn solve_3x3_identity() {
+        // I * x = b → x = b
+        let a = vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+        let b = vec![3.0, 7.0, 11.0];
+        let x = solve_3x3(&a, &b);
+        assert!((x[0] - 3.0).abs() < 1e-10);
+        assert!((x[1] - 7.0).abs() < 1e-10);
+        assert!((x[2] - 11.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn solve_3x3_known_system() {
+        // Use solve_3x3 then verify A*x = b
+        let a = vec![2.0, 1.0, -1.0, 1.0, 3.0, 2.0, 1.0, -1.0, 1.0];
+        let b = vec![1.0, 13.0, 2.0];
+        let x = solve_3x3(&a, &b);
+        // Verify: A*x should equal b
+        for row in 0..3 {
+            let mut sum = 0.0;
+            for col in 0..3 {
+                sum += a[row * 3 + col] * x[col];
+            }
+            assert!(
+                (sum - b[row]).abs() < 1e-10,
+                "row {row}: A*x={sum}, b={}",
+                b[row]
+            );
+        }
+    }
+
+    #[test]
+    fn solve_3x3_singular_returns_zeros() {
+        let a = vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        let b = vec![1.0, 2.0, 3.0];
+        let x = solve_3x3(&a, &b);
+        assert!(x.iter().all(|v| v.abs() < 1e-10));
+    }
+
+    // ─── invert_3x3 ─────────────────────────────────────────────────
+
+    #[test]
+    fn invert_3x3_identity() {
+        let a = vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+        let inv = invert_3x3(&a);
+        for i in 0..3 {
+            for j in 0..3 {
+                let expected = if i == j { 1.0 } else { 0.0 };
+                assert!(
+                    (inv[i * 3 + j] - expected).abs() < 1e-10,
+                    "inv[{i}][{j}]={}",
+                    inv[i * 3 + j]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn invert_3x3_roundtrip() {
+        let a = vec![2.0, 1.0, -1.0, 1.0, 3.0, 2.0, 1.0, -1.0, 1.0];
+        let inv = invert_3x3(&a);
+        // A * A^{-1} should be I
+        for i in 0..3 {
+            for j in 0..3 {
+                let mut sum = 0.0;
+                for k in 0..3 {
+                    sum += a[i * 3 + k] * inv[k * 3 + j];
+                }
+                let expected = if i == j { 1.0 } else { 0.0 };
+                assert!((sum - expected).abs() < 1e-10, "A*inv[{i}][{j}]={sum}");
+            }
+        }
+    }
+
+    // ─── approximate_adf_pvalue ──────────────────────────────────────
+
+    #[test]
+    fn adf_pvalue_very_negative_t_stat() {
+        let p = approximate_adf_pvalue(-5.0, 100);
+        assert!(p < 0.01, "p={p} should be <0.01 for very negative t");
+    }
+
+    #[test]
+    fn adf_pvalue_moderate_t_stat() {
+        let p = approximate_adf_pvalue(-3.0, 100);
+        assert!(p > 0.01 && p < 0.10, "p={p} for t=-3.0");
+    }
+
+    #[test]
+    fn adf_pvalue_near_zero_t_stat() {
+        let p = approximate_adf_pvalue(-0.5, 100);
+        assert!(p > 0.30, "p={p} should be >0.30 for t=-0.5");
+    }
+
+    #[test]
+    fn adf_pvalue_positive_t_stat() {
+        let p = approximate_adf_pvalue(2.0, 100);
+        assert!(p > 0.50, "p={p} should be >0.50 for positive t");
+    }
+
+    #[test]
+    fn adf_pvalue_clamped() {
+        let p1 = approximate_adf_pvalue(-10.0, 100);
+        let p2 = approximate_adf_pvalue(100.0, 100);
+        assert!(p1 >= 0.0001, "p={p1} should be >=0.0001");
+        assert!(p2 <= 0.9999, "p={p2} should be <=0.9999");
+    }
+
+    // ─── adf_test ────────────────────────────────────────────────────
+
+    #[test]
+    fn adf_test_short_series_not_stationary() {
+        let series = vec![1.0; 5];
+        let result = adf_test(&series);
+        assert!(!result.is_stationary);
+        assert_eq!(result.p_value, 1.0);
+    }
+
+    #[test]
+    fn adf_test_stationary_mean_reverting() {
+        // Construct a strongly mean-reverting series: x_t = 0.3 * x_{t-1} + noise
+        let mut rng = 42u64;
+        let mut series = vec![0.0_f64; 200];
+        for i in 1..200 {
+            rng = rng.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let noise = ((rng >> 33) as f64 / f64::from(u32::MAX) - 0.5) * 0.1;
+            series[i] = 0.3 * series[i - 1] + noise;
+        }
+        let result = adf_test(&series);
+        assert!(
+            result.statistic < -2.0,
+            "t-stat={} should be very negative for stationary series",
+            result.statistic
+        );
+        assert!(
+            result.is_stationary,
+            "mean-reverting series should be stationary"
+        );
+    }
+
+    #[test]
+    fn adf_test_random_walk_not_stationary() {
+        // Random walk: x_t = x_{t-1} + noise (unit root)
+        let mut rng = 123u64;
+        let mut series = vec![100.0_f64; 200];
+        for i in 1..200 {
+            rng = rng.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let noise = ((rng >> 33) as f64 / f64::from(u32::MAX) - 0.5) * 0.5;
+            series[i] = series[i - 1] + noise;
+        }
+        let result = adf_test(&series);
+        // t-stat should be near zero or mildly negative (fail to reject unit root)
+        assert!(
+            result.statistic > -2.86,
+            "t-stat={} should not reject unit root for random walk",
+            result.statistic
+        );
+    }
+
+    // ─── compute_half_life ───────────────────────────────────────────
+
+    #[test]
+    fn half_life_short_series_returns_none() {
+        assert!(compute_half_life(&[1.0; 5]).is_none());
+    }
+
+    #[test]
+    fn half_life_mean_reverting_positive() {
+        // phi=0.5 → half-life = -ln(2)/ln(0.5) = 1.0
+        // Build series: x_t = 0.5 * x_{t-1}
+        let mut series = vec![10.0];
+        for i in 1..50 {
+            series.push(0.5 * series[i - 1]);
+        }
+        let hl = compute_half_life(&series);
+        assert!(hl.is_some(), "should have half-life");
+        let hl = hl.unwrap();
+        assert!(
+            (hl - 1.0).abs() < 0.1,
+            "half-life={hl:.4}, expected ~1.0 for phi=0.5"
+        );
+    }
+
+    #[test]
+    fn half_life_unit_root_returns_none() {
+        // phi ~ 1 → no mean reversion
+        let series: Vec<f64> = (0..50).map(|i| 100.0 + f64::from(i) * 0.1).collect();
+        let hl = compute_half_life(&series);
+        // phi should be >= 1 for a trending series → None
+        assert!(hl.is_none(), "trending series should have no half-life");
     }
 }

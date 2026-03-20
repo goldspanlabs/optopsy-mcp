@@ -994,11 +994,11 @@ pub struct PerformanceMetrics {
     pub calmar: f64,
     /// Value at Risk at the 95% confidence level (5th percentile of daily returns).
     pub var_95: f64,
-    /// Conditional Value at Risk (Expected Shortfall) at 95% — mean loss beyond VaR.
-    /// More conservative than VaR for fat-tailed distributions (options strategies).
+    /// Conditional Value at Risk (Expected Shortfall) at 95% — mean loss beyond `VaR`.
+    /// More conservative than `VaR` for fat-tailed distributions (options strategies).
     #[serde(default)]
     pub cvar_95: f64,
-    /// Historical (non-parametric) VaR at 95% — uses empirical percentile without
+    /// Historical (non-parametric) `VaR` at 95% — uses empirical percentile without
     /// assuming normality.
     #[serde(default)]
     pub historical_var_95: f64,

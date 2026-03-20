@@ -11,6 +11,7 @@ use crate::data::cache::CachedStore;
 use crate::tools::response_types::BenchmarkAnalysisResponse;
 
 /// Execute benchmark-relative analysis.
+#[allow(clippy::too_many_lines)]
 pub async fn execute(
     cache: &Arc<CachedStore>,
     symbol: &str,
@@ -19,8 +20,7 @@ pub async fn execute(
 ) -> Result<BenchmarkAnalysisResponse> {
     let upper = symbol.to_uppercase();
     let bench_upper = benchmark.to_uppercase();
-    let cutoff =
-        chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
+    let cutoff = chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
     let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
 
     // Load both return series
@@ -30,9 +30,7 @@ pub async fn execute(
     // Align to minimum length from end
     let min_len = asset_returns.len().min(bench_returns.len());
     if min_len < 30 {
-        anyhow::bail!(
-            "Insufficient aligned observations: {min_len} (need at least 30)"
-        );
+        anyhow::bail!("Insufficient aligned observations: {min_len} (need at least 30)");
     }
 
     let asset_ret = &asset_returns[asset_returns.len() - min_len..];
@@ -50,11 +48,7 @@ pub async fn execute(
         .sum::<f64>()
         / (n - 1) as f64;
 
-    let var_b: f64 = bench_ret
-        .iter()
-        .map(|b| (b - mean_b).powi(2))
-        .sum::<f64>()
-        / (n - 1) as f64;
+    let var_b: f64 = bench_ret.iter().map(|b| (b - mean_b).powi(2)).sum::<f64>() / (n - 1) as f64;
 
     let beta = if var_b > 0.0 { cov_ab / var_b } else { 0.0 };
     let alpha_daily = mean_a - beta * mean_b;
@@ -68,12 +62,19 @@ pub async fn execute(
         let resid = a - predicted;
         sse += resid * resid;
     }
-    let r_squared = if ss_tot > 0.0 { 1.0 - sse / ss_tot } else { 0.0 };
+    let r_squared = if ss_tot > 0.0 {
+        1.0 - sse / ss_tot
+    } else {
+        0.0
+    };
 
     // Alpha significance
     let sigma_sq = sse / (n - 2) as f64;
     let sum_b_sq: f64 = bench_ret.iter().map(|b| b.powi(2)).sum();
-    let var_alpha = sigma_sq * (1.0 / n as f64 + mean_b.powi(2) * n as f64 / (n as f64 * sum_b_sq - bench_ret.iter().sum::<f64>().powi(2)));
+    let var_alpha = sigma_sq
+        * (1.0 / n as f64
+            + mean_b.powi(2) * n as f64
+                / (n as f64 * sum_b_sq - bench_ret.iter().sum::<f64>().powi(2)));
     let alpha_se = var_alpha.abs().sqrt();
     let alpha_t_stat = if alpha_se > 0.0 {
         alpha_daily / alpha_se
@@ -245,8 +246,8 @@ async fn load_returns(
 
 /// Compute up and down capture ratios.
 ///
-/// Up capture = mean(asset_ret | bench > 0) / mean(bench_ret | bench > 0)
-/// Down capture = mean(asset_ret | bench < 0) / mean(bench_ret | bench < 0)
+/// Up capture = `mean(asset_ret | bench > 0) / mean(bench_ret | bench > 0)`
+/// Down capture = `mean(asset_ret | bench < 0) / mean(bench_ret | bench < 0)`
 fn compute_capture_ratios(asset: &[f64], bench: &[f64]) -> (f64, f64) {
     let mut up_asset = Vec::new();
     let mut up_bench = Vec::new();
@@ -263,7 +264,9 @@ fn compute_capture_ratios(asset: &[f64], bench: &[f64]) -> (f64, f64) {
         }
     }
 
-    let up_capture = if !up_bench.is_empty() {
+    let up_capture = if up_bench.is_empty() {
+        1.0
+    } else {
         let mean_up_asset = up_asset.iter().sum::<f64>() / up_asset.len() as f64;
         let mean_up_bench = up_bench.iter().sum::<f64>() / up_bench.len() as f64;
         if mean_up_bench.abs() > 1e-15 {
@@ -271,11 +274,11 @@ fn compute_capture_ratios(asset: &[f64], bench: &[f64]) -> (f64, f64) {
         } else {
             1.0
         }
-    } else {
-        1.0
     };
 
-    let down_capture = if !down_bench.is_empty() {
+    let down_capture = if down_bench.is_empty() {
+        1.0
+    } else {
         let mean_down_asset = down_asset.iter().sum::<f64>() / down_asset.len() as f64;
         let mean_down_bench = down_bench.iter().sum::<f64>() / down_bench.len() as f64;
         if mean_down_bench.abs() > 1e-15 {
@@ -283,9 +286,90 @@ fn compute_capture_ratios(asset: &[f64], bench: &[f64]) -> (f64, f64) {
         } else {
             1.0
         }
-    } else {
-        1.0
     };
 
     (up_capture, down_capture)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capture_ratios_perfect_tracking() {
+        // Asset exactly matches benchmark → up=1.0, down=1.0
+        let bench = vec![0.01, -0.02, 0.015, -0.005, 0.03, -0.01];
+        let asset = bench.clone();
+        let (up, down) = compute_capture_ratios(&asset, &bench);
+        assert!((up - 1.0).abs() < 1e-10, "up={up}");
+        assert!((down - 1.0).abs() < 1e-10, "down={down}");
+    }
+
+    #[test]
+    fn capture_ratios_double_returns() {
+        // Asset = 2x benchmark → up=2.0, down=2.0
+        let bench = vec![0.01, -0.02, 0.015, -0.005, 0.03, -0.01];
+        let asset: Vec<f64> = bench.iter().map(|b| b * 2.0).collect();
+        let (up, down) = compute_capture_ratios(&asset, &bench);
+        assert!((up - 2.0).abs() < 1e-10, "up={up}");
+        assert!((down - 2.0).abs() < 1e-10, "down={down}");
+    }
+
+    #[test]
+    fn capture_ratios_inverse_asset() {
+        // Asset moves opposite to benchmark
+        let bench = vec![0.01, -0.02, 0.015, -0.005];
+        let asset: Vec<f64> = bench.iter().map(|b| -b).collect();
+        let (up, down) = compute_capture_ratios(&asset, &bench);
+        assert!((up - (-1.0)).abs() < 1e-10, "up={up}");
+        assert!((down - (-1.0)).abs() < 1e-10, "down={down}");
+    }
+
+    #[test]
+    fn capture_ratios_all_up_days() {
+        let bench = vec![0.01, 0.02, 0.015, 0.005];
+        let asset = vec![0.02, 0.03, 0.01, 0.01];
+        let (up, down) = compute_capture_ratios(&asset, &bench);
+        // mean_asset_up = (0.02+0.03+0.01+0.01)/4 = 0.0175
+        // mean_bench_up = (0.01+0.02+0.015+0.005)/4 = 0.0125 → up = 1.4
+        assert!((up - 1.4).abs() < 1e-10, "up={up}");
+        // No down days → down = 1.0 (default)
+        assert!((down - 1.0).abs() < 1e-10, "down={down}");
+    }
+
+    #[test]
+    fn capture_ratios_all_down_days() {
+        let bench = vec![-0.01, -0.02, -0.015, -0.005];
+        let asset = vec![-0.005, -0.01, -0.0075, -0.0025];
+        let (up, down) = compute_capture_ratios(&asset, &bench);
+        // No up days → up = 1.0 (default)
+        assert!((up - 1.0).abs() < 1e-10, "up={up}");
+        // Asset captures half of downside → down = 0.5
+        assert!((down - 0.5).abs() < 1e-10, "down={down}");
+    }
+
+    #[test]
+    fn capture_ratios_asymmetric_desirable() {
+        // Asset captures more upside, less downside
+        let bench = vec![0.02, -0.02, 0.01, -0.01];
+        let asset = vec![0.03, -0.01, 0.015, -0.005]; // 1.5x up, 0.5x down
+        let (up, down) = compute_capture_ratios(&asset, &bench);
+        assert!(up > 1.0, "up={up}");
+        assert!(down < 1.0, "down={down}");
+        assert!(up > down, "up capture should exceed down capture");
+    }
+
+    #[test]
+    fn capture_ratios_zero_bench_days_ignored() {
+        // Days where bench=0 should be skipped
+        let bench = vec![0.01, 0.0, -0.02, 0.0, 0.015];
+        let asset = vec![0.02, 0.005, -0.01, 0.003, 0.02];
+        let (up, down) = compute_capture_ratios(&asset, &bench);
+        // Only bench > 0 days: (0.01, 0.015) with asset (0.02, 0.02)
+        // mean_asset = 0.02, mean_bench = 0.0125 → up = 1.6
+        assert!((up - 1.6).abs() < 1e-10, "up={up}");
+        // Only bench < 0 days: (-0.02) with asset (-0.01)
+        // down = -0.01 / -0.02 = 0.5
+        assert!((down - 0.5).abs() < 1e-10, "down={down}");
+    }
 }

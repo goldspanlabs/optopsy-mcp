@@ -2071,8 +2071,8 @@ impl OptopsyServer {
     /// detailed statistics: episode depths, durations, recovery times, Ulcer Index,
     /// and an underwater curve for charting.
     ///
-    /// **When to use**: After seeing max_drawdown in backtest results, use this to understand
-    /// the full drawdown *distribution* — two strategies with identical max_drawdown can have
+    /// **When to use**: After seeing `max_drawdown` in backtest results, use this to understand
+    /// the full drawdown *distribution* — two strategies with identical `max_drawdown` can have
     /// very different drawdown profiles.
     ///
     /// **Output**: Top 20 drawdown episodes by depth, aggregate distribution stats,
@@ -2206,9 +2206,9 @@ impl OptopsyServer {
     /// Optimize portfolio weights using risk parity, minimum variance, and/or maximum Sharpe.
     ///
     /// Takes 2-20 symbols and computes optimal allocations using three methods:
-    /// - **risk_parity**: Equal risk contribution from each asset
-    /// - **min_variance**: Minimize total portfolio volatility
-    /// - **max_sharpe**: Maximize risk-adjusted return (tangency portfolio)
+    /// - **`risk_parity`**: Equal risk contribution from each asset
+    /// - **`min_variance`**: Minimize total portfolio volatility
+    /// - **`max_sharpe`**: Maximize risk-adjusted return (tangency portfolio)
     ///
     /// **When to use**: After identifying a set of assets/strategies, to determine
     /// optimal allocation weights rather than using equal weighting.

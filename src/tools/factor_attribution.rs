@@ -12,6 +12,7 @@ use crate::server::FactorProxies;
 use crate::tools::response_types::{FactorAttributionResponse, FactorExposure};
 
 /// Execute the factor attribution analysis.
+#[allow(clippy::too_many_lines)]
 pub async fn execute(
     cache: &Arc<CachedStore>,
     symbol: &str,
@@ -21,8 +22,7 @@ pub async fn execute(
 ) -> Result<FactorAttributionResponse> {
     let upper = symbol.to_uppercase();
     let bench_upper = benchmark.to_uppercase();
-    let cutoff =
-        chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
+    let cutoff = chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
     let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
 
     // Load target returns
@@ -103,7 +103,7 @@ pub async fn execute(
         .map(|f| f[f.len() - min_len..].to_vec())
         .collect();
     let n = y.len();
-    let k = factors.len() + 1; // +1 for intercept
+    let _k = factors.len() + 1; // +1 for intercept
 
     // Multi-factor OLS regression: y = alpha + sum(beta_i * factor_i) + epsilon
     let result = multi_factor_ols(&y, &factors);
@@ -266,7 +266,7 @@ async fn load_returns(
 
 /// Result of a multi-factor OLS regression.
 struct OlsResult {
-    /// Coefficients: [alpha, beta_1, beta_2, ...]
+    /// Coefficients: `[alpha, beta_1, beta_2, ...]`
     coefficients: Vec<f64>,
     /// T-statistics for each coefficient
     t_stats: Vec<f64>,
@@ -281,6 +281,7 @@ struct OlsResult {
 /// Multi-factor OLS via normal equations: beta = (X'X)^{-1} X'y
 ///
 /// X matrix includes a constant column (intercept).
+#[allow(clippy::many_single_char_names)]
 fn multi_factor_ols(y: &[f64], factors: &[Vec<f64>]) -> OlsResult {
     let n = y.len();
     let k = factors.len() + 1; // +1 for constant
@@ -304,8 +305,7 @@ fn multi_factor_ols(y: &[f64], factors: &[Vec<f64>]) -> OlsResult {
     }
 
     // Invert X'X using nalgebra
-    let xtx_mat =
-        nalgebra::DMatrix::from_row_slice(k, k, &xtx);
+    let xtx_mat = nalgebra::DMatrix::from_row_slice(k, k, &xtx);
     let xty_vec = nalgebra::DVector::from_column_slice(&xty);
 
     let coefficients = match xtx_mat.clone().try_inverse() {
@@ -338,11 +338,7 @@ fn multi_factor_ols(y: &[f64], factors: &[Vec<f64>]) -> OlsResult {
     };
 
     // Standard errors and t-stats
-    let sigma_sq = if n > k {
-        sse / (n - k) as f64
-    } else {
-        0.0
-    };
+    let sigma_sq = if n > k { sse / (n - k) as f64 } else { 0.0 };
 
     let xtx_inv = match xtx_mat.try_inverse() {
         Some(inv) => inv,
@@ -381,6 +377,7 @@ fn multi_factor_ols(y: &[f64], factors: &[Vec<f64>]) -> OlsResult {
 }
 
 /// Standard normal CDF approximation (Abramowitz and Stegun 26.2.17).
+#[allow(clippy::many_single_char_names, clippy::unreadable_literal)]
 fn normal_cdf(x: f64) -> f64 {
     if x < -8.0 {
         return 0.0;
@@ -399,5 +396,154 @@ fn normal_cdf(x: f64) -> f64 {
         1.0 - p * c
     } else {
         p * c
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─── normal_cdf ──────────────────────────────────────────────────
+
+    #[test]
+    fn normal_cdf_at_zero() {
+        assert!((normal_cdf(0.0) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn normal_cdf_symmetry() {
+        // Φ(-x) = 1 - Φ(x)
+        for &x in &[0.5, 1.0, 1.96, 2.5, 3.0] {
+            let diff = (normal_cdf(-x) - (1.0 - normal_cdf(x))).abs();
+            assert!(diff < 1e-6, "symmetry failed for x={x}: diff={diff}");
+        }
+    }
+
+    #[test]
+    fn normal_cdf_known_values() {
+        // Φ(1.96) ≈ 0.975
+        assert!(
+            (normal_cdf(1.96) - 0.975).abs() < 0.001,
+            "Φ(1.96)={}",
+            normal_cdf(1.96)
+        );
+        // Φ(-1.96) ≈ 0.025
+        assert!((normal_cdf(-1.96) - 0.025).abs() < 0.001);
+        // Φ(1.0) ≈ 0.8413
+        assert!((normal_cdf(1.0) - 0.8413).abs() < 0.001);
+    }
+
+    #[test]
+    fn normal_cdf_extreme_values() {
+        assert!(normal_cdf(-10.0) < 1e-6);
+        assert!(normal_cdf(10.0) > 1.0 - 1e-6);
+    }
+
+    // ─── multi_factor_ols ────────────────────────────────────────────
+
+    #[test]
+    fn ols_single_factor_perfect_fit() {
+        // y = 0.01 + 1.5 * factor
+        let factor: Vec<f64> = (0..100).map(|i| f64::from(i) * 0.001).collect();
+        let y: Vec<f64> = factor.iter().map(|f| 0.01 + 1.5 * f).collect();
+        let result = multi_factor_ols(&y, &[factor]);
+        assert!(
+            (result.coefficients[0] - 0.01).abs() < 1e-8,
+            "alpha={}",
+            result.coefficients[0]
+        );
+        assert!(
+            (result.coefficients[1] - 1.5).abs() < 1e-8,
+            "beta={}",
+            result.coefficients[1]
+        );
+        assert!(
+            (result.r_squared - 1.0).abs() < 1e-8,
+            "R²={}",
+            result.r_squared
+        );
+    }
+
+    #[test]
+    fn ols_two_factors() {
+        // y = 0.005 + 1.0 * f1 + 0.5 * f2
+        let n = 200;
+        let f1: Vec<f64> = (0..n)
+            .map(|i| (f64::from(i) * 7.0 % 100.0) * 0.001)
+            .collect();
+        let f2: Vec<f64> = (0..n)
+            .map(|i| (f64::from(i) * 13.0 % 100.0) * 0.001)
+            .collect();
+        let y: Vec<f64> = f1
+            .iter()
+            .zip(f2.iter())
+            .map(|(a, b)| 0.005 + 1.0 * a + 0.5 * b)
+            .collect();
+        let result = multi_factor_ols(&y, &[f1, f2]);
+        assert!(
+            (result.coefficients[0] - 0.005).abs() < 1e-6,
+            "alpha={}",
+            result.coefficients[0]
+        );
+        assert!(
+            (result.coefficients[1] - 1.0).abs() < 1e-6,
+            "beta1={}",
+            result.coefficients[1]
+        );
+        assert!(
+            (result.coefficients[2] - 0.5).abs() < 1e-6,
+            "beta2={}",
+            result.coefficients[2]
+        );
+        assert!((result.r_squared - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn ols_r_squared_between_zero_and_one() {
+        // Noisy data should give 0 < R² < 1
+        let n = 100;
+        #[allow(clippy::cast_lossless)]
+        let factor: Vec<f64> = (0..n).map(|i| (i as f64).sin() * 0.01).collect();
+        #[allow(clippy::cast_lossless)]
+        let y: Vec<f64> = (0..n)
+            .map(|i| factor[i] * 0.8 + (i as f64 * 17.0).sin() * 0.005)
+            .collect();
+        let result = multi_factor_ols(&y, &[factor]);
+        assert!(
+            result.r_squared > 0.0 && result.r_squared < 1.0,
+            "R²={}",
+            result.r_squared
+        );
+    }
+
+    #[test]
+    fn ols_t_stats_and_p_values_coherent() {
+        let n = 100;
+        let factor: Vec<f64> = (0..n).map(|i| f64::from(i) * 0.001).collect();
+        let y: Vec<f64> = factor.iter().map(|f| 0.01 + 2.0 * f).collect();
+        let result = multi_factor_ols(&y, &[factor]);
+        // With perfect fit, t-stats should be very large
+        assert!(
+            result.t_stats[1].abs() > 10.0,
+            "t_stat={}",
+            result.t_stats[1]
+        );
+        // p-value for significant coefficient should be near 0
+        assert!(result.p_values[1] < 0.001, "p_value={}", result.p_values[1]);
+    }
+
+    #[test]
+    fn ols_adj_r_squared_lte_r_squared() {
+        let n = 50;
+        let f1: Vec<f64> = (0..n).map(|i| f64::from(i).sin() * 0.01).collect();
+        let f2: Vec<f64> = (0..n).map(|i| f64::from(i).cos() * 0.01).collect();
+        let y: Vec<f64> = f1.iter().map(|f| f * 0.5 + 0.001).collect();
+        let result = multi_factor_ols(&y, &[f1, f2]);
+        assert!(
+            result.adj_r_squared <= result.r_squared + 1e-10,
+            "adj_R²={} > R²={}",
+            result.adj_r_squared,
+            result.r_squared
+        );
     }
 }

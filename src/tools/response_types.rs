@@ -1155,7 +1155,7 @@ pub struct OptimalWeight {
 /// Portfolio optimization result for one method.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct OptimizationResult {
-    /// Method name (e.g., "risk_parity", "min_variance", "max_sharpe")
+    /// Method name (e.g., "`risk_parity`", "`min_variance`", "`max_sharpe`")
     pub method: String,
     pub weights: Vec<OptimalWeight>,
     /// Expected annualized return
@@ -1172,7 +1172,7 @@ pub struct PortfolioOptimizeResponse {
     pub summary: String,
     pub symbols: Vec<String>,
     pub n_observations: usize,
-    /// Correlation matrix (NxN as flat array with labels)
+    /// Correlation matrix (`NxN` as flat array with labels)
     pub correlation_matrix: Vec<CorrelationEntry>,
     /// Individual asset statistics
     pub asset_stats: Vec<AssetStats>,
@@ -1347,7 +1347,7 @@ pub struct PortfolioStrategyResult {
 }
 
 /// Pairwise Pearson correlation between two strategies' daily returns.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CorrelationEntry {
     pub strategy_a: String,
     pub strategy_b: String,

@@ -14,14 +14,14 @@ use crate::tools::response_types::{
 };
 
 /// Execute the drawdown distribution analysis.
+#[allow(clippy::too_many_lines)]
 pub async fn execute(
     cache: &Arc<CachedStore>,
     symbol: &str,
     years: u32,
 ) -> Result<DrawdownAnalysisResponse> {
     let upper = symbol.to_uppercase();
-    let cutoff =
-        chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
+    let cutoff = chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
     let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
 
     let resp = crate::tools::raw_prices::load_and_execute(
@@ -145,16 +145,15 @@ pub async fn execute(
         } else {
             let depths: Vec<f64> = episodes.iter().map(|e| e.depth_pct).collect();
             let durations: Vec<usize> = episodes.iter().map(|e| e.duration_bars).collect();
-            let recovered_episodes: Vec<&DrawdownEpisode> =
-                episodes.iter().filter(|e| e.recovery_date.is_some()).collect();
+            let recovered_episodes: Vec<&DrawdownEpisode> = episodes
+                .iter()
+                .filter(|e| e.recovery_date.is_some())
+                .collect();
             let recovery_bars: Vec<usize> =
                 recovered_episodes.iter().map(|e| e.recovery_bars).collect();
 
             let avg_d = depths.iter().sum::<f64>() / depths.len() as f64;
-            let max_d = depths
-                .iter()
-                .copied()
-                .fold(0.0_f64, f64::max);
+            let max_d = depths.iter().copied().fold(0.0_f64, f64::max);
             let avg_dur = durations.iter().sum::<usize>() as f64 / durations.len() as f64;
             let max_dur = durations.iter().copied().max().unwrap_or(0);
             let avg_rec = if recovery_bars.is_empty() {
@@ -174,18 +173,14 @@ pub async fn execute(
         avg_duration_bars: avg_duration,
         max_duration_bars: max_duration,
         avg_recovery_bars: avg_recovery,
-        pct_recovered: pct_recovered,
+        pct_recovered,
         ulcer_index,
     };
 
     // Subsample underwater curve to max 500 points
     let underwater = if underwater.len() > 500 {
         let step = underwater.len() / 500;
-        underwater
-            .into_iter()
-            .step_by(step)
-            .take(500)
-            .collect()
+        underwater.into_iter().step_by(step).take(500).collect()
     } else {
         underwater
     };
@@ -203,16 +198,22 @@ pub async fn execute(
     );
 
     let mut key_findings = vec![
-        format!("{n_episodes} drawdown episodes detected (>{:.1}% threshold)", 0.1),
+        format!(
+            "{n_episodes} drawdown episodes detected (>{:.1}% threshold)",
+            0.1
+        ),
         format!("Worst drawdown: {max_depth:.2}% deep, max duration: {max_duration} bars"),
         format!("Average drawdown: {avg_depth:.2}% deep, avg duration: {avg_duration:.0} bars"),
-        format!("Ulcer Index: {ulcer_index:.3} — {}", if ulcer_index > 10.0 {
-            "high sustained drawdown pain"
-        } else if ulcer_index > 5.0 {
-            "moderate drawdown pain"
-        } else {
-            "low drawdown pain"
-        }),
+        format!(
+            "Ulcer Index: {ulcer_index:.3} — {}",
+            if ulcer_index > 10.0 {
+                "high sustained drawdown pain"
+            } else if ulcer_index > 5.0 {
+                "moderate drawdown pain"
+            } else {
+                "low drawdown pain"
+            }
+        ),
     ];
     if pct_recovered < 100.0 {
         key_findings.push(format!(
