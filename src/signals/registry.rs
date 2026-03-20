@@ -524,8 +524,11 @@ pub fn extract_formula_cross_symbols(formula: &str) -> std::collections::HashSet
                 continue;
             }
 
-            // Known function followed by '(' → skip
-            if KNOWN_FUNCTIONS.contains(&lower.as_str()) {
+            // Known function name used as a call (followed by '(') → skip
+            if KNOWN_FUNCTIONS.contains(&lower.as_str())
+                && i + 1 < tokens.len()
+                && matches!(tokens[i + 1], super::custom::Token::LParen)
+            {
                 i += 1;
                 continue;
             }
@@ -662,5 +665,21 @@ mod tests {
         assert_eq!(symbols.len(), 2);
         assert!(symbols.contains("VIX"));
         assert!(symbols.contains("VIX3M"));
+    }
+
+    #[test]
+    fn extract_formula_cross_symbols_function_name_as_ticker() {
+        // Ticker named "MAX" (same as a known function) should be treated as
+        // cross-symbol when NOT followed by '(' (i.e., not used as a function call)
+        let syms = extract_formula_cross_symbols("MAX > 1");
+        assert_eq!(syms.len(), 1);
+        assert!(syms.contains("MAX"));
+    }
+
+    #[test]
+    fn extract_formula_cross_symbols_function_call_not_ticker() {
+        // max(close, 20) is a function call, not a cross-symbol reference
+        let syms = extract_formula_cross_symbols("max(close, 20) > 100");
+        assert!(syms.is_empty());
     }
 }

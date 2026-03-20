@@ -49,7 +49,10 @@ fn pre_join_cross_dfs<S: std::hash::BuildHasher>(
     for sym in symbols {
         let upper = sym.to_uppercase();
         let Some(cross_df) = cross_dfs.get(&upper) else {
-            continue; // Will fail at evaluation with missing column error
+            anyhow::bail!(
+                "Formula references cross-symbol '{upper}' but no OHLCV data loaded for it. \
+                 Ensure the symbol data is available in the cache."
+            );
         };
 
         let cross_date_col = crate::engine::stock_sim::detect_date_col(cross_df);
@@ -114,8 +117,11 @@ fn pre_join_cross_dfs<S: std::hash::BuildHasher>(
                 )
                 .collect()?;
 
-            // Drop temporary join column
+            // Drop temporary join columns
             result = result.drop("__primary_join_date")?;
+            if result.column("__cross_join_key").is_ok() {
+                result = result.drop("__cross_join_key")?;
+            }
         } else {
             // Same granularity or both datetime — join directly
             // Cast cross join key to match primary date column type
@@ -144,6 +150,11 @@ fn pre_join_cross_dfs<S: std::hash::BuildHasher>(
                     JoinArgs::new(JoinType::Left),
                 )
                 .collect()?;
+
+            // Drop join key column from result
+            if result.column("__cross_join_key").is_ok() {
+                result = result.drop("__cross_join_key")?;
+            }
         }
     }
 
@@ -212,8 +223,11 @@ pub fn active_dates_multi<S: std::hash::BuildHasher>(
                 active_dates(spec, &joined, date_col)
             }
         }
-        // All other variants evaluate against the primary DataFrame
-        SignalSpec::Saved { .. } => active_dates(spec, primary_df, date_col),
+        // Saved: load the inner spec and recurse to handle cross-symbol refs
+        SignalSpec::Saved { name } => match storage::load_signal(name) {
+            Ok((loaded, _)) => active_dates_multi(&loaded, primary_df, cross_dfs, date_col),
+            Err(_) => active_dates(spec, primary_df, date_col),
+        },
     }
 }
 
@@ -276,7 +290,11 @@ pub fn active_datetimes_multi<S: std::hash::BuildHasher>(
                 active_datetimes(spec, &joined, date_col)
             }
         }
-        SignalSpec::Saved { .. } => active_datetimes(spec, primary_df, date_col),
+        // Saved: load the inner spec and recurse to handle cross-symbol refs
+        SignalSpec::Saved { name } => match storage::load_signal(name) {
+            Ok((loaded, _)) => active_datetimes_multi(&loaded, primary_df, cross_dfs, date_col),
+            Err(_) => active_datetimes(spec, primary_df, date_col),
+        },
     }
 }
 
