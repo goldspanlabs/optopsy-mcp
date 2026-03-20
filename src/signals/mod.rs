@@ -102,12 +102,14 @@ fn pre_join_cross_dfs<S: std::hash::BuildHasher>(
                 .collect();
             let cross_for_join = cross_selected
                 .lazy()
+                // Sort by original datetime so .last() picks the closing bar
+                .sort(["__cross_join_key"], SortMultipleOptions::default())
                 .with_column(
                     col("__cross_join_key")
                         .cast(DataType::Date)
                         .alias("__cross_join_key"),
                 )
-                .group_by([col("__cross_join_key")])
+                .group_by_stable([col("__cross_join_key")])
                 .agg(cross_col_names)
                 .collect()?;
 
@@ -260,7 +262,7 @@ fn active_dates_multi_depth<S: std::hash::BuildHasher>(
     date_col: &str,
     depth: usize,
 ) -> Result<HashSet<NaiveDate>> {
-    if depth > MAX_MULTI_DEPTH {
+    if depth >= MAX_MULTI_DEPTH {
         anyhow::bail!(
             "Signal recursion limit ({MAX_MULTI_DEPTH}) exceeded — possible cycle in Saved signal references"
         );
@@ -348,7 +350,7 @@ fn active_datetimes_multi_depth<S: std::hash::BuildHasher>(
     date_col: &str,
     depth: usize,
 ) -> Result<HashSet<NaiveDateTime>> {
-    if depth > MAX_MULTI_DEPTH {
+    if depth >= MAX_MULTI_DEPTH {
         anyhow::bail!(
             "Signal recursion limit ({MAX_MULTI_DEPTH}) exceeded — possible cycle in Saved signal references"
         );
