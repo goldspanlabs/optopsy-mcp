@@ -85,6 +85,14 @@ Create entry/exit signals with a formula DSL covering 35+ functions (momentum, t
 | `correlate` | Cross-symbol or cross-metric correlation matrices |
 | `rolling_metric` | Rolling window calculations (Sharpe, volatility, returns, etc.) |
 | `regime_detect` | Market regime detection using volatility or returns clustering |
+| `generate_hypotheses` | Auto-scan for statistically significant patterns with FDR correction |
+| `portfolio_backtest` | Run multiple stock strategies as a weighted portfolio |
+| `drawdown_analysis` | Full drawdown distribution with episode tracking and Ulcer Index |
+| `cointegration_test` | Engle-Granger cointegration test for pairs/stat-arb strategies |
+| `monte_carlo` | Block-bootstrap Monte Carlo simulation with ruin probabilities |
+| `factor_attribution` | Multi-factor regression decomposing returns into factor exposures |
+| `portfolio_optimize` | Optimal portfolio weights via risk parity, min variance, or max Sharpe |
+| `benchmark_analysis` | Benchmark-relative metrics: alpha, beta, Information Ratio, capture ratios |
 
 ## Quick Start
 
