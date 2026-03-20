@@ -28,7 +28,7 @@ pub fn build_price_table(df: &DataFrame) -> Result<(PriceTable, Vec<NaiveDate>, 
 }
 
 /// Build a `DateIndex` from a completed `PriceTable`.
-pub(crate) fn build_date_index(table: &PriceTable) -> DateIndex {
+pub fn build_date_index(table: &PriceTable) -> DateIndex {
     let mut index: DateIndex = HashMap::new();
     for key in table.keys() {
         index.entry(key.0).or_default().push(*key);
