@@ -225,7 +225,7 @@ fn missing_cross_ohlcv_paths_errors() {
     );
     let err_msg = result.unwrap_err().to_string();
     assert!(
-        err_msg.contains("VIX"),
-        "error should mention VIX, got: {err_msg}"
+        err_msg.contains("VIX") && err_msg.contains("no OHLCV data loaded"),
+        "error should mention VIX and explain missing data, got: {err_msg}"
     );
 }

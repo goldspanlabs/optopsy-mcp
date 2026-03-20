@@ -38,6 +38,7 @@ const CROSS_JOIN_COLUMNS: &[&str] = &["close", "open", "high", "low", "volume", 
 /// (e.g., `close` → `VIX_close`) and left-joins on the date column.
 /// If the primary DF is intraday (datetime) but the cross DF is daily (date),
 /// extracts the date from the primary datetime for the join key.
+#[allow(clippy::too_many_lines)]
 fn pre_join_cross_dfs<S: std::hash::BuildHasher>(
     primary_df: &DataFrame,
     cross_dfs: &HashMap<String, DataFrame, S>,
@@ -80,7 +81,51 @@ fn pre_join_cross_dfs<S: std::hash::BuildHasher>(
             .map(|c| matches!(c.dtype(), DataType::Date))
             .unwrap_or(false);
 
-        if primary_is_datetime && cross_is_date {
+        let primary_is_date = primary_df
+            .column(date_col)
+            .map(|c| matches!(c.dtype(), DataType::Date))
+            .unwrap_or(false);
+        let cross_is_datetime = cross_df
+            .column(cross_date_col)
+            .map(|c| matches!(c.dtype(), DataType::Datetime(_, _)))
+            .unwrap_or(false);
+
+        if primary_is_date && cross_is_datetime {
+            // Primary is daily but cross is intraday — cast cross Datetime→Date
+            // to avoid one-to-many join that would multiply primary rows
+            // Cast Datetime→Date and deduplicate: keep last bar per date
+            let cross_col_names: Vec<_> = cross_selected
+                .get_column_names()
+                .iter()
+                .filter(|n| n.as_str() != "__cross_join_key")
+                .map(|n| col(n.as_str()).last())
+                .collect();
+            let cross_for_join = cross_selected
+                .lazy()
+                .with_column(
+                    col("__cross_join_key")
+                        .cast(DataType::Date)
+                        .alias("__cross_join_key"),
+                )
+                .group_by([col("__cross_join_key")])
+                .agg(cross_col_names)
+                .collect()?;
+
+            result = result
+                .lazy()
+                .join(
+                    cross_for_join.lazy(),
+                    [col(date_col)],
+                    [col("__cross_join_key")],
+                    JoinArgs::new(JoinType::Left),
+                )
+                .collect()?;
+
+            // Drop join key column from result
+            if result.column("__cross_join_key").is_ok() {
+                result = result.drop("__cross_join_key")?;
+            }
+        } else if primary_is_datetime && cross_is_date {
             // Add a temporary date column extracted from primary datetime for joining
             result = result
                 .clone()
