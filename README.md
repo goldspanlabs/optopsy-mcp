@@ -165,15 +165,15 @@ The default cache directory is `~/.optopsy/cache/`. To use a different location,
 
 ```
 ~/.optopsy/cache/
-├── options/
+├── options/          # required — options chain data
 │   ├── SPY.parquet
-│   ├── QQQ.parquet
 │   └── ...
-└── prices/
+└── <category>/       # any subfolder name works for OHLCV data
     ├── SPY.parquet
-    ├── QQQ.parquet
     └── ...
 ```
+
+`options/` is the fixed folder for options chain data. For OHLCV price data, you can organize files into any subfolder name you like (e.g. `stocks/`, `etf/`, `futures/`, `indices/`, or your own). The engine searches all non-`options` subdirectories when resolving a symbol's price data.
 
 ### Parquet schemas
 
@@ -191,7 +191,7 @@ The default cache directory is `~/.optopsy/cache/`. To use a different location,
 
 > **Note:** If your data has a `date` (Date) column instead of `datetime`, it will be automatically cast to a Datetime at 15:59:00 on load.
 
-#### Price data (`prices/*.parquet`)
+#### Price data (`<category>/*.parquet`)
 
 | Column | Type | Description |
 |--------|------|-------------|
