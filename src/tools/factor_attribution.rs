@@ -1,0 +1,403 @@
+//! Factor attribution tool using multi-factor regression.
+//!
+//! Decomposes asset returns into systematic factor exposures (Market, SMB, HML,
+//! Momentum) using ETF proxies and OLS regression. Identifies whether returns
+//! are driven by genuine alpha or by exposure to known risk premia.
+
+use anyhow::{Context, Result};
+use std::sync::Arc;
+
+use crate::data::cache::CachedStore;
+use crate::server::params::FactorProxies;
+use crate::tools::response_types::{FactorAttributionResponse, FactorExposure};
+
+/// Execute the factor attribution analysis.
+pub async fn execute(
+    cache: &Arc<CachedStore>,
+    symbol: &str,
+    benchmark: &str,
+    factor_proxies: Option<&FactorProxies>,
+    years: u32,
+) -> Result<FactorAttributionResponse> {
+    let upper = symbol.to_uppercase();
+    let bench_upper = benchmark.to_uppercase();
+    let cutoff =
+        chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
+    let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
+
+    // Load target returns
+    let target_returns = load_returns(cache, &upper, &cutoff_str).await?;
+    if target_returns.len() < 60 {
+        anyhow::bail!("Insufficient data for {upper}: need at least 60 observations");
+    }
+
+    // Load benchmark (market) returns
+    let market_returns = load_returns(cache, &bench_upper, &cutoff_str).await?;
+
+    // Build factor matrix — start with just Market factor, add others if available
+    let mut factor_names = vec!["Market".to_string()];
+    let mut factor_series: Vec<Vec<f64>> = vec![market_returns.clone()];
+
+    // Try to load SMB proxy (small cap - large cap)
+    let small_cap = factor_proxies
+        .and_then(|fp| fp.small_cap.as_deref())
+        .unwrap_or("IWM");
+    if let Ok(small_ret) = load_returns(cache, &small_cap.to_uppercase(), &cutoff_str).await {
+        // SMB = small cap returns - market returns (approximate)
+        let smb: Vec<f64> = small_ret
+            .iter()
+            .zip(market_returns.iter())
+            .map(|(s, m)| s - m)
+            .collect();
+        factor_names.push("SMB (Size)".to_string());
+        factor_series.push(smb);
+    }
+
+    // Try to load HML proxies (value - growth)
+    let value_sym = factor_proxies
+        .and_then(|fp| fp.value.as_deref())
+        .unwrap_or("IWD");
+    let growth_sym = factor_proxies
+        .and_then(|fp| fp.growth.as_deref())
+        .unwrap_or("IWF");
+    if let (Ok(val_ret), Ok(grw_ret)) = (
+        load_returns(cache, &value_sym.to_uppercase(), &cutoff_str).await,
+        load_returns(cache, &growth_sym.to_uppercase(), &cutoff_str).await,
+    ) {
+        let hml: Vec<f64> = val_ret
+            .iter()
+            .zip(grw_ret.iter())
+            .map(|(v, g)| v - g)
+            .collect();
+        factor_names.push("HML (Value)".to_string());
+        factor_series.push(hml);
+    }
+
+    // Try to load Momentum proxy
+    let mom_sym = factor_proxies
+        .and_then(|fp| fp.momentum.as_deref())
+        .unwrap_or("MTUM");
+    if let Ok(mom_ret) = load_returns(cache, &mom_sym.to_uppercase(), &cutoff_str).await {
+        let mom: Vec<f64> = mom_ret
+            .iter()
+            .zip(market_returns.iter())
+            .map(|(m, mkt)| m - mkt)
+            .collect();
+        factor_names.push("Momentum".to_string());
+        factor_series.push(mom);
+    }
+
+    // Align all series to minimum length
+    let min_len = std::iter::once(target_returns.len())
+        .chain(factor_series.iter().map(Vec::len))
+        .min()
+        .unwrap_or(0);
+
+    if min_len < 30 {
+        anyhow::bail!("Insufficient aligned observations: {min_len} (need at least 30)");
+    }
+
+    let y: Vec<f64> = target_returns[target_returns.len() - min_len..].to_vec();
+    let factors: Vec<Vec<f64>> = factor_series
+        .iter()
+        .map(|f| f[f.len() - min_len..].to_vec())
+        .collect();
+    let n = y.len();
+    let k = factors.len() + 1; // +1 for intercept
+
+    // Multi-factor OLS regression: y = alpha + sum(beta_i * factor_i) + epsilon
+    let result = multi_factor_ols(&y, &factors);
+
+    let alpha = result.coefficients[0];
+    let alpha_annualized = alpha * 252.0; // Annualize daily alpha
+
+    // Build factor exposures
+    let mut factor_exposures: Vec<FactorExposure> = Vec::new();
+    let mut total_factor_contribution = 0.0;
+    let total_mean_return = y.iter().sum::<f64>() / n as f64 * 252.0;
+
+    for (i, name) in factor_names.iter().enumerate() {
+        let beta = result.coefficients[i + 1];
+        let t_stat = result.t_stats[i + 1];
+        let p_val = result.p_values[i + 1];
+        let factor_mean = factors[i].iter().sum::<f64>() / factors[i].len() as f64;
+        let contribution = beta * factor_mean * 252.0; // Annualized
+        total_factor_contribution += contribution;
+
+        factor_exposures.push(FactorExposure {
+            factor: name.clone(),
+            beta,
+            t_stat,
+            p_value: p_val,
+            is_significant: p_val < 0.05,
+            return_contribution_pct: if total_mean_return.abs() > 1e-10 {
+                contribution / total_mean_return * 100.0
+            } else {
+                0.0
+            },
+        });
+    }
+
+    let alpha_t_stat = result.t_stats[0];
+    let alpha_p_value = result.p_values[0];
+    let alpha_significant = alpha_p_value < 0.05;
+
+    let pct_explained = if total_mean_return.abs() > 1e-10 {
+        (total_factor_contribution / total_mean_return * 100.0).clamp(0.0, 100.0)
+    } else {
+        0.0
+    };
+
+    // Summary
+    let sig_factors: Vec<&str> = factor_exposures
+        .iter()
+        .filter(|f| f.is_significant)
+        .map(|f| f.factor.as_str())
+        .collect();
+
+    let summary = format!(
+        "Factor attribution for {upper} ({n} obs): alpha={alpha_annualized:.4} ({}), \
+         R²={:.3}, significant factors: {}.",
+        if alpha_significant {
+            "significant"
+        } else {
+            "not significant"
+        },
+        result.r_squared,
+        if sig_factors.is_empty() {
+            "none".to_string()
+        } else {
+            sig_factors.join(", ")
+        },
+    );
+
+    let mut key_findings = vec![
+        format!(
+            "Alpha: {:.2}% annualized (t={:.2}, p={:.4}) — {}",
+            alpha_annualized * 100.0,
+            alpha_t_stat,
+            alpha_p_value,
+            if alpha_significant {
+                "genuine alpha detected"
+            } else {
+                "no significant alpha (returns explained by factors)"
+            }
+        ),
+        format!(
+            "R²={:.3} — {:.1}% of return variance explained by factors",
+            result.r_squared,
+            result.r_squared * 100.0
+        ),
+    ];
+    for fe in &factor_exposures {
+        key_findings.push(format!(
+            "{}: beta={:.3} (t={:.2}, p={:.4}) — {}",
+            fe.factor,
+            fe.beta,
+            fe.t_stat,
+            fe.p_value,
+            if fe.is_significant {
+                "significant exposure"
+            } else {
+                "not significant"
+            }
+        ));
+    }
+
+    let suggested_next_steps = vec![
+        format!(
+            "[NEXT] Call benchmark_analysis(symbol=\"{upper}\", benchmark=\"{bench_upper}\") for detailed benchmark-relative metrics"
+        ),
+        format!(
+            "[THEN] Call rolling_metric(symbol=\"{upper}\", metric=\"beta\", benchmark=\"{bench_upper}\") to check if factor exposure is stable over time"
+        ),
+        "[TIP] If alpha is significant, validate with walk_forward and permutation_test before deploying".to_string(),
+    ];
+
+    Ok(FactorAttributionResponse {
+        summary,
+        symbol: upper,
+        n_observations: n,
+        alpha: alpha_annualized,
+        alpha_t_stat,
+        alpha_significant,
+        r_squared: result.r_squared,
+        adj_r_squared: result.adj_r_squared,
+        factors: factor_exposures,
+        pct_explained_by_factors: pct_explained,
+        key_findings,
+        suggested_next_steps,
+    })
+}
+
+/// Load daily returns for a symbol.
+async fn load_returns(
+    cache: &Arc<CachedStore>,
+    symbol: &str,
+    cutoff_str: &str,
+) -> Result<Vec<f64>> {
+    let resp = crate::tools::raw_prices::load_and_execute(
+        cache,
+        symbol,
+        Some(cutoff_str),
+        None,
+        None,
+        crate::engine::types::Interval::Daily,
+        None,
+    )
+    .await
+    .context(format!("Failed to load OHLCV data for {symbol}"))?;
+
+    let returns: Vec<f64> = resp
+        .prices
+        .windows(2)
+        .filter_map(|w| {
+            if w[0].close == 0.0 {
+                None
+            } else {
+                Some((w[1].close - w[0].close) / w[0].close)
+            }
+        })
+        .filter(|r| r.is_finite())
+        .collect();
+
+    Ok(returns)
+}
+
+/// Result of a multi-factor OLS regression.
+struct OlsResult {
+    /// Coefficients: [alpha, beta_1, beta_2, ...]
+    coefficients: Vec<f64>,
+    /// T-statistics for each coefficient
+    t_stats: Vec<f64>,
+    /// P-values for each coefficient (approximate, using normal distribution)
+    p_values: Vec<f64>,
+    /// R²
+    r_squared: f64,
+    /// Adjusted R²
+    adj_r_squared: f64,
+}
+
+/// Multi-factor OLS via normal equations: beta = (X'X)^{-1} X'y
+///
+/// X matrix includes a constant column (intercept).
+fn multi_factor_ols(y: &[f64], factors: &[Vec<f64>]) -> OlsResult {
+    let n = y.len();
+    let k = factors.len() + 1; // +1 for constant
+
+    // Build X'X and X'y using nalgebra for matrix inversion
+    let mut xtx = vec![0.0_f64; k * k];
+    let mut xty = vec![0.0_f64; k];
+
+    for i in 0..n {
+        let mut row = vec![1.0]; // Constant
+        for factor in factors {
+            row.push(factor[i]);
+        }
+
+        for r in 0..k {
+            for c in 0..k {
+                xtx[r * k + c] += row[r] * row[c];
+            }
+            xty[r] += row[r] * y[i];
+        }
+    }
+
+    // Invert X'X using nalgebra
+    let xtx_mat =
+        nalgebra::DMatrix::from_row_slice(k, k, &xtx);
+    let xty_vec = nalgebra::DVector::from_column_slice(&xty);
+
+    let coefficients = match xtx_mat.clone().try_inverse() {
+        Some(inv) => {
+            let beta = &inv * &xty_vec;
+            beta.data.as_vec().clone()
+        }
+        None => vec![0.0; k],
+    };
+
+    // Compute residuals, SSE, SST
+    let y_mean = y.iter().sum::<f64>() / n as f64;
+    let mut sse = 0.0;
+    let mut sst = 0.0;
+    for i in 0..n {
+        let mut predicted = coefficients[0]; // constant
+        for (j, factor) in factors.iter().enumerate() {
+            predicted += coefficients[j + 1] * factor[i];
+        }
+        let resid = y[i] - predicted;
+        sse += resid * resid;
+        sst += (y[i] - y_mean) * (y[i] - y_mean);
+    }
+
+    let r_squared = if sst > 0.0 { 1.0 - sse / sst } else { 0.0 };
+    let adj_r_squared = if n > k && sst > 0.0 {
+        1.0 - (1.0 - r_squared) * (n - 1) as f64 / (n - k) as f64
+    } else {
+        0.0
+    };
+
+    // Standard errors and t-stats
+    let sigma_sq = if n > k {
+        sse / (n - k) as f64
+    } else {
+        0.0
+    };
+
+    let xtx_inv = match xtx_mat.try_inverse() {
+        Some(inv) => inv,
+        None => nalgebra::DMatrix::zeros(k, k),
+    };
+
+    let mut t_stats = Vec::with_capacity(k);
+    let mut p_values = Vec::with_capacity(k);
+
+    for j in 0..k {
+        let var_j = sigma_sq * xtx_inv[(j, j)];
+        let se_j = var_j.abs().sqrt();
+        let t = if se_j > 0.0 {
+            coefficients[j] / se_j
+        } else {
+            0.0
+        };
+        t_stats.push(t);
+
+        // Approximate p-value using normal distribution (good for n > 30)
+        let p = if t.abs() > 0.0 {
+            2.0 * normal_cdf(-t.abs())
+        } else {
+            1.0
+        };
+        p_values.push(p);
+    }
+
+    OlsResult {
+        coefficients,
+        t_stats,
+        p_values,
+        r_squared,
+        adj_r_squared,
+    }
+}
+
+/// Standard normal CDF approximation (Abramowitz and Stegun 26.2.17).
+fn normal_cdf(x: f64) -> f64 {
+    if x < -8.0 {
+        return 0.0;
+    }
+    if x > 8.0 {
+        return 1.0;
+    }
+    let t = 1.0 / (1.0 + 0.2316419 * x.abs());
+    let d = 0.3989422804014327; // 1/sqrt(2*PI)
+    let p = d * (-x * x / 2.0).exp();
+    let c = t
+        * (0.319_381_530
+            + t * (-0.356_563_782
+                + t * (1.781_477_937 + t * (-1.821_255_978 + t * 1.330_274_429))));
+    if x >= 0.0 {
+        1.0 - p * c
+    } else {
+        p * c
+    }
+}
