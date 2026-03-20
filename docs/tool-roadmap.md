@@ -19,7 +19,7 @@ The platform has 15 MCP tools, 31 options strategies, 40+ signals, and robust va
 | **Bonds / Rates** | TLT, HYG | Long-duration rates and credit spreads — macro regime proxies |
 | **Single names** | AAPL, TSLA, NVDA, AMZN, META | Highest options volume, earnings-driven vol, idiosyncratic patterns |
 
-**Macro proxies** (already cached as OHLCV): TLT (rates), HYG (credit), DXY (dollar), GLD (gold), USO (oil). These feed cross-asset signals via the `CrossSymbol` signal variant.
+**Macro proxies** (already cached as OHLCV): TLT (rates), HYG (credit), DXY (dollar), GLD (gold), USO (oil). These feed cross-asset signals via cross-symbol formula references (e.g., `VIX / VIX3M < 0.9`).
 
 ---
 

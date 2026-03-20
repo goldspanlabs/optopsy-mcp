@@ -253,11 +253,6 @@ pub fn build_example(signal_name: &str) -> Value {
         "cmf (formula)" => build_example("CmfPositive"),
         "consecutive_up (formula)" => build_example("ConsecutiveUp"),
         "consecutive_down (formula)" => build_example("ConsecutiveDown"),
-        "CrossSymbol" => json!({
-            "type": "CrossSymbol",
-            "symbol": "^VIX",
-            "signal": format!("{} > 20", DEFAULT_CLOSE),
-        }),
         // Fallback: return a structured placeholder with explicit error message
         _ => json!({
             "type": "UnknownSignal",

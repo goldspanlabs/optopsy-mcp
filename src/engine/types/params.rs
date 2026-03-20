@@ -95,7 +95,7 @@ pub struct BacktestParams {
     #[garde(skip)]
     pub ohlcv_path: Option<String>,
     /// Paths to OHLCV parquet files for cross-symbol signals (symbol → path).
-    /// Auto-resolved by the server when `CrossSymbol` signal variants are present.
+    /// Auto-resolved by the server when cross-symbol formula references are present.
     #[serde(default)]
     #[garde(skip)]
     pub cross_ohlcv_paths: HashMap<String, String>,

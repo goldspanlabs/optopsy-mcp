@@ -1,8 +1,8 @@
 //! Tests for cross-symbol exit signal resolution in options backtests.
 //!
-//! Validates two key properties:
-//! 1. `CrossSymbol` exit signals evaluate against the cross-symbol's OHLCV data (not primary)
-//! 2. Exit signals only close positions that are actually open (not fire on all days)
+//! Validates that cross-symbol formula references (e.g., `VIX > 30`) evaluate
+//! against the cross-symbol's OHLCV data, and that exit signals only close
+//! positions that are actually open.
 //!
 //! Uses `make_multi_strike_df()` from common: 3 dates (Jan 15, Jan 22, Feb 11 2024),
 //! near-term exp Feb 16 (DTE=32 from Jan 15), `exit_dte=5` → DTE exit on Feb 11.
@@ -73,7 +73,7 @@ fn cross_symbol_vix_exit_fires_when_signal_active_and_position_open() {
     // Setup: short_put enters Jan 15 (DTE=32), normal DTE exit would be Feb 11 (DTE=5).
     //
     // VIX closes: Jan 15=18, Jan 22=35, Feb 11=20
-    // Exit signal: VIX close > 30 (a "VIX spike" condition)
+    // Exit signal: VIX > 30 (a "VIX spike" condition)
     //
     // Expected: VIX > 30 fires on Jan 22. Position is open since Jan 15.
     // → Signal exit on Jan 22 (7 days held), NOT the normal DTE exit on Feb 11.
@@ -89,11 +89,8 @@ fn cross_symbol_vix_exit_fires_when_signal_active_and_position_open() {
     let mut params = base_params("short_put", vec![delta(0.40)]);
     params.ohlcv_path = Some(spy_path);
     params.cross_ohlcv_paths = cross_paths;
-    params.exit_signal = Some(SignalSpec::CrossSymbol {
-        symbol: "VIX".into(),
-        signal: Box::new(SignalSpec::Formula {
-            formula: "close > 30".into(),
-        }),
+    params.exit_signal = Some(SignalSpec::Formula {
+        formula: "VIX > 30".into(),
     });
 
     let result = run_backtest(&df, &params).expect("backtest should succeed");
@@ -117,7 +114,7 @@ fn cross_symbol_vix_exit_fires_when_signal_active_and_position_open() {
 
 #[test]
 fn cross_symbol_exit_uses_cross_data_not_primary() {
-    // Signal: CrossSymbol("VIX", "close > 400")
+    // Signal: VIX > 400
     // - On VIX data (18/19/20): never true → no signal exit
     // - If incorrectly evaluated on SPY (450): would be true → signal exit
     //
@@ -134,11 +131,8 @@ fn cross_symbol_exit_uses_cross_data_not_primary() {
     let mut params = base_params("short_put", vec![delta(0.40)]);
     params.ohlcv_path = Some(spy_path);
     params.cross_ohlcv_paths = cross_paths;
-    params.exit_signal = Some(SignalSpec::CrossSymbol {
-        symbol: "VIX".into(),
-        signal: Box::new(SignalSpec::Formula {
-            formula: "close > 400".into(), // true for SPY (450), false for VIX (18-20)
-        }),
+    params.exit_signal = Some(SignalSpec::Formula {
+        formula: "VIX > 400".into(), // true for SPY (450), false for VIX (18-20)
     });
 
     let result = run_backtest(&df, &params).expect("backtest should succeed");
@@ -184,11 +178,8 @@ fn cross_symbol_exit_only_closes_open_positions() {
     params.ohlcv_path = Some(spy_path);
     params.cross_ohlcv_paths = cross_paths;
     params.max_positions = 1;
-    params.exit_signal = Some(SignalSpec::CrossSymbol {
-        symbol: "VIX".into(),
-        signal: Box::new(SignalSpec::Formula {
-            formula: "close > 30".into(),
-        }),
+    params.exit_signal = Some(SignalSpec::Formula {
+        formula: "VIX > 30".into(),
     });
 
     let result = run_backtest(&df, &params).expect("backtest should succeed");
@@ -206,37 +197,4 @@ fn cross_symbol_exit_only_closes_open_positions() {
     // Trade 1: Jan 15 → Jan 22 (7 days), Trade 2: Jan 22 → Feb 11 (20 days)
     assert_eq!(result.trade_log[0].days_held, 7);
     assert_eq!(result.trade_log[1].days_held, 20);
-}
-
-// ─── Test: Missing cross_ohlcv_paths errors cleanly ─────────────────────────
-
-#[test]
-fn missing_cross_ohlcv_paths_errors() {
-    // CrossSymbol exit references VIX, but cross_ohlcv_paths is empty.
-    // The engine should error with a clear message, not panic.
-    let df = make_multi_strike_df();
-    let dates = ohlcv_dates();
-
-    let (_spy_dir, spy_path) = write_ohlcv_parquet(&dates, &[450.0, 450.0, 450.0]);
-
-    let mut params = base_params("short_put", vec![delta(0.40)]);
-    params.ohlcv_path = Some(spy_path);
-    params.exit_signal = Some(SignalSpec::CrossSymbol {
-        symbol: "VIX".into(),
-        signal: Box::new(SignalSpec::Formula {
-            formula: "close > 30".into(),
-        }),
-    });
-
-    let result = run_backtest(&df, &params);
-
-    assert!(
-        result.is_err(),
-        "expected error when cross_ohlcv_paths is missing VIX data"
-    );
-    let err_msg = result.unwrap_err().to_string();
-    assert!(
-        err_msg.contains("VIX") && err_msg.contains("no OHLCV data loaded"),
-        "error should mention VIX and missing data, got: {err_msg}"
-    );
 }

@@ -248,7 +248,6 @@ pub(crate) fn signal_spec_label(spec: &SignalSpec) -> String {
             }
         }
         SignalSpec::Saved { name } => format!("Saved({name})"),
-        SignalSpec::CrossSymbol { symbol, .. } => format!("CrossSymbol({symbol})"),
         SignalSpec::And { .. } => "And(…)".to_string(),
         SignalSpec::Or { .. } => "Or(…)".to_string(),
     }

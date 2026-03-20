@@ -140,7 +140,6 @@ fn traverse_signal_spec(
         }
         match spec {
             SignalSpec::Formula { formula } => pred(formula),
-            SignalSpec::CrossSymbol { signal, .. } => inner(signal, pred, depth + 1),
             SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
                 inner(left, pred, depth + 1) || inner(right, pred, depth + 1)
             }
@@ -188,7 +187,7 @@ fn formula_references_iv(formula: &str) -> bool {
 /// When IV-based signals are used, aggregates daily IV from the options `DataFrame`
 /// and merges it into the OHLCV `DataFrame` so all signals evaluate against one unified `DataFrame`.
 /// For pure IV signals (no OHLCV path), a minimal `DataFrame` is constructed from the IV aggregation.
-/// When `CrossSymbol` variants are present, loads secondary symbol `DataFrame`s
+/// When cross-symbol formula references are present, loads secondary symbol `DataFrames`
 /// from `params.cross_ohlcv_paths` and uses `active_dates_multi` for evaluation.
 /// Load and prepare the OHLCV `DataFrame` for signal evaluation.
 ///

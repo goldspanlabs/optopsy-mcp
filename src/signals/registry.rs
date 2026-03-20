@@ -455,17 +455,9 @@ pub const SIGNAL_CATALOG: &[SignalInfo] = &[
         params: "condition, then, else",
         formula_example: "if(close > sma(close, 50), 1, 0)",
     },
-    // ── Cross-symbol ──────────────────────────────────────────────────
-    SignalInfo {
-        name: "Cross Symbol",
-        category: "cross-symbol",
-        description: "Evaluate any signal against a different symbol's OHLCV data (e.g., VIX as filter for SPY).",
-        params: "symbol, signal (any nested SignalSpec)",
-        formula_example: "",
-    },
 ];
 
-/// Collect all secondary symbols referenced by `CrossSymbol` variants in a signal tree.
+/// Collect all secondary symbols referenced in a signal tree (via formula cross-symbol syntax).
 pub fn collect_cross_symbols(spec: &SignalSpec) -> std::collections::HashSet<String> {
     let mut symbols = std::collections::HashSet::new();
     let mut visited_saved = std::collections::HashSet::new();
@@ -485,10 +477,6 @@ fn collect_cross_symbols_inner(
     }
 
     match spec {
-        SignalSpec::CrossSymbol { symbol, signal } => {
-            out.insert(symbol.to_uppercase());
-            collect_cross_symbols_inner(signal, out, visited_saved, depth);
-        }
         SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
             collect_cross_symbols_inner(left, out, visited_saved, depth);
             collect_cross_symbols_inner(right, out, visited_saved, depth);
@@ -566,8 +554,8 @@ mod tests {
 
     #[test]
     fn catalog_has_all_signals() {
-        // 63 signals across 10 domain categories
-        assert_eq!(SIGNAL_CATALOG.len(), 63);
+        // 62 signals across 9 domain categories (CrossSymbol removed)
+        assert_eq!(SIGNAL_CATALOG.len(), 62);
     }
 
     #[test]
@@ -589,80 +577,13 @@ mod tests {
     }
 
     #[test]
-    fn collect_cross_symbols_finds_nested() {
-        let spec = SignalSpec::And {
-            left: Box::new(SignalSpec::CrossSymbol {
-                symbol: "^VIX".into(),
-                signal: Box::new(SignalSpec::Formula {
-                    formula: "consecutive_up(close) >= 2".into(),
-                }),
-            }),
-            right: Box::new(SignalSpec::CrossSymbol {
-                symbol: "GLD".into(),
-                signal: Box::new(SignalSpec::Formula {
-                    formula: "consecutive_down(close) >= 3".into(),
-                }),
-            }),
-        };
-        let symbols = collect_cross_symbols(&spec);
-        assert_eq!(symbols.len(), 2);
-        assert!(symbols.contains("^VIX"));
-        assert!(symbols.contains("GLD"));
-    }
-
-    #[test]
-    fn cross_symbol_serde_round_trip() {
-        let spec = SignalSpec::CrossSymbol {
-            symbol: "^VIX".into(),
-            signal: Box::new(SignalSpec::Formula {
-                formula: "close > 20".into(),
-            }),
-        };
-        let json = serde_json::to_string(&spec).unwrap();
-        let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
-        if let SignalSpec::CrossSymbol { symbol, signal } = parsed {
-            assert_eq!(symbol, "^VIX");
-            assert!(matches!(*signal, SignalSpec::Formula { .. }));
-        } else {
-            panic!("expected CrossSymbol");
-        }
-    }
-
-    #[test]
-    fn collect_cross_symbols_depth_limit() {
-        // Build a deeply nested CrossSymbol chain (depth > 8)
-        let mut spec = SignalSpec::CrossSymbol {
-            symbol: "DEEP".into(),
-            signal: Box::new(SignalSpec::Formula {
-                formula: "close > 0".into(),
-            }),
-        };
-        for i in 0..10 {
-            spec = SignalSpec::And {
-                left: Box::new(SignalSpec::CrossSymbol {
-                    symbol: format!("SYM{i}"),
-                    signal: Box::new(spec),
-                }),
-                right: Box::new(SignalSpec::Formula {
-                    formula: "close > 0".into(),
-                }),
-            };
-        }
-        // Should not panic — depth limit caps recursion
-        let symbols = collect_cross_symbols(&spec);
-        assert!(symbols.contains("DEEP"));
-        // At minimum some SYM* symbols should be found
-        assert!(symbols.len() > 1);
-    }
-
-    #[test]
     fn catalog_entries_have_non_empty_fields() {
         for info in SIGNAL_CATALOG {
             assert!(!info.name.is_empty());
             assert!(!info.category.is_empty());
             assert!(!info.description.is_empty());
             assert!(!info.params.is_empty());
-            // formula_example can be empty for CrossSymbol
+            assert!(!info.formula_example.is_empty());
         }
     }
 
@@ -678,7 +599,6 @@ mod tests {
             "iv",
             "datetime",
             "utility",
-            "cross-symbol",
         ];
         for info in SIGNAL_CATALOG {
             assert!(
