@@ -106,7 +106,7 @@ Control runtime behavior and data sources:
 
 ## Architecture
 
-**optopsy-mcp** is an options and stock backtesting engine exposed as an MCP (Model Context Protocol) server via `rmcp 0.17`. It provides 11 tools for running event-driven backtests (options and equities), comparing strategies, parameter optimization, walk-forward analysis, statistical testing, and returning raw price data for charting.
+**optopsy-mcp** is an options and stock backtesting engine exposed as an MCP (Model Context Protocol) server via `rmcp 0.17`. It provides 24 tools for running event-driven backtests (options and equities), comparing strategies, parameter optimization, walk-forward analysis, statistical testing, risk analysis, factor attribution, portfolio optimization, and returning raw price data for charting.
 
 ### Transport (`src/main.rs`)
 - **stdio** (default): for local Claude Desktop integration
@@ -181,6 +181,19 @@ TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, tr
 - **`generate_hypotheses`** — Auto-scan for statistically significant patterns across 8 dimensions with BH-FDR correction. Results are hypotheses — validate before trusting.
   - Dimensions: `seasonality`, `price_action`, `mean_reversion`, `volume`, `volatility_regime`, `cross_asset`, `microstructure`, `autocorrelation`
 
+### Risk & Quantitative Analysis Tools
+- **`drawdown_analysis`** — Full drawdown distribution: episode tracking (depth, duration, recovery), underwater curve, Ulcer Index, Pain Ratio. Use to compare drawdown *profiles* beyond just max drawdown.
+- **`cointegration_test`** — Engle-Granger cointegration test between two price series. Computes hedge ratio, ADF test on spread residuals, spread z-score, and mean-reversion half-life. Foundation for pairs/stat-arb strategies.
+- **`monte_carlo`** — Block-bootstrap Monte Carlo simulation (default 10K paths). Produces confidence intervals on terminal wealth, ruin probabilities (P(loss > 10/25/50%)), max drawdown distribution, and terminal wealth histogram.
+  - Uses 21-day block resampling to preserve autocorrelation structure.
+- **`factor_attribution`** — Multi-factor regression decomposing returns into Market, SMB (Size), HML (Value), and Momentum exposures using ETF proxies. Tests whether alpha is genuine or factor exposure.
+  - Default proxies: Market=SPY, SMB=IWM-SPY, HML=IWD-IWF, Momentum=MTUM-SPY. Customizable via `factor_proxies`.
+- **`portfolio_optimize`** — Compute optimal portfolio weights for 2-20 assets using three methods:
+  - `risk_parity`: Inverse-volatility weighting (equal risk contribution)
+  - `min_variance`: Analytical minimum-variance portfolio (Σ^{-1} * 1 / 1' Σ^{-1} 1)
+  - `max_sharpe`: Tangency portfolio maximizing Sharpe ratio
+- **`benchmark_analysis`** — Benchmark-relative metrics: Jensen's alpha (with t-test), beta, Treynor ratio, Information Ratio, tracking error, up/down capture ratios, R².
+
 ## Type System
 
 ### Enums
@@ -232,7 +245,7 @@ TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, tr
 **`SizingConstraints`**: `{ min_quantity: i32 (default 1), max_quantity: Option<i32> }`
 - Clamps computed quantity to `[min, max]`
 
-**`PerformanceMetrics`**: Sharpe, Sortino, CAGR, Calmar, VaR 95%, max drawdown, win rate, profit factor, expectancy, etc.
+**`PerformanceMetrics`**: Sharpe, Sortino, CAGR, Calmar, VaR 95%, CVaR 95% (Expected Shortfall), historical VaR 95%, max drawdown, Ulcer Index, Pain Ratio, avg/max drawdown duration, win rate, profit factor, expectancy, etc.
 
 **`TradeRecord`**: Entry/exit date, strike, legs, quantity, entry_cost, exit_cost, P&L, days_held, exit_reason, computed_quantity, entry_equity
 
