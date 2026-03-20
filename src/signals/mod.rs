@@ -270,16 +270,16 @@ fn active_dates_multi_depth<S: std::hash::BuildHasher>(
     match spec {
         SignalSpec::And { left, right } => {
             let left_dates =
-                active_dates_multi_depth(left, primary_df, cross_dfs, date_col, depth)?;
+                active_dates_multi_depth(left, primary_df, cross_dfs, date_col, depth + 1)?;
             let right_dates =
-                active_dates_multi_depth(right, primary_df, cross_dfs, date_col, depth)?;
+                active_dates_multi_depth(right, primary_df, cross_dfs, date_col, depth + 1)?;
             Ok(left_dates.intersection(&right_dates).copied().collect())
         }
         SignalSpec::Or { left, right } => {
             let left_dates =
-                active_dates_multi_depth(left, primary_df, cross_dfs, date_col, depth)?;
+                active_dates_multi_depth(left, primary_df, cross_dfs, date_col, depth + 1)?;
             let right_dates =
-                active_dates_multi_depth(right, primary_df, cross_dfs, date_col, depth)?;
+                active_dates_multi_depth(right, primary_df, cross_dfs, date_col, depth + 1)?;
             Ok(left_dates.union(&right_dates).copied().collect())
         }
         // Formula with potential cross-symbol references
@@ -358,16 +358,16 @@ fn active_datetimes_multi_depth<S: std::hash::BuildHasher>(
     match spec {
         SignalSpec::And { left, right } => {
             let left_dts =
-                active_datetimes_multi_depth(left, primary_df, cross_dfs, date_col, depth)?;
+                active_datetimes_multi_depth(left, primary_df, cross_dfs, date_col, depth + 1)?;
             let right_dts =
-                active_datetimes_multi_depth(right, primary_df, cross_dfs, date_col, depth)?;
+                active_datetimes_multi_depth(right, primary_df, cross_dfs, date_col, depth + 1)?;
             Ok(intersect_mixed_granularity(&left_dts, &right_dts))
         }
         SignalSpec::Or { left, right } => {
             let left_dts =
-                active_datetimes_multi_depth(left, primary_df, cross_dfs, date_col, depth)?;
+                active_datetimes_multi_depth(left, primary_df, cross_dfs, date_col, depth + 1)?;
             let right_dts =
-                active_datetimes_multi_depth(right, primary_df, cross_dfs, date_col, depth)?;
+                active_datetimes_multi_depth(right, primary_df, cross_dfs, date_col, depth + 1)?;
             Ok(union_mixed_granularity(&left_dts, &right_dts))
         }
         // Formula with potential cross-symbol references
