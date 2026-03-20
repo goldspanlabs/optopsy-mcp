@@ -85,12 +85,13 @@ impl Interval {
         )
     }
 
-    /// Default lookback in calendar days for intraday intervals when no date range
-    /// is specified. Returns `None` for daily/weekly/monthly (no limit needed).
+    /// Default lookback in calendar days for intraday intervals when `start_date`
+    /// is `None`. Returns `None` for daily/weekly/monthly (no limit needed).
     ///
-    /// Prevents loading 10+ years of minute/hourly data when the user doesn't
-    /// specify explicit `start_date`/`end_date`. Shorter intervals get tighter caps
-    /// because the bar count grows proportionally.
+    /// Prevents loading 10+ years of minute/hourly data when callers don't provide
+    /// an explicit `start_date`. Callers typically anchor this lookback to
+    /// `end_date` when it is set, or to the current date/time otherwise. Shorter
+    /// intervals get tighter caps because the bar count grows proportionally.
     pub fn default_intraday_lookback_days(self) -> Option<i64> {
         match self {
             Self::Min1 => Some(180), // ~6 months — ~75K bars
@@ -1570,5 +1571,23 @@ mod tests {
                 s.name
             );
         }
+    }
+
+    #[test]
+    fn default_intraday_lookback_days_mapping() {
+        assert_eq!(Interval::Min1.default_intraday_lookback_days(), Some(180));
+        assert_eq!(Interval::Min5.default_intraday_lookback_days(), Some(365));
+        assert_eq!(Interval::Min10.default_intraday_lookback_days(), Some(730));
+        assert_eq!(Interval::Min15.default_intraday_lookback_days(), Some(730));
+        assert_eq!(Interval::Min30.default_intraday_lookback_days(), Some(730));
+        assert_eq!(Interval::Hour1.default_intraday_lookback_days(), Some(1095));
+        assert_eq!(Interval::Hour4.default_intraday_lookback_days(), Some(1095));
+    }
+
+    #[test]
+    fn default_intraday_lookback_days_none_for_daily_and_above() {
+        assert_eq!(Interval::Daily.default_intraday_lookback_days(), None);
+        assert_eq!(Interval::Weekly.default_intraday_lookback_days(), None);
+        assert_eq!(Interval::Monthly.default_intraday_lookback_days(), None);
     }
 }

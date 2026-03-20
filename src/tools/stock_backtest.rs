@@ -26,21 +26,10 @@ pub fn execute(
 
     // Apply a default lookback cap for intraday intervals when no start date is
     // specified, preventing loading millions of bars from multi-year datasets.
-    let effective_start = params.start_date.or_else(|| {
-        params
-            .interval
-            .default_intraday_lookback_days()
-            .map(|days| {
-                let cap = chrono::Utc::now().date_naive() - chrono::Duration::days(days);
-                tracing::info!(
-                    interval = %params.interval,
-                    lookback_days = days,
-                    effective_start = %cap,
-                    "Applying default intraday lookback cap (no start_date specified)"
-                );
-                cap
-            })
-    });
+    // Anchored to end_date when present so historical runs don't produce an
+    // effective_start that exceeds end_date.
+    let effective_start =
+        stock_sim::compute_effective_start(params.interval, params.start_date, params.end_date);
 
     let ohlcv_df = stock_sim::load_ohlcv_df(ohlcv_path, effective_start, params.end_date)?;
 
