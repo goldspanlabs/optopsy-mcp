@@ -27,18 +27,21 @@ use crate::engine::types::{
 use crate::signals::registry::{collect_cross_symbols, SignalSpec};
 use crate::tools;
 use crate::tools::response_types::{
-    AggregatePricesResponse, BacktestResponse, BuildSignalResponse, CompareResponse,
-    CorrelateResponse, DistributionResponse, HypothesisParams, HypothesisResponse,
-    ListSymbolsResponse, PermutationTestResponse, PortfolioBacktestResponse, RawPricesResponse,
-    RegimeDetectResponse, RollingMetricResponse, StockBacktestResponse, StrategiesResponse,
-    SweepResponse, WalkForwardResponse,
+    AggregatePricesResponse, BacktestResponse, BenchmarkAnalysisResponse, BuildSignalResponse,
+    CointegrationResponse, CompareResponse, CorrelateResponse, DistributionResponse,
+    DrawdownAnalysisResponse, FactorAttributionResponse, HypothesisParams, HypothesisResponse,
+    ListSymbolsResponse, MonteCarloResponse, PermutationTestResponse, PortfolioBacktestResponse,
+    PortfolioOptimizeResponse, RawPricesResponse, RegimeDetectResponse, RollingMetricResponse,
+    StockBacktestResponse, StrategiesResponse, SweepResponse, WalkForwardResponse,
 };
 use params::{
     resolve_leg_deltas, resolve_sweep_strategies, validation_err, AggregatePricesParams,
-    BacktestBaseParams, BuildSignalParams, CompareStrategiesParams, CorrelateParams,
-    DistributionParams, GetRawPricesParams, ListSymbolsParams, ParameterSweepParams,
-    PermutationTestParams, PortfolioBacktestParams, RegimeDetectParams, RollingMetricParams,
-    RunBacktestParams, RunStockBacktestParams, WalkForwardParams,
+    BacktestBaseParams, BenchmarkAnalysisParams, BuildSignalParams, CointegrationParams,
+    CompareStrategiesParams, CorrelateParams, DistributionParams, DrawdownAnalysisParams,
+    FactorAttributionParams, GetRawPricesParams, ListSymbolsParams, MonteCarloParams,
+    ParameterSweepParams, PermutationTestParams, PortfolioBacktestParams, PortfolioOptimizeParams,
+    RegimeDetectParams, RollingMetricParams, RunBacktestParams, RunStockBacktestParams,
+    WalkForwardParams,
 };
 use sanitize::{SanitizedJson, SanitizedResult};
 
@@ -2054,6 +2057,212 @@ impl OptopsyServer {
                 })
                 .await
                 .map_err(|e| format!("Portfolio backtest task panicked: {e}"))?
+                .map_err(|e| format!("Error: {e}"))
+            }
+            .await,
+        )
+    }
+
+    /// Analyze the full drawdown distribution of a symbol's price history.
+    ///
+    /// Decomposes the equity curve into individual drawdown episodes and computes
+    /// detailed statistics: episode depths, durations, recovery times, Ulcer Index,
+    /// and an underwater curve for charting.
+    ///
+    /// **When to use**: After seeing max_drawdown in backtest results, use this to understand
+    /// the full drawdown *distribution* — two strategies with identical max_drawdown can have
+    /// very different drawdown profiles.
+    ///
+    /// **Output**: Top 20 drawdown episodes by depth, aggregate distribution stats,
+    /// and an underwater curve for visualization.
+    #[tool(name = "drawdown_analysis", annotations(read_only_hint = true))]
+    async fn drawdown_analysis(
+        &self,
+        Parameters(params): Parameters<DrawdownAnalysisParams>,
+    ) -> SanitizedResult<DrawdownAnalysisResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("drawdown_analysis", e))?;
+                tools::drawdown_analysis::execute(&self.cache, &params.symbol, params.years)
+                    .await
+                    .map_err(|e| format!("Error: {e}"))
+            }
+            .await,
+        )
+    }
+
+    /// Test for cointegration between two price series using the Engle-Granger method.
+    ///
+    /// Fits a cointegrating regression (B = alpha + beta * A), computes the spread (residuals),
+    /// and tests stationarity via an ADF test. If cointegrated, the spread is mean-reverting
+    /// and suitable for pairs/statistical arbitrage strategies.
+    ///
+    /// **When to use**: Before building pairs trading strategies. Correlation measures
+    /// co-movement of *returns*; cointegration measures whether a *spread* between two
+    /// prices is mean-reverting — a much stronger condition for stat-arb.
+    ///
+    /// **Output**: Hedge ratio, ADF test, spread statistics (z-score, half-life), and
+    /// a spread time series for charting.
+    #[tool(name = "cointegration_test", annotations(read_only_hint = true))]
+    async fn cointegration_test(
+        &self,
+        Parameters(params): Parameters<CointegrationParams>,
+    ) -> SanitizedResult<CointegrationResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("cointegration_test", e))?;
+                tools::cointegration::execute(
+                    &self.cache,
+                    &params.symbol_a,
+                    &params.symbol_b,
+                    params.years,
+                )
+                .await
+                .map_err(|e| format!("Error: {e}"))
+            }
+            .await,
+        )
+    }
+
+    /// Run Monte Carlo simulations to estimate forward-looking risk and return distributions.
+    ///
+    /// Fits a return distribution from historical data, then generates thousands of synthetic
+    /// equity paths via bootstrapped block resampling. Produces confidence intervals on
+    /// terminal wealth, max drawdown distributions, and ruin probabilities.
+    ///
+    /// **When to use**: After backtesting, to estimate the range of possible outcomes
+    /// going forward. Complements the permutation test (which tests *past* significance)
+    /// with *forward-looking* risk quantification.
+    ///
+    /// **Output**: Percentile paths (5th/25th/50th/75th/95th), ruin probabilities,
+    /// drawdown distribution, and terminal wealth histogram.
+    #[tool(name = "monte_carlo", annotations(read_only_hint = true))]
+    async fn monte_carlo(
+        &self,
+        Parameters(params): Parameters<MonteCarloParams>,
+    ) -> SanitizedResult<MonteCarloResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("monte_carlo", e))?;
+                tools::monte_carlo::execute(
+                    &self.cache,
+                    &params.symbol,
+                    params.n_simulations,
+                    params.horizon_days,
+                    params.initial_capital,
+                    params.years,
+                    params.seed,
+                )
+                .await
+                .map_err(|e| format!("Error: {e}"))
+            }
+            .await,
+        )
+    }
+
+    /// Decompose returns into systematic factor exposures and idiosyncratic alpha.
+    ///
+    /// Runs a multi-factor regression using ETF proxies for Market, Size (SMB),
+    /// Value (HML), and Momentum factors. Answers: "Is my return explained by
+    /// known risk factors, or is there genuine alpha?"
+    ///
+    /// **When to use**: After finding a profitable strategy, to verify the alpha
+    /// isn't simply market beta or factor exposure in disguise.
+    ///
+    /// **Output**: Factor betas with significance tests, alpha estimate,
+    /// R² (how much is explained), and return attribution breakdown.
+    #[tool(name = "factor_attribution", annotations(read_only_hint = true))]
+    async fn factor_attribution(
+        &self,
+        Parameters(params): Parameters<FactorAttributionParams>,
+    ) -> SanitizedResult<FactorAttributionResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("factor_attribution", e))?;
+                tools::factor_attribution::execute(
+                    &self.cache,
+                    &params.symbol,
+                    &params.benchmark,
+                    params.factor_proxies.as_ref(),
+                    params.years,
+                )
+                .await
+                .map_err(|e| format!("Error: {e}"))
+            }
+            .await,
+        )
+    }
+
+    /// Optimize portfolio weights using risk parity, minimum variance, and/or maximum Sharpe.
+    ///
+    /// Takes 2-20 symbols and computes optimal allocations using three methods:
+    /// - **risk_parity**: Equal risk contribution from each asset
+    /// - **min_variance**: Minimize total portfolio volatility
+    /// - **max_sharpe**: Maximize risk-adjusted return (tangency portfolio)
+    ///
+    /// **When to use**: After identifying a set of assets/strategies, to determine
+    /// optimal allocation weights rather than using equal weighting.
+    ///
+    /// **Output**: Optimal weights per method, expected portfolio metrics,
+    /// correlation matrix, and per-asset statistics.
+    #[tool(name = "portfolio_optimize", annotations(read_only_hint = true))]
+    async fn portfolio_optimize(
+        &self,
+        Parameters(params): Parameters<PortfolioOptimizeParams>,
+    ) -> SanitizedResult<PortfolioOptimizeResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("portfolio_optimize", e))?;
+                tools::portfolio_optimize::execute(
+                    &self.cache,
+                    &params.symbols,
+                    params.methods.as_deref(),
+                    params.years,
+                    params.risk_free_rate,
+                )
+                .await
+                .map_err(|e| format!("Error: {e}"))
+            }
+            .await,
+        )
+    }
+
+    /// Compute benchmark-relative performance metrics: Jensen's alpha, beta, Treynor ratio,
+    /// Information Ratio, tracking error, and up/down capture ratios.
+    ///
+    /// **When to use**: To evaluate an active strategy relative to a passive benchmark.
+    /// Sharpe measures absolute risk-adjusted return; Information Ratio measures
+    /// risk-adjusted *excess* return over the benchmark.
+    ///
+    /// **Output**: Alpha (with significance test), beta, Treynor, IR, tracking error,
+    /// up/down capture ratios, and R².
+    #[tool(name = "benchmark_analysis", annotations(read_only_hint = true))]
+    async fn benchmark_analysis(
+        &self,
+        Parameters(params): Parameters<BenchmarkAnalysisParams>,
+    ) -> SanitizedResult<BenchmarkAnalysisResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("benchmark_analysis", e))?;
+                tools::benchmark_analysis::execute(
+                    &self.cache,
+                    &params.symbol,
+                    &params.benchmark,
+                    params.years,
+                )
+                .await
                 .map_err(|e| format!("Error: {e}"))
             }
             .await,

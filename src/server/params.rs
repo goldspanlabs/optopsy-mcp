@@ -1246,6 +1246,166 @@ pub struct PortfolioBacktestParams {
     pub end_date: Option<String>,
 }
 
+// ── Default helpers for new quant tools ─────────────────────────────────
+
+fn default_analysis_years() -> u32 {
+    5
+}
+
+fn default_n_simulations() -> usize {
+    10_000
+}
+
+fn default_horizon_days() -> usize {
+    252
+}
+
+fn default_monte_carlo_capital() -> f64 {
+    10_000.0
+}
+
+/// Parameters for the `drawdown_analysis` tool.
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+#[garde(context(()))]
+pub struct DrawdownAnalysisParams {
+    /// Ticker symbol
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
+    pub symbol: String,
+    /// Years of history to analyze (default: 5)
+    #[serde(default = "default_analysis_years")]
+    #[garde(range(min = 1, max = 50))]
+    pub years: u32,
+}
+
+/// Parameters for the `cointegration_test` tool.
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+#[garde(context(()))]
+pub struct CointegrationParams {
+    /// First symbol (dependent variable in hedge ratio regression)
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
+    pub symbol_a: String,
+    /// Second symbol (independent variable)
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
+    pub symbol_b: String,
+    /// Years of history (default: 5)
+    #[serde(default = "default_analysis_years")]
+    #[garde(range(min = 1, max = 50))]
+    pub years: u32,
+}
+
+/// Parameters for the `monte_carlo` tool.
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+#[garde(context(()))]
+pub struct MonteCarloParams {
+    /// Ticker symbol to base simulations on
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
+    pub symbol: String,
+    /// Number of simulations (default: 10000)
+    #[serde(default = "default_n_simulations")]
+    #[garde(range(min = 100, max = 100_000))]
+    pub n_simulations: usize,
+    /// Forecast horizon in trading days (default: 252)
+    #[serde(default = "default_horizon_days")]
+    #[garde(range(min = 5, max = 2520))]
+    pub horizon_days: usize,
+    /// Starting capital (default: 10000)
+    #[serde(default = "default_monte_carlo_capital")]
+    #[garde(range(min = 1.0))]
+    pub initial_capital: f64,
+    /// Years of historical data to fit from (default: 5)
+    #[serde(default = "default_analysis_years")]
+    #[garde(range(min = 1, max = 50))]
+    pub years: u32,
+    /// Optional random seed for reproducibility
+    #[serde(default)]
+    #[garde(skip)]
+    pub seed: Option<u64>,
+}
+
+/// Parameters for the `factor_attribution` tool.
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+#[garde(context(()))]
+pub struct FactorAttributionParams {
+    /// Symbol to analyze
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
+    pub symbol: String,
+    /// Market benchmark symbol (default: "SPY")
+    #[serde(default = "default_benchmark")]
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
+    pub benchmark: String,
+    /// Additional factor proxy symbols. Default factors use:
+    /// Market=benchmark, SMB=IWM-SPY, HML=IWD-IWF, Momentum=MTUM
+    #[serde(default)]
+    #[garde(skip)]
+    pub factor_proxies: Option<FactorProxies>,
+    /// Years of history (default: 5)
+    #[serde(default = "default_analysis_years")]
+    #[garde(range(min = 1, max = 50))]
+    pub years: u32,
+}
+
+fn default_benchmark() -> String {
+    "SPY".to_string()
+}
+
+/// Custom factor proxy symbols.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct FactorProxies {
+    /// Small-cap proxy (default: "IWM")
+    pub small_cap: Option<String>,
+    /// Large-cap growth proxy (default: "IWF")
+    pub growth: Option<String>,
+    /// Large-cap value proxy (default: "IWD")
+    pub value: Option<String>,
+    /// Momentum factor proxy (default: "MTUM")
+    pub momentum: Option<String>,
+}
+
+/// Parameters for the `portfolio_optimize` tool.
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+#[garde(context(()))]
+pub struct PortfolioOptimizeParams {
+    /// Symbols to include in portfolio (2-20)
+    #[garde(
+        length(min = 2, max = 20),
+        inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))
+    )]
+    pub symbols: Vec<String>,
+    /// Optimization methods to run (default: all three)
+    #[serde(default)]
+    #[garde(skip)]
+    pub methods: Option<Vec<String>>,
+    /// Years of history (default: 5)
+    #[serde(default = "default_analysis_years")]
+    #[garde(range(min = 1, max = 50))]
+    pub years: u32,
+    /// Risk-free rate for Sharpe calculation (default: 0.05 = 5%)
+    #[serde(default = "default_risk_free")]
+    #[garde(range(min = 0.0, max = 0.2))]
+    pub risk_free_rate: f64,
+}
+
+fn default_risk_free() -> f64 {
+    0.05
+}
+
+/// Parameters for the `benchmark_analysis` tool.
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+#[garde(context(()))]
+pub struct BenchmarkAnalysisParams {
+    /// Symbol to analyze
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
+    pub symbol: String,
+    /// Benchmark symbol (default: "SPY")
+    #[serde(default = "default_benchmark")]
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
+    pub benchmark: String,
+    /// Years of history (default: 5)
+    #[serde(default = "default_analysis_years")]
+    #[garde(range(min = 1, max = 50))]
+    pub years: u32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
