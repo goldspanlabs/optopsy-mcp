@@ -17,7 +17,7 @@ pub use helpers::FuncArg;
 use polars::prelude::Expr;
 
 /// Dispatch a function call to the appropriate category module.
-pub fn dispatch(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
+pub fn dispatch(name: &str, args: &[FuncArg]) -> Result<Expr, String> {
     let n = name.to_lowercase();
     match n.as_str() {
         // Rolling

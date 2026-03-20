@@ -13,12 +13,11 @@ use crate::signals::helpers::pad_series;
 use crate::signals::volatility::{compute_atr, compute_keltner_channel};
 use crate::signals::volume::{compute_cmf, compute_typical_price};
 
-#[allow(clippy::needless_pass_by_value, clippy::too_many_lines)]
-pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
+#[allow(clippy::too_many_lines)]
+pub fn build(name: &str, args: &[FuncArg]) -> Result<Expr, String> {
     match name {
         "atr" => {
-            let (close_expr, high_expr, low_expr, period) =
-                extract_three_cols_period(&args, "atr")?;
+            let (close_expr, high_expr, low_expr, period) = extract_three_cols_period(args, "atr")?;
             Ok(as_struct(vec![
                 close_expr.alias("__c"),
                 high_expr.alias("__h"),
@@ -55,7 +54,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
         }
         "stochastic" => {
             let (close_expr, high_expr, low_expr, period) =
-                extract_three_cols_period(&args, "stochastic")?;
+                extract_three_cols_period(args, "stochastic")?;
             Ok(as_struct(vec![
                 close_expr.alias("__c"),
                 high_expr.alias("__h"),
@@ -93,7 +92,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
         }
         "keltner_upper" => {
             let (close_expr, high_expr, low_expr, period, mult) =
-                extract_three_cols_period_mult(&args, "keltner_upper")?;
+                extract_three_cols_period_mult(args, "keltner_upper")?;
             Ok(as_struct(vec![
                 close_expr.alias("__c"),
                 high_expr.alias("__h"),
@@ -130,7 +129,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
         }
         "keltner_lower" => {
             let (close_expr, high_expr, low_expr, period, mult) =
-                extract_three_cols_period_mult(&args, "keltner_lower")?;
+                extract_three_cols_period_mult(args, "keltner_lower")?;
             Ok(as_struct(vec![
                 close_expr.alias("__c"),
                 high_expr.alias("__h"),
@@ -166,7 +165,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
             ))
         }
         "obv" => {
-            let (close_expr, vol_expr) = extract_two_cols(&args, "obv")?;
+            let (close_expr, vol_expr) = extract_two_cols(args, "obv")?;
             Ok(
                 as_struct(vec![close_expr.alias("__c"), vol_expr.alias("__v")]).map(
                     move |col: Column| {
@@ -198,7 +197,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
         }
         "mfi" => {
             let (close_expr, high_expr, low_expr, vol_expr, period) =
-                extract_four_cols_period(&args, "mfi")?;
+                extract_four_cols_period(args, "mfi")?;
             Ok(as_struct(vec![
                 close_expr.alias("__c"),
                 high_expr.alias("__h"),
@@ -247,7 +246,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
             ))
         }
         "tr" => {
-            let (close_expr, high_expr, low_expr) = extract_three_cols(&args, "tr")?;
+            let (close_expr, high_expr, low_expr) = extract_three_cols(args, "tr")?;
             Ok(as_struct(vec![
                 close_expr.alias("__c"),
                 high_expr.alias("__h"),
@@ -294,7 +293,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
         }
         "cmf" => {
             let (close_expr, high_expr, low_expr, vol_expr, period) =
-                extract_four_cols_period(&args, "cmf")?;
+                extract_four_cols_period(args, "cmf")?;
             Ok(as_struct(vec![
                 close_expr.alias("__c"),
                 high_expr.alias("__h"),

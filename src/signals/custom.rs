@@ -579,7 +579,7 @@ impl Parser {
                     self.advance();
                     let args = self.parse_args()?;
                     self.expect(&Token::RParen)?;
-                    let expr = Self::build_function_call(&name, args)?;
+                    let expr = Self::build_function_call(&name, &args)?;
                     // Allow lookback on function results: sma(close, 5)[1]
                     self.parse_optional_lookback(expr)
                 }
@@ -649,7 +649,7 @@ impl Parser {
         Ok(FuncArg::Expression(expr))
     }
 
-    fn build_function_call(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
+    fn build_function_call(name: &str, args: &[FuncArg]) -> Result<Expr, String> {
         super::custom_funcs::dispatch(name, args)
     }
 }

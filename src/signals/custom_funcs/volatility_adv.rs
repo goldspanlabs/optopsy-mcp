@@ -16,15 +16,15 @@ use super::helpers::{
 };
 use crate::signals::helpers::pad_series;
 
-#[allow(clippy::needless_pass_by_value, clippy::too_many_lines)]
-pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
+#[allow(clippy::too_many_lines)]
+pub fn build(name: &str, args: &[FuncArg]) -> Result<Expr, String> {
     match name {
         "aroon_up" => build_aroon(name, args, AroonComponent::Up),
         "aroon_down" => build_aroon(name, args, AroonComponent::Down),
         "aroon_osc" => build_aroon(name, args, AroonComponent::Osc),
         "supertrend" => {
             let (close_expr, high_expr, low_expr, period, mult) =
-                extract_three_cols_period_mult(&args, "supertrend")?;
+                extract_three_cols_period_mult(args, "supertrend")?;
             Ok(as_struct(vec![
                 close_expr.alias("__c"),
                 high_expr.alias("__h"),
@@ -72,8 +72,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
         }
         "donchian_upper" | "donchian_mid" | "donchian_lower" => {
             let func = name.to_string();
-            let (high_expr, low_expr, period) =
-                extract_three_cols_period_as_two_cols(&args, &func)?;
+            let (high_expr, low_expr, period) = extract_three_cols_period_as_two_cols(args, &func)?;
             Ok(
                 as_struct(vec![high_expr.alias("__h"), low_expr.alias("__l")]).map(
                     move |col: Column| {
@@ -113,7 +112,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
         }
         "ichimoku_tenkan" | "ichimoku_kijun" | "ichimoku_senkou_a" | "ichimoku_senkou_b" => {
             let func = name.to_string();
-            let (high_expr, low_expr, close_expr) = extract_three_cols(&args, &func)?;
+            let (high_expr, low_expr, close_expr) = extract_three_cols(args, &func)?;
             Ok(as_struct(vec![
                 high_expr.alias("__h"),
                 low_expr.alias("__l"),
@@ -163,7 +162,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
         }
         "envelope_upper" | "envelope_lower" => {
             let func = name.to_string();
-            let (col_expr, period, pct) = extract_col_period_float(&args, &func)?;
+            let (col_expr, period, pct) = extract_col_period_float(args, &func)?;
             Ok(col_expr.map(
                 move |col: Column| {
                     let ca = col.as_materialized_series().f64()?;
@@ -189,7 +188,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
             ))
         }
         "ad" => {
-            let (high_expr, low_expr, close_expr, vol_expr) = extract_four_cols(&args, "ad")?;
+            let (high_expr, low_expr, close_expr, vol_expr) = extract_four_cols(args, "ad")?;
             Ok(as_struct(vec![
                 high_expr.alias("__h"),
                 low_expr.alias("__l"),
@@ -236,7 +235,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
             ))
         }
         "pvi" => {
-            let (close_expr, vol_expr) = extract_two_cols(&args, "pvi")?;
+            let (close_expr, vol_expr) = extract_two_cols(args, "pvi")?;
             Ok(
                 as_struct(vec![close_expr.alias("__c"), vol_expr.alias("__v")]).map(
                     move |col: Column| {
@@ -267,7 +266,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
             )
         }
         "nvi" => {
-            let (close_expr, vol_expr) = extract_two_cols(&args, "nvi")?;
+            let (close_expr, vol_expr) = extract_two_cols(args, "nvi")?;
             Ok(
                 as_struct(vec![close_expr.alias("__c"), vol_expr.alias("__v")]).map(
                     move |col: Column| {
@@ -298,7 +297,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
             )
         }
         "ulcer" => {
-            let (col_expr, period) = extract_col_period(&args, "ulcer")?;
+            let (col_expr, period) = extract_col_period(args, "ulcer")?;
             Ok(col_expr.map(
                 move |col: Column| {
                     let ca = col.as_materialized_series().f64()?;
@@ -326,9 +325,8 @@ enum AroonComponent {
     Osc,
 }
 
-#[allow(clippy::needless_pass_by_value)]
-fn build_aroon(name: &str, args: Vec<FuncArg>, component: AroonComponent) -> Result<Expr, String> {
-    let (high_expr, low_expr, period) = extract_three_cols_period_as_two_cols(&args, name)?;
+fn build_aroon(name: &str, args: &[FuncArg], component: AroonComponent) -> Result<Expr, String> {
+    let (high_expr, low_expr, period) = extract_three_cols_period_as_two_cols(args, name)?;
     let series_name = name.to_string();
     Ok(
         as_struct(vec![high_expr.alias("__h"), low_expr.alias("__l")]).map(

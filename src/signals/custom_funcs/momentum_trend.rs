@@ -13,12 +13,12 @@ use super::helpers::{
 };
 use crate::signals::helpers::pad_series;
 
-#[allow(clippy::needless_pass_by_value, clippy::too_many_lines)]
-pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
+#[allow(clippy::too_many_lines)]
+pub fn build(name: &str, args: &[FuncArg]) -> Result<Expr, String> {
     match name {
         "williams_r" => {
             let (high_expr, low_expr, close_expr, period) =
-                extract_three_cols_period(&args, "williams_r")?;
+                extract_three_cols_period(args, "williams_r")?;
             Ok(as_struct(vec![
                 high_expr.alias("__h"),
                 low_expr.alias("__l"),
@@ -59,8 +59,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
         }
         "adx" | "plus_di" | "minus_di" => {
             let func = name.to_string();
-            let (high_expr, low_expr, close_expr, period) =
-                extract_three_cols_period(&args, &func)?;
+            let (high_expr, low_expr, close_expr, period) = extract_three_cols_period(args, &func)?;
             Ok(as_struct(vec![
                 high_expr.alias("__h"),
                 low_expr.alias("__l"),
@@ -115,7 +114,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
         }
         "psar" => {
             let (high_expr, low_expr, accel, max_accel) =
-                extract_two_cols_two_floats(&args, "psar")?;
+                extract_two_cols_two_floats(args, "psar")?;
             Ok(
                 as_struct(vec![high_expr.alias("__h"), low_expr.alias("__l")]).map(
                     move |col: Column| {
@@ -154,7 +153,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
             )
         }
         "tsi" => {
-            let (col_expr, fast, slow) = extract_col_two_periods(&args, "tsi")?;
+            let (col_expr, fast, slow) = extract_col_two_periods(args, "tsi")?;
             Ok(col_expr.map(
                 move |col: Column| {
                     let ca = col.as_materialized_series().f64()?;
@@ -177,7 +176,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
             ))
         }
         "vpt" => {
-            let (close_expr, vol_expr) = extract_two_cols(&args, "vpt")?;
+            let (close_expr, vol_expr) = extract_two_cols(args, "vpt")?;
             Ok(
                 as_struct(vec![close_expr.alias("__c"), vol_expr.alias("__v")]).map(
                     move |col: Column| {

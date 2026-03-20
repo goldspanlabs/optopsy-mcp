@@ -6,8 +6,7 @@ use polars::prelude::*;
 
 use super::helpers::FuncArg;
 
-#[allow(clippy::needless_pass_by_value)]
-pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
+pub fn build(name: &str, args: &[FuncArg]) -> Result<Expr, String> {
     match name {
         "day_of_week" => {
             if !args.is_empty() {

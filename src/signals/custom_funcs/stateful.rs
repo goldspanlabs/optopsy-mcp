@@ -4,11 +4,10 @@ use polars::prelude::*;
 
 use super::helpers::{extract_single_col, FuncArg};
 
-#[allow(clippy::needless_pass_by_value)]
-pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
+pub fn build(name: &str, args: &[FuncArg]) -> Result<Expr, String> {
     match name {
         "consecutive_up" => {
-            let col_expr = extract_single_col(&args, "consecutive_up")?;
+            let col_expr = extract_single_col(args, "consecutive_up")?;
             Ok(col_expr.map(
                 move |col: Column| {
                     let ca = col.as_materialized_series().f64()?;
@@ -29,7 +28,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
             ))
         }
         "consecutive_down" => {
-            let col_expr = extract_single_col(&args, "consecutive_down")?;
+            let col_expr = extract_single_col(args, "consecutive_down")?;
             Ok(col_expr.map(
                 move |col: Column| {
                     let ca = col.as_materialized_series().f64()?;

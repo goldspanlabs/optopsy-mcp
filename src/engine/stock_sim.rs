@@ -594,11 +594,13 @@ pub fn volume_as_i64(
 /// Output column type:
 /// - Daily/Weekly/Monthly target → `"date"` (Date) for backward compat
 /// - Intraday target (Min5/Min30/Hour1) → `"datetime"` (Datetime)
-#[allow(clippy::too_many_lines, clippy::items_after_statements)]
+#[allow(clippy::too_many_lines)]
 pub fn resample_ohlcv(
     df: &polars::prelude::DataFrame,
     interval: Interval,
 ) -> Result<polars::prelude::DataFrame> {
+    use polars::prelude::{IntoLazy, SortMultipleOptions};
+
     let has_datetime_col = df
         .column("datetime")
         .ok()
@@ -616,7 +618,6 @@ pub fn resample_ohlcv(
         // Already at minimum granularity — no downsampling needed.
         // Sort by datetime for consistency with other intraday resamples so
         // downstream consumers can assume chronological order.
-        use polars::prelude::{IntoLazy, SortMultipleOptions};
         return Ok(df
             .clone()
             .lazy()
@@ -643,11 +644,52 @@ pub fn resample_ohlcv(
     resample_date(df, interval)
 }
 
+/// Extracted OHLCV column references from a `DataFrame`.
+struct OhlcvColumns<'a> {
+    opens: &'a polars::prelude::Float64Chunked,
+    highs: &'a polars::prelude::Float64Chunked,
+    lows: &'a polars::prelude::Float64Chunked,
+    closes: &'a polars::prelude::Float64Chunked,
+    volumes: polars::prelude::Int64Chunked,
+    has_adjclose: bool,
+    adjcloses: Option<&'a polars::prelude::Float64Chunked>,
+}
+
+/// Extract OHLCV columns from a `DataFrame` for resampling aggregation.
+fn extract_ohlcv_columns(df: &polars::prelude::DataFrame) -> Result<OhlcvColumns<'_>> {
+    let opens = df.column("open")?.f64()?;
+    let highs = df.column("high")?.f64()?;
+    let lows = df.column("low")?.f64()?;
+    let closes = df.column("close")?.f64()?;
+    let volumes = volume_as_i64(df)?;
+    let has_adjclose = df.column("adjclose").is_ok();
+    let adjcloses = if has_adjclose {
+        Some(df.column("adjclose")?.f64()?)
+    } else {
+        None
+    };
+    Ok(OhlcvColumns {
+        opens,
+        highs,
+        lows,
+        closes,
+        volumes,
+        has_adjclose,
+        adjcloses,
+    })
+}
+
+/// A contiguous group of rows sharing the same resampling key.
+struct ResampleGroup {
+    start: usize,
+    end: usize, // exclusive
+}
+
 /// Resample a `DataFrame` with `"datetime"` (Datetime) column to any target interval.
 ///
 /// Input must contain a `"datetime"` column of Datetime type. The `DataFrame` is
 /// sorted by `"datetime"` internally so callers don't need to pre-sort.
-#[allow(clippy::too_many_lines, clippy::items_after_statements)]
+#[allow(clippy::too_many_lines)]
 fn resample_datetime(
     df: &polars::prelude::DataFrame,
     interval: Interval,
@@ -665,17 +707,7 @@ fn resample_datetime(
         .column("datetime")
         .map_err(|e| anyhow::anyhow!("Missing 'datetime' column: {e}"))?;
 
-    let opens = df.column("open")?.f64()?;
-    let highs = df.column("high")?.f64()?;
-    let lows = df.column("low")?.f64()?;
-    let closes = df.column("close")?.f64()?;
-    let volumes = volume_as_i64(&df)?;
-    let has_adjclose = df.column("adjclose").is_ok();
-    let adjcloses = if has_adjclose {
-        Some(df.column("adjclose")?.f64()?)
-    } else {
-        None
-    };
+    let ohlcv = extract_ohlcv_columns(&df)?;
 
     // Extract NaiveDateTimes for grouping
     let n = df.height();
@@ -724,11 +756,7 @@ fn resample_datetime(
     }
 
     // Group consecutive rows by key
-    struct Group {
-        start: usize,
-        end: usize, // exclusive
-    }
-    let mut groups: Vec<Group> = Vec::new();
+    let mut groups: Vec<ResampleGroup> = Vec::new();
     let mut i = 0;
     while i < n {
         let key = group_keys[i];
@@ -736,7 +764,7 @@ fn resample_datetime(
         while i < n && group_keys[i] == key {
             i += 1;
         }
-        groups.push(Group { start, end: i });
+        groups.push(ResampleGroup { start, end: i });
     }
 
     // Aggregate each group
@@ -753,7 +781,8 @@ fn resample_datetime(
         // Use the first bar's timestamp as the candle open time (standard convention)
         out_datetimes.push(datetimes[g.start]);
         out_opens.push(
-            opens
+            ohlcv
+                .opens
                 .get(g.start)
                 .ok_or_else(|| anyhow::anyhow!("NULL open in group {gi} at row {}", g.start))?,
         );
@@ -762,20 +791,20 @@ fn resample_datetime(
         let mut min_low = f64::INFINITY;
         let mut vol_sum: i64 = 0;
         for j in g.start..g.end {
-            if let Some(h) = highs.get(j).filter(|v| v.is_finite()) {
+            if let Some(h) = ohlcv.highs.get(j).filter(|v| v.is_finite()) {
                 if h > max_high {
                     max_high = h;
                 }
             }
-            if let Some(l) = lows.get(j).filter(|v| v.is_finite()) {
+            if let Some(l) = ohlcv.lows.get(j).filter(|v| v.is_finite()) {
                 if l < min_low {
                     min_low = l;
                 }
             }
-            vol_sum += volumes.get(j).unwrap_or(0);
+            vol_sum += ohlcv.volumes.get(j).unwrap_or(0);
         }
         // If all highs/lows were NaN/NULL, fall back to the group's open price
-        let fallback = opens.get(g.start).unwrap_or(0.0);
+        let fallback = ohlcv.opens.get(g.start).unwrap_or(0.0);
         if max_high == f64::NEG_INFINITY {
             max_high = fallback;
         }
@@ -785,15 +814,17 @@ fn resample_datetime(
         out_highs.push(max_high);
         out_lows.push(min_low);
         out_closes.push(
-            closes
+            ohlcv
+                .closes
                 .get(last)
                 .ok_or_else(|| anyhow::anyhow!("NULL close in group {gi} at row {last}"))?,
         );
         out_adjcloses.push(
-            adjcloses
+            ohlcv
+                .adjcloses
                 .as_ref()
                 .and_then(|ac| ac.get(last))
-                .unwrap_or(closes.get(last).ok_or_else(|| {
+                .unwrap_or(ohlcv.closes.get(last).ok_or_else(|| {
                     anyhow::anyhow!("NULL close for adjclose fallback in group {gi}")
                 })?),
         );
@@ -818,7 +849,7 @@ fn resample_datetime(
             Series::new("low".into(), &out_lows).into(),
             Series::new("close".into(), &out_closes).into(),
         ];
-        if has_adjclose {
+        if ohlcv.has_adjclose {
             columns.push(Series::new("adjclose".into(), &out_adjcloses).into());
         }
         columns.push(Series::new("volume".into(), &out_volumes).into());
@@ -838,7 +869,7 @@ fn resample_datetime(
             Series::new("low".into(), &out_lows).into(),
             Series::new("close".into(), &out_closes).into(),
         ];
-        if has_adjclose {
+        if ohlcv.has_adjclose {
             columns.push(Series::new("adjclose".into(), &out_adjcloses).into());
         }
         columns.push(Series::new("volume".into(), &out_volumes).into());
@@ -850,7 +881,7 @@ fn resample_datetime(
 }
 
 /// Legacy resample path for `DataFrame` with `"date"` (Date) column → Weekly/Monthly.
-#[allow(clippy::too_many_lines, clippy::items_after_statements)]
+#[allow(clippy::too_many_lines)]
 fn resample_date(
     df: &polars::prelude::DataFrame,
     interval: Interval,
@@ -865,18 +896,7 @@ fn resample_date(
         .date()
         .map_err(|e| anyhow::anyhow!("'date' not Date type: {e}"))?;
 
-    let opens = df.column("open")?.f64()?;
-    let highs = df.column("high")?.f64()?;
-    let lows = df.column("low")?.f64()?;
-    let closes = df.column("close")?.f64()?;
-    let volumes = volume_as_i64(df)?;
-
-    let has_adjclose = df.column("adjclose").is_ok();
-    let adjcloses = if has_adjclose {
-        Some(df.column("adjclose")?.f64()?)
-    } else {
-        None
-    };
+    let ohlcv = extract_ohlcv_columns(df)?;
 
     // Build group keys for each row.
     // `iso_week().year()` correctly handles year boundaries (e.g., Dec 30 → ISO week 1 of next year).
@@ -898,11 +918,7 @@ fn resample_date(
     }
 
     // Group consecutive rows by key
-    struct Group {
-        start: usize,
-        end: usize, // exclusive
-    }
-    let mut groups: Vec<Group> = Vec::new();
+    let mut groups: Vec<ResampleGroup> = Vec::new();
     let mut i = 0;
     while i < n {
         let key = group_keys[i];
@@ -910,7 +926,7 @@ fn resample_date(
         while i < n && group_keys[i] == key {
             i += 1;
         }
-        groups.push(Group { start, end: i });
+        groups.push(ResampleGroup { start, end: i });
     }
 
     let mut out_dates: Vec<i32> = Vec::with_capacity(groups.len());
@@ -934,7 +950,8 @@ fn resample_date(
                 .ok_or_else(|| anyhow::anyhow!("NULL date in group {gi} at row {last}"))?,
         );
         out_opens.push(
-            opens
+            ohlcv
+                .opens
                 .get(g.start)
                 .ok_or_else(|| anyhow::anyhow!("NULL open in group {gi} at row {}", g.start))?,
         );
@@ -943,19 +960,19 @@ fn resample_date(
         let mut min_low = f64::INFINITY;
         let mut vol_sum: i64 = 0;
         for j in g.start..g.end {
-            if let Some(h) = highs.get(j).filter(|v| v.is_finite()) {
+            if let Some(h) = ohlcv.highs.get(j).filter(|v| v.is_finite()) {
                 if h > max_high {
                     max_high = h;
                 }
             }
-            if let Some(l) = lows.get(j).filter(|v| v.is_finite()) {
+            if let Some(l) = ohlcv.lows.get(j).filter(|v| v.is_finite()) {
                 if l < min_low {
                     min_low = l;
                 }
             }
-            vol_sum += volumes.get(j).unwrap_or(0);
+            vol_sum += ohlcv.volumes.get(j).unwrap_or(0);
         }
-        let fallback = opens.get(g.start).unwrap_or(0.0);
+        let fallback = ohlcv.opens.get(g.start).unwrap_or(0.0);
         if max_high == f64::NEG_INFINITY {
             max_high = fallback;
         }
@@ -965,15 +982,17 @@ fn resample_date(
         out_highs.push(max_high);
         out_lows.push(min_low);
         out_closes.push(
-            closes
+            ohlcv
+                .closes
                 .get(last)
                 .ok_or_else(|| anyhow::anyhow!("NULL close in group {gi} at row {last}"))?,
         );
         out_adjcloses.push(
-            adjcloses
+            ohlcv
+                .adjcloses
                 .as_ref()
                 .and_then(|ac| ac.get(last))
-                .unwrap_or(closes.get(last).ok_or_else(|| {
+                .unwrap_or(ohlcv.closes.get(last).ok_or_else(|| {
                     anyhow::anyhow!("NULL close for adjclose fallback in group {gi}")
                 })?),
         );
@@ -999,7 +1018,7 @@ fn resample_date(
         Series::new("low".into(), &out_lows).into(),
         Series::new("close".into(), &out_closes).into(),
     ];
-    if has_adjclose {
+    if ohlcv.has_adjclose {
         columns.push(Series::new("adjclose".into(), &out_adjcloses).into());
     }
     columns.push(Series::new("volume".into(), &out_volumes).into());

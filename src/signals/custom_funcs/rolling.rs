@@ -4,11 +4,10 @@ use polars::prelude::*;
 
 use super::helpers::{extract_col_period, FuncArg};
 
-#[allow(clippy::needless_pass_by_value)]
-pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
+pub fn build(name: &str, args: &[FuncArg]) -> Result<Expr, String> {
     match name {
         "sma" => {
-            let (col_expr, period) = extract_col_period(&args, "sma")?;
+            let (col_expr, period) = extract_col_period(args, "sma")?;
             Ok(col_expr.rolling_mean(RollingOptionsFixedWindow {
                 window_size: period,
                 min_periods: period,
@@ -16,7 +15,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
             }))
         }
         "ema" => {
-            let (col_expr, period) = extract_col_period(&args, "ema")?;
+            let (col_expr, period) = extract_col_period(args, "ema")?;
             let alpha = 2.0f64 / (period as f64 + 1.0);
             Ok(col_expr.ewm_mean(EWMOptions {
                 alpha,
@@ -27,7 +26,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
             }))
         }
         "std" => {
-            let (col_expr, period) = extract_col_period(&args, "std")?;
+            let (col_expr, period) = extract_col_period(args, "std")?;
             Ok(col_expr.rolling_std(RollingOptionsFixedWindow {
                 window_size: period,
                 min_periods: period,
@@ -35,7 +34,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
             }))
         }
         "max" => {
-            let (col_expr, period) = extract_col_period(&args, "max")?;
+            let (col_expr, period) = extract_col_period(args, "max")?;
             Ok(col_expr.rolling_max(RollingOptionsFixedWindow {
                 window_size: period,
                 min_periods: period,
@@ -43,7 +42,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
             }))
         }
         "min" => {
-            let (col_expr, period) = extract_col_period(&args, "min")?;
+            let (col_expr, period) = extract_col_period(args, "min")?;
             Ok(col_expr.rolling_min(RollingOptionsFixedWindow {
                 window_size: period,
                 min_periods: period,
@@ -51,7 +50,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
             }))
         }
         "bbands_mid" => {
-            let (col_expr, period) = extract_col_period(&args, "bbands_mid")?;
+            let (col_expr, period) = extract_col_period(args, "bbands_mid")?;
             Ok(col_expr.rolling_mean(RollingOptionsFixedWindow {
                 window_size: period,
                 min_periods: period,
@@ -59,7 +58,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
             }))
         }
         "bbands_upper" => {
-            let (col_expr, period) = extract_col_period(&args, "bbands_upper")?;
+            let (col_expr, period) = extract_col_period(args, "bbands_upper")?;
             let sma = col_expr.clone().rolling_mean(RollingOptionsFixedWindow {
                 window_size: period,
                 min_periods: period,
@@ -73,7 +72,7 @@ pub fn build(name: &str, args: Vec<FuncArg>) -> Result<Expr, String> {
             Ok(sma + lit(2.0) * std_dev)
         }
         "bbands_lower" => {
-            let (col_expr, period) = extract_col_period(&args, "bbands_lower")?;
+            let (col_expr, period) = extract_col_period(args, "bbands_lower")?;
             let sma = col_expr.clone().rolling_mean(RollingOptionsFixedWindow {
                 window_size: period,
                 min_periods: period,
