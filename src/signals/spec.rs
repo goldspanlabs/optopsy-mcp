@@ -5,7 +5,7 @@
 //! ```json
 //! "rsi(close, 14) < 30"
 //! ```
-//! Tagged objects are used for structural variants (`Saved`, `CrossSymbol`, `And`, `Or`).
+//! Tagged objects are used for structural variants (`Saved`, `And`, `Or`).
 
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -15,7 +15,7 @@ use serde::Serialize;
 /// A plain formula string is the primary input format:
 /// `"rsi(close, 14) < 30"` deserialized as `Formula { formula: "rsi(close, 14) < 30".to_string() }`.
 ///
-/// Tagged objects are used for `Saved`, `CrossSymbol`, `And`, and `Or`.
+/// Tagged objects are used for `Saved`, `And`, and `Or`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
 pub enum SignalSpec {
@@ -33,15 +33,6 @@ pub enum SignalSpec {
     Saved {
         /// Name of a previously saved signal
         name: String,
-    },
-
-    /// Evaluate the inner signal against a different symbol's OHLCV data.
-    /// Example: use VIX close > 20 as an entry filter for SPY strategies.
-    CrossSymbol {
-        /// Ticker of the secondary symbol (e.g., "^VIX")
-        symbol: String,
-        /// The signal to evaluate on that symbol's data
-        signal: Box<SignalSpec>,
     },
 
     /// Logical AND: fire only when both left and right signals are active.
@@ -75,10 +66,6 @@ enum SignalSpecTagged {
     Saved {
         name: String,
     },
-    CrossSymbol {
-        symbol: String,
-        signal: Box<SignalSpec>,
-    },
     And {
         left: Box<SignalSpec>,
         right: Box<SignalSpec>,
@@ -110,9 +97,6 @@ impl<'de> serde::Deserialize<'de> for SignalSpec {
                     SignalSpec::Formula { formula }
                 }
                 SignalSpecTagged::Saved { name } => SignalSpec::Saved { name },
-                SignalSpecTagged::CrossSymbol { symbol, signal } => {
-                    SignalSpec::CrossSymbol { symbol, signal }
-                }
                 SignalSpecTagged::And { left, right } => SignalSpec::And { left, right },
                 SignalSpecTagged::Or { left, right } => SignalSpec::Or { left, right },
             })
@@ -135,26 +119,13 @@ impl JsonSchema for SignalSpec {
 
         // Combine: anyOf [string, tagged-object]
         let combined = serde_json::json!({
-            "description": "Signal specification. Pass a plain formula string (e.g. \"rsi(close, 14) < 30\"), or an object with \"type\" for Saved, CrossSymbol, And, Or.",
+            "description": "Signal specification. Pass a plain formula string (e.g. \"rsi(close, 14) < 30\"), or an object with \"type\" for Saved, And, Or. Cross-symbol references (e.g. VIX / VIX3M < 0.9) are supported directly in formulas.",
             "anyOf": [
                 { "type": "string", "description": "Formula string shorthand — e.g. \"rsi(close, 14) < 30\"" },
                 object_schema
             ]
         });
         schemars::Schema::try_from(combined).expect("SignalSpec schema is a valid JSON Schema")
-    }
-}
-
-impl SignalSpec {
-    /// Check if this spec (or any nested child) contains a `CrossSymbol` variant.
-    pub fn contains_cross_symbol(&self) -> bool {
-        match self {
-            SignalSpec::CrossSymbol { .. } => true,
-            SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
-                left.contains_cross_symbol() || right.contains_cross_symbol()
-            }
-            _ => false,
-        }
     }
 }
 
@@ -210,21 +181,6 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_cross_symbol_with_string_signal() {
-        let json = r#"{"type": "CrossSymbol", "symbol": "^VIX", "signal": "close > 20"}"#;
-        let spec: SignalSpec = serde_json::from_str(json).unwrap();
-        match spec {
-            SignalSpec::CrossSymbol { symbol, signal } => {
-                assert_eq!(symbol, "^VIX");
-                assert!(
-                    matches!(*signal, SignalSpec::Formula { formula: ref f } if f == "close > 20")
-                );
-            }
-            _ => panic!("expected CrossSymbol variant"),
-        }
-    }
-
-    #[test]
     fn serialize_roundtrip() {
         let spec = SignalSpec::Formula {
             formula: "close > 100".to_string(),
@@ -235,41 +191,6 @@ mod tests {
         assert!(
             matches!(deserialized, SignalSpec::Formula { formula: ref f } if f == "close > 100")
         );
-    }
-
-    #[test]
-    fn contains_cross_symbol_basic() {
-        let spec = SignalSpec::CrossSymbol {
-            symbol: "^VIX".to_string(),
-            signal: Box::new(SignalSpec::Formula {
-                formula: "close > 20".to_string(),
-            }),
-        };
-        assert!(spec.contains_cross_symbol());
-    }
-
-    #[test]
-    fn contains_cross_symbol_nested_and() {
-        let spec = SignalSpec::And {
-            left: Box::new(SignalSpec::Formula {
-                formula: "rsi(close, 14) < 30".to_string(),
-            }),
-            right: Box::new(SignalSpec::CrossSymbol {
-                symbol: "^VIX".to_string(),
-                signal: Box::new(SignalSpec::Formula {
-                    formula: "close > 20".to_string(),
-                }),
-            }),
-        };
-        assert!(spec.contains_cross_symbol());
-    }
-
-    #[test]
-    fn no_cross_symbol_in_formula() {
-        let spec = SignalSpec::Formula {
-            formula: "close > 100".to_string(),
-        };
-        assert!(!spec.contains_cross_symbol());
     }
 
     #[test]
@@ -302,15 +223,10 @@ mod tests {
             "right": {
                 "type": "And",
                 "left": "rsi(close, 14) < 30",
-                "right": {
-                    "type": "CrossSymbol",
-                    "symbol": "^VIX",
-                    "signal": "close > 20"
-                }
+                "right": "close > sma(close, 50)"
             }
         }"#;
         let spec: SignalSpec = serde_json::from_str(json).unwrap();
-        assert!(spec.contains_cross_symbol());
         match spec {
             SignalSpec::And { left, right } => {
                 assert!(matches!(*left, SignalSpec::Or { .. }));
@@ -340,47 +256,5 @@ mod tests {
         // A bare number is neither a string nor a valid object
         let result = serde_json::from_str::<SignalSpec>("42");
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn contains_cross_symbol_nested_or() {
-        let spec = SignalSpec::Or {
-            left: Box::new(SignalSpec::Formula {
-                formula: "close > 100".to_string(),
-            }),
-            right: Box::new(SignalSpec::CrossSymbol {
-                symbol: "GLD".to_string(),
-                signal: Box::new(SignalSpec::Formula {
-                    formula: "close > 180".to_string(),
-                }),
-            }),
-        };
-        assert!(spec.contains_cross_symbol());
-    }
-
-    #[test]
-    fn no_cross_symbol_in_saved() {
-        let spec = SignalSpec::Saved {
-            name: "my_signal".to_string(),
-        };
-        assert!(!spec.contains_cross_symbol());
-    }
-
-    #[test]
-    fn no_cross_symbol_in_nested_combinators() {
-        let spec = SignalSpec::And {
-            left: Box::new(SignalSpec::Or {
-                left: Box::new(SignalSpec::Formula {
-                    formula: "close > 100".into(),
-                }),
-                right: Box::new(SignalSpec::Formula {
-                    formula: "close < 50".into(),
-                }),
-            }),
-            right: Box::new(SignalSpec::Formula {
-                formula: "volume > 1000000".into(),
-            }),
-        };
-        assert!(!spec.contains_cross_symbol());
     }
 }

@@ -85,7 +85,6 @@ fn compute_indicator_data_inner(
         SignalSpec::Formula { formula } => {
             extract_indicators_from_formula(formula, ohlcv_df, date_col)
         }
-        SignalSpec::CrossSymbol { .. } => vec![],
     }
 }
 
@@ -1346,7 +1345,7 @@ mod tests {
         .unwrap()
     }
 
-    // ── Custom / CrossSymbol return empty ────────────────────────────────────
+    // ── Custom return empty ─────────────────────────────────────────────────
 
     // ── Formula indicator extraction ────────────────────────────────────────
 
@@ -1393,19 +1392,6 @@ mod tests {
         let df = make_ohlcv_df(30);
         let spec = SignalSpec::Formula {
             formula: "close > 100".into(),
-        };
-        let result = compute_indicator_data(&spec, &df, "date");
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn cross_symbol_returns_empty_indicators() {
-        let df = make_ohlcv_df(10);
-        let spec = SignalSpec::CrossSymbol {
-            symbol: "^VIX".into(),
-            signal: Box::new(SignalSpec::Formula {
-                formula: "close > 20".into(),
-            }),
         };
         let result = compute_indicator_data(&spec, &df, "date");
         assert!(result.is_empty());

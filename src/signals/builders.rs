@@ -45,8 +45,6 @@ fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
             }
         },
 
-        SignalSpec::CrossSymbol { signal, .. } => build_signal_depth(signal, depth + 1),
-
         SignalSpec::And { left, right } => Box::new(AndSignal {
             left: build_signal_depth(left, depth + 1),
             right: build_signal_depth(right, depth + 1),
@@ -119,21 +117,6 @@ mod tests {
         assert!(bools.get(0).unwrap());
         assert!(!bools.get(1).unwrap());
         assert!(bools.get(4).unwrap());
-    }
-
-    #[test]
-    fn build_cross_symbol_extracts_inner_signal() {
-        let spec = SignalSpec::CrossSymbol {
-            symbol: "^VIX".into(),
-            signal: Box::new(SignalSpec::Formula {
-                formula: "close > 102".into(),
-            }),
-        };
-        let signal = build_signal(&spec);
-        // CrossSymbol unwraps to the inner formula signal
-        assert_eq!(signal.name(), "custom_formula");
-        let result = signal.evaluate(&dummy_df()).unwrap();
-        assert_eq!(result.len(), 5);
     }
 
     #[test]

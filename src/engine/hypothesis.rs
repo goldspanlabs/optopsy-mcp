@@ -1014,11 +1014,8 @@ fn scan_cross_asset(
                         &format!("{symbol} large move (>2%) leads target → {h}-day forward return (Granger F={f_stat:.1}, p={p_val:.4})"),
                         HypothesisDimension::CrossAsset,
                         "cross_asset",
-                        SignalSpec::CrossSymbol {
-                            symbol: symbol.clone(),
-                            signal: Box::new(SignalSpec::Formula {
-                                formula: "abs(pct_change(close, 1)) > 0.02".to_string(),
-                            }),
+                        SignalSpec::Formula {
+                            formula: format!("abs(pct_change({}, 1)) > 0.02", symbol.to_uppercase()),
                         },
                     ) {
                         patterns.push(pat);

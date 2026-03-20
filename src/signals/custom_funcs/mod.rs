@@ -16,6 +16,87 @@ pub use helpers::FuncArg;
 
 use polars::prelude::Expr;
 
+/// All known function names handled by `dispatch()`.
+/// Used by the cross-symbol extractor to distinguish function names from symbol names.
+pub const KNOWN_FUNCTIONS: &[&str] = &[
+    // Rolling
+    "sma",
+    "ema",
+    "std",
+    "max",
+    "min",
+    "bbands_mid",
+    "bbands_upper",
+    "bbands_lower",
+    // Math
+    "abs",
+    "change",
+    "pct_change",
+    "roc",
+    "rel_volume",
+    "zscore",
+    "range_pct",
+    "if",
+    "gap",
+    "gap_size",
+    "gap_filled",
+    // Single-column
+    "rsi",
+    "macd_hist",
+    "macd_signal",
+    "macd_line",
+    "rank",
+    "iv_rank",
+    "cci",
+    "ppo",
+    "cmo",
+    // Multi-column
+    "atr",
+    "stochastic",
+    "keltner_upper",
+    "keltner_lower",
+    "obv",
+    "mfi",
+    "tr",
+    "cmf",
+    // Momentum/trend
+    "williams_r",
+    "adx",
+    "plus_di",
+    "minus_di",
+    "psar",
+    "tsi",
+    "vpt",
+    // Volatility/advanced
+    "donchian_upper",
+    "donchian_mid",
+    "donchian_lower",
+    "ichimoku_tenkan",
+    "ichimoku_kijun",
+    "ichimoku_senkou_a",
+    "ichimoku_senkou_b",
+    "envelope_upper",
+    "envelope_lower",
+    "supertrend",
+    "aroon_up",
+    "aroon_down",
+    "aroon_osc",
+    "ad",
+    "pvi",
+    "nvi",
+    "ulcer",
+    // Stateful
+    "consecutive_up",
+    "consecutive_down",
+    // Datetime
+    "day_of_week",
+    "month",
+    "day_of_month",
+    "hour",
+    "minute",
+    "week_of_year",
+];
+
 /// Dispatch a function call to the appropriate category module.
 pub fn dispatch(name: &str, args: &[FuncArg]) -> Result<Expr, String> {
     let n = name.to_lowercase();

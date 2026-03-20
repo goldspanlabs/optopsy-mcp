@@ -60,7 +60,7 @@ New actions:
 
 ### What Doesn't Change
 
-- `SignalSpec` enum stays as-is (Formula, Saved, CrossSymbol, And, Or)
+- `SignalSpec` enum stays as-is (Formula, Saved, And, Or)
 - Engine still receives separate `entry_signal` / `exit_signal` — no engine changes
 - Standalone signals still work — presets are additive
 - Mix-and-match still possible (use a preset's entry with a different exit by using standalone signals)

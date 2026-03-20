@@ -1485,15 +1485,6 @@ mod tests {
             "Saved(my_signal)"
         );
         assert_eq!(
-            signal_spec_label(&SignalSpec::CrossSymbol {
-                symbol: "^VIX".into(),
-                signal: Box::new(SignalSpec::Formula {
-                    formula: "close > 20".into()
-                }),
-            }),
-            "CrossSymbol(^VIX)"
-        );
-        assert_eq!(
             signal_spec_label(&SignalSpec::And {
                 left: Box::new(SignalSpec::Formula {
                     formula: "rsi(close,14) < 30".into()

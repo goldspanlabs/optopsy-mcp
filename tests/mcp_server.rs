@@ -1277,7 +1277,7 @@ async fn build_signal_validate_invalid_formula() {
             arguments: Some(
                 serde_json::from_value(json!({
                     "action": "validate",
-                    "formula": "foo > 10"
+                    "formula": "unknown_func(close) > 10"
                 }))
                 .unwrap(),
             ),
@@ -1299,7 +1299,7 @@ async fn build_signal_validate_invalid_formula() {
 
     assert_eq!(
         resp["success"], false,
-        "validate should fail for unknown column 'foo'"
+        "validate should fail for unknown function 'unknown_func'"
     );
     assert!(
         !resp["formula_help"].is_null(),

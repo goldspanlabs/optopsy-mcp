@@ -455,17 +455,9 @@ pub const SIGNAL_CATALOG: &[SignalInfo] = &[
         params: "condition, then, else",
         formula_example: "if(close > sma(close, 50), 1, 0)",
     },
-    // ── Cross-symbol ──────────────────────────────────────────────────
-    SignalInfo {
-        name: "Cross Symbol",
-        category: "cross-symbol",
-        description: "Evaluate any signal against a different symbol's OHLCV data (e.g., VIX as filter for SPY).",
-        params: "symbol, signal (any nested SignalSpec)",
-        formula_example: "",
-    },
 ];
 
-/// Collect all secondary symbols referenced by `CrossSymbol` variants in a signal tree.
+/// Collect all secondary symbols referenced in a signal tree (via formula cross-symbol syntax).
 pub fn collect_cross_symbols(spec: &SignalSpec) -> std::collections::HashSet<String> {
     let mut symbols = std::collections::HashSet::new();
     let mut visited_saved = std::collections::HashSet::new();
@@ -485,10 +477,6 @@ fn collect_cross_symbols_inner(
     }
 
     match spec {
-        SignalSpec::CrossSymbol { symbol, signal } => {
-            out.insert(symbol.to_uppercase());
-            collect_cross_symbols_inner(signal, out, visited_saved, depth);
-        }
         SignalSpec::And { left, right } | SignalSpec::Or { left, right } => {
             collect_cross_symbols_inner(left, out, visited_saved, depth);
             collect_cross_symbols_inner(right, out, visited_saved, depth);
@@ -501,8 +489,66 @@ fn collect_cross_symbols_inner(
                 collect_cross_symbols_inner(&loaded_spec, out, visited_saved, depth + 1);
             }
         }
-        SignalSpec::Formula { .. } => {}
+        SignalSpec::Formula { formula } => {
+            out.extend(extract_formula_cross_symbols(formula));
+        }
     }
+}
+
+/// Extract cross-symbol references from a formula string.
+///
+/// Tokenizes the formula and identifies `Ident` tokens that are NOT valid column
+/// names and NOT known function names. Also handles `Ident.Ident` dot-access patterns.
+/// Returns the set of uppercase symbol names.
+pub fn extract_formula_cross_symbols(formula: &str) -> std::collections::HashSet<String> {
+    use super::custom_funcs::KNOWN_FUNCTIONS;
+
+    let Ok(tokens) = super::custom::tokenize(formula) else {
+        return std::collections::HashSet::new();
+    };
+
+    let valid_columns: &[&str] = &["close", "open", "high", "low", "volume", "adjclose", "iv"];
+    let mut symbols = std::collections::HashSet::new();
+    let mut i = 0;
+
+    while i < tokens.len() {
+        if let super::custom::Token::Ident(ref name) = tokens[i] {
+            let lower = name.to_lowercase();
+
+            // Skip keywords that are handled as separate tokens (and, or, not, true, false)
+            // — these are already tokenized differently, so they won't be Ident tokens.
+
+            // Known column → skip
+            if valid_columns.contains(&lower.as_str()) {
+                i += 1;
+                continue;
+            }
+
+            // Known function name used as a call (followed by '(') → skip
+            if KNOWN_FUNCTIONS.contains(&lower.as_str())
+                && i + 1 < tokens.len()
+                && matches!(tokens[i + 1], super::custom::Token::LParen)
+            {
+                i += 1;
+                continue;
+            }
+
+            // This is a cross-symbol reference
+            symbols.insert(name.to_uppercase());
+
+            // If followed by Dot + Ident, skip those tokens (they're the column accessor)
+            if i + 2 < tokens.len()
+                && matches!(tokens[i + 1], super::custom::Token::Dot)
+                && matches!(tokens[i + 2], super::custom::Token::Ident(_))
+            {
+                i += 3;
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    symbols
 }
 
 #[cfg(test)]
@@ -511,8 +557,8 @@ mod tests {
 
     #[test]
     fn catalog_has_all_signals() {
-        // 63 signals across 10 domain categories
-        assert_eq!(SIGNAL_CATALOG.len(), 63);
+        // 62 signals across 9 domain categories (CrossSymbol removed)
+        assert_eq!(SIGNAL_CATALOG.len(), 62);
     }
 
     #[test]
@@ -534,80 +580,13 @@ mod tests {
     }
 
     #[test]
-    fn collect_cross_symbols_finds_nested() {
-        let spec = SignalSpec::And {
-            left: Box::new(SignalSpec::CrossSymbol {
-                symbol: "^VIX".into(),
-                signal: Box::new(SignalSpec::Formula {
-                    formula: "consecutive_up(close) >= 2".into(),
-                }),
-            }),
-            right: Box::new(SignalSpec::CrossSymbol {
-                symbol: "GLD".into(),
-                signal: Box::new(SignalSpec::Formula {
-                    formula: "consecutive_down(close) >= 3".into(),
-                }),
-            }),
-        };
-        let symbols = collect_cross_symbols(&spec);
-        assert_eq!(symbols.len(), 2);
-        assert!(symbols.contains("^VIX"));
-        assert!(symbols.contains("GLD"));
-    }
-
-    #[test]
-    fn cross_symbol_serde_round_trip() {
-        let spec = SignalSpec::CrossSymbol {
-            symbol: "^VIX".into(),
-            signal: Box::new(SignalSpec::Formula {
-                formula: "close > 20".into(),
-            }),
-        };
-        let json = serde_json::to_string(&spec).unwrap();
-        let parsed: SignalSpec = serde_json::from_str(&json).unwrap();
-        if let SignalSpec::CrossSymbol { symbol, signal } = parsed {
-            assert_eq!(symbol, "^VIX");
-            assert!(matches!(*signal, SignalSpec::Formula { .. }));
-        } else {
-            panic!("expected CrossSymbol");
-        }
-    }
-
-    #[test]
-    fn collect_cross_symbols_depth_limit() {
-        // Build a deeply nested CrossSymbol chain (depth > 8)
-        let mut spec = SignalSpec::CrossSymbol {
-            symbol: "DEEP".into(),
-            signal: Box::new(SignalSpec::Formula {
-                formula: "close > 0".into(),
-            }),
-        };
-        for i in 0..10 {
-            spec = SignalSpec::And {
-                left: Box::new(SignalSpec::CrossSymbol {
-                    symbol: format!("SYM{i}"),
-                    signal: Box::new(spec),
-                }),
-                right: Box::new(SignalSpec::Formula {
-                    formula: "close > 0".into(),
-                }),
-            };
-        }
-        // Should not panic — depth limit caps recursion
-        let symbols = collect_cross_symbols(&spec);
-        assert!(symbols.contains("DEEP"));
-        // At minimum some SYM* symbols should be found
-        assert!(symbols.len() > 1);
-    }
-
-    #[test]
     fn catalog_entries_have_non_empty_fields() {
         for info in SIGNAL_CATALOG {
             assert!(!info.name.is_empty());
             assert!(!info.category.is_empty());
             assert!(!info.description.is_empty());
             assert!(!info.params.is_empty());
-            // formula_example can be empty for CrossSymbol
+            assert!(!info.formula_example.is_empty());
         }
     }
 
@@ -623,7 +602,6 @@ mod tests {
             "iv",
             "datetime",
             "utility",
-            "cross-symbol",
         ];
         for info in SIGNAL_CATALOG {
             assert!(
@@ -632,5 +610,76 @@ mod tests {
                 info.category
             );
         }
+    }
+
+    // ── Formula cross-symbol extraction tests ───────────────────────────
+
+    #[test]
+    fn extract_formula_cross_symbols_basic() {
+        let syms = extract_formula_cross_symbols("VIX / VIX3M < 0.9");
+        assert_eq!(syms.len(), 2);
+        assert!(syms.contains("VIX"));
+        assert!(syms.contains("VIX3M"));
+    }
+
+    #[test]
+    fn extract_formula_cross_symbols_empty_for_plain() {
+        let syms = extract_formula_cross_symbols("close > sma(close, 20)");
+        assert!(syms.is_empty());
+    }
+
+    #[test]
+    fn extract_formula_cross_symbols_dot_syntax() {
+        let syms = extract_formula_cross_symbols("VIX.high / VIX3M.low > 1.1");
+        assert_eq!(syms.len(), 2);
+        assert!(syms.contains("VIX"));
+        assert!(syms.contains("VIX3M"));
+    }
+
+    #[test]
+    fn extract_formula_cross_symbols_mixed() {
+        let syms = extract_formula_cross_symbols("VIX > 30 and rsi(close, 14) < 30");
+        assert_eq!(syms.len(), 1);
+        assert!(syms.contains("VIX"));
+    }
+
+    #[test]
+    fn extract_formula_cross_symbols_in_function() {
+        let syms = extract_formula_cross_symbols("sma(VIX, 20) > 15");
+        assert_eq!(syms.len(), 1);
+        assert!(syms.contains("VIX"));
+    }
+
+    #[test]
+    fn collect_cross_symbols_detects_formula_refs() {
+        // Formula inside an And combinator should detect cross-symbol refs
+        let spec = SignalSpec::And {
+            left: Box::new(SignalSpec::Formula {
+                formula: "VIX / VIX3M < 0.9".into(),
+            }),
+            right: Box::new(SignalSpec::Formula {
+                formula: "rsi(close, 14) < 30".into(),
+            }),
+        };
+        let symbols = collect_cross_symbols(&spec);
+        assert_eq!(symbols.len(), 2);
+        assert!(symbols.contains("VIX"));
+        assert!(symbols.contains("VIX3M"));
+    }
+
+    #[test]
+    fn extract_formula_cross_symbols_function_name_as_ticker() {
+        // Ticker named "MAX" (same as a known function) should be treated as
+        // cross-symbol when NOT followed by '(' (i.e., not used as a function call)
+        let syms = extract_formula_cross_symbols("MAX > 1");
+        assert_eq!(syms.len(), 1);
+        assert!(syms.contains("MAX"));
+    }
+
+    #[test]
+    fn extract_formula_cross_symbols_function_call_not_ticker() {
+        // max(close, 20) is a function call, not a cross-symbol reference
+        let syms = extract_formula_cross_symbols("max(close, 20) > 100");
+        assert!(syms.is_empty());
     }
 }
