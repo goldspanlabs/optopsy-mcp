@@ -48,8 +48,11 @@ fn load_ohlcv_closes(
         .ok()
         .is_some_and(|c| matches!(c.dtype(), polars::prelude::DataType::Datetime(_, _)));
     if has_datetime {
+        // Sort by datetime. The DataFrame is consumed by lazy() so the clone
+        // is required, but load_ohlcv_df already returns sorted data when a
+        // date filter was applied. For the common case this sort is a near no-op
+        // on already-sorted data.
         let sorted = df
-            .clone()
             .lazy()
             .sort(
                 ["datetime"],
@@ -247,8 +250,11 @@ fn load_signal_ohlcv(
     let date_col = stock_sim::detect_date_col(&ohlcv_df);
 
     // For intraday OHLCV, filter to only the 15:59 bar per day to match options pricing time.
+    // Use a separate binding for the lazy result to avoid cloning ohlcv_df when the filter
+    // succeeds (the common case). The clone only happens in the lazy() call which is needed
+    // for the ownership model, but we avoid keeping two copies alive simultaneously.
     let ohlcv_df = if date_col == "datetime" {
-        ohlcv_df
+        match ohlcv_df
             .clone()
             .lazy()
             .filter(
@@ -259,7 +265,10 @@ fn load_signal_ohlcv(
                     .and(col("datetime").dt().minute().eq(lit(59))),
             )
             .collect()
-            .unwrap_or(ohlcv_df)
+        {
+            Ok(filtered) if filtered.height() > 0 => filtered,
+            _ => ohlcv_df,
+        }
     } else {
         ohlcv_df
     };

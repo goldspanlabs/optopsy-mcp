@@ -56,6 +56,15 @@ pub fn filter_option_type(df: &DataFrame, option_type: &str) -> Result<DataFrame
 /// Select the closest option to a target delta within a range.
 /// Groups by (`datetime`, expiration) and picks the row closest to target delta.
 pub fn select_closest_delta(df: &DataFrame, target: &TargetRange) -> Result<DataFrame> {
+    // Collect the original column names before adding the helper column,
+    // so we can select only them at the end (dropping delta_dist in the lazy plan
+    // instead of materializing and then reallocating).
+    let original_cols: Vec<Expr> = df
+        .get_column_names()
+        .into_iter()
+        .map(|name| col(name.as_str()))
+        .collect();
+
     let result = df
         .clone()
         .lazy()
@@ -78,10 +87,10 @@ pub fn select_closest_delta(df: &DataFrame, target: &TargetRange) -> Result<Data
             Some(vec![col(DATETIME_COL), col("expiration")]),
             UniqueKeepStrategy::First,
         )
+        // Drop the helper column in the lazy plan instead of post-collect
+        .select(original_cols)
         .collect()?;
 
-    // Drop the helper column
-    let result = result.drop("delta_dist")?;
     Ok(result)
 }
 

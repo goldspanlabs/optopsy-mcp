@@ -674,12 +674,18 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("ohlcv_path is required for stock sweep"))?;
 
-    // 4. Run backtests grouped by data-prep key
+    // 4. Run backtests grouped by data-prep key, caching prepared data for OOS reuse
     let mut results: Vec<SweepResult> = Vec::new();
     let mut combo_indices: Vec<usize> = Vec::new();
     let mut failed: usize = 0;
 
-    for indices in grouped.values() {
+    // Cache (bars, ohlcv_df) by group key to avoid re-reading parquet during OOS pass
+    let mut data_cache: std::collections::BTreeMap<
+        String,
+        (Vec<stock_sim::Bar>, polars::prelude::DataFrame),
+    > = std::collections::BTreeMap::new();
+
+    for (group_key, indices) in &grouped {
         // Use the first combo in the group to prep data
         let representative = &combos[indices[0]];
         let (all_bars, ohlcv_df) = stock_sim::prepare_stock_data(
@@ -689,6 +695,9 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
             params.base_params.start_date,
             params.base_params.end_date,
         )?;
+        data_cache.insert(group_key.clone(), (all_bars.clone(), ohlcv_df.clone()));
+        let all_bars = &data_cache[group_key].0;
+        let ohlcv_df = &data_cache[group_key].1;
 
         // Determine OOS split on bars. The test slice is fetched separately in the OOS pass
         // below to avoid a redundant allocation here.
@@ -699,7 +708,7 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
             let split_idx = split_idx.clamp(1, all_bars.len() - 1);
             &all_bars[..split_idx]
         } else {
-            &all_bars
+            all_bars
         };
 
         for &idx in indices {
@@ -710,7 +719,7 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
 
             // Build signal filters for train data
             let (entry_dates, exit_dates) =
-                stock_sim::build_stock_signal_filters(&combo_params, &ohlcv_df)?;
+                stock_sim::build_stock_signal_filters(&combo_params, ohlcv_df)?;
 
             // Filter signal dates to train window
             let train_entry = filter_signals_to_bar_range(entry_dates.as_ref(), train_bars);
@@ -779,20 +788,18 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
     // 5. Compute dimension sensitivity (uses signal_dim_keys)
     let dimension_sensitivity = compute_sensitivity(&results);
 
-    // 6. OOS validation on top 3
+    // 6. OOS validation on top 3 — reuse cached data from step 4
     let mut oos_results = Vec::new();
     if params.out_of_sample_pct > 0.0 {
         let top_n = results.len().min(3);
         for (ri, r) in results.iter().take(top_n).enumerate() {
             let combo = &combos[combo_indices[ri]];
 
-            let (all_bars, oos_ohlcv_df) = stock_sim::prepare_stock_data(
-                ohlcv_path,
-                combo.interval,
-                combo.session_filter.as_ref(),
-                params.base_params.start_date,
-                params.base_params.end_date,
-            )?;
+            // Look up cached data instead of re-reading parquet
+            let group_key = format!("{:?}|{:?}", combo.interval, combo.session_filter);
+            let (all_bars, oos_ohlcv_df) = data_cache
+                .get(&group_key)
+                .ok_or_else(|| anyhow::anyhow!("Missing cached data for OOS group {group_key}"))?;
 
             if all_bars.len() < 2 {
                 // Not enough data for a train/test split; skip OOS for this combo.
@@ -807,7 +814,7 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
             let combo_params = build_stock_params_for_combo(&params.base_params, combo);
 
             let (entry_dates, exit_dates) =
-                stock_sim::build_stock_signal_filters(&combo_params, &oos_ohlcv_df)?;
+                stock_sim::build_stock_signal_filters(&combo_params, oos_ohlcv_df)?;
 
             let test_entry = filter_signals_to_bar_range(entry_dates.as_ref(), test_bars);
             let test_exit = filter_signals_to_bar_range(exit_dates.as_ref(), test_bars);
