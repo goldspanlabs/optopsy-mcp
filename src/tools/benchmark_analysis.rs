@@ -71,17 +71,21 @@ pub async fn execute(
     // Alpha significance
     let sigma_sq = sse / (n - 2) as f64;
     let sum_b_sq: f64 = bench_ret.iter().map(|b| b.powi(2)).sum();
-    let var_alpha = sigma_sq
-        * (1.0 / n as f64
-            + mean_b.powi(2) * n as f64
-                / (n as f64 * sum_b_sq - bench_ret.iter().sum::<f64>().powi(2)));
-    let alpha_se = var_alpha.abs().sqrt();
-    let alpha_t_stat = if alpha_se > 0.0 {
-        alpha_daily / alpha_se
+    let sum_b: f64 = bench_ret.iter().sum();
+    let denom = n as f64 * sum_b_sq - sum_b.powi(2);
+    let (_alpha_se, alpha_t_stat, alpha_significant) = if sigma_sq > 0.0 && denom.abs() > 1e-12 {
+        let var_alpha = sigma_sq * (1.0 / n as f64 + mean_b.powi(2) * n as f64 / denom);
+        let se = var_alpha.abs().sqrt();
+        if se > 0.0 {
+            let t = alpha_daily / se;
+            (se, t, t.abs() > 1.96)
+        } else {
+            (0.0, 0.0, false)
+        }
     } else {
-        0.0
+        // Degenerate benchmark (constant returns): cannot compute stable alpha t-stat
+        (0.0, 0.0, false)
     };
-    let alpha_significant = alpha_t_stat.abs() > 1.96;
 
     // Tracking error: annualized std of excess returns
     let excess: Vec<f64> = asset_ret
