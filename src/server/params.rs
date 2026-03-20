@@ -320,7 +320,7 @@ pub struct RunStockBacktestParams {
     #[serde(default = "default_max_positions")]
     #[garde(range(min = 1))]
     pub max_positions: i32,
-    /// Slippage model (default: Mid for stocks)
+    /// Slippage model (default: Spread)
     #[serde(default = "default_stock_slippage")]
     #[garde(dive)]
     pub slippage: Slippage,
@@ -386,7 +386,7 @@ pub struct RunStockBacktestParams {
 }
 
 fn default_stock_slippage() -> Slippage {
-    Slippage::Mid
+    Slippage::Spread
 }
 
 fn default_train_days() -> i32 {
@@ -500,7 +500,7 @@ pub struct StockCompareEntryInput {
     /// Take profit as fraction of entry price
     #[garde(inner(range(min = 0.0)))]
     pub take_profit: Option<f64>,
-    /// Slippage model (default: Mid for stocks)
+    /// Slippage model (default: Spread)
     #[serde(default = "default_stock_slippage")]
     #[garde(dive)]
     pub slippage: Slippage,
@@ -724,14 +724,14 @@ pub struct StockSweepDimensions {
     #[serde(default)]
     #[garde(skip)]
     pub take_profits: Option<Vec<f64>>,
-    /// Slippage models to sweep (default: [Mid])
+    /// Slippage models to sweep (default: [Spread])
     #[serde(default = "default_stock_sweep_slippage")]
     #[garde(length(min = 1), dive)]
     pub slippage_models: Vec<Slippage>,
 }
 
 fn default_stock_sweep_slippage() -> Vec<Slippage> {
-    vec![Slippage::Mid]
+    vec![Slippage::Spread]
 }
 
 /// Parameters for the `parameter_sweep` optimization tool.
@@ -1232,7 +1232,7 @@ pub struct PortfolioBacktestParams {
     #[serde(default = "default_capital")]
     #[garde(range(min = 0.01))]
     pub capital: f64,
-    /// Default slippage model for strategies that don't specify one (default: Mid)
+    /// Default slippage model for strategies that don't specify one (default: Spread)
     #[serde(default = "default_stock_slippage")]
     #[garde(dive)]
     pub slippage: Slippage,
