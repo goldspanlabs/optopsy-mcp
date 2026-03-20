@@ -1281,10 +1281,10 @@ pub struct DrawdownAnalysisParams {
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 #[garde(context(()))]
 pub struct CointegrationParams {
-    /// First symbol (dependent variable in hedge ratio regression)
+    /// First symbol (independent variable in hedge ratio regression; model is `symbol_b = α + β × symbol_a`)
     #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub symbol_a: String,
-    /// Second symbol (independent variable)
+    /// Second symbol (dependent variable in hedge ratio regression)
     #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub symbol_b: String,
     /// Years of history (default: 5)
@@ -1336,7 +1336,7 @@ pub struct FactorAttributionParams {
     /// Additional factor proxy symbols. Default factors use:
     /// Market=benchmark, SMB=IWM-SPY, HML=IWD-IWF, Momentum=MTUM
     #[serde(default)]
-    #[garde(skip)]
+    #[garde(dive)]
     pub factor_proxies: Option<FactorProxies>,
     /// Years of history (default: 5)
     #[serde(default = "default_analysis_years")]
@@ -1349,15 +1349,20 @@ fn default_benchmark() -> String {
 }
 
 /// Custom factor proxy symbols.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema, Validate)]
+#[garde(context(()))]
 pub struct FactorProxies {
     /// Small-cap proxy (default: "IWM")
+    #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
     pub small_cap: Option<String>,
     /// Large-cap growth proxy (default: "IWF")
+    #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
     pub growth: Option<String>,
     /// Large-cap value proxy (default: "IWD")
+    #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
     pub value: Option<String>,
     /// Momentum factor proxy (default: "MTUM")
+    #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
     pub momentum: Option<String>,
 }
 

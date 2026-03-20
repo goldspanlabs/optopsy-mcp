@@ -158,9 +158,10 @@ pub async fn execute(
             "risk_parity" => risk_parity_weights(&cov_matrix),
             "min_variance" => min_variance_weights(&cov_matrix),
             "max_sharpe" => max_sharpe_weights(&annualized_returns, &cov_matrix, risk_free_rate),
-            _ => {
-                // Equal weight fallback for unknown methods
-                vec![1.0 / n_assets as f64; n_assets]
+            other => {
+                anyhow::bail!(
+                    "Unknown optimization method: '{other}'. Valid methods: risk_parity, min_variance, max_sharpe"
+                );
             }
         };
 

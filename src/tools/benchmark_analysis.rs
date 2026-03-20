@@ -105,7 +105,7 @@ pub async fn execute(
         0.0
     };
 
-    // Treynor ratio = excess return / beta
+    // Treynor ratio = annualized mean return / beta (no risk-free subtraction)
     let treynor = if beta.abs() > 1e-10 {
         (mean_a * 252.0) / beta
     } else {

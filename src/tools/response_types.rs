@@ -1206,9 +1206,9 @@ pub struct BenchmarkAnalysisResponse {
     pub alpha_significant: bool,
     /// Portfolio beta to benchmark
     pub beta: f64,
-    /// Treynor ratio: excess return / beta
+    /// Treynor-like ratio: annualized mean return / beta (no risk-free subtraction)
     pub treynor: f64,
-    /// Information ratio: alpha / tracking error
+    /// Information ratio: annualized mean excess return / tracking error
     pub information_ratio: f64,
     /// Tracking error (annualized std of excess returns)
     pub tracking_error: f64,
