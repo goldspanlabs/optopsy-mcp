@@ -27,7 +27,128 @@ use polars::prelude::*;
 
 use crate::engine::price_table::{extract_date_from_column, extract_datetime_from_column};
 use helpers::SignalFn;
-use registry::{build_signal, SignalSpec};
+use registry::{build_signal, extract_formula_cross_symbols, SignalSpec};
+
+/// OHLCV columns to join with prefix for cross-symbol references.
+const CROSS_JOIN_COLUMNS: &[&str] = &["close", "open", "high", "low", "volume", "adjclose", "iv"];
+
+/// Pre-join cross-symbol `DataFrames` into the primary DF with prefixed column names.
+///
+/// For each referenced symbol, renames OHLCV columns with `SYMBOL_` prefix
+/// (e.g., `close` → `VIX_close`) and left-joins on the date column.
+/// If the primary DF is intraday (datetime) but the cross DF is daily (date),
+/// extracts the date from the primary datetime for the join key.
+fn pre_join_cross_dfs<S: std::hash::BuildHasher>(
+    primary_df: &DataFrame,
+    cross_dfs: &HashMap<String, DataFrame, S>,
+    symbols: &HashSet<String>,
+    date_col: &str,
+) -> Result<DataFrame> {
+    let mut result = primary_df.clone();
+
+    for sym in symbols {
+        let upper = sym.to_uppercase();
+        let Some(cross_df) = cross_dfs.get(&upper) else {
+            continue; // Will fail at evaluation with missing column error
+        };
+
+        let cross_date_col = crate::engine::stock_sim::detect_date_col(cross_df);
+
+        // Build select expressions that rename OHLCV columns with symbol prefix
+        let mut select_exprs = vec![col(cross_date_col).alias("__cross_join_key")];
+
+        for &ohlcv_col in CROSS_JOIN_COLUMNS {
+            if cross_df.column(ohlcv_col).is_ok() {
+                let prefixed = format!("{upper}_{ohlcv_col}");
+                select_exprs.push(col(ohlcv_col).alias(&*prefixed));
+            }
+        }
+
+        let cross_selected = cross_df.clone().lazy().select(select_exprs).collect()?;
+
+        // Determine join key for primary side.
+        // If primary is datetime but cross is date, extract date from primary datetime.
+        let primary_is_datetime = primary_df
+            .column(date_col)
+            .map(|c| matches!(c.dtype(), DataType::Datetime(_, _)))
+            .unwrap_or(false);
+        let cross_is_date = cross_df
+            .column(cross_date_col)
+            .map(|c| matches!(c.dtype(), DataType::Date))
+            .unwrap_or(false);
+
+        if primary_is_datetime && cross_is_date {
+            // Add a temporary date column extracted from primary datetime for joining
+            result = result
+                .clone()
+                .lazy()
+                .with_column(
+                    col(date_col)
+                        .cast(DataType::Date)
+                        .alias("__primary_join_date"),
+                )
+                .collect()?;
+
+            // Cast cross join key to Date if it's Datetime
+            let cross_key_dtype = cross_selected.column("__cross_join_key")?.dtype().clone();
+            let cross_for_join = if matches!(cross_key_dtype, DataType::Datetime(_, _)) {
+                cross_selected
+                    .lazy()
+                    .with_column(
+                        col("__cross_join_key")
+                            .cast(DataType::Date)
+                            .alias("__cross_join_key"),
+                    )
+                    .collect()?
+            } else {
+                cross_selected
+            };
+
+            result = result
+                .lazy()
+                .join(
+                    cross_for_join.lazy(),
+                    [col("__primary_join_date")],
+                    [col("__cross_join_key")],
+                    JoinArgs::new(JoinType::Left),
+                )
+                .collect()?;
+
+            // Drop temporary join column
+            result = result.drop("__primary_join_date")?;
+        } else {
+            // Same granularity or both datetime — join directly
+            // Cast cross join key to match primary date column type
+            let primary_dtype = result.column(date_col)?.dtype().clone();
+            let cross_key_dtype = cross_selected.column("__cross_join_key")?.dtype().clone();
+
+            let cross_for_join = if primary_dtype == cross_key_dtype {
+                cross_selected
+            } else {
+                cross_selected
+                    .lazy()
+                    .with_column(
+                        col("__cross_join_key")
+                            .cast(primary_dtype)
+                            .alias("__cross_join_key"),
+                    )
+                    .collect()?
+            };
+
+            result = result
+                .lazy()
+                .join(
+                    cross_for_join.lazy(),
+                    [col(date_col)],
+                    [col("__cross_join_key")],
+                    JoinArgs::new(JoinType::Left),
+                )
+                .collect()?;
+        }
+    }
+
+    Ok(result)
+}
 
 /// Evaluate a signal spec against an OHLCV `DataFrame` and return the set of dates
 /// where the signal is active (true).
@@ -97,8 +218,18 @@ pub fn active_dates_multi<S: std::hash::BuildHasher>(
             let right_dates = active_dates_multi(right, primary_df, cross_dfs, date_col)?;
             Ok(left_dates.union(&right_dates).copied().collect())
         }
+        // Formula with potential cross-symbol references
+        SignalSpec::Formula { formula } => {
+            let cross_syms = extract_formula_cross_symbols(formula);
+            if cross_syms.is_empty() {
+                active_dates(spec, primary_df, date_col)
+            } else {
+                let joined = pre_join_cross_dfs(primary_df, cross_dfs, &cross_syms, date_col)?;
+                active_dates(spec, &joined, date_col)
+            }
+        }
         // All other variants evaluate against the primary DataFrame
-        _ => active_dates(spec, primary_df, date_col),
+        SignalSpec::Saved { .. } => active_dates(spec, primary_df, date_col),
     }
 }
 
@@ -166,7 +297,17 @@ pub fn active_datetimes_multi<S: std::hash::BuildHasher>(
             let right_dts = active_datetimes_multi(right, primary_df, cross_dfs, date_col)?;
             Ok(union_mixed_granularity(&left_dts, &right_dts))
         }
-        _ => active_datetimes(spec, primary_df, date_col),
+        // Formula with potential cross-symbol references
+        SignalSpec::Formula { formula } => {
+            let cross_syms = extract_formula_cross_symbols(formula);
+            if cross_syms.is_empty() {
+                active_datetimes(spec, primary_df, date_col)
+            } else {
+                let joined = pre_join_cross_dfs(primary_df, cross_dfs, &cross_syms, date_col)?;
+                active_datetimes(spec, &joined, date_col)
+            }
+        }
+        SignalSpec::Saved { .. } => active_datetimes(spec, primary_df, date_col),
     }
 }
 
@@ -933,5 +1074,158 @@ mod tests {
         let dt_jan3_0931 =
             NaiveDateTime::parse_from_str("2024-01-03 09:31:00", "%Y-%m-%d %H:%M:%S").unwrap();
         assert!(result.contains(&dt_jan3_0931));
+    }
+
+    // ── Cross-symbol formula integration tests ──────────────────────────
+
+    #[test]
+    fn active_dates_multi_formula_cross_symbol() {
+        let dates = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 3).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 4).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 5).unwrap(),
+        ];
+
+        // Primary symbol
+        let primary_df = df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), dates.clone()),
+            "close" => &[100.0, 101.0, 102.0, 103.0, 104.0],
+        }
+        .unwrap();
+
+        // VIX data
+        let vix_df = df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), dates.clone()),
+            "close" => &[25.0, 22.0, 18.0, 15.0, 12.0],
+        }
+        .unwrap();
+
+        // VIX3M data
+        let vix3m_df = df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), dates.clone()),
+            "close" => &[20.0, 20.0, 20.0, 20.0, 20.0],
+        }
+        .unwrap();
+
+        let mut cross_dfs = HashMap::new();
+        cross_dfs.insert("VIX".to_string(), vix_df);
+        cross_dfs.insert("VIX3M".to_string(), vix3m_df);
+
+        // Formula: VIX / VIX3M < 0.9
+        // VIX/VIX3M: 1.25, 1.1, 0.9, 0.75, 0.6
+        // < 0.9: indices 3 (0.75), 4 (0.6)
+        let spec = SignalSpec::Formula {
+            formula: "VIX / VIX3M < 0.9".into(),
+        };
+
+        let result = active_dates_multi(&spec, &primary_df, &cross_dfs, "date").unwrap();
+        assert_eq!(result.len(), 2);
+        assert!(result.contains(&dates[3]));
+        assert!(result.contains(&dates[4]));
+    }
+
+    #[test]
+    fn active_dates_multi_formula_cross_symbol_dot_syntax() {
+        let dates = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 3).unwrap(),
+        ];
+
+        let primary_df = df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), dates.clone()),
+            "close" => &[100.0, 101.0, 102.0],
+        }
+        .unwrap();
+
+        let vix_df = df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), dates.clone()),
+            "close" => &[25.0, 35.0, 15.0],
+            "high" => &[28.0, 38.0, 18.0],
+        }
+        .unwrap();
+
+        let mut cross_dfs = HashMap::new();
+        cross_dfs.insert("VIX".to_string(), vix_df);
+
+        // VIX.high > 30 → indices 0 (28 no), 1 (38 yes), 2 (18 no)
+        let spec = SignalSpec::Formula {
+            formula: "VIX.high > 30".into(),
+        };
+
+        let result = active_dates_multi(&spec, &primary_df, &cross_dfs, "date").unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(result.contains(&dates[1]));
+    }
+
+    #[test]
+    fn active_dates_multi_formula_cross_with_primary() {
+        let dates = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 3).unwrap(),
+        ];
+
+        let primary_df = df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), dates.clone()),
+            "close" => &[100.0, 101.0, 102.0],
+        }
+        .unwrap();
+
+        let vix_df = df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), dates.clone()),
+            "close" => &[35.0, 25.0, 15.0],
+        }
+        .unwrap();
+
+        let mut cross_dfs = HashMap::new();
+        cross_dfs.insert("VIX".to_string(), vix_df);
+
+        // VIX > 30 and close > 99 → VIX>30 at idx 0 (35), close>99 at all → idx 0
+        let spec = SignalSpec::Formula {
+            formula: "VIX > 30 and close > 99".into(),
+        };
+
+        let result = active_dates_multi(&spec, &primary_df, &cross_dfs, "date").unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(result.contains(&dates[0]));
+    }
+
+    #[test]
+    fn active_dates_multi_formula_missing_dates_produce_null() {
+        // Cross DF missing some dates → left join fills with null → signal excludes those
+        let primary_dates = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 3).unwrap(),
+        ];
+
+        let primary_df = df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), primary_dates.clone()),
+            "close" => &[100.0, 101.0, 102.0],
+        }
+        .unwrap();
+
+        // VIX only has data for Jan 2
+        let vix_dates = vec![NaiveDate::from_ymd_opt(2024, 1, 2).unwrap()];
+        let vix_df = df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), vix_dates),
+            "close" => &[35.0],
+        }
+        .unwrap();
+
+        let mut cross_dfs = HashMap::new();
+        cross_dfs.insert("VIX".to_string(), vix_df);
+
+        // VIX > 30 → only Jan 2 has VIX data (35 > 30 = true), Jan 1 and Jan 3 are null
+        let spec = SignalSpec::Formula {
+            formula: "VIX > 30".into(),
+        };
+
+        let result = active_dates_multi(&spec, &primary_df, &cross_dfs, "date").unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(result.contains(&primary_dates[1]));
     }
 }

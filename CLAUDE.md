@@ -157,6 +157,12 @@ TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, tr
   - Formula columns: `close`, `open`, `high`, `low`, `volume`, `adjclose`
   - Functions: `sma`, `ema`, `std`, `max`, `min`, `abs`, `change`, `pct_change`, `rsi`, `macd_hist`, `macd_signal`, `macd_line`, `rank`, `iv_rank`, `cci`, `ppo`, `cmo`, `atr`, `stochastic`, `keltner_upper`, `keltner_lower`, `obv`, `mfi`, `tr`, `cmf`, `williams_r`, `adx`, `plus_di`, `minus_di`, `psar`, `tsi`, `vpt`, `bbands_mid`, `bbands_upper`, `bbands_lower`, `donchian_upper`, `donchian_mid`, `donchian_lower`, `supertrend`, `consecutive_up`, `consecutive_down`, `roc`, `gap`
   - Date functions: `day_of_week()` (1=Mon..7=Sun), `month()`, `day_of_month()`, `hour()`, `minute()`, `week_of_year()`
+  - Cross-symbol references in formulas: Use other symbols' data directly in formulas. Unknown identifiers (not columns or functions) are treated as cross-symbol references defaulting to `.close`. Use dot syntax for specific columns.
+    - `VIX / VIX3M < 0.9` — VIX.close / VIX3M.close ratio
+    - `VIX.high / VIX3M.low > 1.1` — explicit columns
+    - `sma(VIX / VIX3M, 20) < 0.85` — cross-symbol in function args
+    - `VIX > 30 and rsi(close, 14) < 30` — mixed: cross-symbol + primary
+    - Cross-symbol data is auto-loaded from cache and pre-joined into the primary DataFrame
 
 ### Backtest Tools
 - **`run_options_backtest`** — Event-driven options backtest. Requires `strategy` + `leg_deltas` + `entry_dte` + `symbol`. Options data auto-loaded from cache.

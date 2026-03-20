@@ -170,7 +170,7 @@ impl SignalFn for FormulaSignal {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
-enum Token {
+pub(crate) enum Token {
     Number(f64),
     Ident(String),
     LParen,
@@ -178,6 +178,7 @@ enum Token {
     LBracket,
     RBracket,
     Comma,
+    Dot,
     Plus,
     Minus,
     Star,
@@ -196,7 +197,7 @@ enum Token {
 }
 
 #[allow(clippy::too_many_lines)]
-fn tokenize(input: &str) -> Result<Vec<Token>, String> {
+pub(crate) fn tokenize(input: &str) -> Result<Vec<Token>, String> {
     let mut tokens = Vec::new();
     let chars: Vec<char> = input.chars().collect();
     let mut i = 0;
@@ -276,6 +277,10 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
                     tokens.push(Token::Not);
                     i += 1;
                 }
+            }
+            '.' if i + 1 >= chars.len() || !chars[i + 1].is_ascii_digit() => {
+                tokens.push(Token::Dot);
+                i += 1;
             }
             c if c.is_ascii_digit() || c == '.' => {
                 let start = i;
@@ -586,21 +591,44 @@ impl Parser {
                 // Check for lookback: ident "[" number "]"
                 else if self.peek() == Some(&Token::LBracket) {
                     let name_lower = name.to_lowercase();
-                    if !VALID_COLUMNS.contains(&name_lower.as_str()) {
-                        return Err(format!(
-                            "Unknown column '{name}'. Valid columns are: close, open, high, low, volume, adjclose, iv"
-                        ));
+                    if VALID_COLUMNS.contains(&name_lower.as_str()) {
+                        self.parse_optional_lookback(col(&*name_lower))
+                    } else {
+                        // Cross-symbol with lookback: VIX[1] → col("VIX_close").shift(1)
+                        let sym = name.to_uppercase();
+                        self.parse_optional_lookback(col(format!("{sym}_close")))
                     }
-                    self.parse_optional_lookback(col(&*name_lower))
+                }
+                // Check for dot accessor: ident "." ident → cross-symbol column
+                else if self.peek() == Some(&Token::Dot) {
+                    let sym = name.to_uppercase();
+                    self.advance(); // consume Dot
+                    match self.advance() {
+                        Some(Token::Ident(col_name)) => {
+                            let col_lower = col_name.to_lowercase();
+                            if !VALID_COLUMNS.contains(&col_lower.as_str()) {
+                                return Err(format!(
+                                    "Unknown column '{col_name}' in cross-symbol reference '{sym}.{col_name}'. \
+                                     Valid columns are: close, open, high, low, volume, adjclose, iv"
+                                ));
+                            }
+                            let expr = col(format!("{sym}_{col_lower}"));
+                            self.parse_optional_lookback(expr)
+                        }
+                        other => Err(format!(
+                            "Expected column name after '{sym}.', got {other:?}"
+                        )),
+                    }
                 } else {
-                    // Plain column reference
+                    // Plain column or cross-symbol reference
                     let name_lower = name.to_lowercase();
-                    if !VALID_COLUMNS.contains(&name_lower.as_str()) {
-                        return Err(format!(
-                            "Unknown column '{name}'. Valid columns are: close, open, high, low, volume, adjclose, iv"
-                        ));
+                    if VALID_COLUMNS.contains(&name_lower.as_str()) {
+                        Ok(col(&*name_lower))
+                    } else {
+                        // Cross-symbol reference, defaults to .close
+                        let sym = name.to_uppercase();
+                        Ok(col(format!("{sym}_close")))
                     }
-                    Ok(col(&*name_lower))
                 }
             }
             Some(tok) => Err(format!("Unexpected token: {tok:?}")),
@@ -966,9 +994,9 @@ mod tests {
         assert!(validate_formula("").is_err());
         assert!(validate_formula("close >").is_err());
         assert!(validate_formula("unknown_func(close)").is_err());
-        // Unknown column name should be rejected
-        assert!(validate_formula("foo > 1").is_err());
-        assert!(validate_formula("typo[1] > close").is_err());
+        // Unknown identifiers are now cross-symbol references (not errors)
+        assert!(validate_formula("foo > 1").is_ok()); // FOO_close > 1
+        assert!(validate_formula("typo[1] > close").is_ok()); // TYPO_close.shift(1) > close
     }
 
     #[test]
@@ -982,8 +1010,8 @@ mod tests {
         // Valid integer lookbacks should be accepted
         assert!(validate_formula("close[0]").is_ok());
         assert!(validate_formula("close[10000]").is_ok());
-        // Unknown column in lookback should be rejected
-        assert!(validate_formula("foo[1]").is_err());
+        // Unknown identifiers with lookback are cross-symbol references (not errors)
+        assert!(validate_formula("foo[1]").is_ok()); // FOO_close.shift(1)
     }
 
     #[test]
@@ -2138,5 +2166,79 @@ mod tests {
         assert!(validate_formula("gap(close)").is_err());
         assert!(validate_formula("gap_size(14)").is_err());
         assert!(validate_formula("gap_filled(close, 2)").is_err());
+    }
+
+    // ── Cross-symbol formula tests ──────────────────────────────────────
+
+    #[test]
+    fn tokenize_dot() {
+        let tokens = tokenize("VIX.close").unwrap();
+        assert_eq!(tokens.len(), 3);
+        assert_eq!(tokens[0], Token::Ident("VIX".to_string()));
+        assert_eq!(tokens[1], Token::Dot);
+        assert_eq!(tokens[2], Token::Ident("close".to_string()));
+    }
+
+    #[test]
+    fn cross_symbol_bare_defaults_to_close() {
+        // VIX > 20 → col("VIX_close") > 20
+        assert!(validate_formula("VIX > 20").is_ok());
+    }
+
+    #[test]
+    fn cross_symbol_dot_column() {
+        // VIX.high > 20 → col("VIX_high") > 20
+        assert!(validate_formula("VIX.high > 20").is_ok());
+    }
+
+    #[test]
+    fn cross_symbol_dot_invalid_column() {
+        // VIX.invalid should error
+        assert!(validate_formula("VIX.invalid > 20").is_err());
+    }
+
+    #[test]
+    fn cross_symbol_division() {
+        // VIX / VIX3M < 0.9
+        assert!(validate_formula("VIX / VIX3M < 0.9").is_ok());
+    }
+
+    #[test]
+    fn cross_symbol_in_function() {
+        // sma(VIX, 20) < 0.85
+        // Note: VIX here will be parsed as a cross-symbol Expr argument
+        assert!(validate_formula("sma(VIX, 20) > 15").is_ok());
+    }
+
+    #[test]
+    fn cross_symbol_with_lookback() {
+        // VIX[1] → col("VIX_close").shift(1)
+        assert!(validate_formula("VIX[1] > 20").is_ok());
+    }
+
+    #[test]
+    fn cross_symbol_dot_with_lookback() {
+        // VIX.high[1] → col("VIX_high").shift(1)
+        assert!(validate_formula("VIX.high[1] > 20").is_ok());
+    }
+
+    #[test]
+    fn cross_symbol_mixed_with_primary() {
+        // VIX > 30 and rsi(close, 14) < 30
+        assert!(validate_formula("VIX > 30 and rsi(close, 14) < 30").is_ok());
+    }
+
+    #[test]
+    fn cross_symbol_dot_syntax_ratio() {
+        // VIX.high / VIX3M.low > 1.1
+        assert!(validate_formula("VIX.high / VIX3M.low > 1.1").is_ok());
+    }
+
+    #[test]
+    fn cross_symbol_number_dot_not_confused() {
+        // 1.5 should still parse as number, not 1 + Dot + 5
+        let tokens = tokenize("close > 1.5").unwrap();
+        assert_eq!(tokens.len(), 3);
+        assert_eq!(tokens[2], Token::Number(1.5));
     }
 }
