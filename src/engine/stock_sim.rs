@@ -289,13 +289,50 @@ pub fn run_stock_backtest(
     })
 }
 
+/// Compute the trigger price for a stop-loss or take-profit exit.
+///
+/// For stop-loss (`is_stop = true`): Long subtracts, Short adds.
+/// For take-profit (`is_stop = false`): Long adds, Short subtracts.
+fn compute_trigger_price(entry_price: f64, pct: f64, side: Side, is_stop: bool) -> f64 {
+    match (side, is_stop) {
+        (Side::Long, true) | (Side::Short, false) => entry_price * (1.0 - pct),
+        (Side::Long, false) | (Side::Short, true) => entry_price * (1.0 + pct),
+    }
+}
+
+/// Check whether a bar has hit the given trigger price.
+///
+/// Stop-loss triggers when: Long bar.low <= trigger, Short bar.high >= trigger.
+/// Take-profit triggers when: Long bar.high >= trigger, Short bar.low <= trigger.
+fn check_trigger(bar: &Bar, trigger_price: f64, side: Side, is_stop: bool) -> bool {
+    match (side, is_stop) {
+        (Side::Long, true) | (Side::Short, false) => bar.low <= trigger_price,
+        (Side::Long, false) | (Side::Short, true) => bar.high >= trigger_price,
+    }
+}
+
+/// Compute the fill price for a triggered SL/TP, accounting for gap-through.
+///
+/// If the bar's open has already blown past the trigger level, fill at the open
+/// (the trigger price was never available). Otherwise fill at the trigger price.
+fn gap_fill_price(bar: &Bar, trigger_price: f64, side: Side, is_stop: bool) -> f64 {
+    let gapped_through = match (side, is_stop) {
+        (Side::Long, true) | (Side::Short, false) => bar.open <= trigger_price,
+        (Side::Long, false) | (Side::Short, true) => bar.open >= trigger_price,
+    };
+    if gapped_through {
+        bar.open
+    } else {
+        trigger_price
+    }
+}
+
 /// Check if a position should be exited on this bar.
 ///
 /// Returns an `ExitDecision` with the exit type and an optional fill price
 /// override for SL/TP exits. Gap-through fills use the bar's open when the
 /// open has already blown past the trigger level (the trigger price was never
 /// available as a fill).
-#[allow(clippy::too_many_lines)]
 fn check_exit(
     pos: &StockPosition,
     bar: &Bar,
@@ -305,34 +342,11 @@ fn check_exit(
 ) -> Option<ExitDecision> {
     // ── Evaluate SL and TP triggers independently ───────────────────────
     let sl_decision = params.stop_loss.and_then(|sl_pct| {
-        let sl_price = match pos.side {
-            Side::Long => pos.entry_price * (1.0 - sl_pct),
-            Side::Short => pos.entry_price * (1.0 + sl_pct),
-        };
-        let triggered = match pos.side {
-            Side::Long => bar.low <= sl_price,
-            Side::Short => bar.high >= sl_price,
-        };
-        if !triggered {
+        let sl_price = compute_trigger_price(pos.entry_price, sl_pct, pos.side, true);
+        if !check_trigger(bar, sl_price, pos.side, true) {
             return None;
         }
-        // Gap-through: if the open already blew past the stop, fill at the open
-        let fill = match pos.side {
-            Side::Long => {
-                if bar.open <= sl_price {
-                    bar.open
-                } else {
-                    sl_price
-                }
-            }
-            Side::Short => {
-                if bar.open >= sl_price {
-                    bar.open
-                } else {
-                    sl_price
-                }
-            }
-        };
+        let fill = gap_fill_price(bar, sl_price, pos.side, true);
         Some(ExitDecision {
             exit_type: ExitType::StopLoss,
             fill_price: Some(fill),
@@ -340,34 +354,11 @@ fn check_exit(
     });
 
     let tp_decision = params.take_profit.and_then(|tp_pct| {
-        let tp_price = match pos.side {
-            Side::Long => pos.entry_price * (1.0 + tp_pct),
-            Side::Short => pos.entry_price * (1.0 - tp_pct),
-        };
-        let triggered = match pos.side {
-            Side::Long => bar.high >= tp_price,
-            Side::Short => bar.low <= tp_price,
-        };
-        if !triggered {
+        let tp_price = compute_trigger_price(pos.entry_price, tp_pct, pos.side, false);
+        if !check_trigger(bar, tp_price, pos.side, false) {
             return None;
         }
-        // Gap-through: if the open already blew past the target, fill at the open
-        let fill = match pos.side {
-            Side::Long => {
-                if bar.open >= tp_price {
-                    bar.open
-                } else {
-                    tp_price
-                }
-            }
-            Side::Short => {
-                if bar.open <= tp_price {
-                    bar.open
-                } else {
-                    tp_price
-                }
-            }
-        };
+        let fill = gap_fill_price(bar, tp_price, pos.side, false);
         Some(ExitDecision {
             exit_type: ExitType::TakeProfit,
             fill_price: Some(fill),

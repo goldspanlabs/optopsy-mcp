@@ -6,7 +6,7 @@
 use anyhow::Result;
 
 use crate::engine::stock_sim::{self, StockBacktestParams};
-use crate::signals::helpers::{extend_indicators_deduped, IndicatorData};
+use crate::signals::helpers::collect_indicator_data;
 
 use super::ai_format;
 use super::response_types::{StockBacktestResponse, UnderlyingPrice};
@@ -47,18 +47,12 @@ pub fn execute(
     let (entry_dates, exit_dates) = stock_sim::build_stock_signal_filters(params, &ohlcv_df)?;
 
     // Compute raw indicator data for charting from signals
-    let mut indicator_data: Vec<IndicatorData> = vec![];
-    if let Some(ref spec) = params.entry_signal {
-        indicator_data.extend(crate::signals::indicators::compute_indicator_data(
-            spec, &ohlcv_df, date_col,
-        ));
-    }
-    if let Some(ref spec) = params.exit_signal {
-        extend_indicators_deduped(
-            &mut indicator_data,
-            crate::signals::indicators::compute_indicator_data(spec, &ohlcv_df, date_col),
-        );
-    }
+    let indicator_data = collect_indicator_data(
+        params.entry_signal.as_ref(),
+        params.exit_signal.as_ref(),
+        &ohlcv_df,
+        date_col,
+    );
 
     // Run the simulation
     let result =

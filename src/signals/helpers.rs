@@ -47,6 +47,31 @@ pub struct IndicatorData {
     pub total_points: Option<usize>,
 }
 
+/// Collect indicator data from entry and exit signal specs, deduplicating by name.
+///
+/// Shared helper used by both options and stock backtest tools to avoid
+/// duplicating the collect-and-dedup pattern.
+pub fn collect_indicator_data(
+    entry_signal: Option<&crate::signals::registry::SignalSpec>,
+    exit_signal: Option<&crate::signals::registry::SignalSpec>,
+    ohlcv_df: &DataFrame,
+    date_col: &str,
+) -> Vec<IndicatorData> {
+    let mut indicator_data: Vec<IndicatorData> = vec![];
+    if let Some(spec) = entry_signal {
+        indicator_data.extend(crate::signals::indicators::compute_indicator_data(
+            spec, ohlcv_df, date_col,
+        ));
+    }
+    if let Some(spec) = exit_signal {
+        extend_indicators_deduped(
+            &mut indicator_data,
+            crate::signals::indicators::compute_indicator_data(spec, ohlcv_df, date_col),
+        );
+    }
+    indicator_data
+}
+
 /// Extend a collection of `IndicatorData` with new entries, deduplicating by name.
 ///
 /// Uses a `HashSet` for O(1) lookups instead of O(n) linear scan per insertion.

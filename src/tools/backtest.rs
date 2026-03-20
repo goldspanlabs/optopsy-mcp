@@ -8,7 +8,7 @@ use anyhow::Result;
 use polars::prelude::*;
 
 use crate::engine::types::BacktestParams;
-use crate::signals::helpers::{extend_indicators_deduped, IndicatorData};
+use crate::signals::helpers::{collect_indicator_data, IndicatorData};
 
 use super::ai_format;
 use super::response_types::{BacktestResponse, UnderlyingPrice};
@@ -29,20 +29,16 @@ pub fn execute(
     );
 
     // Compute raw indicator data for charting from signals (if OHLCV data available)
-    let mut indicator_data: Vec<IndicatorData> = vec![];
-    if let Some(ohlcv) = ohlcv_df {
-        if let Some(ref spec) = params.entry_signal {
-            indicator_data.extend(crate::signals::indicators::compute_indicator_data(
-                spec, ohlcv, "date",
-            ));
-        }
-        if let Some(ref spec) = params.exit_signal {
-            extend_indicators_deduped(
-                &mut indicator_data,
-                crate::signals::indicators::compute_indicator_data(spec, ohlcv, "date"),
-            );
-        }
-    }
+    let indicator_data: Vec<IndicatorData> = if let Some(ohlcv) = ohlcv_df {
+        collect_indicator_data(
+            params.entry_signal.as_ref(),
+            params.exit_signal.as_ref(),
+            ohlcv,
+            "date",
+        )
+    } else {
+        vec![]
+    };
 
     Ok(ai_format::format_backtest(
         result,
