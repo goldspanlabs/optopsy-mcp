@@ -695,9 +695,10 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
             params.base_params.start_date,
             params.base_params.end_date,
         )?;
-        data_cache.insert(group_key.clone(), (all_bars.clone(), ohlcv_df.clone()));
-        let all_bars = &data_cache[group_key].0;
-        let ohlcv_df = &data_cache[group_key].1;
+        data_cache.insert(group_key.clone(), (all_bars, ohlcv_df));
+        let (all_bars, ohlcv_df) = data_cache
+            .get(group_key)
+            .expect("group key must be present in data_cache after insertion");
 
         // Determine OOS split on bars. The test slice is fetched separately in the OOS pass
         // below to avoid a redundant allocation here.

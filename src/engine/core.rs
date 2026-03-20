@@ -48,10 +48,10 @@ fn load_ohlcv_closes(
         .ok()
         .is_some_and(|c| matches!(c.dtype(), polars::prelude::DataType::Datetime(_, _)));
     if has_datetime {
-        // Sort by datetime. The DataFrame is consumed by lazy() so the clone
-        // is required, but load_ohlcv_df already returns sorted data when a
-        // date filter was applied. For the common case this sort is a near no-op
-        // on already-sorted data.
+        // Sort by datetime. `lazy()` takes ownership of `df`, which is fine
+        // because we don't use the original DataFrame after this point.
+        // `load_ohlcv` already returns data roughly ordered by datetime when
+        // a date filter was applied, so this sort is typically a near no-op.
         let sorted = df
             .lazy()
             .sort(
@@ -250,9 +250,10 @@ fn load_signal_ohlcv(
     let date_col = stock_sim::detect_date_col(&ohlcv_df);
 
     // For intraday OHLCV, filter to only the 15:59 bar per day to match options pricing time.
-    // Use a separate binding for the lazy result to avoid cloning ohlcv_df when the filter
-    // succeeds (the common case). The clone only happens in the lazy() call which is needed
-    // for the ownership model, but we avoid keeping two copies alive simultaneously.
+    // We clone here because `DataFrame::lazy()` takes ownership, but we still need the original
+    // `ohlcv_df` as a fallback if the filtered result is empty or the lazy computation fails.
+    // This incurs a one-time clone cost on the intraday path, but we do not retain two full
+    // DataFrames after the match completes.
     let ohlcv_df = if date_col == "datetime" {
         match ohlcv_df
             .clone()
@@ -267,7 +268,43 @@ fn load_signal_ohlcv(
             .collect()
         {
             Ok(filtered) if filtered.height() > 0 => filtered,
-            _ => ohlcv_df,
+            Ok(_empty) => {
+                // No explicit 15:59 bar found; fall back to one row per day by taking
+                // the last available intraday bar for each calendar date. This preserves
+                // the "one bar per day" semantics without reverting to full intraday data.
+                tracing::warn!(
+                    "Intraday OHLCV contained no 15:59 bars; falling back to last bar per date."
+                );
+                // Capture original column expressions before adding the helper column.
+                let original_cols: Vec<Expr> = ohlcv_df
+                    .get_column_names()
+                    .iter()
+                    .map(|n| col(n.as_str()))
+                    .collect();
+                ohlcv_df
+                    .clone()
+                    .lazy()
+                    .sort(
+                        ["datetime"],
+                        polars::prelude::SortMultipleOptions::default(),
+                    )
+                    .with_column(col("datetime").dt().date().alias("_date"))
+                    .unique_generic(
+                        Some(vec![col("_date")]),
+                        polars::prelude::UniqueKeepStrategy::Last,
+                    )
+                    .select(original_cols)
+                    .collect()
+                    .context(
+                        "failed to compute last intraday bar per date as fallback \
+                         when 15:59 bars are missing",
+                    )?
+            }
+            Err(_) => {
+                // If filtering itself fails for some reason, fall back to the original
+                // intraday frame to avoid surprising hard failures here.
+                ohlcv_df
+            }
         }
     } else {
         ohlcv_df
