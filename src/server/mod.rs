@@ -788,6 +788,20 @@ impl OptopsyServer {
     /// **Key difference from `run_options_backtest`**: This operates on stock prices (OHLCV bars),
     /// not options chains. No strategy/delta/DTE needed — signals drive everything.
     ///
+    /// **IMPORTANT: `entry_signal` is REQUIRED** — pass a formula string like `"rsi(close, 14) < 30"`.
+    /// Do NOT pass null. The signal defines when to open positions.
+    ///
+    /// **Example call**:
+    /// ```json
+    /// {
+    ///   "symbol": "SPY", "side": "Long", "capital": 100000, "quantity": 100,
+    ///   "entry_signal": "rsi(close, 14) < 30",
+    ///   "exit_signal": "rsi(close, 14) > 70",
+    ///   "stop_loss": 0.05,
+    ///   "start_date": "2020-01-01", "end_date": "2024-12-31"
+    /// }
+    /// ```
+    ///
     /// **What it simulates**:
     ///   - Day-by-day position opens when `entry_signal` fires
     ///   - Position management (stop loss, take profit, max hold days, exit signal)

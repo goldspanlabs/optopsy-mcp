@@ -360,10 +360,16 @@ pub struct RunStockBacktestParams {
     #[garde(skip)]
     pub conflict_resolution: Option<crate::engine::types::ConflictResolution>,
     /// Entry signal — REQUIRED. Opens positions when this signal fires.
-    /// Use `build_signal(action="search")` to find suitable signals.
+    /// Pass a formula string directly, e.g.: `"rsi(close, 14) < 30"`
+    /// Examples:
+    ///   - `"rsi(close, 14) < 30"` — buy when RSI is oversold
+    ///   - `"close > sma(close, 50) and macd_hist(close) > 0"` — trend + momentum
+    ///   - `"hmm_regime(3, 5) == bullish and rsi(close, 14) < 30"` — regime + RSI
+    ///   - `"consecutive_down(close) >= 3"` — buy after 3 down days
     #[garde(skip)]
     pub entry_signal: SignalSpec,
     /// Exit signal — optional. Closes positions when this signal fires.
+    /// Same formula syntax as `entry_signal`, e.g.: `"rsi(close, 14) > 70"`
     #[serde(default)]
     #[garde(skip)]
     pub exit_signal: Option<SignalSpec>,
