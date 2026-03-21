@@ -368,6 +368,24 @@ pub fn forward_filter(hmm: &GaussianHmm, observations: &[f64], threshold: f64) -
     result
 }
 
+/// Check if any pair of HMM states has overlapping emission distributions.
+///
+/// Two states overlap if their means are within 1 standard deviation of each other
+/// (using the larger of the two std devs). This indicates the HMM may not have
+/// found meaningfully distinct regimes.
+pub fn overlapping_emissions(hmm: &GaussianHmm) -> bool {
+    for i in 0..hmm.n_states {
+        for j in (i + 1)..hmm.n_states {
+            let std_max = hmm.variances[i].sqrt().max(hmm.variances[j].sqrt());
+            let mean_gap = (hmm.means[i] - hmm.means[j]).abs();
+            if mean_gap < std_max {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -624,5 +642,24 @@ mod tests {
             "forward filter and viterbi should mostly agree: {:.1}%",
             pct * 100.0
         );
+    }
+
+    #[test]
+    fn test_overlapping_emissions_well_separated() {
+        let data = two_state_data(400);
+        let hmm = fit(&data, 2);
+        assert!(!overlapping_emissions(&hmm));
+    }
+
+    #[test]
+    fn test_overlapping_emissions_identical_means() {
+        let hmm = GaussianHmm {
+            n_states: 2,
+            initial: vec![0.5, 0.5],
+            transition: vec![vec![0.7, 0.3], vec![0.3, 0.7]],
+            means: vec![0.01, 0.011],
+            variances: vec![0.001, 0.001],
+        };
+        assert!(overlapping_emissions(&hmm));
     }
 }
