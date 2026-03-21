@@ -1229,6 +1229,14 @@ fn dates_to_datetimes(dates: HashSet<NaiveDate>) -> HashSet<NaiveDateTime> {
         .collect()
 }
 
+/// Derive the cache root directory from an OHLCV parquet path.
+///
+/// Cache paths follow the convention `{cache_root}/{category}/{SYMBOL}.parquet`, so
+/// the root is two parent directories up from the file path.
+pub fn ohlcv_path_to_cache_root(ohlcv_path: &str) -> Option<&std::path::Path> {
+    std::path::Path::new(ohlcv_path).parent()?.parent()
+}
+
 /// Build signal datetime filters for stock backtest from a pre-loaded OHLCV `DataFrame`.
 ///
 /// Accepts the primary OHLCV data directly to avoid re-reading the parquet file.
@@ -1244,15 +1252,14 @@ pub fn build_stock_signal_filters(
     use crate::signals;
     use crate::signals::registry::SignalSpec;
 
-    let has_entry = params.entry_signal.is_some();
-    let has_exit = params.exit_signal.is_some();
-
-    if !has_entry && !has_exit {
+    if params.entry_signal.is_none() && params.exit_signal.is_none() {
         return Ok((None, None));
     }
 
     let date_col = detect_date_col(ohlcv_df);
     let is_intraday = date_col == "datetime";
+    let params_ohlcv = params.ohlcv_path.as_deref();
+    let effective_cache_dir = cache_dir.or_else(|| params_ohlcv.and_then(ohlcv_path_to_cache_root));
 
     // --- HMM regime preprocessing ---
     let primary_symbol = &params.symbol;
@@ -1266,7 +1273,7 @@ pub fn build_stock_signal_filters(
                 formula,
                 primary_symbol,
                 &ohlcv_df,
-                cache_dir,
+                effective_cache_dir,
                 date_col,
             )?;
             entry_signal = Some(SignalSpec::Formula { formula: rewritten });
@@ -1279,7 +1286,7 @@ pub fn build_stock_signal_filters(
                 formula,
                 primary_symbol,
                 &ohlcv_df,
-                cache_dir,
+                effective_cache_dir,
                 date_col,
             )?;
             exit_signal = Some(SignalSpec::Formula { formula: rewritten });
