@@ -724,7 +724,7 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
 
             // Build signal filters for train data
             let (entry_dates, exit_dates) =
-                stock_sim::build_stock_signal_filters(&combo_params, &ohlcv_df)?;
+                stock_sim::build_stock_signal_filters(&combo_params, &ohlcv_df, None)?;
 
             // Filter signal dates to train window
             let train_entry = filter_signals_to_bar_range(entry_dates.as_ref(), train_bars);
@@ -819,7 +819,7 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
             let combo_params = build_stock_params_for_combo(&params.base_params, combo);
 
             let (entry_dates, exit_dates) =
-                stock_sim::build_stock_signal_filters(&combo_params, oos_ohlcv_df)?;
+                stock_sim::build_stock_signal_filters(&combo_params, &oos_ohlcv_df, None)?;
 
             let test_entry = filter_signals_to_bar_range(entry_dates.as_ref(), test_bars);
             let test_exit = filter_signals_to_bar_range(exit_dates.as_ref(), test_bars);
@@ -972,7 +972,7 @@ fn run_stock_multiple_comparisons(
         let combo_params = build_stock_params_for_combo(&params.base_params, combo);
 
         let Ok((entry_dates, exit_dates)) =
-            stock_sim::build_stock_signal_filters(&combo_params, ohlcv_df)
+            stock_sim::build_stock_signal_filters(&combo_params, ohlcv_df, None)
         else {
             result.p_value = Some(1.0);
             continue;

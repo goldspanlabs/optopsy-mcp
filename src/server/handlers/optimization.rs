@@ -290,7 +290,7 @@ async fn walk_forward_stock(
             resolved.params.end_date,
         )?;
         let (entry_dates, exit_dates) =
-            crate::engine::stock_sim::build_stock_signal_filters(&resolved.params, &ohlcv_df)?;
+            crate::engine::stock_sim::build_stock_signal_filters(&resolved.params, &ohlcv_df, None)?;
         tools::walk_forward::execute_stock(
             &bars,
             &resolved.params,
@@ -377,7 +377,7 @@ async fn permutation_test_stock(
             resolved.params.end_date,
         )?;
         let (entry_dates, exit_dates) =
-            crate::engine::stock_sim::build_stock_signal_filters(&resolved.params, &ohlcv_df)?;
+            crate::engine::stock_sim::build_stock_signal_filters(&resolved.params, &ohlcv_df, None)?;
         tools::permutation_test::execute_stock(
             &bars,
             &resolved.params,
@@ -401,7 +401,7 @@ async fn permutation_test_options(
 
     tokio::task::spawn_blocking(move || {
         let (entry_dates, exit_dates) =
-            crate::engine::core::build_signal_filters(&backtest_params, &df)?;
+            crate::engine::core::build_signal_filters(&backtest_params, &df, None)?;
         tools::permutation_test::execute(
             &df,
             &backtest_params,

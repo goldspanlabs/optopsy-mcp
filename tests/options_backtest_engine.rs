@@ -630,7 +630,7 @@ fn day_of_week_signal_works_with_intraday_ohlcv() {
     params.ohlcv_path = Some(path);
 
     // build_signal_filters should succeed (not crash on datetime column)
-    let filters = build_signal_filters(&params, &df);
+    let filters = build_signal_filters(&params, &df, None);
     assert!(
         filters.is_ok(),
         "day_of_week() with intraday OHLCV should not error: {:?}",

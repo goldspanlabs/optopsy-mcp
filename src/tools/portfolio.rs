@@ -104,7 +104,7 @@ pub fn execute(
         let ohlcv_df = stock_sim::resample_ohlcv(&ohlcv_df, Interval::Daily)?;
         let bars = stock_sim::bars_from_df(&ohlcv_df)?;
         let (entry_dates, exit_dates) =
-            stock_sim::build_stock_signal_filters(&stock_params, &ohlcv_df)?;
+            stock_sim::build_stock_signal_filters(&stock_params, &ohlcv_df, None)?;
 
         let result = stock_sim::run_stock_backtest(
             &bars,
