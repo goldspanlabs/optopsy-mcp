@@ -113,19 +113,15 @@ impl JsonSchema for SignalSpec {
         "SignalSpec".into()
     }
 
-    fn json_schema(gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        // Generate the tagged-object schema from the internal enum
-        let object_schema = gen.subschema_for::<SignalSpecTagged>();
-
-        // Combine: anyOf [string, tagged-object]
-        let combined = serde_json::json!({
-            "description": "Signal specification. Pass a plain formula string (e.g. \"rsi(close, 14) < 30\"), or an object with \"type\" for Saved, And, Or. Cross-symbol references (e.g. VIX / VIX3M < 0.9) are supported directly in formulas.",
-            "anyOf": [
-                { "type": "string", "description": "Formula string shorthand — e.g. \"rsi(close, 14) < 30\"" },
-                object_schema
-            ]
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        // Emit a simple string schema. The deserializer still accepts both plain strings
+        // and tagged objects, but we only advertise strings in the schema to avoid confusing
+        // AI agents with complex anyOf alternatives.
+        let schema = serde_json::json!({
+            "type": "string",
+            "description": "Formula string. Examples: \"rsi(close, 14) < 30\", \"close > sma(close, 50)\", \"hmm_regime(3, 5) == bullish\", \"consecutive_down(close) >= 3\". Do NOT pass null."
         });
-        schemars::Schema::try_from(combined).expect("SignalSpec schema is a valid JSON Schema")
+        schemars::Schema::try_from(schema).expect("SignalSpec schema is a valid JSON Schema")
     }
 }
 
