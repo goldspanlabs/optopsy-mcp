@@ -526,8 +526,17 @@ pub fn run_event_loop(
 
                     // Dynamic position sizing
                     let effective_qty = params.sizing.as_ref().and_then(|cfg| {
-                        let ml =
-                            super::sizing::max_loss_per_contract(strategy_def, candidate, params)?;
+                        let stock_px = if strategy_def.has_stock_leg {
+                            ohlcv_closes.and_then(|c| c.get(&today).copied())
+                        } else {
+                            None
+                        };
+                        let ml = super::sizing::max_loss_per_contract(
+                            strategy_def,
+                            candidate,
+                            params,
+                            stock_px,
+                        )?;
                         if ml <= 0.0 {
                             return None;
                         }

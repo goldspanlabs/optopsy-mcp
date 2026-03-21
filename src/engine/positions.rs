@@ -230,7 +230,8 @@ pub fn mark_to_market(
 }
 
 /// Compute the current signed net position delta from live option quotes.
-/// Returns sum of (delta × `side_multiplier` × qty) for all open legs.
+/// Returns sum of (delta × `side_multiplier` × qty) for all open legs,
+/// plus +1.0 per contract for stock-leg strategies (e.g. covered call).
 /// Falls back to the last-known quote when no live price exists.
 pub(crate) fn compute_position_net_delta(
     position: &Position,
@@ -239,6 +240,12 @@ pub(crate) fn compute_position_net_delta(
     last_known: &LastKnown,
 ) -> f64 {
     let mut net_delta = 0.0;
+
+    // Stock leg contributes +1.0 delta per contract (long 100 shares = 1.0 delta)
+    if position.stock_entry_price.is_some() {
+        net_delta += f64::from(position.quantity);
+    }
+
     for leg in &position.legs {
         if leg.closed {
             continue;
@@ -704,6 +711,76 @@ mod tests {
         };
         let pnl = close_position(&mut position, d3, &ctx, &last_known, ExitType::DteExit);
         assert!((pnl - 1100.0).abs() < 1e-10, "PnL was {pnl}");
+    }
+
+    #[test]
+    fn net_delta_with_stock_leg() {
+        // Covered call: long stock (+1.0) + short call (-0.35) = +0.65
+        let (table, _, _) = make_price_table_simple();
+        let d2 = NaiveDate::from_ymd_opt(2024, 1, 22).unwrap();
+        let last_known = LastKnown::new();
+        let params = make_test_params(Slippage::Mid, 100);
+        let sd = make_test_strategy_def();
+        let ctx = SimContext {
+            price_table: &table,
+            params: &params,
+            strategy_def: &sd,
+            ohlcv_closes: None,
+        };
+        let position = make_stock_leg_position(); // short call, stock_entry_price = Some(100.0)
+        let nd = compute_position_net_delta(&position, d2, &ctx, &last_known);
+        // Stock: +1.0, Short call delta=0.35: 0.35 * (-1) * 1 = -0.35
+        // Net: 1.0 - 0.35 = 0.65
+        assert!(
+            (nd - 0.65).abs() < 1e-10,
+            "Net delta was {nd}, expected 0.65"
+        );
+    }
+
+    #[test]
+    fn net_delta_without_stock_leg() {
+        // Plain short call: no stock leg, just option delta
+        let (table, _, _) = make_price_table_simple();
+        let d2 = NaiveDate::from_ymd_opt(2024, 1, 22).unwrap();
+        let last_known = LastKnown::new();
+        let params = make_test_params(Slippage::Mid, 100);
+        let sd = make_test_strategy_def();
+        let ctx = SimContext {
+            price_table: &table,
+            params: &params,
+            strategy_def: &sd,
+            ohlcv_closes: None,
+        };
+        let exp = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
+        let position = Position {
+            id: 1,
+            entry_date: NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            expiration: exp,
+            secondary_expiration: None,
+            legs: vec![PositionLeg {
+                leg_index: 0,
+                side: Side::Short,
+                option_type: OptionType::Call,
+                strike: 100.0,
+                expiration: exp,
+                entry_price: 5.25,
+                qty: 1,
+                closed: false,
+                close_price: None,
+                close_date: None,
+            }],
+            entry_cost: -525.0,
+            quantity: 1,
+            multiplier: 100,
+            status: PositionStatus::Open,
+            stock_entry_price: None, // no stock leg
+        };
+        let nd = compute_position_net_delta(&position, d2, &ctx, &last_known);
+        // Short call delta=0.35: 0.35 * (-1) * 1 = -0.35
+        assert!(
+            (nd - (-0.35)).abs() < 1e-10,
+            "Net delta was {nd}, expected -0.35"
+        );
     }
 
     #[test]
