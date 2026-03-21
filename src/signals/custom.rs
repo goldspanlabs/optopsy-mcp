@@ -632,6 +632,10 @@ impl Parser {
                     let name_lower = name.to_lowercase();
                     if VALID_COLUMNS.contains(&name_lower.as_str()) {
                         Ok(col(&*name_lower))
+                    } else if name.starts_with("__") {
+                        // Internal computed column (e.g., __hmm_regime_SPY_3_5_65)
+                        // — use as literal column reference, no transformation
+                        Ok(col(name))
                     } else {
                         // Cross-symbol reference, defaults to .close
                         let sym = name.to_uppercase();
@@ -2255,5 +2259,19 @@ mod tests {
         // close.high should error — close is a primary column, not a cross-symbol
         assert!(validate_formula("close.high > 0").is_err());
         assert!(validate_formula("volume.low > 0").is_err());
+    }
+
+    #[test]
+    fn test_double_underscore_ident_is_literal_column() {
+        let expr = parse_formula("__hmm_regime_SPY_3_5_65 == 2").unwrap();
+        let fmt = format!("{expr:?}");
+        assert!(
+            fmt.contains("__hmm_regime_SPY_3_5_65"),
+            "should contain literal column name, got: {fmt}"
+        );
+        assert!(
+            !fmt.contains("_close"),
+            "should NOT append _close suffix, got: {fmt}"
+        );
     }
 }
