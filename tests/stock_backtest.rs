@@ -292,7 +292,7 @@ fn signal_driven_entry_consecutive_up() {
     });
 
     let ohlcv_df = load_ohlcv_df(&path, None, None).unwrap();
-    let (entry_dates, exit_dates) = build_stock_signal_filters(&params, &ohlcv_df).unwrap();
+    let (entry_dates, exit_dates) = build_stock_signal_filters(&params, &ohlcv_df, None).unwrap();
 
     assert!(entry_dates.is_some(), "Should find entry signal dates");
     let entry_set = entry_dates.as_ref().unwrap();
@@ -318,7 +318,7 @@ fn signal_driven_entry_and_exit() {
     });
 
     let ohlcv_df = load_ohlcv_df(&path, None, None).unwrap();
-    let (entry_dates, exit_dates) = build_stock_signal_filters(&params, &ohlcv_df).unwrap();
+    let (entry_dates, exit_dates) = build_stock_signal_filters(&params, &ohlcv_df, None).unwrap();
 
     assert!(entry_dates.is_some());
     assert!(exit_dates.is_some());
@@ -346,7 +346,7 @@ fn signal_filters_into_full_backtest() {
     });
 
     let ohlcv_df = load_ohlcv_df(&path, None, None).unwrap();
-    let (entry_dates, exit_dates) = build_stock_signal_filters(&params, &ohlcv_df).unwrap();
+    let (entry_dates, exit_dates) = build_stock_signal_filters(&params, &ohlcv_df, None).unwrap();
     let bars = parse_ohlcv_bars(&path, None, None).unwrap();
 
     let result =
@@ -379,7 +379,7 @@ fn signal_entry_and_exit_produces_multiple_trades() {
     });
 
     let ohlcv_df = load_ohlcv_df(&path, None, None).unwrap();
-    let (entry_dates, exit_dates) = build_stock_signal_filters(&params, &ohlcv_df).unwrap();
+    let (entry_dates, exit_dates) = build_stock_signal_filters(&params, &ohlcv_df, None).unwrap();
     let bars = parse_ohlcv_bars(&path, None, None).unwrap();
 
     let result =

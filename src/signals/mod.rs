@@ -8,6 +8,7 @@ pub mod combinators;
 pub mod custom;
 pub mod custom_funcs;
 pub mod helpers;
+pub mod hmm_rewrite;
 pub mod indicators;
 pub mod momentum;
 pub mod overlap;
@@ -25,7 +26,9 @@ use anyhow::Result;
 use chrono::{NaiveDate, NaiveDateTime};
 use polars::prelude::*;
 
+use crate::engine::hmm;
 use crate::engine::price_table::{extract_date_from_column, extract_datetime_from_column};
+use crate::engine::types::EPOCH_DAYS_CE_OFFSET;
 use helpers::SignalFn;
 use registry::{build_signal, extract_formula_cross_symbols, SignalSpec};
 
@@ -455,6 +458,226 @@ fn union_mixed_granularity(
     // from the other branch will match. The midnight entries are harmless
     // (no bar will have a midnight timestamp in intraday data).
     left.union(right).copied().collect()
+}
+
+/// Pre-process a formula string for HMM regime calls.
+///
+/// 1. Scans for `hmm_regime(...)` calls and rewrites the formula
+/// 2. For each unique call: loads data, fits HMM, forward-filters
+/// 3. Injects `__hmm_regime_*` columns into the `DataFrame`
+/// 4. Returns (`rewritten_formula`, `modified_dataframe`)
+///
+/// If no `hmm_regime()` calls found, returns formula and `DataFrame` unchanged.
+///
+/// `cache_dir` is needed only when `hmm_regime` references a symbol different
+/// from `primary_symbol`. Pass `None` if only the primary symbol is used.
+#[allow(clippy::too_many_lines)]
+pub fn preprocess_hmm_regime(
+    formula: &str,
+    primary_symbol: &str,
+    primary_df: &DataFrame,
+    cache_dir: Option<&std::path::Path>,
+    date_col: &str,
+) -> Result<(String, DataFrame)> {
+    let rewrite = hmm_rewrite::rewrite_formula(formula, primary_symbol)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    if rewrite.calls.is_empty() {
+        return Ok((rewrite.formula, primary_df.clone()));
+    }
+
+    let mut result_df = primary_df.clone();
+
+    // Derive backtest start date from the primary DataFrame (min date, not row 0 which
+    // may be unsorted). Sort lazily by the date column and take the first row.
+    let first_row = primary_df
+        .clone()
+        .lazy()
+        .sort([date_col], SortMultipleOptions::default())
+        .slice(0, 1)
+        .collect()?;
+    if first_row.height() == 0 {
+        anyhow::bail!(
+            "cannot derive backtest start date: primary DataFrame for '{primary_symbol}' is empty"
+        );
+    }
+    let backtest_start = extract_naive_date(first_row.column(date_col)?, 0)?;
+
+    for call in &rewrite.calls {
+        let sym = call.symbol.as_deref().unwrap_or(primary_symbol);
+        let col_name =
+            hmm_rewrite::column_name(sym, call.n_regimes, call.fit_years, call.threshold);
+
+        // Load OHLCV for the HMM symbol
+        // Prefer full history from cache for HMM fitting (primary_df may be truncated
+        // to the user's start_date and lack the fit-window data).
+        let hmm_df = if sym.eq_ignore_ascii_case(primary_symbol) {
+            match cache_dir {
+                Some(dir) => load_hmm_symbol_ohlcv(dir, sym).unwrap_or_else(|_| primary_df.clone()),
+                None => primary_df.clone(),
+            }
+        } else {
+            let cache = cache_dir.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "hmm_regime references symbol '{sym}' but no cache directory available"
+                )
+            })?;
+            load_hmm_symbol_ohlcv(cache, sym)?
+        };
+
+        // Detect date column in the HMM symbol's data
+        let hmm_date_col = crate::engine::stock_sim::detect_date_col(&hmm_df);
+
+        // Sort by date ascending so adjacent-row returns are chronologically valid
+        // and the fit/apply split is determined by real temporal order, not file order.
+        let hmm_df = hmm_df
+            .clone()
+            .lazy()
+            .sort([hmm_date_col], SortMultipleOptions::default())
+            .collect()?;
+
+        // Extract dates and closes, compute returns
+        let hmm_dates = hmm_df.column(hmm_date_col)?;
+        let closes = hmm_df.column("close")?.f64()?;
+
+        let mut returns = Vec::with_capacity(closes.len());
+        let mut return_dates = Vec::new();
+        for i in 1..closes.len() {
+            if let (Some(prev), Some(curr)) = (closes.get(i - 1), closes.get(i)) {
+                if prev.abs() > 1e-15 {
+                    returns.push((curr - prev) / prev);
+                    return_dates.push(extract_naive_date(hmm_dates, i)?);
+                }
+            }
+        }
+
+        // HMM operates on daily returns — deduplicate to one return per date.
+        // If source data is intraday, later bars overwrite earlier ones (close-to-close).
+        let mut daily_map = std::collections::BTreeMap::<chrono::NaiveDate, f64>::new();
+        for (date, ret) in return_dates.iter().zip(returns.iter()) {
+            daily_map.insert(*date, *ret);
+        }
+        let return_dates: Vec<chrono::NaiveDate> = daily_map.keys().copied().collect();
+        let returns: Vec<f64> = daily_map.values().copied().collect();
+
+        // Split into fit window and apply window
+        let fit_years_days = call.fit_years as i64 * 365;
+        let fit_start = backtest_start - chrono::Duration::days(fit_years_days);
+
+        let mut fit_returns = Vec::new();
+        let mut apply_returns = Vec::new();
+        let mut apply_dates = Vec::new();
+
+        for (ret, date) in returns.iter().zip(return_dates.iter()) {
+            if *date < backtest_start && *date >= fit_start {
+                fit_returns.push(*ret);
+            } else if *date >= backtest_start {
+                apply_returns.push(*ret);
+                apply_dates.push(*date);
+            }
+        }
+
+        if fit_returns.len() < 50 {
+            anyhow::bail!(
+                "hmm_regime requires at least 50 bars before backtest start date; \
+                 only found {} bars for {} with fit_years={}",
+                fit_returns.len(),
+                sym,
+                call.fit_years
+            );
+        }
+
+        // Fit HMM on pre-backtest data
+        let fitted = hmm::fit(&fit_returns, call.n_regimes);
+
+        // Check for overlapping emissions
+        if hmm::overlapping_emissions(&fitted) {
+            tracing::warn!(
+                "HMM states for {} have overlapping distributions — regime labels may be \
+                 unreliable. Consider using fewer states or a longer fit window.",
+                sym
+            );
+        }
+
+        // Forward-filter the apply window
+        let regime_labels = hmm::forward_filter(&fitted, &apply_returns, call.threshold);
+
+        // Regime is a daily concept — all intraday bars on the same date get the same label.
+        let regime_map: std::collections::HashMap<chrono::NaiveDate, usize> =
+            apply_dates.into_iter().zip(regime_labels).collect();
+
+        // Create the regime column aligned to the primary DataFrame
+        let primary_dates = result_df.column(date_col)?;
+        let mut regime_col = Vec::with_capacity(result_df.height());
+        for i in 0..result_df.height() {
+            let date = extract_naive_date(primary_dates, i)?;
+            regime_col.push(regime_map.get(&date).map(|&x| x as u32));
+        }
+
+        // Inject as UInt32 column (nullable for dates outside apply window)
+        let series = Series::new(col_name.into(), regime_col);
+        result_df.with_column(series.into())?;
+    }
+
+    Ok((rewrite.formula, result_df))
+}
+
+/// Load OHLCV data for an HMM symbol from the cache directory.
+fn load_hmm_symbol_ohlcv(cache_dir: &std::path::Path, symbol: &str) -> Result<DataFrame> {
+    crate::data::cache::validate_path_segment(symbol)
+        .map_err(|e| anyhow::anyhow!("invalid HMM symbol '{symbol}': {e}"))?;
+    for category in &["etf", "stocks", "futures", "indices"] {
+        let path = cache_dir.join(category).join(format!("{symbol}.parquet"));
+        if path.exists() {
+            let path_str = path.to_string_lossy();
+            let args = ScanArgsParquet::default();
+            return Ok(LazyFrame::scan_parquet(path_str.as_ref().into(), args)?.collect()?);
+        }
+    }
+    anyhow::bail!(
+        "no OHLCV data found for '{symbol}'; available categories: stocks, etf, indices, futures"
+    )
+}
+
+/// Extract a `NaiveDate` from a date/datetime column at the given index.
+fn extract_naive_date(col: &Column, idx: usize) -> Result<chrono::NaiveDate> {
+    match col.dtype() {
+        DataType::Date => {
+            let days = col
+                .date()?
+                .phys
+                .get(idx)
+                .ok_or_else(|| anyhow::anyhow!("null date at index {idx}"))?;
+            chrono::NaiveDate::from_num_days_from_ce_opt(days + EPOCH_DAYS_CE_OFFSET)
+                .ok_or_else(|| anyhow::anyhow!("invalid date at index {idx}"))
+        }
+        DataType::Datetime(tu, _) => {
+            let val = col
+                .datetime()?
+                .phys
+                .get(idx)
+                .ok_or_else(|| anyhow::anyhow!("null datetime at index {idx}"))?;
+            let ndt = match tu {
+                TimeUnit::Milliseconds => chrono::DateTime::from_timestamp_millis(val)
+                    .ok_or_else(|| anyhow::anyhow!("invalid datetime ms at {idx}"))?
+                    .naive_utc(),
+                TimeUnit::Microseconds => chrono::DateTime::from_timestamp_micros(val)
+                    .ok_or_else(|| anyhow::anyhow!("invalid datetime us at {idx}"))?
+                    .naive_utc(),
+                TimeUnit::Nanoseconds => {
+                    let secs = val / 1_000_000_000;
+                    let nsecs = (val % 1_000_000_000) as u32;
+                    chrono::DateTime::from_timestamp(secs, nsecs)
+                        .ok_or_else(|| anyhow::anyhow!("invalid datetime ns at {idx}"))?
+                        .naive_utc()
+                }
+            };
+            Ok(ndt.date())
+        }
+        other => Err(anyhow::anyhow!(
+            "expected date/datetime column, got {other}"
+        )),
+    }
 }
 
 #[cfg(test)]

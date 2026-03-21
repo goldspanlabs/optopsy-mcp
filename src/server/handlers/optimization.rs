@@ -289,8 +289,11 @@ async fn walk_forward_stock(
             resolved.params.start_date,
             resolved.params.end_date,
         )?;
-        let (entry_dates, exit_dates) =
-            crate::engine::stock_sim::build_stock_signal_filters(&resolved.params, &ohlcv_df)?;
+        let (entry_dates, exit_dates) = crate::engine::stock_sim::build_stock_signal_filters(
+            &resolved.params,
+            &ohlcv_df,
+            crate::engine::stock_sim::ohlcv_path_to_cache_root(ohlcv_path),
+        )?;
         tools::walk_forward::execute_stock(
             &bars,
             &resolved.params,
@@ -376,8 +379,11 @@ async fn permutation_test_stock(
             resolved.params.start_date,
             resolved.params.end_date,
         )?;
-        let (entry_dates, exit_dates) =
-            crate::engine::stock_sim::build_stock_signal_filters(&resolved.params, &ohlcv_df)?;
+        let (entry_dates, exit_dates) = crate::engine::stock_sim::build_stock_signal_filters(
+            &resolved.params,
+            &ohlcv_df,
+            crate::engine::stock_sim::ohlcv_path_to_cache_root(ohlcv_path),
+        )?;
         tools::permutation_test::execute_stock(
             &bars,
             &resolved.params,
@@ -400,8 +406,14 @@ async fn permutation_test_options(
     let (_symbol, df, backtest_params) = server.resolve_backtest_params(base).await?;
 
     tokio::task::spawn_blocking(move || {
+        // Derive cache_dir from ohlcv_path ({cache_dir}/{category}/{SYMBOL}.parquet)
+        let cache_dir = backtest_params
+            .ohlcv_path
+            .as_deref()
+            .and_then(|p| std::path::Path::new(p).parent())
+            .and_then(|p| p.parent());
         let (entry_dates, exit_dates) =
-            crate::engine::core::build_signal_filters(&backtest_params, &df)?;
+            crate::engine::core::build_signal_filters(&backtest_params, &df, cache_dir)?;
         tools::permutation_test::execute(
             &df,
             &backtest_params,

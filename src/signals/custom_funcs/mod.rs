@@ -95,6 +95,8 @@ pub const KNOWN_FUNCTIONS: &[&str] = &[
     "hour",
     "minute",
     "week_of_year",
+    // HMM regime (handled by formula rewriting, not dispatch)
+    "hmm_regime",
 ];
 
 /// Dispatch a function call to the appropriate category module.

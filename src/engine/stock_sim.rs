@@ -1229,6 +1229,14 @@ fn dates_to_datetimes(dates: HashSet<NaiveDate>) -> HashSet<NaiveDateTime> {
         .collect()
 }
 
+/// Derive the cache root directory from an OHLCV parquet path.
+///
+/// Cache paths follow the convention `{cache_root}/{category}/{SYMBOL}.parquet`, so
+/// the root is two parent directories up from the file path.
+pub fn ohlcv_path_to_cache_root(ohlcv_path: &str) -> Option<&std::path::Path> {
+    std::path::Path::new(ohlcv_path).parent()?.parent()
+}
+
 /// Build signal datetime filters for stock backtest from a pre-loaded OHLCV `DataFrame`.
 ///
 /// Accepts the primary OHLCV data directly to avoid re-reading the parquet file.
@@ -1239,26 +1247,59 @@ fn dates_to_datetimes(dates: HashSet<NaiveDate>) -> HashSet<NaiveDateTime> {
 pub fn build_stock_signal_filters(
     params: &StockBacktestParams,
     ohlcv_df: &polars::prelude::DataFrame,
+    cache_dir: Option<&std::path::Path>,
 ) -> Result<(DateTimeFilter, DateTimeFilter)> {
     use crate::signals;
+    use crate::signals::registry::SignalSpec;
 
-    let has_entry = params.entry_signal.is_some();
-    let has_exit = params.exit_signal.is_some();
-
-    if !has_entry && !has_exit {
+    if params.entry_signal.is_none() && params.exit_signal.is_none() {
         return Ok((None, None));
     }
 
     let date_col = detect_date_col(ohlcv_df);
     let is_intraday = date_col == "datetime";
+    let params_ohlcv = params.ohlcv_path.as_deref();
+    let effective_cache_dir = cache_dir.or_else(|| params_ohlcv.and_then(ohlcv_path_to_cache_root));
+
+    // --- HMM regime preprocessing ---
+    let primary_symbol = &params.symbol;
+    let mut entry_signal = params.entry_signal.clone();
+    let mut exit_signal = params.exit_signal.clone();
+    let mut hmm_df: Option<polars::prelude::DataFrame> = None;
+
+    if let Some(SignalSpec::Formula { ref formula }) = entry_signal {
+        if formula.contains("hmm_regime(") {
+            let (rewritten, updated_df) = signals::preprocess_hmm_regime(
+                formula,
+                primary_symbol,
+                hmm_df.as_ref().unwrap_or(ohlcv_df),
+                effective_cache_dir,
+                date_col,
+            )?;
+            entry_signal = Some(SignalSpec::Formula { formula: rewritten });
+            hmm_df = Some(updated_df);
+        }
+    }
+    if let Some(SignalSpec::Formula { ref formula }) = exit_signal {
+        if formula.contains("hmm_regime(") {
+            let (rewritten, updated_df) = signals::preprocess_hmm_regime(
+                formula,
+                primary_symbol,
+                hmm_df.as_ref().unwrap_or(ohlcv_df),
+                effective_cache_dir,
+                date_col,
+            )?;
+            exit_signal = Some(SignalSpec::Formula { formula: rewritten });
+            hmm_df = Some(updated_df);
+        }
+    }
+    let ohlcv_df = hmm_df.as_ref().unwrap_or(ohlcv_df);
 
     // Check for cross-symbol references
-    let has_cross = params
-        .entry_signal
+    let has_cross = entry_signal
         .as_ref()
         .is_some_and(|s| !signals::registry::collect_cross_symbols(s).is_empty())
-        || params
-            .exit_signal
+        || exit_signal
             .as_ref()
             .is_some_and(|s| !signals::registry::collect_cross_symbols(s).is_empty());
 
@@ -1272,26 +1313,22 @@ pub fn build_stock_signal_filters(
         }
 
         if is_intraday {
-            let entry_dates = params
-                .entry_signal
+            let entry_dates = entry_signal
                 .as_ref()
                 .map(|spec| signals::active_datetimes_multi(spec, ohlcv_df, &cross_dfs, date_col))
                 .transpose()?;
-            let exit_dates = params
-                .exit_signal
+            let exit_dates = exit_signal
                 .as_ref()
                 .map(|spec| signals::active_datetimes_multi(spec, ohlcv_df, &cross_dfs, date_col))
                 .transpose()?;
             Ok((entry_dates, exit_dates))
         } else {
-            let entry_dates = params
-                .entry_signal
+            let entry_dates = entry_signal
                 .as_ref()
                 .map(|spec| signals::active_dates_multi(spec, ohlcv_df, &cross_dfs, date_col))
                 .transpose()?
                 .map(dates_to_datetimes);
-            let exit_dates = params
-                .exit_signal
+            let exit_dates = exit_signal
                 .as_ref()
                 .map(|spec| signals::active_dates_multi(spec, ohlcv_df, &cross_dfs, date_col))
                 .transpose()?
@@ -1299,26 +1336,22 @@ pub fn build_stock_signal_filters(
             Ok((entry_dates, exit_dates))
         }
     } else if is_intraday {
-        let entry_dates = params
-            .entry_signal
+        let entry_dates = entry_signal
             .as_ref()
             .map(|spec| signals::active_datetimes(spec, ohlcv_df, date_col))
             .transpose()?;
-        let exit_dates = params
-            .exit_signal
+        let exit_dates = exit_signal
             .as_ref()
             .map(|spec| signals::active_datetimes(spec, ohlcv_df, date_col))
             .transpose()?;
         Ok((entry_dates, exit_dates))
     } else {
-        let entry_dates = params
-            .entry_signal
+        let entry_dates = entry_signal
             .as_ref()
             .map(|spec| signals::active_dates(spec, ohlcv_df, date_col))
             .transpose()?
             .map(dates_to_datetimes);
-        let exit_dates = params
-            .exit_signal
+        let exit_dates = exit_signal
             .as_ref()
             .map(|spec| signals::active_dates(spec, ohlcv_df, date_col))
             .transpose()?

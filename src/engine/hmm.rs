@@ -285,6 +285,107 @@ pub fn viterbi(hmm: &GaussianHmm, observations: &[f64]) -> Vec<usize> {
     path
 }
 
+/// Online forward filter: classify each observation using only past data.
+///
+/// Unlike Viterbi (which uses the full sequence), this processes bars one at a time,
+/// avoiding look-ahead bias. A regime switch only happens when the new state's
+/// posterior exceeds `threshold`; otherwise the previous regime carries forward.
+///
+/// `threshold` must be in (0.5, 1.0]. Values near 1.0 produce very stable (sticky)
+/// regime labels; values near 0.5 behave like raw argmax.
+#[allow(clippy::needless_range_loop)]
+pub fn forward_filter(hmm: &GaussianHmm, observations: &[f64], threshold: f64) -> Vec<usize> {
+    let t = observations.len();
+    let k = hmm.n_states;
+    if t == 0 {
+        return vec![];
+    }
+
+    let mut result = Vec::with_capacity(t);
+    let mut posterior = hmm.initial.clone();
+    let mut log_post = vec![0.0_f64; k];
+    let mut norm_post = vec![0.0_f64; k];
+
+    // Classify first bar
+    for j in 0..k {
+        log_post[j] = posterior[j].max(1e-300).ln()
+            + log_gaussian(observations[0], hmm.means[j], hmm.variances[j]);
+    }
+    let max_lp = log_post.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let sum_exp: f64 = log_post.iter().map(|&lp| (lp - max_lp).exp()).sum();
+    let log_norm = max_lp + sum_exp.ln();
+    for j in 0..k {
+        norm_post[j] = (log_post[j] - log_norm).exp();
+    }
+
+    let initial_state = norm_post
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+        .map_or(0, |(i, _)| i);
+    result.push(initial_state);
+    posterior.copy_from_slice(&norm_post);
+    let mut prev_state = initial_state;
+
+    // Process remaining bars
+    for tt in 1..t {
+        let mut predicted = vec![0.0_f64; k];
+        for j in 0..k {
+            for i in 0..k {
+                predicted[j] += posterior[i] * hmm.transition[i][j];
+            }
+        }
+
+        for j in 0..k {
+            log_post[j] = predicted[j].max(1e-300).ln()
+                + log_gaussian(observations[tt], hmm.means[j], hmm.variances[j]);
+        }
+
+        let max_lp = log_post.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let sum_exp: f64 = log_post.iter().map(|&lp| (lp - max_lp).exp()).sum();
+        let log_norm = max_lp + sum_exp.ln();
+        for j in 0..k {
+            norm_post[j] = (log_post[j] - log_norm).exp();
+        }
+
+        let argmax_state = norm_post
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .map_or(0, |(i, _)| i);
+
+        let state = if argmax_state != prev_state && norm_post[argmax_state] > threshold {
+            argmax_state
+        } else {
+            prev_state
+        };
+
+        result.push(state);
+        posterior.copy_from_slice(&norm_post);
+        prev_state = state;
+    }
+
+    result
+}
+
+/// Check if any pair of HMM states has overlapping emission distributions.
+///
+/// Two states overlap if their means are within 1 standard deviation of each other
+/// (using the larger of the two std devs). This indicates the HMM may not have
+/// found meaningfully distinct regimes.
+pub fn overlapping_emissions(hmm: &GaussianHmm) -> bool {
+    for i in 0..hmm.n_states {
+        for j in (i + 1)..hmm.n_states {
+            let std_max = hmm.variances[i].sqrt().max(hmm.variances[j].sqrt());
+            let mean_gap = (hmm.means[i] - hmm.means[j]).abs();
+            if mean_gap < std_max {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,5 +551,115 @@ mod tests {
             let s: f64 = row.iter().sum();
             assert!((s - 1.0).abs() < 1e-6, "transition row should sum to 1");
         }
+    }
+
+    #[test]
+    fn test_forward_filter_length_matches_observations() {
+        let data = two_state_data(400);
+        let hmm = fit(&data, 2);
+        let result = forward_filter(&hmm, &data[200..], 0.65);
+        assert_eq!(result.len(), 200);
+    }
+
+    #[test]
+    fn test_forward_filter_empty_observations() {
+        let hmm = fit(&[1.0, 2.0, 3.0, 4.0], 2);
+        let result = forward_filter(&hmm, &[], 0.65);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_forward_filter_single_bar() {
+        let data = two_state_data(400);
+        let hmm = fit(&data, 2);
+        let result = forward_filter(&hmm, &[0.01], 0.65);
+        assert_eq!(result.len(), 1);
+        assert!(result[0] < hmm.n_states);
+    }
+
+    #[test]
+    fn test_forward_filter_values_in_range() {
+        let data = two_state_data(400);
+        let hmm = fit(&data, 2);
+        let result = forward_filter(&hmm, &data, 0.65);
+        for &s in &result {
+            assert!(s < 2, "state {s} out of range for 2-state HMM");
+        }
+    }
+
+    #[test]
+    fn test_forward_filter_recovers_known_regimes() {
+        let data = two_state_data(400);
+        let hmm = fit(&data[..200], 2);
+        let result = forward_filter(&hmm, &data[200..], 0.65);
+        let state1_count = result.iter().filter(|&&s| s == 1).count();
+        assert!(
+            state1_count as f64 / result.len() as f64 > 0.5,
+            "expected mostly state 1 in second half, got {state1_count}/{}",
+            result.len()
+        );
+    }
+
+    #[test]
+    fn test_forward_filter_threshold_reduces_switches() {
+        let data = two_state_data(400);
+        let hmm = fit(&data, 2);
+        let loose = forward_filter(&hmm, &data, 0.5001);
+        let strict = forward_filter(&hmm, &data, 0.8);
+        let count_switches =
+            |path: &[usize]| -> usize { path.windows(2).filter(|w| w[0] != w[1]).count() };
+        assert!(
+            count_switches(&strict) <= count_switches(&loose),
+            "stricter threshold should produce fewer or equal switches: strict={}, loose={}",
+            count_switches(&strict),
+            count_switches(&loose)
+        );
+    }
+
+    #[test]
+    fn test_forward_filter_carries_forward_when_below_threshold() {
+        let data = two_state_data(400);
+        let hmm = fit(&data, 2);
+        let result = forward_filter(&hmm, &data, 1.0);
+        let switches: usize = result.windows(2).filter(|w| w[0] != w[1]).count();
+        assert_eq!(switches, 0, "threshold=1.0 should produce zero switches");
+    }
+
+    #[test]
+    fn test_forward_filter_mostly_agrees_with_viterbi() {
+        let data = two_state_data(400);
+        let hmm = fit(&data, 2);
+        let viterbi_path = viterbi(&hmm, &data);
+        let filter_path = forward_filter(&hmm, &data, 0.5001);
+        let agree = viterbi_path
+            .iter()
+            .zip(filter_path.iter())
+            .filter(|(a, b)| a == b)
+            .count();
+        let pct = agree as f64 / data.len() as f64;
+        assert!(
+            pct > 0.7,
+            "forward filter and viterbi should mostly agree: {:.1}%",
+            pct * 100.0
+        );
+    }
+
+    #[test]
+    fn test_overlapping_emissions_well_separated() {
+        let data = two_state_data(400);
+        let hmm = fit(&data, 2);
+        assert!(!overlapping_emissions(&hmm));
+    }
+
+    #[test]
+    fn test_overlapping_emissions_identical_means() {
+        let hmm = GaussianHmm {
+            n_states: 2,
+            initial: vec![0.5, 0.5],
+            transition: vec![vec![0.7, 0.3], vec![0.3, 0.7]],
+            means: vec![0.01, 0.011],
+            variances: vec![0.001, 0.001],
+        };
+        assert!(overlapping_emissions(&hmm));
     }
 }

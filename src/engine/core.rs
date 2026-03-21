@@ -15,7 +15,7 @@ use super::metrics;
 use super::types::*;
 use super::vectorized_sim;
 use crate::signals;
-use crate::signals::registry::collect_cross_symbols;
+use crate::signals::registry::{collect_cross_symbols, SignalSpec};
 use crate::strategies;
 
 type DateFilter = Option<HashSet<NaiveDate>>;
@@ -318,23 +318,80 @@ fn intraday_last_bar_per_day(df: DataFrame) -> Result<DataFrame> {
         .context("failed to compute last intraday bar per date")
 }
 
+/// If the `SignalSpec` is a `Formula` variant whose formula contains `hmm_regime(`,
+/// run the HMM preprocessing pass and return a rewritten spec + updated `DataFrame`.
+/// Returns `None` when no HMM processing is needed (avoiding a `DataFrame` clone).
+fn maybe_preprocess_hmm(
+    spec: &SignalSpec,
+    primary_symbol: &str,
+    df: &DataFrame,
+    cache_dir: Option<&std::path::Path>,
+    date_col: &str,
+) -> Result<Option<(SignalSpec, DataFrame)>> {
+    if let SignalSpec::Formula { formula } = spec {
+        if formula.contains("hmm_regime(") {
+            let (rewritten, updated_df) =
+                signals::preprocess_hmm_regime(formula, primary_symbol, df, cache_dir, date_col)?;
+            return Ok(Some((
+                SignalSpec::Formula { formula: rewritten },
+                updated_df,
+            )));
+        }
+    }
+    Ok(None)
+}
+
+/// Derive a primary symbol name from an OHLCV file path (filename stem, uppercased).
+fn symbol_from_ohlcv_path(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("UNKNOWN")
+        .to_uppercase()
+}
+
 pub fn build_signal_filters(
     params: &BacktestParams,
     options_df: &DataFrame,
+    cache_dir: Option<&std::path::Path>,
 ) -> Result<(DateFilter, DateFilter)> {
     if params.entry_signal.is_none() && params.exit_signal.is_none() {
         return Ok((None, None));
     }
 
-    let (ohlcv_df, date_col) = load_signal_ohlcv(params, options_df)?;
+    let (mut ohlcv_df, date_col) = load_signal_ohlcv(params, options_df)?;
+
+    // --- HMM regime preprocessing ---
+    let primary_symbol = params
+        .ohlcv_path
+        .as_deref()
+        .map_or_else(|| "UNKNOWN".to_string(), symbol_from_ohlcv_path);
+
+    let mut entry_signal = params.entry_signal.clone();
+    let mut exit_signal = params.exit_signal.clone();
+
+    if let Some(spec) = entry_signal.as_ref() {
+        if let Some((new_spec, new_df)) =
+            maybe_preprocess_hmm(spec, &primary_symbol, &ohlcv_df, cache_dir, date_col)?
+        {
+            entry_signal = Some(new_spec);
+            ohlcv_df = new_df;
+        }
+    }
+    if let Some(spec) = exit_signal.as_ref() {
+        if let Some((new_spec, new_df)) =
+            maybe_preprocess_hmm(spec, &primary_symbol, &ohlcv_df, cache_dir, date_col)?
+        {
+            exit_signal = Some(new_spec);
+            ohlcv_df = new_df;
+        }
+    }
 
     // Check if any signal references a cross-symbol
-    let has_cross = params
-        .entry_signal
+    let has_cross = entry_signal
         .as_ref()
         .is_some_and(|s| !collect_cross_symbols(s).is_empty())
-        || params
-            .exit_signal
+        || exit_signal
             .as_ref()
             .is_some_and(|s| !collect_cross_symbols(s).is_empty());
 
@@ -345,13 +402,11 @@ pub fn build_signal_filters(
             cross_dfs.insert(sym.to_uppercase(), load_ohlcv(path)?);
         }
 
-        let entry_dates = params
-            .entry_signal
+        let entry_dates = entry_signal
             .as_ref()
             .map(|spec| signals::active_dates_multi(spec, &ohlcv_df, &cross_dfs, date_col))
             .transpose()?;
-        let exit_dates = params
-            .exit_signal
+        let exit_dates = exit_signal
             .as_ref()
             .map(|spec| signals::active_dates_multi(spec, &ohlcv_df, &cross_dfs, date_col))
             .transpose()?;
@@ -359,13 +414,11 @@ pub fn build_signal_filters(
         Ok((entry_dates, exit_dates))
     } else {
         // Fast path: no cross-symbol references
-        let entry_dates = params
-            .entry_signal
+        let entry_dates = entry_signal
             .as_ref()
             .map(|spec| signals::active_dates(spec, &ohlcv_df, date_col))
             .transpose()?;
-        let exit_dates = params
-            .exit_signal
+        let exit_dates = exit_signal
             .as_ref()
             .map(|spec| signals::active_dates(spec, &ohlcv_df, date_col))
             .transpose()?;
@@ -397,8 +450,15 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
         );
     }
 
+    // Derive cache_dir from ohlcv_path (path is {cache_dir}/{category}/{SYMBOL}.parquet)
+    let cache_dir = params
+        .ohlcv_path
+        .as_deref()
+        .and_then(|p| std::path::Path::new(p).parent())
+        .and_then(|p| p.parent());
+
     // Build signal date filters if specified (loads OHLCV at most once)
-    let (entry_dates, exit_dates) = build_signal_filters(params, df)?;
+    let (entry_dates, exit_dates) = build_signal_filters(params, df, cache_dir)?;
 
     if entry_dates.is_some() || exit_dates.is_some() {
         tracing::info!(
@@ -610,6 +670,7 @@ pub struct StockCompareEntry {
 /// interval, side, etc.). Data is prepared once per unique `(ohlcv_path,
 /// interval, session_filter, start_date, end_date)` group to avoid redundant
 /// I/O for entries that share the same underlying data.
+#[allow(clippy::too_many_lines)]
 pub fn compare_stock_strategies(entries: &[StockCompareEntry]) -> Result<Vec<CompareResult>> {
     // Reject duplicate labels up front so callers get a clear error instead of silent skipping.
     let mut seen_labels: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -674,8 +735,12 @@ pub fn compare_stock_strategies(entries: &[StockCompareEntry]) -> Result<Vec<Com
             (&cached.0, &cached.1)
         };
 
-        let (entry_dates, exit_dates) =
-            stock_sim::build_stock_signal_filters(&entry.params, ohlcv_df)?;
+        // Derive cache_dir from ohlcv_path ({cache_dir}/{category}/{SYMBOL}.parquet)
+        let (entry_dates, exit_dates) = stock_sim::build_stock_signal_filters(
+            &entry.params,
+            ohlcv_df,
+            stock_sim::ohlcv_path_to_cache_root(ohlcv_path),
+        )?;
 
         match stock_sim::run_stock_backtest(
             bars,

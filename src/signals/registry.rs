@@ -455,6 +455,28 @@ pub const SIGNAL_CATALOG: &[SignalInfo] = &[
         params: "condition, then, else",
         formula_example: "if(close > sma(close, 50), 1, 0)",
     },
+    // ── Regime ────────────────────────────────────────────────────────
+    SignalInfo {
+        name: "HMM Regime Filter",
+        category: "regime",
+        description: "Gate entries by HMM regime state. Run regime_detect first to inspect states.",
+        params: "symbol (optional), n_regimes (2-4), fit_years, threshold (optional, default 0.65)",
+        formula_example: "hmm_regime(SPY, 3, 5) == bullish",
+    },
+    SignalInfo {
+        name: "HMM Regime Exclude",
+        category: "regime",
+        description: "Exclude a specific HMM regime (e.g., avoid bearish). Run regime_detect first.",
+        params: "symbol (optional), n_regimes (2-4), fit_years, threshold (optional, default 0.65)",
+        formula_example: "hmm_regime(3, 5) != bearish",
+    },
+    SignalInfo {
+        name: "HMM Regime Numeric",
+        category: "regime",
+        description: "Gate entries by HMM state index (0=lowest return, N-1=highest). Run regime_detect first.",
+        params: "symbol (optional), n_regimes (2-4), fit_years, threshold (optional, default 0.65)",
+        formula_example: "hmm_regime(3, 5) >= 1",
+    },
 ];
 
 /// Collect all secondary symbols referenced in a signal tree (via formula cross-symbol syntax).
@@ -524,11 +546,23 @@ pub fn extract_formula_cross_symbols(formula: &str) -> std::collections::HashSet
                 continue;
             }
 
+            // Internal computed column (__ prefix) → skip
+            if name.starts_with("__") {
+                i += 1;
+                continue;
+            }
+
             // Known function name used as a call (followed by '(') → skip
             if KNOWN_FUNCTIONS.contains(&lower.as_str())
                 && i + 1 < tokens.len()
                 && matches!(tokens[i + 1], super::custom::Token::LParen)
             {
+                i += 1;
+                continue;
+            }
+
+            // HMM regime alias names → skip (resolved by hmm_rewrite before evaluation)
+            if super::hmm_rewrite::REGIME_ALIASES.contains(&lower.as_str()) {
                 i += 1;
                 continue;
             }
@@ -557,8 +591,8 @@ mod tests {
 
     #[test]
     fn catalog_has_all_signals() {
-        // 62 signals across 9 domain categories (CrossSymbol removed)
-        assert_eq!(SIGNAL_CATALOG.len(), 62);
+        // 65 signals across 10 domain categories (CrossSymbol removed)
+        assert_eq!(SIGNAL_CATALOG.len(), 65);
     }
 
     #[test]
@@ -602,6 +636,7 @@ mod tests {
             "iv",
             "datetime",
             "utility",
+            "regime",
         ];
         for info in SIGNAL_CATALOG {
             assert!(
@@ -681,5 +716,23 @@ mod tests {
         // max(close, 20) is a function call, not a cross-symbol reference
         let syms = extract_formula_cross_symbols("max(close, 20) > 100");
         assert!(syms.is_empty());
+    }
+
+    #[test]
+    fn test_cross_symbol_extractor_skips_double_underscore() {
+        let syms = extract_formula_cross_symbols("__hmm_regime_SPY_3_5_65 == 2");
+        assert!(
+            syms.is_empty(),
+            "__ prefix identifiers should not be treated as cross-symbols: {syms:?}"
+        );
+    }
+
+    #[test]
+    fn test_cross_symbol_extractor_skips_hmm_regime_function() {
+        let syms = extract_formula_cross_symbols("hmm_regime(SPY, 3, 5) == 2 and VIX > 20");
+        assert!(
+            !syms.contains("HMM_REGIME"),
+            "hmm_regime should be in KNOWN_FUNCTIONS: {syms:?}"
+        );
     }
 }

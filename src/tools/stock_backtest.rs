@@ -44,7 +44,11 @@ pub fn execute(
 
     // Build signal date filters from the session-filtered, resampled DataFrame
     let date_col = stock_sim::detect_date_col(&ohlcv_df);
-    let (entry_dates, exit_dates) = stock_sim::build_stock_signal_filters(params, &ohlcv_df)?;
+    let (entry_dates, exit_dates) = stock_sim::build_stock_signal_filters(
+        params,
+        &ohlcv_df,
+        stock_sim::ohlcv_path_to_cache_root(ohlcv_path),
+    )?;
 
     // Compute raw indicator data for charting from signals
     let indicator_data = collect_indicator_data(

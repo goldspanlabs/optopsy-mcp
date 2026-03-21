@@ -17,6 +17,7 @@ Thumbs.db
 .env
 .dual-graph/
 .mcp.json
+.worktrees/
 
 # Documentation
 docs/
