@@ -679,7 +679,9 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
     let mut combo_indices: Vec<usize> = Vec::new();
     let mut failed: usize = 0;
 
-    // Cache (bars, ohlcv_df) by group key to avoid re-reading parquet during OOS pass
+    // Cache (bars, ohlcv_df) by group key to avoid re-reading parquet during OOS pass.
+    // Only populated when out_of_sample_pct > 0.0; otherwise data is used directly per group
+    // and released, keeping peak memory bounded to a single group's data at a time.
     let mut data_cache: std::collections::BTreeMap<
         String,
         (Vec<stock_sim::Bar>, polars::prelude::DataFrame),
@@ -695,10 +697,12 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
             params.base_params.start_date,
             params.base_params.end_date,
         )?;
-        data_cache.insert(group_key.clone(), (all_bars, ohlcv_df));
-        let (all_bars, ohlcv_df) = data_cache
-            .get(group_key)
-            .expect("group key must be present in data_cache after insertion");
+
+        // Only cache when the OOS pass will need the data later. This avoids accumulating
+        // all groups in memory when OOS is disabled (one group at a time instead).
+        if params.out_of_sample_pct > 0.0 {
+            data_cache.insert(group_key.clone(), (all_bars.clone(), ohlcv_df.clone()));
+        }
 
         // Determine OOS split on bars. The test slice is fetched separately in the OOS pass
         // below to avoid a redundant allocation here.
@@ -709,7 +713,7 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
             let split_idx = split_idx.clamp(1, all_bars.len() - 1);
             &all_bars[..split_idx]
         } else {
-            all_bars
+            &all_bars
         };
 
         for &idx in indices {
@@ -720,7 +724,7 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
 
             // Build signal filters for train data
             let (entry_dates, exit_dates) =
-                stock_sim::build_stock_signal_filters(&combo_params, ohlcv_df)?;
+                stock_sim::build_stock_signal_filters(&combo_params, &ohlcv_df)?;
 
             // Filter signal dates to train window
             let train_entry = filter_signals_to_bar_range(entry_dates.as_ref(), train_bars);

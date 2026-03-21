@@ -185,14 +185,13 @@ fn formula_references_iv(formula: &str) -> bool {
     false
 }
 
-/// Build entry/exit date filters from signal specs, loading OHLCV at most once.
+/// Load and prepare the OHLCV `DataFrame` for signal evaluation.
 ///
 /// When IV-based signals are used, aggregates daily IV from the options `DataFrame`
 /// and merges it into the OHLCV `DataFrame` so all signals evaluate against one unified `DataFrame`.
 /// For pure IV signals (no OHLCV path), a minimal `DataFrame` is constructed from the IV aggregation.
 /// When cross-symbol formula references are present, loads secondary symbol `DataFrames`
 /// from `params.cross_ohlcv_paths` and uses `active_dates_multi` for evaluation.
-/// Load and prepare the OHLCV `DataFrame` for signal evaluation.
 ///
 /// Handles three cases: pure OHLCV signals, pure IV signals, and mixed.
 /// For intraday OHLCV data, filters to only the 15:59 bar per day to
@@ -269,41 +268,21 @@ fn load_signal_ohlcv(
         {
             Ok(filtered) if filtered.height() > 0 => filtered,
             Ok(_empty) => {
-                // No explicit 15:59 bar found; fall back to one row per day by taking
-                // the last available intraday bar for each calendar date. This preserves
-                // the "one bar per day" semantics without reverting to full intraday data.
+                // No explicit 15:59 bar found; fall back to last bar per day.
                 tracing::warn!(
                     "Intraday OHLCV contained no 15:59 bars; falling back to last bar per date."
                 );
-                // Capture original column expressions before adding the helper column.
-                let original_cols: Vec<Expr> = ohlcv_df
-                    .get_column_names()
-                    .iter()
-                    .map(|n| col(n.as_str()))
-                    .collect();
-                ohlcv_df
-                    .clone()
-                    .lazy()
-                    .sort(
-                        ["datetime"],
-                        polars::prelude::SortMultipleOptions::default(),
-                    )
-                    .with_column(col("datetime").dt().date().alias("_date"))
-                    .unique_generic(
-                        Some(vec![col("_date")]),
-                        polars::prelude::UniqueKeepStrategy::Last,
-                    )
-                    .select(original_cols)
-                    .collect()
-                    .context(
-                        "failed to compute last intraday bar per date as fallback \
-                         when 15:59 bars are missing",
-                    )?
+                intraday_last_bar_per_day(ohlcv_df)?
             }
-            Err(_) => {
-                // If filtering itself fails for some reason, fall back to the original
-                // intraday frame to avoid surprising hard failures here.
-                ohlcv_df
+            Err(e) => {
+                // If filtering itself fails, log the error and fall back to last bar per date
+                // to keep one-row-per-day semantics and avoid evaluating signals on full
+                // intraday data.
+                tracing::warn!(
+                    "Failed to filter intraday OHLCV to 15:59 bars: {e:?}. \
+                     Falling back to last bar per date."
+                );
+                intraday_last_bar_per_day(ohlcv_df)?
             }
         }
     } else {
@@ -311,6 +290,32 @@ fn load_signal_ohlcv(
     };
 
     Ok((ohlcv_df, date_col))
+}
+
+/// Reduce an intraday `DataFrame` to one row per calendar date by keeping the last bar.
+///
+/// Sorts by `"datetime"`, adds a temporary `"_date"` column, deduplicates keeping the last
+/// row per date, then drops the helper column. This preserves one-row-per-day semantics
+/// when a 15:59 bar is unavailable.
+fn intraday_last_bar_per_day(df: DataFrame) -> Result<DataFrame> {
+    let original_cols: Vec<Expr> = df
+        .get_column_names()
+        .iter()
+        .map(|n| col(n.as_str()))
+        .collect();
+    df.lazy()
+        .sort(
+            ["datetime"],
+            polars::prelude::SortMultipleOptions::default(),
+        )
+        .with_column(col("datetime").dt().date().alias("_date"))
+        .unique_generic(
+            Some(vec![col("_date")]),
+            polars::prelude::UniqueKeepStrategy::Last,
+        )
+        .select(original_cols)
+        .collect()
+        .context("failed to compute last intraday bar per date")
 }
 
 pub fn build_signal_filters(
