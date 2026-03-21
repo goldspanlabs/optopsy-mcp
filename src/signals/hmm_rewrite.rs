@@ -122,6 +122,15 @@ fn parse_hmm_args(args_str: &str) -> Result<HmmCall, String> {
                 .is_some_and(|c| c.is_ascii_alphabetic())
             {
                 let symbol = parts[0].to_uppercase();
+                if !symbol
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+                {
+                    return Err(format!(
+                        "hmm_regime symbol must be alphanumeric (with . - _ allowed), got '{}'",
+                        parts[0]
+                    ));
+                }
                 let n_regimes = parse_int(parts[1], "n_regimes")?;
                 let fit_years = parse_int(parts[2], "fit_years")?;
                 validate_params(n_regimes, fit_years, DEFAULT_THRESHOLD)?;
@@ -153,6 +162,15 @@ fn parse_hmm_args(args_str: &str) -> Result<HmmCall, String> {
             {
                 return Err(format!(
                     "hmm_regime first arg must be a symbol identifier, got '{}'",
+                    parts[0]
+                ));
+            }
+            if !symbol
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+            {
+                return Err(format!(
+                    "hmm_regime symbol must be alphanumeric (with . - _ allowed), got '{}'",
                     parts[0]
                 ));
             }
@@ -521,5 +539,11 @@ mod tests {
         let result = rewrite_formula("hmm_regime(SPY, 3, 5, 0.8) == bullish", "AAPL").unwrap();
         assert_eq!(result.formula, "__hmm_regime_SPY_3_5_80 == 2");
         assert!((result.calls[0].threshold - 0.8).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_extract_symbol_with_path_separator_errors() {
+        assert!(extract_hmm_calls("hmm_regime(../etc, 3, 5) == 0").is_err());
+        assert!(extract_hmm_calls("hmm_regime(SPY/../../x, 3, 5) == 0").is_err());
     }
 }

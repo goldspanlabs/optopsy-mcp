@@ -443,8 +443,15 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
         );
     }
 
+    // Derive cache_dir from ohlcv_path (path is {cache_dir}/{category}/{SYMBOL}.parquet)
+    let cache_dir = params
+        .ohlcv_path
+        .as_deref()
+        .and_then(|p| std::path::Path::new(p).parent())
+        .and_then(|p| p.parent());
+
     // Build signal date filters if specified (loads OHLCV at most once)
-    let (entry_dates, exit_dates) = build_signal_filters(params, df, None)?;
+    let (entry_dates, exit_dates) = build_signal_filters(params, df, cache_dir)?;
 
     if entry_dates.is_some() || exit_dates.is_some() {
         tracing::info!(
@@ -656,6 +663,7 @@ pub struct StockCompareEntry {
 /// interval, side, etc.). Data is prepared once per unique `(ohlcv_path,
 /// interval, session_filter, start_date, end_date)` group to avoid redundant
 /// I/O for entries that share the same underlying data.
+#[allow(clippy::too_many_lines)]
 pub fn compare_stock_strategies(entries: &[StockCompareEntry]) -> Result<Vec<CompareResult>> {
     // Reject duplicate labels up front so callers get a clear error instead of silent skipping.
     let mut seen_labels: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -720,8 +728,12 @@ pub fn compare_stock_strategies(entries: &[StockCompareEntry]) -> Result<Vec<Com
             (&cached.0, &cached.1)
         };
 
+        // Derive cache_dir from ohlcv_path ({cache_dir}/{category}/{SYMBOL}.parquet)
+        let cache_dir = std::path::Path::new(ohlcv_path)
+            .parent()
+            .and_then(|p| p.parent());
         let (entry_dates, exit_dates) =
-            stock_sim::build_stock_signal_filters(&entry.params, ohlcv_df, None)?;
+            stock_sim::build_stock_signal_filters(&entry.params, ohlcv_df, cache_dir)?;
 
         match stock_sim::run_stock_backtest(
             bars,

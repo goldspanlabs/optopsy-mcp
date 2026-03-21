@@ -103,8 +103,12 @@ pub fn execute(
             stock_sim::load_ohlcv_df(&resolved.ohlcv_path, resolved.start_date, resolved.end_date)?;
         let ohlcv_df = stock_sim::resample_ohlcv(&ohlcv_df, Interval::Daily)?;
         let bars = stock_sim::bars_from_df(&ohlcv_df)?;
+        // Derive cache_dir from ohlcv_path ({cache_dir}/{category}/{SYMBOL}.parquet)
+        let cache_dir = std::path::Path::new(&resolved.ohlcv_path)
+            .parent()
+            .and_then(|p| p.parent());
         let (entry_dates, exit_dates) =
-            stock_sim::build_stock_signal_filters(&stock_params, &ohlcv_df, None)?;
+            stock_sim::build_stock_signal_filters(&stock_params, &ohlcv_df, cache_dir)?;
 
         let result = stock_sim::run_stock_backtest(
             &bars,

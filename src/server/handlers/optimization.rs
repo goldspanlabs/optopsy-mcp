@@ -406,8 +406,14 @@ async fn permutation_test_options(
     let (_symbol, df, backtest_params) = server.resolve_backtest_params(base).await?;
 
     tokio::task::spawn_blocking(move || {
+        // Derive cache_dir from ohlcv_path ({cache_dir}/{category}/{SYMBOL}.parquet)
+        let cache_dir = backtest_params
+            .ohlcv_path
+            .as_deref()
+            .and_then(|p| std::path::Path::new(p).parent())
+            .and_then(|p| p.parent());
         let (entry_dates, exit_dates) =
-            crate::engine::core::build_signal_filters(&backtest_params, &df, None)?;
+            crate::engine::core::build_signal_filters(&backtest_params, &df, cache_dir)?;
         tools::permutation_test::execute(
             &df,
             &backtest_params,

@@ -496,8 +496,13 @@ pub fn preprocess_hmm_regime(
             hmm_rewrite::column_name(sym, call.n_regimes, call.fit_years, call.threshold);
 
         // Load OHLCV for the HMM symbol
+        // Prefer full history from cache for HMM fitting (primary_df may be truncated
+        // to the user's start_date and lack the fit-window data).
         let hmm_df = if sym.eq_ignore_ascii_case(primary_symbol) {
-            primary_df.clone()
+            match cache_dir {
+                Some(dir) => load_hmm_symbol_ohlcv(dir, sym).unwrap_or_else(|_| primary_df.clone()),
+                None => primary_df.clone(),
+            }
         } else {
             let cache = cache_dir.ok_or_else(|| {
                 anyhow::anyhow!(
@@ -589,6 +594,8 @@ pub fn preprocess_hmm_regime(
 
 /// Load OHLCV data for an HMM symbol from the cache directory.
 fn load_hmm_symbol_ohlcv(cache_dir: &std::path::Path, symbol: &str) -> Result<DataFrame> {
+    crate::data::cache::validate_path_segment(symbol)
+        .map_err(|e| anyhow::anyhow!("invalid HMM symbol '{symbol}': {e}"))?;
     for category in &["etf", "stocks", "futures", "indices"] {
         let path = cache_dir.join(category).join(format!("{symbol}.parquet"));
         if path.exists() {

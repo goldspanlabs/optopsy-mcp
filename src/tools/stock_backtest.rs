@@ -44,7 +44,12 @@ pub fn execute(
 
     // Build signal date filters from the session-filtered, resampled DataFrame
     let date_col = stock_sim::detect_date_col(&ohlcv_df);
-    let (entry_dates, exit_dates) = stock_sim::build_stock_signal_filters(params, &ohlcv_df, None)?;
+    // Derive cache_dir from ohlcv_path (path is {cache_dir}/{category}/{SYMBOL}.parquet)
+    let cache_dir = std::path::Path::new(ohlcv_path)
+        .parent()
+        .and_then(|p| p.parent());
+    let (entry_dates, exit_dates) =
+        stock_sim::build_stock_signal_filters(params, &ohlcv_df, cache_dir)?;
 
     // Compute raw indicator data for charting from signals
     let indicator_data = collect_indicator_data(
