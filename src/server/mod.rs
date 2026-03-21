@@ -730,8 +730,36 @@ impl OptopsyServer {
     ///   OHLCV data is loaded from cache when signals are used.
     /// **Next tools**: `compare_strategies()` (to test variations) or iterate on parameters
     ///
-    /// **IMPORTANT**: `strategy` is REQUIRED — it defines WHAT option legs to trade.
-    /// Signals only FILTER WHEN to enter/exit — they are optional add-ons.
+    /// **IMPORTANT**: `strategy` is REQUIRED — pick one like `short_put`, `iron_condor`, etc.
+    /// Signals (entry_signal/exit_signal) are optional FILTERS for when to enter, not the strategy itself.
+    ///
+    /// **Example call**:
+    /// ```json
+    /// {
+    ///   "symbol": "SPY", "strategy": "short_put",
+    ///   "leg_deltas": [{"target": 0.30, "min": 0.20, "max": 0.40}],
+    ///   "entry_dte": {"target": 45, "min": 30, "max": 60},
+    ///   "exit_dte": 5, "slippage": {"type": "Mid"},
+    ///   "capital": 100000, "quantity": 1, "multiplier": 100, "max_positions": 5
+    /// }
+    /// ```
+    ///
+    /// **With entry signal filter**:
+    /// ```json
+    /// {
+    ///   "symbol": "SPY", "strategy": "iron_condor",
+    ///   "leg_deltas": [
+    ///     {"target": 0.16, "min": 0.10, "max": 0.20},
+    ///     {"target": 0.30, "min": 0.25, "max": 0.35},
+    ///     {"target": 0.30, "min": 0.25, "max": 0.35},
+    ///     {"target": 0.16, "min": 0.10, "max": 0.20}
+    ///   ],
+    ///   "entry_dte": {"target": 45, "min": 30, "max": 60},
+    ///   "exit_dte": 5, "slippage": {"type": "Mid"},
+    ///   "capital": 100000, "quantity": 1, "multiplier": 100, "max_positions": 5,
+    ///   "entry_signal": "hmm_regime(3, 5) != bearish"
+    /// }
+    /// ```
     ///
     /// **What it simulates**:
     ///   - Day-by-day position opens (respecting `max_positions` constraint)
@@ -879,6 +907,37 @@ impl OptopsyServer {
     ///   - Both: filter provided list by direction
     ///
     /// **Output**: Ranked results, dimension sensitivity analysis, OOS validation
+    ///
+    /// **CRITICAL**: `entry_signals` (plural, with an 's') goes inside `sim_params`, NOT at the top level.
+    ///
+    /// **Example call (options)**:
+    /// ```json
+    /// {
+    ///   "symbol": "SPY",
+    ///   "direction": "bearish",
+    ///   "sim_params": {
+    ///     "capital": 100000, "quantity": 1, "multiplier": 100, "max_positions": 5,
+    ///     "entry_signals": ["rsi(close, 14) < 30", "rsi(close, 14) < 25"]
+    ///   },
+    ///   "sweep": {
+    ///     "delta_targets": [[0.20, 0.30], [0.30, 0.40]],
+    ///     "dte_targets": [30, 45],
+    ///     "exit_dte": 5
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// **Example call (stocks)**:
+    /// ```json
+    /// {
+    ///   "symbol": "SPY", "mode": "stock",
+    ///   "sim_params": {
+    ///     "side": "Long", "capital": 100000, "quantity": 100,
+    ///     "entry_signals": ["rsi(close, 14) < 30", "rsi(close, 14) < 25"],
+    ///     "stop_loss": 0.05
+    ///   }
+    /// }
+    /// ```
     #[tool(name = "parameter_sweep", annotations(read_only_hint = true))]
     async fn parameter_sweep(
         &self,
@@ -1041,6 +1100,20 @@ impl OptopsyServer {
     /// Returns descriptive stats, histogram, normality test, and tail analysis.
     ///
     /// Two modes: `price_returns` (auto-loads OHLCV) or `trade_pnl` (user-provided array).
+    ///
+    /// **Example (price returns)**:
+    /// ```json
+    /// {
+    ///   "source": {"type": "price_returns", "symbol": "SPY", "years": 5}
+    /// }
+    /// ```
+    ///
+    /// **Example (trade P&L from a backtest)**:
+    /// ```json
+    /// {
+    ///   "source": {"type": "trade_pnl", "values": [150.0, -80.0, 200.0, -50.0, 300.0]}
+    /// }
+    /// ```
     #[tool(name = "distribution", annotations(read_only_hint = true))]
     async fn distribution(
         &self,
