@@ -18,10 +18,13 @@ const KELLY_MIN_TRADES: usize = 20;
 ///
 /// Returns `None` when max loss cannot be determined (fallback to fixed quantity).
 /// The returned value is always positive (absolute loss).
+///
+/// `stock_price` should be provided for stock-leg strategies (e.g. covered call).
 pub fn max_loss_per_contract(
     strategy_def: &StrategyDef,
     candidate: &EntryCandidate,
     params: &BacktestParams,
+    stock_price: Option<f64>,
 ) -> Option<f64> {
     let legs = &strategy_def.legs;
     let multiplier = f64::from(params.multiplier);
@@ -33,6 +36,26 @@ pub fn max_loss_per_contract(
         .zip(legs.iter())
         .map(|(cl, ld)| pricing::fill_price(cl.bid, cl.ask, ld.side, &params.slippage))
         .collect();
+
+    // Stock-leg strategies (e.g. covered call): max loss = stock downside - premium received
+    if strategy_def.has_stock_leg {
+        let sp = stock_price?;
+        // Net premium received from option legs (positive = credit, negative = debit)
+        let net_credit: f64 = entry_prices
+            .iter()
+            .zip(legs.iter())
+            .map(|(&price, ld)| match ld.side {
+                Side::Short => price, // credit received
+                Side::Long => -price, // debit paid
+            })
+            .sum();
+
+        // Max loss = (stock goes to zero) - (net premium received)
+        // With stop loss: max stock loss = stock_price × stop_loss
+        let stock_max_loss = sp * params.stop_loss.unwrap_or(1.0);
+        let max_loss = (stock_max_loss - net_credit) * multiplier;
+        return Some(max_loss.max(0.0));
+    }
 
     match legs.len() {
         1 => max_loss_single_leg(&legs[0], entry_prices[0], multiplier, params.stop_loss),
@@ -334,8 +357,9 @@ pub fn sizing_method_label(config: &SizingConfig) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::sim_types::EntryCandidate;
     use crate::engine::types::{ExitType, SizingConstraints};
-    use chrono::NaiveDateTime;
+    use chrono::{NaiveDate, NaiveDateTime};
 
     fn make_trade(pnl: f64) -> TradeRecord {
         let dt = NaiveDateTime::parse_from_str("2024-01-15 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap();
@@ -583,6 +607,205 @@ mod tests {
         // qty = floor(10000 * 0.10 / (0.20 * 500)) = floor(10)
         let qty = compute_quantity(&cfg, 10000.0, 500.0, &[], Some(0.20), 100, 1);
         assert_eq!(qty, 10);
+    }
+
+    // ── max_loss_per_contract: stock-leg strategies ────────────────────
+
+    #[test]
+    fn max_loss_covered_call_no_stop() {
+        // Covered call: stock=$100, short call premium=$5, multiplier=100
+        // Max loss = (100 - 5) * 100 = 9500 (stock goes to zero, keep premium)
+        let strategy_def = crate::strategies::find_strategy("covered_call").unwrap();
+        let candidate = EntryCandidate {
+            entry_date: NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            expiration: NaiveDate::from_ymd_opt(2024, 2, 16).unwrap(),
+            secondary_expiration: None,
+            legs: vec![crate::engine::sim_types::CandidateLeg {
+                option_type: OptionType::Call,
+                strike: 105.0,
+                expiration: NaiveDate::from_ymd_opt(2024, 2, 16).unwrap(),
+                bid: 4.80,
+                ask: 5.20,
+                delta: 0.30,
+            }],
+            net_premium: -5.0,
+            net_delta: -0.30,
+        };
+        let params = BacktestParams {
+            strategy: "covered_call".to_string(),
+            leg_deltas: vec![crate::engine::types::TargetRange {
+                target: 0.30,
+                min: 0.20,
+                max: 0.40,
+            }],
+            entry_dte: crate::engine::types::DteRange {
+                target: 45,
+                min: 30,
+                max: 60,
+            },
+            exit_dte: 5,
+            slippage: crate::engine::types::Slippage::Mid,
+            commission: None,
+            min_bid_ask: 0.0,
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            capital: 100_000.0,
+            quantity: 1,
+            sizing: None,
+            multiplier: 100,
+            max_positions: 5,
+            selector: crate::engine::types::TradeSelector::First,
+            adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
+            cross_ohlcv_paths: std::collections::HashMap::new(),
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: None,
+            max_net_delta: None,
+            min_days_between_entries: None,
+            expiration_filter: crate::engine::types::ExpirationFilter::Any,
+            exit_net_delta: None,
+        };
+        let ml = max_loss_per_contract(&strategy_def, &candidate, &params, Some(100.0));
+        assert!(ml.is_some());
+        // stock_max_loss = 100 * 1.0 = 100, net_credit = 5.0 (mid), max_loss = (100 - 5) * 100 = 9500
+        assert!(
+            (ml.unwrap() - 9500.0).abs() < 1e-10,
+            "Max loss was {}, expected 9500",
+            ml.unwrap()
+        );
+    }
+
+    #[test]
+    fn max_loss_covered_call_with_stop() {
+        // Covered call with 10% stop loss: stock=$100, short call premium=$5
+        // Max loss = (100*0.10 - 5) * 100 = (10 - 5) * 100 = 500
+        let strategy_def = crate::strategies::find_strategy("covered_call").unwrap();
+        let candidate = EntryCandidate {
+            entry_date: NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            expiration: NaiveDate::from_ymd_opt(2024, 2, 16).unwrap(),
+            secondary_expiration: None,
+            legs: vec![crate::engine::sim_types::CandidateLeg {
+                option_type: OptionType::Call,
+                strike: 105.0,
+                expiration: NaiveDate::from_ymd_opt(2024, 2, 16).unwrap(),
+                bid: 4.80,
+                ask: 5.20,
+                delta: 0.30,
+            }],
+            net_premium: -5.0,
+            net_delta: -0.30,
+        };
+        let params = BacktestParams {
+            strategy: "covered_call".to_string(),
+            leg_deltas: vec![crate::engine::types::TargetRange {
+                target: 0.30,
+                min: 0.20,
+                max: 0.40,
+            }],
+            entry_dte: crate::engine::types::DteRange {
+                target: 45,
+                min: 30,
+                max: 60,
+            },
+            exit_dte: 5,
+            slippage: crate::engine::types::Slippage::Mid,
+            commission: None,
+            min_bid_ask: 0.0,
+            stop_loss: Some(0.10),
+            take_profit: None,
+            max_hold_days: None,
+            capital: 100_000.0,
+            quantity: 1,
+            sizing: None,
+            multiplier: 100,
+            max_positions: 5,
+            selector: crate::engine::types::TradeSelector::First,
+            adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
+            cross_ohlcv_paths: std::collections::HashMap::new(),
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: None,
+            max_net_delta: None,
+            min_days_between_entries: None,
+            expiration_filter: crate::engine::types::ExpirationFilter::Any,
+            exit_net_delta: None,
+        };
+        let ml = max_loss_per_contract(&strategy_def, &candidate, &params, Some(100.0));
+        assert!(ml.is_some());
+        // stock_max_loss = 100 * 0.10 = 10, net_credit = 5.0, max_loss = (10 - 5) * 100 = 500
+        assert!(
+            (ml.unwrap() - 500.0).abs() < 1e-10,
+            "Max loss was {}, expected 500",
+            ml.unwrap()
+        );
+    }
+
+    #[test]
+    fn max_loss_covered_call_no_stock_price_returns_none() {
+        let strategy_def = crate::strategies::find_strategy("covered_call").unwrap();
+        let candidate = EntryCandidate {
+            entry_date: NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            expiration: NaiveDate::from_ymd_opt(2024, 2, 16).unwrap(),
+            secondary_expiration: None,
+            legs: vec![crate::engine::sim_types::CandidateLeg {
+                option_type: OptionType::Call,
+                strike: 105.0,
+                expiration: NaiveDate::from_ymd_opt(2024, 2, 16).unwrap(),
+                bid: 4.80,
+                ask: 5.20,
+                delta: 0.30,
+            }],
+            net_premium: -5.0,
+            net_delta: -0.30,
+        };
+        let params = BacktestParams {
+            strategy: "covered_call".to_string(),
+            leg_deltas: vec![crate::engine::types::TargetRange {
+                target: 0.30,
+                min: 0.20,
+                max: 0.40,
+            }],
+            entry_dte: crate::engine::types::DteRange {
+                target: 45,
+                min: 30,
+                max: 60,
+            },
+            exit_dte: 5,
+            slippage: crate::engine::types::Slippage::Mid,
+            commission: None,
+            min_bid_ask: 0.0,
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            capital: 100_000.0,
+            quantity: 1,
+            sizing: None,
+            multiplier: 100,
+            max_positions: 5,
+            selector: crate::engine::types::TradeSelector::First,
+            adjustment_rules: vec![],
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
+            cross_ohlcv_paths: std::collections::HashMap::new(),
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: None,
+            max_net_delta: None,
+            min_days_between_entries: None,
+            expiration_filter: crate::engine::types::ExpirationFilter::Any,
+            exit_net_delta: None,
+        };
+        // No stock price → None
+        let ml = max_loss_per_contract(&strategy_def, &candidate, &params, None);
+        assert!(ml.is_none(), "Should return None when no stock price");
     }
 
     // ── max_loss_per_share ──────────────────────────────────────────────
