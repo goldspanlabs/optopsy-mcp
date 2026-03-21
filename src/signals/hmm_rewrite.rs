@@ -32,7 +32,7 @@ pub struct RewriteResult {
 pub const DEFAULT_THRESHOLD: f64 = 0.65;
 
 /// All regime alias names that must not leak past rewriting.
-const REGIME_ALIASES: &[&str] = &[
+pub const REGIME_ALIASES: &[&str] = &[
     "bearish",
     "bullish",
     "neutral",

@@ -561,6 +561,12 @@ pub fn extract_formula_cross_symbols(formula: &str) -> std::collections::HashSet
                 continue;
             }
 
+            // HMM regime alias names → skip (resolved by hmm_rewrite before evaluation)
+            if super::hmm_rewrite::REGIME_ALIASES.contains(&lower.as_str()) {
+                i += 1;
+                continue;
+            }
+
             // This is a cross-symbol reference
             symbols.insert(name.to_uppercase());
 
