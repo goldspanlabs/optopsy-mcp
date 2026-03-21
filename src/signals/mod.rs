@@ -8,6 +8,7 @@ pub mod combinators;
 pub mod custom;
 pub mod custom_funcs;
 pub mod helpers;
+pub mod hmm_rewrite;
 pub mod indicators;
 pub mod momentum;
 pub mod overlap;
