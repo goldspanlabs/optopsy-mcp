@@ -513,7 +513,15 @@ pub fn preprocess_hmm_regime(
         // to the user's start_date and lack the fit-window data).
         let hmm_df = if sym.eq_ignore_ascii_case(primary_symbol) {
             match cache_dir {
-                Some(dir) => load_hmm_symbol_ohlcv(dir, sym).unwrap_or_else(|_| primary_df.clone()),
+                Some(dir) => load_hmm_symbol_ohlcv(dir, sym).unwrap_or_else(|e| {
+                    tracing::warn!(
+                        "Could not load full history for '{}' from cache ({}); \
+                         falling back to primary DataFrame which may lack fit-window data",
+                        sym,
+                        e
+                    );
+                    primary_df.clone()
+                }),
                 None => primary_df.clone(),
             }
         } else {
