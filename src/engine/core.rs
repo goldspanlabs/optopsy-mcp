@@ -320,22 +320,25 @@ fn intraday_last_bar_per_day(df: DataFrame) -> Result<DataFrame> {
 
 /// If the `SignalSpec` is a `Formula` variant whose formula contains `hmm_regime(`,
 /// run the HMM preprocessing pass and return a rewritten spec + updated `DataFrame`.
-/// Otherwise returns the original spec and `DataFrame` unchanged.
+/// Returns `None` when no HMM processing is needed (avoiding a `DataFrame` clone).
 fn maybe_preprocess_hmm(
     spec: &SignalSpec,
     primary_symbol: &str,
     df: &DataFrame,
     cache_dir: Option<&std::path::Path>,
     date_col: &str,
-) -> Result<(SignalSpec, DataFrame)> {
+) -> Result<Option<(SignalSpec, DataFrame)>> {
     if let SignalSpec::Formula { formula } = spec {
         if formula.contains("hmm_regime(") {
             let (rewritten, updated_df) =
                 signals::preprocess_hmm_regime(formula, primary_symbol, df, cache_dir, date_col)?;
-            return Ok((SignalSpec::Formula { formula: rewritten }, updated_df));
+            return Ok(Some((
+                SignalSpec::Formula { formula: rewritten },
+                updated_df,
+            )));
         }
     }
-    Ok((spec.clone(), df.clone()))
+    Ok(None)
 }
 
 /// Derive a primary symbol name from an OHLCV file path (filename stem, uppercased).
@@ -368,16 +371,20 @@ pub fn build_signal_filters(
     let mut exit_signal = params.exit_signal.clone();
 
     if let Some(spec) = entry_signal.as_ref() {
-        let (new_spec, new_df) =
-            maybe_preprocess_hmm(spec, &primary_symbol, &ohlcv_df, cache_dir, date_col)?;
-        entry_signal = Some(new_spec);
-        ohlcv_df = new_df;
+        if let Some((new_spec, new_df)) =
+            maybe_preprocess_hmm(spec, &primary_symbol, &ohlcv_df, cache_dir, date_col)?
+        {
+            entry_signal = Some(new_spec);
+            ohlcv_df = new_df;
+        }
     }
     if let Some(spec) = exit_signal.as_ref() {
-        let (new_spec, new_df) =
-            maybe_preprocess_hmm(spec, &primary_symbol, &ohlcv_df, cache_dir, date_col)?;
-        exit_signal = Some(new_spec);
-        ohlcv_df = new_df;
+        if let Some((new_spec, new_df)) =
+            maybe_preprocess_hmm(spec, &primary_symbol, &ohlcv_df, cache_dir, date_col)?
+        {
+            exit_signal = Some(new_spec);
+            ohlcv_df = new_df;
+        }
     }
 
     // Check if any signal references a cross-symbol

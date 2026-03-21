@@ -471,6 +471,7 @@ fn union_mixed_granularity(
 ///
 /// `cache_dir` is needed only when `hmm_regime` references a symbol different
 /// from `primary_symbol`. Pass `None` if only the primary symbol is used.
+#[allow(clippy::too_many_lines)]
 pub fn preprocess_hmm_regime(
     formula: &str,
     primary_symbol: &str,
@@ -550,6 +551,15 @@ pub fn preprocess_hmm_regime(
             }
         }
 
+        // HMM operates on daily returns — deduplicate to one return per date.
+        // If source data is intraday, later bars overwrite earlier ones (close-to-close).
+        let mut daily_map = std::collections::BTreeMap::<chrono::NaiveDate, f64>::new();
+        for (date, ret) in return_dates.iter().zip(returns.iter()) {
+            daily_map.insert(*date, *ret);
+        }
+        let return_dates: Vec<chrono::NaiveDate> = daily_map.keys().copied().collect();
+        let returns: Vec<f64> = daily_map.values().copied().collect();
+
         // Split into fit window and apply window
         let fit_years_days = call.fit_years as i64 * 365;
         let fit_start = backtest_start - chrono::Duration::days(fit_years_days);
@@ -592,7 +602,7 @@ pub fn preprocess_hmm_regime(
         // Forward-filter the apply window
         let regime_labels = hmm::forward_filter(&fitted, &apply_returns, call.threshold);
 
-        // Build a mapping from date → regime label
+        // Regime is a daily concept — all intraday bars on the same date get the same label.
         let regime_map: std::collections::HashMap<chrono::NaiveDate, usize> =
             apply_dates.into_iter().zip(regime_labels).collect();
 
