@@ -1547,8 +1547,14 @@ impl ServerHandler for OptopsyServer {
                 \n\
                 \n### 2. Full Simulation\
                 \n  - **Options**: run_options_backtest({ strategy, symbol, ... }) — event-driven options backtest\
-                \n  - **Stocks**: run_stock_backtest({ symbol, entry_signal, ... }) — signal-driven stock backtest\
-                \n    No strategy/delta/DTE needed — entry_signal is REQUIRED, exit uses stop-loss/take-profit/exit_signal\
+                \n  - **Stocks**: run_stock_backtest — signal-driven stock backtest. Example:\
+                \n    ```json\
+                \n    { \"symbol\": \"SPY\", \"side\": \"Long\", \"capital\": 100000, \"quantity\": 100,\
+                \n      \"entry_signal\": \"rsi(close, 14) < 30\", \"exit_signal\": \"rsi(close, 14) > 70\",\
+                \n      \"stop_loss\": 0.05, \"start_date\": \"2020-01-01\", \"end_date\": \"2024-12-31\" }\
+                \n    ```\
+                \n    entry_signal is a FORMULA STRING like \"rsi(close, 14) < 30\" — NEVER pass null.\
+                \n    exit_signal is optional (omit it entirely if not needed, do NOT pass null).\
                 \n  - OHLCV data is loaded from cache when needed\
                 \n\
                 \n### 3. Compare & Optimize (optional, options only)\
@@ -1567,9 +1573,9 @@ impl ServerHandler for OptopsyServer {
                 \n  When a user asks you to test/evaluate if a strategy is viable, follow this reasoning loop:\
                 \n\
                 \n  **Step 1: Build the signals**\
-                \n  - Translate the user's entry/exit conditions into SignalSpec JSON\
+                \n  - Translate the user's entry/exit conditions into formula strings (e.g. \"rsi(close, 14) < 30\")\
                 \n  - For formula-based conditions: use build_signal(action=\"validate\") to verify syntax\
-                \n  - For built-in indicators (RSI, MACD, etc.): construct the SignalSpec directly from the catalog\
+                \n  - For built-in indicators (RSI, MACD, etc.): write the formula directly (e.g. \"macd_hist(close) > 0\")\
                 \n  - If a saved signal name is referenced: use build_signal(action=\"get\") to load it\
                 \n  - If conditions are ambiguous, ask the user to clarify before proceeding\
                 \n\
@@ -1600,7 +1606,8 @@ impl ServerHandler for OptopsyServer {
                 \n\
                 \n## RULES\
                 \n- For OPTIONS: strategy is ALWAYS REQUIRED — signals only filter WHEN to trade\
-                \n- For STOCKS: entry_signal is ALWAYS REQUIRED — it drives when to buy/sell\
+                \n- For STOCKS: entry_signal is ALWAYS REQUIRED — pass a formula STRING like \"rsi(close, 14) < 30\"\
+                \n- NEVER pass null for entry_signal, exit_signal, strategy, or side. Either pass a value or OMIT the field entirely.\
                 \n- NEVER pass strategy: null for options — pick one like short_put, iron_condor, etc.\
                 \n- For STOCKS: quantity means NUMBER OF SHARES (default: 100 = 1 standard lot). Do NOT pass large values like 10000.\
                 \n  Ensure capital ≥ quantity × share_price, or all entries will be skipped. If `warnings` are returned, address them.\
