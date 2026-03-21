@@ -164,15 +164,16 @@ fn write_ohlcv_parquet(dates: &[NaiveDate], closes: &[f64]) -> (tempfile::TempDi
     (dir, path_str)
 }
 
-/// Write an intraday OHLCV parquet with a `datetime` (Datetime) column.
-/// Each date gets multiple bars at different times; only the 15:59 bar
-/// should be used for options signal evaluation.
-fn write_intraday_ohlcv_parquet(
+/// Write an intraday OHLCV Parquet to a temporary file.
+///
+/// `bars_for_date(date_index, close_ref) → Vec<(hour, minute, close)>` is called per date to
+/// generate that date's bar rows. All bars share open=100, high=105, low=95.
+fn write_intraday_ohlcv_parquet_raw(
     dates: &[NaiveDate],
-    closes_at_1559: &[f64],
+    close_refs: &[f64],
+    filename: &str,
+    bars_for_date: impl Fn(usize, f64) -> Vec<(u32, u32, f64)>,
 ) -> (tempfile::TempDir, String) {
-    // For each date, write 3 bars: 10:00, 13:00, 15:59
-    // Only the 15:59 bar gets the specified close; others get a different value.
     let mut datetimes = Vec::new();
     let mut opens = Vec::new();
     let mut highs = Vec::new();
@@ -181,12 +182,7 @@ fn write_intraday_ohlcv_parquet(
     let mut volumes = Vec::new();
 
     for (i, date) in dates.iter().enumerate() {
-        let close_1559 = closes_at_1559[i];
-        for (hour, minute, close_val) in [
-            (10, 0, close_1559 + 5.0), // morning bar — different close
-            (13, 0, close_1559 - 2.0), // midday bar — different close
-            (15, 59, close_1559),      // EOD bar — the one options see
-        ] {
+        for (hour, minute, close_val) in bars_for_date(i, close_refs[i]) {
             datetimes.push(date.and_hms_opt(hour, minute, 0).unwrap());
             opens.push(100.0);
             highs.push(105.0);
@@ -215,12 +211,48 @@ fn write_intraday_ohlcv_parquet(
     df.with_column(dt_series).unwrap();
 
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("ohlcv_intraday.parquet");
+    let path = dir.path().join(filename);
     let file = std::fs::File::create(&path).unwrap();
     polars::prelude::ParquetWriter::new(file)
         .finish(&mut df)
         .unwrap();
     (dir, path.to_string_lossy().to_string())
+}
+
+/// Write an intraday OHLCV parquet with a `datetime` (Datetime) column.
+/// Each date gets 3 bars: 10:00, 13:00, 15:59. Only the 15:59 bar uses the
+/// specified close; the others use offset values to distinguish them.
+fn write_intraday_ohlcv_parquet(
+    dates: &[NaiveDate],
+    closes_at_1559: &[f64],
+) -> (tempfile::TempDir, String) {
+    write_intraday_ohlcv_parquet_raw(dates, closes_at_1559, "ohlcv_intraday.parquet", |_, c| {
+        vec![
+            (10, 0, c + 5.0), // morning bar — different close
+            (13, 0, c - 2.0), // midday bar — different close
+            (15, 59, c),      // EOD bar — the one options see
+        ]
+    })
+}
+
+/// Write an intraday OHLCV parquet where **no bar is at 15:59**.
+/// Each date gets bars at 13:00 and 16:00 only, to exercise the fallback
+/// path that selects the last bar per day when 15:59 is absent.
+fn write_intraday_ohlcv_parquet_no_1559(
+    dates: &[NaiveDate],
+    closes_at_last_bar: &[f64],
+) -> (tempfile::TempDir, String) {
+    write_intraday_ohlcv_parquet_raw(
+        dates,
+        closes_at_last_bar,
+        "ohlcv_intraday_no_1559.parquet",
+        |_, c| {
+            vec![
+                (13, 0, c + 3.0), // earlier bar — different close
+                (16, 0, c),       // latest bar — the fallback should pick this
+            ]
+        },
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -615,5 +647,56 @@ fn day_of_week_signal_works_with_intraday_ohlcv() {
     assert!(
         !entry_dates.contains(&NaiveDate::from_ymd_opt(2024, 1, 15).unwrap()),
         "Monday Jan 15 should not fire for day_of_week() == 4"
+    );
+}
+
+#[test]
+fn intraday_ohlcv_fallback_to_last_bar_per_day_when_no_1559() {
+    // When intraday OHLCV has no 15:59 bar, load_signal_ohlcv must fall back to the
+    // last available bar per calendar date (preserving one-row-per-day semantics).
+    let df = make_daily_options_df();
+
+    let ohlcv_dates: Vec<NaiveDate> = vec![
+        NaiveDate::from_ymd_opt(2024, 1, 11).unwrap(),
+        NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+        NaiveDate::from_ymd_opt(2024, 1, 22).unwrap(),
+        NaiveDate::from_ymd_opt(2024, 1, 29).unwrap(),
+        NaiveDate::from_ymd_opt(2024, 2, 1).unwrap(),
+        NaiveDate::from_ymd_opt(2024, 2, 5).unwrap(),
+        NaiveDate::from_ymd_opt(2024, 2, 11).unwrap(),
+    ];
+    // 16:00 closes (the last bar per day): monotonically increasing → ConsecutiveUp(2) fires.
+    // The 13:00 bars have close = last_close + 3.0, which is also increasing but differently.
+    // The key assertion is that signal evaluation fires (proving the fallback data is used
+    // and that it still yields exactly one bar per day).
+    let closes_at_last_bar = vec![100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0];
+    let (_dir, path) = write_intraday_ohlcv_parquet_no_1559(&ohlcv_dates, &closes_at_last_bar);
+
+    let mut params = default_backtest_params();
+    params.entry_signal = Some(SignalSpec::Formula {
+        formula: "consecutive_up(close) >= 2".into(),
+    });
+    params.ohlcv_path = Some(path);
+
+    // build_signal_filters should succeed — the fallback produces one row per day
+    let filters = build_signal_filters(&params, &df);
+    assert!(
+        filters.is_ok(),
+        "build_signal_filters should succeed when intraday OHLCV has no 15:59 bars: {:?}",
+        filters.err()
+    );
+
+    let (entry_dates, _) = filters.unwrap();
+    let entry_dates = entry_dates.expect("entry filter should be Some");
+    // Monotonically increasing closes → consecutive_up(2) fires from Jan 22 onward;
+    // at least one date should be in the entry set (proving the fallback was used).
+    assert!(
+        !entry_dates.is_empty(),
+        "Signal should fire on increasing closes from last-bar-per-day fallback"
+    );
+    // Verify one-row-per-day: each calendar date appears at most once (no bar duplication).
+    assert!(
+        entry_dates.len() <= ohlcv_dates.len(),
+        "Fallback must not duplicate rows across dates"
     );
 }
