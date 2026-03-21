@@ -674,12 +674,20 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("ohlcv_path is required for stock sweep"))?;
 
-    // 4. Run backtests grouped by data-prep key
+    // 4. Run backtests grouped by data-prep key, caching prepared data for OOS reuse
     let mut results: Vec<SweepResult> = Vec::new();
     let mut combo_indices: Vec<usize> = Vec::new();
     let mut failed: usize = 0;
 
-    for indices in grouped.values() {
+    // Cache (bars, ohlcv_df) by group key to avoid re-reading parquet during OOS pass.
+    // Only populated when out_of_sample_pct > 0.0; otherwise data is used directly per group
+    // and released, keeping peak memory bounded to a single group's data at a time.
+    let mut data_cache: std::collections::BTreeMap<
+        String,
+        (Vec<stock_sim::Bar>, polars::prelude::DataFrame),
+    > = std::collections::BTreeMap::new();
+
+    for (group_key, indices) in &grouped {
         // Use the first combo in the group to prep data
         let representative = &combos[indices[0]];
         let (all_bars, ohlcv_df) = stock_sim::prepare_stock_data(
@@ -689,6 +697,12 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
             params.base_params.start_date,
             params.base_params.end_date,
         )?;
+
+        // Only cache when the OOS pass will need the data later. This avoids accumulating
+        // all groups in memory when OOS is disabled (one group at a time instead).
+        if params.out_of_sample_pct > 0.0 {
+            data_cache.insert(group_key.clone(), (all_bars.clone(), ohlcv_df.clone()));
+        }
 
         // Determine OOS split on bars. The test slice is fetched separately in the OOS pass
         // below to avoid a redundant allocation here.
@@ -779,20 +793,18 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
     // 5. Compute dimension sensitivity (uses signal_dim_keys)
     let dimension_sensitivity = compute_sensitivity(&results);
 
-    // 6. OOS validation on top 3
+    // 6. OOS validation on top 3 — reuse cached data from step 4
     let mut oos_results = Vec::new();
     if params.out_of_sample_pct > 0.0 {
         let top_n = results.len().min(3);
         for (ri, r) in results.iter().take(top_n).enumerate() {
             let combo = &combos[combo_indices[ri]];
 
-            let (all_bars, oos_ohlcv_df) = stock_sim::prepare_stock_data(
-                ohlcv_path,
-                combo.interval,
-                combo.session_filter.as_ref(),
-                params.base_params.start_date,
-                params.base_params.end_date,
-            )?;
+            // Look up cached data instead of re-reading parquet
+            let group_key = format!("{:?}|{:?}", combo.interval, combo.session_filter);
+            let (all_bars, oos_ohlcv_df) = data_cache
+                .get(&group_key)
+                .ok_or_else(|| anyhow::anyhow!("Missing cached data for OOS group {group_key}"))?;
 
             if all_bars.len() < 2 {
                 // Not enough data for a train/test split; skip OOS for this combo.
@@ -807,7 +819,7 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
             let combo_params = build_stock_params_for_combo(&params.base_params, combo);
 
             let (entry_dates, exit_dates) =
-                stock_sim::build_stock_signal_filters(&combo_params, &oos_ohlcv_df)?;
+                stock_sim::build_stock_signal_filters(&combo_params, oos_ohlcv_df)?;
 
             let test_entry = filter_signals_to_bar_range(entry_dates.as_ref(), test_bars);
             let test_exit = filter_signals_to_bar_range(exit_dates.as_ref(), test_bars);

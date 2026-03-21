@@ -25,6 +25,14 @@ pub use super::positions::mark_to_market;
 pub use super::price_table::build_price_table;
 pub(crate) use super::price_table::extract_date_from_column;
 
+/// Pre-extracted per-leg column references for fast row iteration.
+struct LegColumns<'a> {
+    strikes: &'a Float64Chunked,
+    bids: &'a Float64Chunked,
+    asks: &'a Float64Chunked,
+    deltas: &'a Float64Chunked,
+}
+
 /// Find entry candidates from the options data, grouped by date.
 /// Reuses existing Polars filter pipeline but does NOT call `match_entry_exit`.
 #[allow(clippy::too_many_lines)]
@@ -108,18 +116,48 @@ pub fn find_entry_candidates(
     // Convert to EntryCandidate structs grouped by date
     let quote_dates = combined.column(DATETIME_COL)?;
 
+    // Pre-extract per-leg columns outside the row loop to avoid repeated
+    // column lookups (`.column()?.f64()?`) on every row × every leg.
+    let leg_columns: Vec<LegColumns<'_>> = (0..num_legs)
+        .map(|i| {
+            Ok(LegColumns {
+                strikes: combined.column(&format!("strike_{i}"))?.f64()?,
+                bids: combined.column(&format!("bid_{i}"))?.f64()?,
+                asks: combined.column(&format!("ask_{i}"))?.f64()?,
+                deltas: combined.column(&format!("delta_{i}"))?.f64()?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    // Pre-extract expiration columns once
+    let exp_primary_col = if is_multi_exp {
+        Some(combined.column("expiration_primary")?)
+    } else {
+        None
+    };
+    let exp_secondary_col = if is_multi_exp {
+        Some(combined.column("expiration_secondary")?)
+    } else {
+        None
+    };
+    let exp_col = if is_multi_exp {
+        None
+    } else {
+        Some(combined.column("expiration")?)
+    };
+
     let mut candidates: BTreeMap<NaiveDate, Vec<EntryCandidate>> = BTreeMap::new();
 
     for row_idx in 0..combined.height() {
         let entry_date = extract_date_from_column(quote_dates, row_idx)?;
 
-        // Extract expiration dates
+        // Extract expiration dates using pre-extracted columns
         let (primary_exp, secondary_exp) = if is_multi_exp {
-            let prim = extract_date_from_column(combined.column("expiration_primary")?, row_idx)?;
-            let sec = extract_date_from_column(combined.column("expiration_secondary")?, row_idx)?;
+            let prim = extract_date_from_column(exp_primary_col.unwrap(), row_idx)?;
+            let sec = extract_date_from_column(exp_secondary_col.unwrap(), row_idx)?;
             (prim, Some(sec))
         } else {
-            let exp = extract_date_from_column(combined.column("expiration")?, row_idx)?;
+            let exp = extract_date_from_column(exp_col.unwrap(), row_idx)?;
             (exp, None)
         };
 
@@ -129,7 +167,8 @@ pub fn find_entry_candidates(
 
         let mut skip_row = false;
         for (i, leg_def) in strategy_def.legs.iter().enumerate() {
-            let Some(strike) = combined.column(&format!("strike_{i}"))?.f64()?.get(row_idx) else {
+            let lc = &leg_columns[i];
+            let Some(strike) = lc.strikes.get(row_idx) else {
                 tracing::debug!(
                     row = row_idx,
                     leg = i,
@@ -138,7 +177,7 @@ pub fn find_entry_candidates(
                 skip_row = true;
                 break;
             };
-            let Some(bid) = combined.column(&format!("bid_{i}"))?.f64()?.get(row_idx) else {
+            let Some(bid) = lc.bids.get(row_idx) else {
                 tracing::debug!(
                     row = row_idx,
                     leg = i,
@@ -147,7 +186,7 @@ pub fn find_entry_candidates(
                 skip_row = true;
                 break;
             };
-            let Some(ask) = combined.column(&format!("ask_{i}"))?.f64()?.get(row_idx) else {
+            let Some(ask) = lc.asks.get(row_idx) else {
                 tracing::debug!(
                     row = row_idx,
                     leg = i,
@@ -156,7 +195,7 @@ pub fn find_entry_candidates(
                 skip_row = true;
                 break;
             };
-            let Some(delta) = combined.column(&format!("delta_{i}"))?.f64()?.get(row_idx) else {
+            let Some(delta) = lc.deltas.get(row_idx) else {
                 tracing::debug!(
                     row = row_idx,
                     leg = i,
