@@ -292,7 +292,7 @@ async fn walk_forward_stock(
         let (entry_dates, exit_dates) = crate::engine::stock_sim::build_stock_signal_filters(
             &resolved.params,
             &ohlcv_df,
-            None,
+            crate::engine::stock_sim::ohlcv_path_to_cache_root(ohlcv_path),
         )?;
         tools::walk_forward::execute_stock(
             &bars,
@@ -382,7 +382,7 @@ async fn permutation_test_stock(
         let (entry_dates, exit_dates) = crate::engine::stock_sim::build_stock_signal_filters(
             &resolved.params,
             &ohlcv_df,
-            None,
+            crate::engine::stock_sim::ohlcv_path_to_cache_root(ohlcv_path),
         )?;
         tools::permutation_test::execute_stock(
             &bars,

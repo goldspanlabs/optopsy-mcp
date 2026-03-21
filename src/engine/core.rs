@@ -729,11 +729,11 @@ pub fn compare_stock_strategies(entries: &[StockCompareEntry]) -> Result<Vec<Com
         };
 
         // Derive cache_dir from ohlcv_path ({cache_dir}/{category}/{SYMBOL}.parquet)
-        let cache_dir = std::path::Path::new(ohlcv_path)
-            .parent()
-            .and_then(|p| p.parent());
-        let (entry_dates, exit_dates) =
-            stock_sim::build_stock_signal_filters(&entry.params, ohlcv_df, cache_dir)?;
+        let (entry_dates, exit_dates) = stock_sim::build_stock_signal_filters(
+            &entry.params,
+            ohlcv_df,
+            stock_sim::ohlcv_path_to_cache_root(ohlcv_path),
+        )?;
 
         match stock_sim::run_stock_backtest(
             bars,
