@@ -327,11 +327,18 @@ fn maybe_preprocess_hmm(
     df: &DataFrame,
     cache_dir: Option<&std::path::Path>,
     date_col: &str,
+    backtest_start: Option<chrono::NaiveDate>,
 ) -> Result<Option<(SignalSpec, DataFrame)>> {
     if let SignalSpec::Formula { formula } = spec {
         if formula.contains("hmm_regime(") {
-            let (rewritten, updated_df) =
-                signals::preprocess_hmm_regime(formula, primary_symbol, df, cache_dir, date_col)?;
+            let (rewritten, updated_df) = signals::preprocess_hmm_regime(
+                formula,
+                primary_symbol,
+                df,
+                cache_dir,
+                date_col,
+                backtest_start,
+            )?;
             return Ok(Some((
                 SignalSpec::Formula { formula: rewritten },
                 updated_df,
@@ -350,6 +357,7 @@ fn symbol_from_ohlcv_path(path: &str) -> String {
         .to_uppercase()
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn build_signal_filters(
     params: &BacktestParams,
     options_df: &DataFrame,
@@ -367,21 +375,41 @@ pub fn build_signal_filters(
         .as_deref()
         .map_or_else(|| "UNKNOWN".to_string(), symbol_from_ohlcv_path);
 
+    // For options backtests, the actual trading period starts when options data begins,
+    // not when OHLCV data begins (OHLCV may go back much further). Derive the backtest
+    // start from the options DataFrame so HMM can use earlier OHLCV data for fitting.
+    let options_start = options_df.column("datetime").ok().and_then(|c| {
+        c.datetime()
+            .ok()
+            .and_then(|dt| dt.as_datetime_iter().flatten().next())
+            .map(|ndt| ndt.date())
+    });
+
     let mut entry_signal = params.entry_signal.clone();
     let mut exit_signal = params.exit_signal.clone();
 
     if let Some(spec) = entry_signal.as_ref() {
-        if let Some((new_spec, new_df)) =
-            maybe_preprocess_hmm(spec, &primary_symbol, &ohlcv_df, cache_dir, date_col)?
-        {
+        if let Some((new_spec, new_df)) = maybe_preprocess_hmm(
+            spec,
+            &primary_symbol,
+            &ohlcv_df,
+            cache_dir,
+            date_col,
+            options_start,
+        )? {
             entry_signal = Some(new_spec);
             ohlcv_df = new_df;
         }
     }
     if let Some(spec) = exit_signal.as_ref() {
-        if let Some((new_spec, new_df)) =
-            maybe_preprocess_hmm(spec, &primary_symbol, &ohlcv_df, cache_dir, date_col)?
-        {
+        if let Some((new_spec, new_df)) = maybe_preprocess_hmm(
+            spec,
+            &primary_symbol,
+            &ohlcv_df,
+            cache_dir,
+            date_col,
+            options_start,
+        )? {
             exit_signal = Some(new_spec);
             ohlcv_df = new_df;
         }

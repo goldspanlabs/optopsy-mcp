@@ -1244,6 +1244,7 @@ pub fn ohlcv_path_to_cache_root(ohlcv_path: &str) -> Option<&std::path::Path> {
 ///
 /// For daily data (column `"date"`), signal dates are promoted to midnight datetimes.
 /// For intraday data (column `"datetime"`), signal datetimes carry the full timestamp.
+#[allow(clippy::too_many_lines)]
 pub fn build_stock_signal_filters(
     params: &StockBacktestParams,
     ohlcv_df: &polars::prelude::DataFrame,
@@ -1275,6 +1276,7 @@ pub fn build_stock_signal_filters(
                 hmm_df.as_ref().unwrap_or(ohlcv_df),
                 effective_cache_dir,
                 date_col,
+                None,
             )?;
             entry_signal = Some(SignalSpec::Formula { formula: rewritten });
             hmm_df = Some(updated_df);
@@ -1288,6 +1290,7 @@ pub fn build_stock_signal_filters(
                 hmm_df.as_ref().unwrap_or(ohlcv_df),
                 effective_cache_dir,
                 date_col,
+                None,
             )?;
             exit_signal = Some(SignalSpec::Formula { formula: rewritten });
             hmm_df = Some(updated_df);

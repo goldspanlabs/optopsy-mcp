@@ -74,7 +74,7 @@ fn test_preprocess_no_hmm_passthrough() {
     let df = DataFrame::new(3, vec![dates.into(), closes.into()]).unwrap();
 
     let (rewritten, new_df) =
-        preprocess_hmm_regime("rsi(close, 14) < 30", "SPY", &df, None, "datetime").unwrap();
+        preprocess_hmm_regime("rsi(close, 14) < 30", "SPY", &df, None, "datetime", None).unwrap();
     assert_eq!(rewritten, "rsi(close, 14) < 30");
     assert_eq!(new_df.width(), df.width());
 }

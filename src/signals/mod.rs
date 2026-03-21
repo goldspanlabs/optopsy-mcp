@@ -478,6 +478,7 @@ pub fn preprocess_hmm_regime(
     primary_df: &DataFrame,
     cache_dir: Option<&std::path::Path>,
     date_col: &str,
+    backtest_start_override: Option<chrono::NaiveDate>,
 ) -> Result<(String, DataFrame)> {
     let rewrite = hmm_rewrite::rewrite_formula(formula, primary_symbol)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -488,20 +489,24 @@ pub fn preprocess_hmm_regime(
 
     let mut result_df = primary_df.clone();
 
-    // Derive backtest start date from the primary DataFrame (min date, not row 0 which
-    // may be unsorted). Sort lazily by the date column and take the first row.
-    let first_row = primary_df
-        .clone()
-        .lazy()
-        .sort([date_col], SortMultipleOptions::default())
-        .slice(0, 1)
-        .collect()?;
-    if first_row.height() == 0 {
-        anyhow::bail!(
-            "cannot derive backtest start date: primary DataFrame for '{primary_symbol}' is empty"
-        );
-    }
-    let backtest_start = extract_naive_date(first_row.column(date_col)?, 0)?;
+    // Use explicit backtest start if provided (e.g., from options data date range),
+    // otherwise derive from the primary DataFrame's earliest date.
+    let backtest_start = if let Some(start) = backtest_start_override {
+        start
+    } else {
+        let first_row = primary_df
+            .clone()
+            .lazy()
+            .sort([date_col], SortMultipleOptions::default())
+            .slice(0, 1)
+            .collect()?;
+        if first_row.height() == 0 {
+            anyhow::bail!(
+                "cannot derive backtest start date: primary DataFrame for '{primary_symbol}' is empty"
+            );
+        }
+        extract_naive_date(first_row.column(date_col)?, 0)?
+    };
 
     for call in &rewrite.calls {
         let sym = call.symbol.as_deref().unwrap_or(primary_symbol);
