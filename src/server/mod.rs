@@ -731,7 +731,7 @@ impl OptopsyServer {
     /// **Next tools**: `compare_strategies()` (to test variations) or iterate on parameters
     ///
     /// **IMPORTANT**: `strategy` is REQUIRED — pick one like `short_put`, `iron_condor`, etc.
-    /// Signals (entry_signal/exit_signal) are optional FILTERS for when to enter, not the strategy itself.
+    /// Signals (`entry_signal`/`exit_signal`) are optional FILTERS for when to enter, not the strategy itself.
     ///
     /// **Example call**:
     /// ```json
