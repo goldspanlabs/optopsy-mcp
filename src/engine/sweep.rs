@@ -819,7 +819,7 @@ pub fn run_stock_sweep(params: &StockSweepParams) -> Result<SweepOutput> {
             let combo_params = build_stock_params_for_combo(&params.base_params, combo);
 
             let (entry_dates, exit_dates) =
-                stock_sim::build_stock_signal_filters(&combo_params, &oos_ohlcv_df, None)?;
+                stock_sim::build_stock_signal_filters(&combo_params, oos_ohlcv_df, None)?;
 
             let test_entry = filter_signals_to_bar_range(entry_dates.as_ref(), test_bars);
             let test_exit = filter_signals_to_bar_range(exit_dates.as_ref(), test_bars);

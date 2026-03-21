@@ -319,8 +319,8 @@ fn intraday_last_bar_per_day(df: DataFrame) -> Result<DataFrame> {
 }
 
 /// If the `SignalSpec` is a `Formula` variant whose formula contains `hmm_regime(`,
-/// run the HMM preprocessing pass and return a rewritten spec + updated DataFrame.
-/// Otherwise returns the original spec and DataFrame unchanged.
+/// run the HMM preprocessing pass and return a rewritten spec + updated `DataFrame`.
+/// Otherwise returns the original spec and `DataFrame` unchanged.
 fn maybe_preprocess_hmm(
     spec: &SignalSpec,
     primary_symbol: &str,
@@ -362,8 +362,7 @@ pub fn build_signal_filters(
     let primary_symbol = params
         .ohlcv_path
         .as_deref()
-        .map(symbol_from_ohlcv_path)
-        .unwrap_or_else(|| "UNKNOWN".to_string());
+        .map_or_else(|| "UNKNOWN".to_string(), symbol_from_ohlcv_path);
 
     let mut entry_signal = params.entry_signal.clone();
     let mut exit_signal = params.exit_signal.clone();

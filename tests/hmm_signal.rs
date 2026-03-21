@@ -1,4 +1,4 @@
-//! Integration tests for hmm_regime() formula function in backtests.
+//! Integration tests for `hmm_regime()` formula function in backtests.
 
 use optopsy_mcp::signals::hmm_rewrite;
 
@@ -49,8 +49,7 @@ fn test_hmm_forward_filter_no_lookahead() {
 fn test_cross_symbol_extractor_ignores_hmm_columns() {
     use optopsy_mcp::signals::registry::extract_formula_cross_symbols;
 
-    let syms =
-        extract_formula_cross_symbols("__hmm_regime_SPY_3_5_65 == 2 and VIX > 20");
+    let syms = extract_formula_cross_symbols("__hmm_regime_SPY_3_5_65 == 2 and VIX > 20");
     assert!(!syms.contains("__HMM_REGIME_SPY_3_5_65"));
     assert!(syms.contains("VIX"));
 }
@@ -75,8 +74,7 @@ fn test_preprocess_no_hmm_passthrough() {
     let df = DataFrame::new(3, vec![dates.into(), closes.into()]).unwrap();
 
     let (rewritten, new_df) =
-        preprocess_hmm_regime("rsi(close, 14) < 30", "SPY", &df, None, "datetime")
-            .unwrap();
+        preprocess_hmm_regime("rsi(close, 14) < 30", "SPY", &df, None, "datetime").unwrap();
     assert_eq!(rewritten, "rsi(close, 14) < 30");
     assert_eq!(new_df.width(), df.width());
 }

@@ -20,7 +20,7 @@ pub struct HmmCall {
 /// Result of rewriting a formula: the rewritten string + extracted HMM calls.
 #[derive(Debug, Clone)]
 pub struct RewriteResult {
-    /// The rewritten formula string (hmm_regime calls replaced with column refs).
+    /// The rewritten formula string (`hmm_regime` calls replaced with column refs).
     pub formula: String,
     /// Deduplicated HMM calls found in the formula.
     pub calls: Vec<HmmCall>,
@@ -48,7 +48,7 @@ pub fn column_name(symbol: &str, n_regimes: usize, fit_years: usize, threshold: 
     format!("__hmm_regime_{symbol}_{n_regimes}_{fit_years}_{thresh_int}")
 }
 
-/// Return the valid alias names for a given n_regimes.
+/// Return the valid alias names for a given `n_regimes`.
 pub fn aliases_for(n_regimes: usize) -> &'static [&'static str] {
     match n_regimes {
         2 => &["bearish", "bullish"],
@@ -58,7 +58,7 @@ pub fn aliases_for(n_regimes: usize) -> &'static [&'static str] {
     }
 }
 
-/// Resolve a named alias to its integer index for the given n_regimes.
+/// Resolve a named alias to its integer index for the given `n_regimes`.
 pub fn alias_to_index(alias: &str, n_regimes: usize) -> Option<usize> {
     aliases_for(n_regimes).iter().position(|&a| a == alias)
 }
@@ -101,7 +101,7 @@ pub fn extract_hmm_calls(formula: &str) -> Result<Vec<HmmCall>, String> {
 }
 
 fn parse_hmm_args(args_str: &str) -> Result<HmmCall, String> {
-    let parts: Vec<&str> = args_str.split(',').map(|s| s.trim()).collect();
+    let parts: Vec<&str> = args_str.split(',').map(str::trim).collect();
 
     match parts.len() {
         2 => {
@@ -119,7 +119,7 @@ fn parse_hmm_args(args_str: &str) -> Result<HmmCall, String> {
             if parts[0]
                 .chars()
                 .next()
-                .map_or(false, |c| c.is_ascii_alphabetic())
+                .is_some_and(|c| c.is_ascii_alphabetic())
             {
                 let symbol = parts[0].to_uppercase();
                 let n_regimes = parse_int(parts[1], "n_regimes")?;
@@ -149,7 +149,7 @@ fn parse_hmm_args(args_str: &str) -> Result<HmmCall, String> {
             if !symbol
                 .chars()
                 .next()
-                .map_or(false, |c| c.is_ascii_alphabetic())
+                .is_some_and(|c| c.is_ascii_alphabetic())
             {
                 return Err(format!(
                     "hmm_regime first arg must be a symbol identifier, got '{}'",

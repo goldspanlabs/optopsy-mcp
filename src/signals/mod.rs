@@ -464,10 +464,10 @@ fn union_mixed_granularity(
 ///
 /// 1. Scans for `hmm_regime(...)` calls and rewrites the formula
 /// 2. For each unique call: loads data, fits HMM, forward-filters
-/// 3. Injects `__hmm_regime_*` columns into the DataFrame
-/// 4. Returns (rewritten_formula, modified_dataframe)
+/// 3. Injects `__hmm_regime_*` columns into the `DataFrame`
+/// 4. Returns (`rewritten_formula`, `modified_dataframe`)
 ///
-/// If no `hmm_regime()` calls found, returns formula and DataFrame unchanged.
+/// If no `hmm_regime()` calls found, returns formula and `DataFrame` unchanged.
 ///
 /// `cache_dir` is needed only when `hmm_regime` references a symbol different
 /// from `primary_symbol`. Pass `None` if only the primary symbol is used.
@@ -501,8 +501,7 @@ pub fn preprocess_hmm_regime(
         } else {
             let cache = cache_dir.ok_or_else(|| {
                 anyhow::anyhow!(
-                    "hmm_regime references symbol '{}' but no cache directory available",
-                    sym
+                    "hmm_regime references symbol '{sym}' but no cache directory available"
                 )
             })?;
             load_hmm_symbol_ohlcv(cache, sym)?
@@ -512,7 +511,7 @@ pub fn preprocess_hmm_regime(
         let hmm_date_col = crate::engine::stock_sim::detect_date_col(&hmm_df);
 
         // Extract dates and closes, compute returns
-        let dates_col = hmm_df.column(hmm_date_col)?;
+        let hmm_dates = hmm_df.column(hmm_date_col)?;
         let closes = hmm_df.column("close")?.f64()?;
 
         let mut returns = Vec::with_capacity(closes.len());
@@ -521,7 +520,7 @@ pub fn preprocess_hmm_regime(
             if let (Some(prev), Some(curr)) = (closes.get(i - 1), closes.get(i)) {
                 if prev.abs() > 1e-15 {
                     returns.push((curr - prev) / prev);
-                    return_dates.push(extract_naive_date(dates_col, i)?);
+                    return_dates.push(extract_naive_date(hmm_dates, i)?);
                 }
             }
         }
@@ -569,10 +568,8 @@ pub fn preprocess_hmm_regime(
         let regime_labels = hmm::forward_filter(&fitted, &apply_returns, call.threshold);
 
         // Build a mapping from date → regime label
-        let regime_map: std::collections::HashMap<chrono::NaiveDate, usize> = apply_dates
-            .into_iter()
-            .zip(regime_labels)
-            .collect();
+        let regime_map: std::collections::HashMap<chrono::NaiveDate, usize> =
+            apply_dates.into_iter().zip(regime_labels).collect();
 
         // Create the regime column aligned to the primary DataFrame
         let primary_dates = result_df.column(date_col)?;
@@ -601,8 +598,7 @@ fn load_hmm_symbol_ohlcv(cache_dir: &std::path::Path, symbol: &str) -> Result<Da
         }
     }
     anyhow::bail!(
-        "no OHLCV data found for '{}'; available categories: stocks, etf, indices, futures",
-        symbol
+        "no OHLCV data found for '{symbol}'; available categories: stocks, etf, indices, futures"
     )
 }
 

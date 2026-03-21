@@ -679,7 +679,7 @@ fn intraday_ohlcv_fallback_to_last_bar_per_day_when_no_1559() {
     params.ohlcv_path = Some(path);
 
     // build_signal_filters should succeed — the fallback produces one row per day
-    let filters = build_signal_filters(&params, &df);
+    let filters = build_signal_filters(&params, &df, None);
     assert!(
         filters.is_ok(),
         "build_signal_filters should succeed when intraday OHLCV has no 15:59 bars: {:?}",

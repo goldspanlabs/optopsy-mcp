@@ -311,7 +311,7 @@ pub fn forward_filter(hmm: &GaussianHmm, observations: &[f64], threshold: f64) -
         log_post[j] = posterior[j].max(1e-300).ln()
             + log_gaussian(observations[0], hmm.means[j], hmm.variances[j]);
     }
-    let max_lp = log_post.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let max_lp = log_post.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let sum_exp: f64 = log_post.iter().map(|&lp| (lp - max_lp).exp()).sum();
     let log_norm = max_lp + sum_exp.ln();
     for j in 0..k {
@@ -341,7 +341,7 @@ pub fn forward_filter(hmm: &GaussianHmm, observations: &[f64], threshold: f64) -
                 + log_gaussian(observations[tt], hmm.means[j], hmm.variances[j]);
         }
 
-        let max_lp = log_post.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let max_lp = log_post.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         let sum_exp: f64 = log_post.iter().map(|&lp| (lp - max_lp).exp()).sum();
         let log_norm = max_lp + sum_exp.ln();
         for j in 0..k {
