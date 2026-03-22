@@ -135,6 +135,8 @@ pub(crate) fn exit_type_name(exit_type: &ExitType) -> &'static str {
         ExitType::Adjustment => "Adjustment",
         ExitType::Signal => "Signal",
         ExitType::DeltaExit => "DeltaExit",
+        ExitType::Assignment => "Assignment",
+        ExitType::CalledAway => "CalledAway",
     }
 }
 
