@@ -278,12 +278,13 @@ fn roll_to_target_finds_best_match() {
     // Plus the realized loss from closing the near-term leg on Jan 22:
     // entry mid Jan 15 = (5.0+5.5)/2 = 5.25, exit mid Jan 22 = (4.0+4.5)/2 = 4.25
     // Realized = (4.25 - 5.25) * 100 = -100.0
-    // Total equity = 100000 - 100 - 180 = 99720. But this is approximate due to
-    // entry_cost tracking. The key test is that equity differs from initial capital.
+    // Total equity = 100000 - 100 - 180 = 99720.
     let last_equity = equity.last().unwrap().equity;
+    let expected_equity = 99_720.0;
+    let tolerance = 50.0;
     assert!(
-        (last_equity - 100_000.0).abs() > 1.0,
-        "equity should differ from initial capital after roll, got {last_equity}"
+        (last_equity - expected_equity).abs() <= tolerance,
+        "equity should be within {tolerance} of {expected_equity} after far-term roll, got {last_equity}"
     );
 }
 

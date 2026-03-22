@@ -47,6 +47,18 @@ pub(crate) fn trigger_fires(
     }
 }
 
+/// Captures state from the old leg when a `RollToTarget` replaces it.
+struct RollLegInfo {
+    side: Side,
+    option_type: OptionType,
+    qty: i32,
+    expiration: NaiveDate,
+    /// Price at which the old leg was closed (used for realized P&L).
+    close_price: f64,
+    /// Original entry price of the old leg.
+    entry_price: f64,
+}
+
 /// Returns the `position_id` encoded in an `AdjustmentAction`.
 /// A value of `0` is treated as a wildcard (matches any position).
 pub(crate) fn action_position_id(action: &AdjustmentAction) -> usize {
@@ -182,8 +194,16 @@ pub(crate) fn execute_adjustment(
                         ctx,
                         last_known,
                     );
-                    let info = (leg.side, leg.option_type, leg.qty, leg.expiration);
-                    pos.entry_cost -= leg.entry_price
+                    let old_entry_price = leg.entry_price;
+                    let info = RollLegInfo {
+                        side: leg.side,
+                        option_type: leg.option_type,
+                        qty: leg.qty,
+                        expiration: leg.expiration,
+                        close_price: cp,
+                        entry_price: old_entry_price,
+                    };
+                    pos.entry_cost -= old_entry_price
                         * leg.side.multiplier()
                         * f64::from(leg.qty)
                         * f64::from(pos.multiplier);
@@ -194,11 +214,17 @@ pub(crate) fn execute_adjustment(
                 None
             };
 
-            if let Some((leg_side, leg_opt_type, leg_qty, old_exp)) = roll_info {
+            if let Some(ri) = roll_info {
+                // Realize P&L for the leg being closed as part of the roll.
+                let realized_pnl = (ri.close_price - ri.entry_price)
+                    * ri.side.multiplier()
+                    * f64::from(ri.qty)
+                    * f64::from(pos.multiplier);
+                state.realized_equity += realized_pnl;
                 // Scan the date index for available contracts on today
                 if let Some(found) = find_roll_target(
                     today,
-                    leg_opt_type,
+                    ri.option_type,
                     target_delta,
                     target_dte,
                     ctx,
@@ -208,22 +234,22 @@ pub(crate) fn execute_adjustment(
                     let ep = lookup_fill_price(
                         new_expiration,
                         new_strike,
-                        leg_opt_type,
-                        leg_side,
+                        ri.option_type,
+                        ri.side,
                         today,
                         ctx,
                         last_known,
                     );
                     pos.entry_cost +=
-                        ep * leg_side.multiplier() * f64::from(leg_qty) * f64::from(pos.multiplier);
+                        ep * ri.side.multiplier() * f64::from(ri.qty) * f64::from(pos.multiplier);
                     let new_leg = PositionLeg {
                         leg_index: *leg_index,
-                        side: leg_side,
-                        option_type: leg_opt_type,
+                        side: ri.side,
+                        option_type: ri.option_type,
                         strike: new_strike,
                         expiration: new_expiration,
                         entry_price: ep,
-                        qty: leg_qty,
+                        qty: ri.qty,
                         closed: false,
                         close_price: None,
                         close_date: None,
@@ -233,9 +259,9 @@ pub(crate) fn execute_adjustment(
                     } else {
                         pos.legs.push(new_leg);
                     }
-                    if pos.expiration == old_exp {
+                    if pos.expiration == ri.expiration {
                         pos.expiration = new_expiration;
-                    } else if pos.secondary_expiration == Some(old_exp) {
+                    } else if pos.secondary_expiration == Some(ri.expiration) {
                         pos.secondary_expiration = Some(new_expiration);
                     }
                 }
