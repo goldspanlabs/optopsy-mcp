@@ -378,6 +378,125 @@ fn adjustment_no_fire_below_threshold() {
     );
 }
 
+// ─── RollToTarget: dynamic roll from near-term to far-term ──────────────────
+
+#[test]
+fn roll_to_target_calendar_roll_to_far_expiration() {
+    // Short put@100 (delta=-0.40): entry Jan 15, near-term exp Feb 16 (DTE=32).
+    // CalendarRoll dte_trigger=25 fires on Jan 22 (DTE=25 ≤ 25).
+    // RollToTarget: target_delta=0.40, target_dte={target:45, min:30, max:60}.
+    // On Jan 22, far-term puts (exp Mar 15, DTE=53):
+    //   95: delta=-0.22, 100: delta=-0.42, 105: delta=-0.57, 110: delta=-0.72
+    // Closest to 0.40 → strike 100 at |delta|=0.42 (distance 0.02).
+    // Position stays open with new leg at Mar 15 exp, exits via DTE when DTE≤5.
+    let df = make_multi_strike_df();
+
+    let mut params = base_params("short_put", vec![delta(0.40)]);
+    params.adjustment_rules = vec![AdjustmentRule {
+        trigger: AdjustmentTrigger::CalendarRoll {
+            dte_trigger: 25,
+            new_dte: 45,
+        },
+        action: AdjustmentAction::RollToTarget {
+            position_id: 0,
+            leg_index: 0,
+            target_delta: TargetRange {
+                target: 0.40,
+                min: 0.20,
+                max: 0.60,
+            },
+            target_dte: DteRange {
+                target: 45,
+                min: 30,
+                max: 60,
+            },
+        },
+    }];
+
+    let result = run_backtest(&df, &params).expect("backtest failed");
+
+    assert!(!result.trade_log.is_empty(), "expected at least 1 trade");
+    let trade = &result.trade_log[0];
+
+    // After dynamic roll on Jan 22, position stays open with far-term leg (Mar 15).
+    // The trade should NOT exit on Jan 22 (that's the roll date, not a close).
+    assert!(
+        trade.days_held > 7,
+        "position should survive past the roll date (Jan 22), held {} days",
+        trade.days_held
+    );
+
+    // After roll, the leg should be at strike 100 (closest to 0.40 delta in far-term puts)
+    assert!(!trade.legs.is_empty(), "trade should have leg details");
+    let rolled_leg = &trade.legs[0];
+    assert_eq!(
+        rolled_leg.strike, 100.0,
+        "expected roll to strike 100 (closest 0.40 delta), got {}",
+        rolled_leg.strike
+    );
+}
+
+// ─── RollToTarget: defensive roll to lower delta strike ──────────────────────
+
+#[test]
+fn roll_to_target_defensive_roll_to_lower_delta() {
+    // Long call@100 (delta=0.50): entry mid=5.25 on Jan 15.
+    // Jan 22 mid=4.25 → MTM = (4.25-5.25)*100 = -100.
+    // entry_cost=525, loss_threshold=0.10 → threshold=52.5.
+    // -100 < -52.5 → DefensiveRoll fires on Jan 22.
+    // RollToTarget: target_delta=0.20, target_dte={target:30, min:10, max:35}.
+    // On Jan 22, near-term calls (exp Feb 16, DTE=25):
+    //   95: delta=0.70, 100: delta=0.50, 105: delta=0.35, 110: delta=0.20
+    // DTE=25 is in range [10, 35]. Closest to 0.20 → strike 110 at delta=0.20.
+    // Position stays open with new leg, exits via DTE on Feb 11.
+    let df = make_multi_strike_df();
+
+    let mut params = base_params("long_call", vec![delta(0.50)]);
+    params.adjustment_rules = vec![AdjustmentRule {
+        trigger: AdjustmentTrigger::DefensiveRoll {
+            loss_threshold: 0.10,
+        },
+        action: AdjustmentAction::RollToTarget {
+            position_id: 0,
+            leg_index: 0,
+            target_delta: TargetRange {
+                target: 0.20,
+                min: 0.15,
+                max: 0.25,
+            },
+            target_dte: DteRange {
+                target: 30,
+                min: 10,
+                max: 35,
+            },
+        },
+    }];
+
+    let result = run_backtest(&df, &params).expect("backtest failed");
+
+    assert!(!result.trade_log.is_empty(), "expected at least 1 trade");
+    let trade = &result.trade_log[0];
+
+    // After roll on Jan 22, position stays open. Exits via DTE on Feb 11 (27 days total).
+    assert!(
+        matches!(trade.exit_type, ExitType::DteExit),
+        "expected DteExit after defensive roll, got {:?}",
+        trade.exit_type
+    );
+    assert_eq!(
+        trade.days_held, 27,
+        "expected 27 days held (Jan 15 → Feb 11), got {}",
+        trade.days_held
+    );
+
+    // Verify the rolled leg is at strike 110 (closest to 0.20 delta)
+    let rolled_leg = &trade.legs[0];
+    assert_eq!(
+        rolled_leg.strike, 110.0,
+        "expected roll to strike 110 (closest 0.20 delta), got {}",
+        rolled_leg.strike
+    );
+}
 // ─── RollToTarget: no matching target → position closes ──────────────────────
 
 #[test]
