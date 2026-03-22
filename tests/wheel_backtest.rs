@@ -145,11 +145,11 @@ fn wheel_full_cycle() {
         "Cost basis was {cost_basis}, expected 96.75"
     );
 
-    // Stock PnL = (call_strike - cost_basis) * qty * mult = (102 - 96.75) * 1 * 100 = 525
+    // Stock PnL = (call_strike - entry_price) * qty * mult = (102 - 100) * 1 * 100 = 200
     let stock_pnl = cycle.stock_pnl.unwrap();
     assert!(
-        (stock_pnl - 525.0).abs() < 1e-10,
-        "Stock PnL was {stock_pnl}, expected 525.0"
+        (stock_pnl - 200.0).abs() < 1e-10,
+        "Stock PnL was {stock_pnl}, expected 200.0"
     );
 }
 

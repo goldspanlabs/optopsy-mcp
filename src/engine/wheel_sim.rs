@@ -54,11 +54,18 @@ pub enum WheelState {
 }
 
 /// Tracks shares acquired via put assignment.
-/// `cost_basis` is a rolling value: starts at `strike - put_premium`, then decreases
-/// by each call premium collected. Used for the `min_call_strike_at_cost` floor and stop-loss.
+///
+/// Two cost basis values:
+/// - `entry_price`: raw strike price, used for stock P&L calculation (no double-counting)
+/// - `adjusted_basis`: rolling value (strike - put premium - call premiums), used for
+///   the `min_call_strike_at_cost` floor and stop-loss trigger
 #[derive(Debug, Clone)]
 pub struct StockHolding {
-    pub cost_basis: f64,
+    /// Raw assignment strike — used for stock P&L calculation.
+    pub entry_price: f64,
+    /// Rolling adjusted basis — decreases with each premium collected.
+    /// Used for call strike floor and stop-loss trigger.
+    pub adjusted_basis: f64,
     pub entry_date: NaiveDate,
     pub quantity: i32,
     pub multiplier: i32,
@@ -291,7 +298,8 @@ pub fn run_wheel_backtest(
                             ));
 
                             stock_holding = Some(StockHolding {
-                                cost_basis,
+                                entry_price: opt.strike,
+                                adjusted_basis: cost_basis,
                                 entry_date: today,
                                 quantity: qty,
                                 multiplier: mult,
@@ -308,11 +316,11 @@ pub fn run_wheel_backtest(
                                 )?;
                             }
 
-                            // Start cycle tracker
+                            // Start cycle tracker (cost_basis stores adjusted_basis for display)
                             if let Some(ref mut ct) = cycle_tracker {
                                 ct.put_pnl = option_pnl;
                                 ct.assigned = true;
-                                ct.cost_basis = Some(cost_basis);
+                                ct.cost_basis = Some(cost_basis); // adjusted_basis value
                             }
 
                             active_option = None;
@@ -382,7 +390,7 @@ pub fn run_wheel_backtest(
                             let sh = stock_holding
                                 .as_ref()
                                 .expect("must hold stock in SellingCalls");
-                            let stock_pnl = (opt.strike - sh.cost_basis) * qty_f * mult_f;
+                            let stock_pnl = (opt.strike - sh.entry_price) * qty_f * mult_f;
                             realized_pnl += stock_pnl;
 
                             trade_id += 1;
@@ -400,7 +408,7 @@ pub fn run_wheel_backtest(
                                 qty,
                                 mult,
                             );
-                            record.stock_entry_price = Some(sh.cost_basis);
+                            record.stock_entry_price = Some(sh.entry_price);
                             record.stock_exit_price = Some(opt.strike);
                             record.stock_pnl = Some(stock_pnl);
                             trade_log.push(record);
@@ -465,12 +473,12 @@ pub fn run_wheel_backtest(
                                 ct.call_premiums.push(opt.fill_price * qty_f * mult_f);
                             }
 
-                            // Rolling cost basis: reduce by call premium per share
+                            // Rolling adjusted basis: reduce by call premium per share
                             if let Some(ref mut sh) = stock_holding {
-                                sh.cost_basis -= opt.fill_price;
-                                // Update cycle tracker with new cost basis
+                                sh.adjusted_basis -= opt.fill_price;
+                                // Update cycle tracker with new adjusted basis
                                 if let Some(ref mut ct) = cycle_tracker {
-                                    ct.cost_basis = Some(sh.cost_basis);
+                                    ct.cost_basis = Some(sh.adjusted_basis);
                                 }
                                 // Rebuild call candidates if using cost basis floor
                                 if params.min_call_strike_at_cost {
@@ -479,7 +487,7 @@ pub fn run_wheel_backtest(
                                         &params.call_delta,
                                         &params.call_dte,
                                         params.min_bid_ask,
-                                        Some(sh.cost_basis),
+                                        Some(sh.adjusted_basis),
                                     )?;
                                 }
                             }
@@ -499,7 +507,7 @@ pub fn run_wheel_backtest(
 
         // ==== Phase 2: Stop loss check ====
         if let (Some(ref sh), Some(sl_pct)) = (&stock_holding, params.stop_loss) {
-            if underlying_close < sh.cost_basis * (1.0 - sl_pct) {
+            if underlying_close < sh.adjusted_basis * (1.0 - sl_pct) {
                 // Close active call if any
                 if let Some(ref opt) = active_option {
                     // Force close the call at intrinsic value approximation
@@ -532,7 +540,7 @@ pub fn run_wheel_backtest(
                 active_option = None;
 
                 // Sell stock at market
-                let stock_pnl = (underlying_close - sh.cost_basis) * qty_f * mult_f;
+                let stock_pnl = (underlying_close - sh.entry_price) * qty_f * mult_f;
                 realized_pnl += stock_pnl;
 
                 // Complete cycle with stop loss
@@ -575,7 +583,7 @@ pub fn run_wheel_backtest(
                         if let Some(cand) = day_cands.first() {
                             // Capital check: need enough to be assigned
                             let stock_value = stock_holding.as_ref().map_or(0.0, |sh| {
-                                sh.cost_basis * f64::from(sh.quantity) * f64::from(sh.multiplier)
+                                sh.entry_price * f64::from(sh.quantity) * f64::from(sh.multiplier)
                             });
                             let available_capital = params.capital + realized_pnl - stock_value;
                             let required = cand.strike * qty_f * mult_f;
@@ -647,7 +655,7 @@ pub fn run_wheel_backtest(
 
         // ==== Phase 4: Mark-to-market equity ====
         let unrealized_stock = stock_holding.as_ref().map_or(0.0, |sh| {
-            (underlying_close - sh.cost_basis) * f64::from(sh.quantity) * f64::from(sh.multiplier)
+            (underlying_close - sh.entry_price) * f64::from(sh.quantity) * f64::from(sh.multiplier)
         });
         // For the active option, we don't have a live price table lookup here,
         // so we approximate: the option's unrealized P&L is already reflected
@@ -709,8 +717,8 @@ pub fn run_wheel_backtest(
         let last_close = ohlcv_closes
             .range(..=last_day)
             .next_back()
-            .map_or(sh.cost_basis, |(_, &v)| v);
-        let stock_pnl = (last_close - sh.cost_basis) * qty_f * mult_f;
+            .map_or(sh.entry_price, |(_, &v)| v);
+        let stock_pnl = (last_close - sh.entry_price) * qty_f * mult_f;
         realized_pnl += stock_pnl;
 
         if let Some(ref mut ct) = cycle_tracker {
@@ -1044,11 +1052,11 @@ mod tests {
             "Cost basis was {cost_basis}, expected 96.75"
         );
 
-        // Stock P&L = (call_strike - cost_basis) * qty * mult = (102 - 96.75) * 1 * 100 = 525
+        // Stock P&L = (call_strike - entry_price) * qty * mult = (102 - 100) * 1 * 100 = 200
         let stock_pnl = cycle.stock_pnl.unwrap();
         assert!(
-            (stock_pnl - 525.0).abs() < 1e-10,
-            "Stock PnL was {stock_pnl}, expected 525.0"
+            (stock_pnl - 200.0).abs() < 1e-10,
+            "Stock PnL was {stock_pnl}, expected 200.0"
         );
     }
 
@@ -1083,10 +1091,10 @@ mod tests {
             "Stock PnL should be negative after stop loss"
         );
 
-        // Stock PnL = (80 - 96.75) * 1 * 100 = -1675 (cost basis = strike - put premium)
+        // Stock PnL = (80 - entry_price) * 1 * 100 = (80 - 100) * 100 = -2000
         assert!(
-            (stock_pnl - (-1675.0)).abs() < 1e-10,
-            "Stock PnL was {stock_pnl}, expected -1675.0"
+            (stock_pnl - (-2000.0)).abs() < 1e-10,
+            "Stock PnL was {stock_pnl}, expected -2000.0"
         );
     }
 
