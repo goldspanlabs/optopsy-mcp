@@ -215,13 +215,7 @@ pub(crate) fn execute_adjustment(
             };
 
             if let Some(ri) = roll_info {
-                // Realize P&L for the leg being closed as part of the roll.
-                let realized_pnl = (ri.close_price - ri.entry_price)
-                    * ri.side.multiplier()
-                    * f64::from(ri.qty)
-                    * f64::from(pos.multiplier);
-                state.realized_equity += realized_pnl;
-                // Scan the date index for available contracts on today
+                // Scan the date index for available contracts on today.
                 if let Some(found) = find_roll_target(
                     today,
                     ri.option_type,
@@ -230,6 +224,20 @@ pub(crate) fn execute_adjustment(
                     ctx,
                     last_known,
                 ) {
+                    // Realize P&L for the closed leg. The rolled-out leg will no longer
+                    // appear in pos.legs, so close_position won't account for it.
+                    let realized_pnl = (ri.close_price - ri.entry_price)
+                        * ri.side.multiplier()
+                        * f64::from(ri.qty)
+                        * f64::from(pos.multiplier);
+                    state.realized_equity += realized_pnl;
+
+                    // Debit the full round-trip commission for the rolled-out leg (entry +
+                    // exit), since close_position only charges commission for legs that are
+                    // still present in pos.legs when the position eventually closes.
+                    let commission = ctx.params.commission.clone().unwrap_or_default();
+                    state.realized_equity -= commission.calculate(ri.qty.abs()) * 2.0;
+
                     let (new_strike, new_expiration) = found;
                     let ep = lookup_fill_price(
                         new_expiration,
@@ -266,7 +274,8 @@ pub(crate) fn execute_adjustment(
                     }
                 }
                 // If no target found, the old leg is closed but no replacement opens.
-                // The position may finalize if all legs are now closed.
+                // P&L and commission for the closed leg are handled by
+                // finalize_if_all_closed via mark_to_market when all legs are closed.
                 finalize_if_all_closed(pos, today, ctx, last_known, state);
             }
         }
