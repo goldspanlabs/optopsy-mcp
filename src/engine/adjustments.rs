@@ -53,10 +53,6 @@ struct RollLegInfo {
     option_type: OptionType,
     qty: i32,
     expiration: NaiveDate,
-    /// Price at which the old leg was closed (used for realized P&L).
-    close_price: f64,
-    /// Original entry price of the old leg.
-    entry_price: f64,
 }
 
 /// Returns the `position_id` encoded in an `AdjustmentAction`.
@@ -194,16 +190,13 @@ pub(crate) fn execute_adjustment(
                         ctx,
                         last_known,
                     );
-                    let old_entry_price = leg.entry_price;
                     let info = RollLegInfo {
                         side: leg.side,
                         option_type: leg.option_type,
                         qty: leg.qty,
                         expiration: leg.expiration,
-                        close_price: cp,
-                        entry_price: old_entry_price,
                     };
-                    pos.entry_cost -= old_entry_price
+                    pos.entry_cost -= leg.entry_price
                         * leg.side.multiplier()
                         * f64::from(leg.qty)
                         * f64::from(pos.multiplier);
@@ -215,12 +208,10 @@ pub(crate) fn execute_adjustment(
             };
 
             if let Some(ri) = roll_info {
-                // Realize P&L for the leg being closed as part of the roll.
-                let realized_pnl = (ri.close_price - ri.entry_price)
-                    * ri.side.multiplier()
-                    * f64::from(ri.qty)
-                    * f64::from(pos.multiplier);
-                state.realized_equity += realized_pnl;
+                // The old leg is already closed in `pos.legs` (with close_price set).
+                // Its P&L will be captured by mark_to_market when the position eventually closes.
+                // Do NOT realize it here to avoid double-counting with finalize_if_all_closed.
+
                 // Scan the date index for available contracts on today
                 if let Some(found) = find_roll_target(
                     today,
@@ -242,6 +233,9 @@ pub(crate) fn execute_adjustment(
                     );
                     pos.entry_cost +=
                         ep * ri.side.multiplier() * f64::from(ri.qty) * f64::from(pos.multiplier);
+                    // Preserve the old closed leg in pos.legs so close_position counts its
+                    // contracts when computing commission. Append the new leg at the end so
+                    // downstream P&L accounting sees the full roll history.
                     let new_leg = PositionLeg {
                         leg_index: *leg_index,
                         side: ri.side,
@@ -254,11 +248,7 @@ pub(crate) fn execute_adjustment(
                         close_price: None,
                         close_date: None,
                     };
-                    if let Some(slot) = pos.legs.get_mut(*leg_index) {
-                        *slot = new_leg;
-                    } else {
-                        pos.legs.push(new_leg);
-                    }
+                    pos.legs.push(new_leg);
                     if pos.expiration == ri.expiration {
                         pos.expiration = new_expiration;
                     } else if pos.secondary_expiration == Some(ri.expiration) {
