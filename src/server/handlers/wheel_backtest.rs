@@ -122,8 +122,8 @@ pub async fn execute(
     // 8. Filter trading days by date range
     let trading_days: Vec<NaiveDate> = trading_days
         .into_iter()
-        .filter(|d| start_date.map_or(true, |s| *d >= s))
-        .filter(|d| end_date.map_or(true, |e| *d <= e))
+        .filter(|d| start_date.is_none_or(|s| *d >= s))
+        .filter(|d| end_date.is_none_or(|e| *d <= e))
         .collect();
 
     // 9. Convert RunWheelBacktestParams → WheelParams
@@ -243,7 +243,7 @@ fn build_ohlcv_closes(ohlcv_path: &str) -> anyhow::Result<BTreeMap<NaiveDate, f6
     Ok(closes_map)
 }
 
-/// Extract unique sorted dates from the options DataFrame's datetime column.
+/// Extract unique sorted dates from the options `DataFrame`'s datetime column.
 fn extract_trading_days(options_df: &DataFrame) -> anyhow::Result<Vec<NaiveDate>> {
     let dt_col = options_df
         .column(DATETIME_COL)

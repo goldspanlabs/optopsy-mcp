@@ -51,7 +51,7 @@ pub struct WheelCycleSummary {
     pub assignment_rate: f64,
 }
 
-/// AI-enriched response for run_wheel_backtest.
+/// AI-enriched response for `run_wheel_backtest`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WheelBacktestResponse {
     pub summary: String,
