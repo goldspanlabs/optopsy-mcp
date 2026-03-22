@@ -208,6 +208,20 @@ pub fn run_wheel_backtest(
         params.min_bid_ask,
     )?;
 
+    // Pre-build call candidates when min_call_strike_at_cost is false (no cost basis filter).
+    // When true, we rebuild per-assignment with the actual cost basis as min_strike.
+    let mut call_candidates = if params.min_call_strike_at_cost {
+        BTreeMap::new() // will be populated per-assignment
+    } else {
+        find_call_candidates(
+            options_df,
+            &params.call_delta,
+            &params.call_dte,
+            params.min_bid_ask,
+            None,
+        )?
+    };
+
     let mut state = WheelState::SellingPuts;
     let mut active_option: Option<ActiveOption> = None;
     let mut stock_holding: Option<StockHolding> = None;
@@ -279,6 +293,17 @@ pub fn run_wheel_backtest(
                                 quantity: qty,
                                 multiplier: mult,
                             });
+
+                            // Rebuild call candidates with cost basis floor
+                            if params.min_call_strike_at_cost {
+                                call_candidates = find_call_candidates(
+                                    options_df,
+                                    &params.call_delta,
+                                    &params.call_dte,
+                                    params.min_bid_ask,
+                                    Some(cost_basis),
+                                )?;
+                            }
 
                             // Start cycle tracker
                             if let Some(ref mut ct) = cycle_tracker {
@@ -570,21 +595,6 @@ pub fn run_wheel_backtest(
                     }
                 }
                 WheelState::HoldingStock => {
-                    let sh = stock_holding
-                        .as_ref()
-                        .expect("must hold stock in HoldingStock");
-                    let min_strike = if params.min_call_strike_at_cost {
-                        Some(sh.cost_basis)
-                    } else {
-                        None
-                    };
-                    let call_candidates = find_call_candidates(
-                        options_df,
-                        &params.call_delta,
-                        &params.call_dte,
-                        params.min_bid_ask,
-                        min_strike,
-                    )?;
                     if let Some(day_cands) = call_candidates.get(&today) {
                         if let Some(cand) = day_cands.first() {
                             let fp = pricing::fill_price(
@@ -819,6 +829,14 @@ pub fn find_single_leg_candidates(
                 delta: delta_val,
                 option_type: opt_type,
             });
+    }
+
+    // Sort each date's candidates by proximity to target DTE
+    for day_cands in candidates.values_mut() {
+        day_cands.sort_by_key(|c| {
+            let candidate_dte = (c.expiration - c.date).num_days();
+            (candidate_dte - i64::from(dte.target)).abs()
+        });
     }
 
     Ok(candidates)

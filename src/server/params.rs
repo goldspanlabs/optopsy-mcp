@@ -1520,7 +1520,7 @@ pub struct RunWheelBacktestParams {
     pub start_date: Option<String>,
     /// End date (YYYY-MM-DD). Optional — defaults to last available data.
     #[serde(default)]
-    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))]
+    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")), custom(validate_end_date_after_start(&self.start_date)))]
     pub end_date: Option<String>,
 }
 
