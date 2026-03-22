@@ -141,6 +141,7 @@ fn wheel_trade_record(
     strike: f64,
     expiration: NaiveDate,
     qty: i32,
+    multiplier: i32,
 ) -> TradeRecord {
     let entry_dt = entry_date
         .and_hms_opt(0, 0, 0)
@@ -151,7 +152,7 @@ fn wheel_trade_record(
     let days_held = (exit_date - entry_date).num_days();
 
     // For short options: entry_cost is negative (credit received)
-    let entry_cost = -entry_price * f64::from(qty) * 100.0;
+    let entry_cost = -entry_price * f64::from(qty) * f64::from(multiplier);
     let exit_proceeds = entry_cost + pnl;
 
     TradeRecord::new(
@@ -245,15 +246,14 @@ pub fn run_wheel_backtest(
                     WheelState::SellingPuts => {
                         let itm = underlying_close <= opt.strike;
                         if itm {
-                            // Assigned: stock acquired at strike, premium reduces cost basis
+                            // Assigned: stock acquired at strike price.
+                            // Put premium is separate realized P&L (not folded into cost basis).
                             let premium_pnl = opt.fill_price * qty_f * mult_f;
                             let comm = commission.calculate(qty) * 2.0;
                             let option_pnl = premium_pnl - comm;
-                            // Option P&L for the trade record = 0 conceptually,
-                            // but we record premium received minus commission
                             realized_pnl += option_pnl;
 
-                            let cost_basis = opt.strike - opt.fill_price;
+                            let cost_basis = opt.strike;
 
                             trade_id += 1;
                             trade_log.push(wheel_trade_record(
@@ -268,6 +268,7 @@ pub fn run_wheel_backtest(
                                 opt.strike,
                                 opt.expiration,
                                 qty,
+                                mult,
                             ));
 
                             stock_holding = Some(StockHolding {
@@ -306,6 +307,7 @@ pub fn run_wheel_backtest(
                                 opt.strike,
                                 opt.expiration,
                                 qty,
+                                mult,
                             ));
 
                             // Complete cycle as put-only
@@ -366,6 +368,7 @@ pub fn run_wheel_backtest(
                                 opt.strike,
                                 opt.expiration,
                                 qty,
+                                mult,
                             );
                             record.stock_entry_price = Some(sh.cost_basis);
                             record.stock_exit_price = Some(opt.strike);
@@ -424,6 +427,7 @@ pub fn run_wheel_backtest(
                                 opt.strike,
                                 opt.expiration,
                                 qty,
+                                mult,
                             ));
 
                             if let Some(ref mut ct) = cycle_tracker {
@@ -449,10 +453,10 @@ pub fn run_wheel_backtest(
             if underlying_close < sh.cost_basis * (1.0 - sl_pct) {
                 // Close active call if any
                 if let Some(ref opt) = active_option {
-                    // Force close the call (buy back at current price ~ 0 since stop loss)
-                    let call_premium_pnl = opt.fill_price * qty_f * mult_f;
-                    let comm = commission.calculate(qty) * 2.0;
-                    let call_pnl = call_premium_pnl - comm;
+                    // Force close the call at intrinsic value approximation
+                    let call_intrinsic = (underlying_close - opt.strike).max(0.0);
+                    let call_pnl = (opt.fill_price - call_intrinsic) * qty_f * mult_f
+                        - commission.calculate(qty) * 2.0;
                     realized_pnl += call_pnl;
 
                     trade_id += 1;
@@ -461,13 +465,14 @@ pub fn run_wheel_backtest(
                         opt.entry_date,
                         today,
                         opt.fill_price,
-                        0.0,
+                        call_intrinsic,
                         call_pnl,
                         ExitType::StopLoss,
                         opt.option_type,
                         opt.strike,
                         opt.expiration,
                         qty,
+                        mult,
                     ));
 
                     if let Some(ref mut ct) = cycle_tracker {
@@ -628,9 +633,14 @@ pub fn run_wheel_backtest(
     #[allow(unused_assignments)]
     if let Some(ref opt) = active_option {
         let last_day = trading_days.last().copied().unwrap_or(opt.expiration);
-        let premium_pnl = opt.fill_price * qty_f * mult_f;
+        // Use last known close to compute intrinsic value approximation
+        let last_close_for_opt = last_known_close.unwrap_or(opt.strike);
+        let intrinsic = match opt.option_type {
+            OptionType::Put => (opt.strike - last_close_for_opt).max(0.0),
+            OptionType::Call => (last_close_for_opt - opt.strike).max(0.0),
+        };
         let comm = commission.calculate(qty) * 2.0;
-        let option_pnl = premium_pnl - comm;
+        let option_pnl = (opt.fill_price - intrinsic) * qty_f * mult_f - comm;
         realized_pnl += option_pnl;
 
         trade_id += 1;
@@ -639,13 +649,14 @@ pub fn run_wheel_backtest(
             opt.entry_date,
             last_day,
             opt.fill_price,
-            0.0,
+            intrinsic,
             option_pnl,
             ExitType::Expiration,
             opt.option_type,
             opt.strike,
             opt.expiration,
             qty,
+            mult,
         ));
 
         if let Some(ref mut ct) = cycle_tracker {
@@ -984,18 +995,18 @@ mod tests {
         assert_eq!(cycle.calls_sold, 1);
         assert!(cycle.called_away_date.is_some());
 
-        // Cost basis = strike - premium = 100 - 3.25 = 96.75
+        // Cost basis = strike = 100.0 (premium is separate realized P&L)
         let cost_basis = cycle.cost_basis.unwrap();
         assert!(
-            (cost_basis - 96.75).abs() < 1e-10,
-            "Cost basis was {cost_basis}, expected 96.75"
+            (cost_basis - 100.0).abs() < 1e-10,
+            "Cost basis was {cost_basis}, expected 100.0"
         );
 
-        // Stock P&L = (call_strike - cost_basis) * qty * mult = (102 - 96.75) * 1 * 100 = 525
+        // Stock P&L = (call_strike - cost_basis) * qty * mult = (102 - 100) * 1 * 100 = 200
         let stock_pnl = cycle.stock_pnl.unwrap();
         assert!(
-            (stock_pnl - 525.0).abs() < 1e-10,
-            "Stock PnL was {stock_pnl}, expected 525.0"
+            (stock_pnl - 200.0).abs() < 1e-10,
+            "Stock PnL was {stock_pnl}, expected 200.0"
         );
     }
 
@@ -1011,8 +1022,8 @@ mod tests {
 
         let mut closes = BTreeMap::new();
         closes.insert(d1, 101.0);
-        closes.insert(exp_put, 98.0); // ITM -> assigned, cost basis = 100 - 3.25 = 96.75
-                                      // Stock drops to 80.0 — well below 96.75 * 0.90 = 87.075
+        closes.insert(exp_put, 98.0); // ITM -> assigned, cost basis = 100
+                                      // Stock drops to 80.0 — well below 100 * 0.90 = 90.0
         closes.insert(d_after, 80.0);
 
         let trading_days = vec![d1, exp_put, d_after];
@@ -1030,15 +1041,15 @@ mod tests {
             "Stock PnL should be negative after stop loss"
         );
 
-        // Stock PnL = (80 - 96.75) * 1 * 100 = -1675
+        // Stock PnL = (80 - 100) * 1 * 100 = -2000
         assert!(
-            (stock_pnl - (-1675.0)).abs() < 1e-10,
-            "Stock PnL was {stock_pnl}, expected -1675.0"
+            (stock_pnl - (-2000.0)).abs() < 1e-10,
+            "Stock PnL was {stock_pnl}, expected -2000.0"
         );
     }
 
     #[test]
-    fn cost_basis_equals_strike_minus_premium() {
+    fn cost_basis_equals_strike() {
         let d1 = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
         let exp_put = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
 
@@ -1056,12 +1067,11 @@ mod tests {
         let cycle = &result.cycles[0];
         assert!(cycle.assigned);
 
-        // mid(3.00, 3.50) = 3.25
-        // cost_basis = 100.0 - 3.25 = 96.75
+        // cost_basis = strike = 100.0 (premium is separate realized P&L)
         let cost_basis = cycle.cost_basis.unwrap();
         assert!(
-            (cost_basis - 96.75).abs() < 1e-10,
-            "Cost basis was {cost_basis}, expected 96.75"
+            (cost_basis - 100.0).abs() < 1e-10,
+            "Cost basis was {cost_basis}, expected 100.0"
         );
     }
 

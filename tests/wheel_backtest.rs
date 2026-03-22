@@ -138,18 +138,18 @@ fn wheel_full_cycle() {
         "Should have called_away_date"
     );
 
-    // Cost basis = strike - premium = 100 - mid(3.00, 3.50) = 100 - 3.25 = 96.75
+    // Cost basis = strike = 100 (premium is separate realized P&L)
     let cost_basis = cycle.cost_basis.unwrap();
     assert!(
-        (cost_basis - 96.75).abs() < 1e-10,
-        "Cost basis was {cost_basis}, expected 96.75"
+        (cost_basis - 100.0).abs() < 1e-10,
+        "Cost basis was {cost_basis}, expected 100.0"
     );
 
-    // Stock PnL = (call_strike - cost_basis) * qty * mult = (102 - 96.75) * 1 * 100 = 525
+    // Stock PnL = (call_strike - cost_basis) * qty * mult = (102 - 100) * 1 * 100 = 200
     let stock_pnl = cycle.stock_pnl.unwrap();
     assert!(
-        (stock_pnl - 525.0).abs() < 1e-10,
-        "Stock PnL was {stock_pnl}, expected 525.0"
+        (stock_pnl - 200.0).abs() < 1e-10,
+        "Stock PnL was {stock_pnl}, expected 200.0"
     );
 }
 
@@ -269,11 +269,11 @@ fn wheel_cost_basis_correct() {
     let cycle = &result.cycles[0];
     assert!(cycle.assigned);
 
-    // cost_basis = strike - fill_price = 100.0 - 3.25 = 96.75
+    // cost_basis = strike = 100.0 (premium is separate realized P&L)
     let cost_basis = cycle.cost_basis.unwrap();
     assert!(
-        (cost_basis - 96.75).abs() < 1e-10,
-        "Cost basis was {cost_basis}, expected 96.75"
+        (cost_basis - 100.0).abs() < 1e-10,
+        "Cost basis was {cost_basis}, expected 100.0"
     );
 
     // Also verify the cycle's put_premium = 3.25 * 1 * 100 = 325.0
