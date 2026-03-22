@@ -33,3 +33,4 @@ pub mod stock_backtest;
 pub mod strategies;
 pub mod sweep;
 pub mod walk_forward;
+pub mod wheel_backtest;
