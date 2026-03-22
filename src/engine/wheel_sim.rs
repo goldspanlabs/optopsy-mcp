@@ -183,7 +183,9 @@ fn wheel_trade_record(
 /// Run the wheel strategy backtest.
 ///
 /// Transitions: `SellingPuts` → `HoldingStock` → `SellingCalls` → repeat.
-/// Holds every option to expiration (no early exit on options).
+/// Options are normally held to expiration; however a stop-loss on the underlying
+/// stock can force-close an active covered call early, and end-of-data can close
+/// options before their expiration date.
 #[allow(clippy::too_many_lines, clippy::implicit_hasher)]
 pub fn run_wheel_backtest(
     options_df: &DataFrame,
@@ -651,7 +653,7 @@ pub fn run_wheel_backtest(
             opt.fill_price,
             intrinsic,
             option_pnl,
-            ExitType::Expiration,
+            ExitType::MaxHold,
             opt.option_type,
             opt.strike,
             opt.expiration,

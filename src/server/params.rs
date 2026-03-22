@@ -1472,7 +1472,7 @@ pub struct RunWheelBacktestParams {
     /// DTE for covered calls (e.g., target: 30, min: 14, max: 45)
     #[garde(dive)]
     pub call_dte: DteRange,
-    /// Never sell a call below the effective cost basis (strike - premium). Default: true.
+    /// Never sell a call below the raw strike cost basis (premium is tracked separately). Default: true.
     #[serde(default = "default_true")]
     #[garde(skip)]
     pub min_call_strike_at_cost: bool,

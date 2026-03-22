@@ -248,7 +248,7 @@ fn wheel_multiple_cycles() {
     }
 }
 
-/// Verify cost basis = put strike - premium received.
+/// Verify cost basis = put strike (premium is separate realized P&L).
 #[test]
 fn wheel_cost_basis_correct() {
     let entry_date = d(2024, 1, 2);
