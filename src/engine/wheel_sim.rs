@@ -54,6 +54,8 @@ pub enum WheelState {
 }
 
 /// Tracks shares acquired via put assignment.
+/// `cost_basis` is a rolling value: starts at `strike - put_premium`, then decreases
+/// by each call premium collected. Used for the `min_call_strike_at_cost` floor and stop-loss.
 #[derive(Debug, Clone)]
 pub struct StockHolding {
     pub cost_basis: f64,
@@ -269,7 +271,8 @@ pub fn run_wheel_backtest(
                             let option_pnl = premium_pnl - comm;
                             realized_pnl += option_pnl;
 
-                            let cost_basis = opt.strike;
+                            // Rolling cost basis: strike minus put premium per share
+                            let cost_basis = opt.strike - opt.fill_price;
 
                             trade_id += 1;
                             trade_log.push(wheel_trade_record(
@@ -460,6 +463,25 @@ pub fn run_wheel_backtest(
                             if let Some(ref mut ct) = cycle_tracker {
                                 ct.call_pnls.push(call_pnl);
                                 ct.call_premiums.push(opt.fill_price * qty_f * mult_f);
+                            }
+
+                            // Rolling cost basis: reduce by call premium per share
+                            if let Some(ref mut sh) = stock_holding {
+                                sh.cost_basis -= opt.fill_price;
+                                // Update cycle tracker with new cost basis
+                                if let Some(ref mut ct) = cycle_tracker {
+                                    ct.cost_basis = Some(sh.cost_basis);
+                                }
+                                // Rebuild call candidates if using cost basis floor
+                                if params.min_call_strike_at_cost {
+                                    call_candidates = find_call_candidates(
+                                        options_df,
+                                        &params.call_delta,
+                                        &params.call_dte,
+                                        params.min_bid_ask,
+                                        Some(sh.cost_basis),
+                                    )?;
+                                }
                             }
 
                             active_option = None;
@@ -1015,18 +1037,18 @@ mod tests {
         assert_eq!(cycle.calls_sold, 1);
         assert!(cycle.called_away_date.is_some());
 
-        // Cost basis = strike = 100.0 (premium is separate realized P&L)
+        // Rolling cost basis = strike - put premium = 100 - 3.25 = 96.75
         let cost_basis = cycle.cost_basis.unwrap();
         assert!(
-            (cost_basis - 100.0).abs() < 1e-10,
-            "Cost basis was {cost_basis}, expected 100.0"
+            (cost_basis - 96.75).abs() < 1e-10,
+            "Cost basis was {cost_basis}, expected 96.75"
         );
 
-        // Stock P&L = (call_strike - cost_basis) * qty * mult = (102 - 100) * 1 * 100 = 200
+        // Stock P&L = (call_strike - cost_basis) * qty * mult = (102 - 96.75) * 1 * 100 = 525
         let stock_pnl = cycle.stock_pnl.unwrap();
         assert!(
-            (stock_pnl - 200.0).abs() < 1e-10,
-            "Stock PnL was {stock_pnl}, expected 200.0"
+            (stock_pnl - 525.0).abs() < 1e-10,
+            "Stock PnL was {stock_pnl}, expected 525.0"
         );
     }
 
@@ -1061,15 +1083,15 @@ mod tests {
             "Stock PnL should be negative after stop loss"
         );
 
-        // Stock PnL = (80 - 100) * 1 * 100 = -2000
+        // Stock PnL = (80 - 96.75) * 1 * 100 = -1675 (cost basis = strike - put premium)
         assert!(
-            (stock_pnl - (-2000.0)).abs() < 1e-10,
-            "Stock PnL was {stock_pnl}, expected -2000.0"
+            (stock_pnl - (-1675.0)).abs() < 1e-10,
+            "Stock PnL was {stock_pnl}, expected -1675.0"
         );
     }
 
     #[test]
-    fn cost_basis_equals_strike() {
+    fn cost_basis_is_strike_minus_premium() {
         let d1 = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
         let exp_put = NaiveDate::from_ymd_opt(2024, 2, 16).unwrap();
 
@@ -1087,11 +1109,11 @@ mod tests {
         let cycle = &result.cycles[0];
         assert!(cycle.assigned);
 
-        // cost_basis = strike = 100.0 (premium is separate realized P&L)
+        // Rolling cost basis = strike - put premium = 100 - 3.25 = 96.75
         let cost_basis = cycle.cost_basis.unwrap();
         assert!(
-            (cost_basis - 100.0).abs() < 1e-10,
-            "Cost basis was {cost_basis}, expected 100.0"
+            (cost_basis - 96.75).abs() < 1e-10,
+            "Cost basis was {cost_basis}, expected 96.75"
         );
     }
 

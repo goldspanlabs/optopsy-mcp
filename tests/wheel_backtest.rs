@@ -138,18 +138,18 @@ fn wheel_full_cycle() {
         "Should have called_away_date"
     );
 
-    // Cost basis = strike = 100 (premium is separate realized P&L)
+    // Rolling cost basis = strike - put premium = 100 - 3.25 = 96.75
     let cost_basis = cycle.cost_basis.unwrap();
     assert!(
-        (cost_basis - 100.0).abs() < 1e-10,
-        "Cost basis was {cost_basis}, expected 100.0"
+        (cost_basis - 96.75).abs() < 1e-10,
+        "Cost basis was {cost_basis}, expected 96.75"
     );
 
-    // Stock PnL = (call_strike - cost_basis) * qty * mult = (102 - 100) * 1 * 100 = 200
+    // Stock PnL = (call_strike - cost_basis) * qty * mult = (102 - 96.75) * 1 * 100 = 525
     let stock_pnl = cycle.stock_pnl.unwrap();
     assert!(
-        (stock_pnl - 200.0).abs() < 1e-10,
-        "Stock PnL was {stock_pnl}, expected 200.0"
+        (stock_pnl - 525.0).abs() < 1e-10,
+        "Stock PnL was {stock_pnl}, expected 525.0"
     );
 }
 
@@ -248,7 +248,7 @@ fn wheel_multiple_cycles() {
     }
 }
 
-/// Verify cost basis = put strike (premium is separate realized P&L).
+/// Verify rolling cost basis = put strike - put premium per share.
 #[test]
 fn wheel_cost_basis_correct() {
     let entry_date = d(2024, 1, 2);
@@ -269,11 +269,11 @@ fn wheel_cost_basis_correct() {
     let cycle = &result.cycles[0];
     assert!(cycle.assigned);
 
-    // cost_basis = strike = 100.0 (premium is separate realized P&L)
+    // Rolling cost basis = strike - put premium = 100 - 3.25 = 96.75
     let cost_basis = cycle.cost_basis.unwrap();
     assert!(
-        (cost_basis - 100.0).abs() < 1e-10,
-        "Cost basis was {cost_basis}, expected 100.0"
+        (cost_basis - 96.75).abs() < 1e-10,
+        "Cost basis was {cost_basis}, expected 96.75"
     );
 
     // Also verify the cycle's put_premium = 3.25 * 1 * 100 = 325.0
