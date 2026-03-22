@@ -182,8 +182,9 @@ pub(crate) fn execute_adjustment(
                         ctx,
                         last_known,
                     );
-                    let info = (leg.side, leg.option_type, leg.qty, leg.expiration);
-                    pos.entry_cost -= leg.entry_price
+                    let old_entry_price = leg.entry_price;
+                    let info = (leg.side, leg.option_type, leg.qty, leg.expiration, cp, old_entry_price);
+                    pos.entry_cost -= old_entry_price
                         * leg.side.multiplier()
                         * f64::from(leg.qty)
                         * f64::from(pos.multiplier);
@@ -194,7 +195,13 @@ pub(crate) fn execute_adjustment(
                 None
             };
 
-            if let Some((leg_side, leg_opt_type, leg_qty, old_exp)) = roll_info {
+            if let Some((leg_side, leg_opt_type, leg_qty, old_exp, cp, old_entry_price)) = roll_info {
+                // Realize P&L for the leg being closed as part of the roll.
+                let realized_pnl = (cp - old_entry_price)
+                    * leg_side.multiplier()
+                    * f64::from(leg_qty)
+                    * f64::from(pos.multiplier);
+                state.realized_equity += realized_pnl;
                 // Scan the date index for available contracts on today
                 if let Some(found) = find_roll_target(
                     today,
