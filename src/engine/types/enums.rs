@@ -156,6 +156,10 @@ pub enum ExitType {
     Signal,
     /// Exit triggered when the absolute net position delta exceeds `exit_net_delta`.
     DeltaExit,
+    /// Short put expired ITM — shares assigned to the seller.
+    Assignment,
+    /// Short call expired ITM — shares called away from the holder.
+    CalledAway,
 }
 
 /// Label indicating whether a cashflow is a credit (received) or debit (paid).

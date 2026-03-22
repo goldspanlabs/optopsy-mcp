@@ -28,3 +28,4 @@ pub mod sweep_analysis;
 pub mod types;
 pub mod vectorized_sim;
 pub mod walk_forward;
+pub mod wheel_sim;

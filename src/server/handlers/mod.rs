@@ -10,3 +10,4 @@ pub mod optimization;
 pub mod portfolio;
 pub mod signals;
 pub mod stock_backtest;
+pub mod wheel_backtest;

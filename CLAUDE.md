@@ -106,7 +106,7 @@ Control runtime behavior and data sources:
 
 ## Architecture
 
-**optopsy-mcp** is an options and stock backtesting engine exposed as an MCP (Model Context Protocol) server via `rmcp 0.17`. It provides 23 tools for running event-driven backtests (options and equities), comparing strategies, parameter optimization, walk-forward analysis, statistical testing, risk analysis, factor attribution, portfolio optimization, and returning raw price data for charting.
+**optopsy-mcp** is an options and stock backtesting engine exposed as an MCP (Model Context Protocol) server via `rmcp 0.17`. It provides 24 tools for running event-driven backtests (options and equities), comparing strategies, parameter optimization, walk-forward analysis, statistical testing, risk analysis, factor attribution, portfolio optimization, and returning raw price data for charting.
 
 ### Transport (`src/main.rs`)
 - **stdio** (default): for local Claude Desktop integration
@@ -169,6 +169,7 @@ TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, tr
 - **`run_stock_backtest`** — Signal-driven stock backtest. `entry_signal` is REQUIRED (not optional).
   - **Intraday data cap**: When no `start_date` is specified and the interval is intraday, a default lookback cap is applied to avoid loading 10+ years of minute/hourly data: 1m=6mo, 5m=1yr, 10-30m=2yr, 1-4h=3yr. Override by passing explicit `start_date`.
 - **`portfolio_backtest`** — Run multiple stock strategies as a weighted portfolio. Min 2 strategies. Returns combined metrics + correlation matrix.
+- **`run_wheel_backtest`** — Wheel strategy: sell puts → assignment → sell covered calls → repeat. Separate put/call DTE and delta configuration, one cycle at a time, works with entry signals.
 
 ### Optimization & Validation Tools
 - **`parameter_sweep`** — Grid search across delta/DTE/slippage/signal combos with OOS validation. Preferred for optimization.
@@ -216,7 +217,7 @@ TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, tr
 - `LowestPremium` — Lowest entry cost
 - `First` — First matching entry
 
-**`ExitType`**: `Expiration`, `StopLoss`, `TakeProfit`, `MaxHold`, `DteExit`, `Adjustment`, `Signal`, `DeltaExit`
+**`ExitType`**: `Expiration`, `StopLoss`, `TakeProfit`, `MaxHold`, `DteExit`, `Adjustment`, `Signal`, `DeltaExit`, `Assignment`, `CalledAway`
 
 **`Slippage`**:
 - `Mid` — Mid-price entry/exit

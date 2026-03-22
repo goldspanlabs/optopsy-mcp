@@ -15,6 +15,7 @@ pub mod portfolio;
 pub mod risk;
 pub mod signals;
 pub mod stats;
+pub mod wheel;
 
 pub use backtest::*;
 pub use data::*;
@@ -25,3 +26,4 @@ pub use portfolio::*;
 pub use risk::*;
 pub use signals::*;
 pub use stats::*;
+pub use wheel::*;

@@ -33,6 +33,7 @@ use crate::tools::response_types::{
     ListSymbolsResponse, MonteCarloResponse, PermutationTestResponse, PortfolioBacktestResponse,
     PortfolioOptimizeResponse, RawPricesResponse, RegimeDetectResponse, RollingMetricResponse,
     StockBacktestResponse, StrategiesResponse, SweepResponse, WalkForwardResponse,
+    WheelBacktestResponse,
 };
 use params::{
     resolve_leg_deltas, tool_err, validation_err, AggregatePricesParams, BacktestBaseParams,
@@ -40,7 +41,8 @@ use params::{
     CorrelateParams, DistributionParams, DrawdownAnalysisParams, FactorAttributionParams,
     GetRawPricesParams, ListSymbolsParams, MonteCarloParams, ParameterSweepParams,
     PermutationTestParams, PortfolioBacktestParams, PortfolioOptimizeParams, RegimeDetectParams,
-    RollingMetricParams, RunBacktestParams, RunStockBacktestParams, WalkForwardParams,
+    RollingMetricParams, RunBacktestParams, RunStockBacktestParams, RunWheelBacktestParams,
+    WalkForwardParams,
 };
 use sanitize::{SanitizedJson, SanitizedResult};
 
@@ -856,6 +858,50 @@ impl OptopsyServer {
                     .validate()
                     .map_err(|e| validation_err("run_stock_backtest", e))?;
                 handlers::stock_backtest::execute(self, params).await
+            }
+            .await,
+        )
+    }
+
+    /// Wheel strategy backtest: sell puts → get assigned → sell covered calls → repeat.
+    ///
+    /// **When to use**: Backtest the wheel (cash-secured put → covered call rotation) on a single symbol.
+    ///
+    /// **Example call**:
+    /// ```json
+    /// {
+    ///   "symbol": "SPY",
+    ///   "put_delta": {"target": 0.30, "min": 0.20, "max": 0.40},
+    ///   "put_dte": {"target": 45, "min": 30, "max": 60},
+    ///   "call_delta": {"target": 0.30, "min": 0.20, "max": 0.40},
+    ///   "call_dte": {"target": 30, "min": 14, "max": 45},
+    ///   "capital": 100000,
+    ///   "entry_signal": "VIX / VIX3M < 1.0"
+    /// }
+    /// ```
+    ///
+    /// **Output**: Trade log, equity curve, performance metrics, plus wheel-specific
+    /// cycle analytics (assignment rate, calls per assignment, premium breakdown).
+    #[tool(name = "run_wheel_backtest", annotations(read_only_hint = true))]
+    async fn run_wheel_backtest(
+        &self,
+        Parameters(params): Parameters<RunWheelBacktestParams>,
+    ) -> SanitizedResult<WheelBacktestResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("run_wheel_backtest", e))?;
+
+                tracing::info!(
+                    symbol = %params.symbol,
+                    put_delta_target = params.put_delta.target,
+                    call_delta_target = params.call_delta.target,
+                    capital = params.capital,
+                    "Wheel backtest request received"
+                );
+
+                handlers::wheel_backtest::execute(self, params).await
             }
             .await,
         )

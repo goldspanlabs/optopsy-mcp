@@ -9,6 +9,7 @@ mod data;
 mod hypothesis;
 mod portfolio;
 mod stats;
+mod wheel;
 
 pub use advanced::{
     format_permutation_test, format_permutation_test_stock, format_sweep, format_walk_forward,
@@ -21,3 +22,4 @@ pub use stats::{
     format_aggregate_prices, format_correlate, format_distribution, format_regime_detect,
     format_rolling_metric,
 };
+pub use wheel::format_wheel_backtest;

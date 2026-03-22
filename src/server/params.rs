@@ -1422,6 +1422,108 @@ pub struct BenchmarkAnalysisParams {
     pub years: u32,
 }
 
+// ── Wheel strategy helpers ────────────────────────────────────────────────────
+
+/// Return `true` — default for boolean flags that should be on by default.
+pub(crate) fn default_true() -> bool {
+    true
+}
+
+/// Return the default starting capital for the wheel strategy (100,000).
+pub(crate) fn default_wheel_capital() -> f64 {
+    100_000.0
+}
+
+/// Parameters for the `run_wheel_backtest` tool.
+///
+/// The wheel strategy: sell puts → get assigned → sell covered calls → repeat.
+///
+/// **Example call**:
+/// ```json
+/// {
+///   "symbol": "SPY",
+///   "put_delta": {"target": 0.30, "min": 0.20, "max": 0.40},
+///   "put_dte": {"target": 45, "min": 30, "max": 60},
+///   "call_delta": {"target": 0.30, "min": 0.20, "max": 0.40},
+///   "call_dte": {"target": 30, "min": 14, "max": 45},
+///   "capital": 100000,
+///   "entry_signal": "VIX / VIX3M < 1.0"
+/// }
+/// ```
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+#[garde(context(()))]
+pub struct RunWheelBacktestParams {
+    /// Ticker symbol (e.g., "SPY", "AAPL")
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
+    pub symbol: String,
+
+    // ── Put phase ──
+    /// Delta target for short puts (e.g., target: 0.30, min: 0.20, max: 0.40)
+    #[garde(dive)]
+    pub put_delta: TargetRange,
+    /// DTE for short puts (e.g., target: 45, min: 30, max: 60)
+    #[garde(dive)]
+    pub put_dte: DteRange,
+
+    // ── Call phase ──
+    /// Delta target for covered calls (e.g., target: 0.30, min: 0.20, max: 0.40)
+    #[garde(dive)]
+    pub call_delta: TargetRange,
+    /// DTE for covered calls (e.g., target: 30, min: 14, max: 45)
+    #[garde(dive)]
+    pub call_dte: DteRange,
+    /// Never sell a call below the raw strike cost basis (premium is tracked separately). Default: true.
+    #[serde(default = "default_true")]
+    #[garde(skip)]
+    pub min_call_strike_at_cost: bool,
+
+    // ── Shared ──
+    /// Starting capital in dollars (default: 100,000)
+    #[serde(default = "default_wheel_capital")]
+    #[garde(range(min = 0.01))]
+    pub capital: f64,
+    /// Contracts per cycle (1 contract = 100 shares). Default: 1.
+    #[serde(default = "default_quantity")]
+    #[garde(range(min = 1))]
+    pub quantity: i32,
+    /// Options multiplier (default: 100)
+    #[serde(default = "default_multiplier")]
+    #[garde(range(min = 1))]
+    pub multiplier: i32,
+    /// Slippage model (default: Spread)
+    #[serde(default)]
+    #[garde(dive)]
+    pub slippage: Slippage,
+    /// Commission structure
+    #[serde(default)]
+    #[garde(dive)]
+    pub commission: Option<Commission>,
+    /// Stop loss on stock position as fraction of cost basis (e.g., 0.10 = 10%).
+    #[garde(inner(range(min = 0.01)))]
+    pub stop_loss: Option<f64>,
+    /// Minimum bid/ask threshold for quote filtering. Default: 0.05.
+    #[serde(default = "default_min_bid_ask")]
+    #[garde(range(min = 0.0))]
+    pub min_bid_ask: f64,
+
+    // ── Signal ──
+    /// Entry signal — gates both put and call entries.
+    /// Pass a formula string like "VIX / VIX3M < 1.0". Omit for always-active.
+    #[serde(default)]
+    #[garde(skip)]
+    pub entry_signal: Option<crate::signals::registry::SignalSpec>,
+
+    // ── Date range ──
+    /// Start date (YYYY-MM-DD). Optional — defaults to first available data.
+    #[serde(default)]
+    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))]
+    pub start_date: Option<String>,
+    /// End date (YYYY-MM-DD). Optional — defaults to last available data.
+    #[serde(default)]
+    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")), custom(validate_end_date_after_start(&self.start_date)))]
+    pub end_date: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
