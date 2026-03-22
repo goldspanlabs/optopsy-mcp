@@ -47,12 +47,25 @@ pub(crate) fn trigger_fires(
     }
 }
 
+/// Captures state from the old leg when a `RollToTarget` replaces it.
+struct RollLegInfo {
+    side: Side,
+    option_type: OptionType,
+    qty: i32,
+    expiration: NaiveDate,
+    /// Price at which the old leg was closed (used for realized P&L).
+    close_price: f64,
+    /// Original entry price of the old leg.
+    entry_price: f64,
+}
+
 /// Returns the `position_id` encoded in an `AdjustmentAction`.
 /// A value of `0` is treated as a wildcard (matches any position).
 pub(crate) fn action_position_id(action: &AdjustmentAction) -> usize {
     match action {
         AdjustmentAction::Close { position_id, .. }
         | AdjustmentAction::Roll { position_id, .. }
+        | AdjustmentAction::RollToTarget { position_id, .. }
         | AdjustmentAction::Add { position_id, .. } => *position_id,
     }
 }
@@ -159,6 +172,113 @@ pub(crate) fn execute_adjustment(
                 }
             }
         }
+        AdjustmentAction::RollToTarget {
+            leg_index,
+            target_delta,
+            target_dte,
+            ..
+        } => {
+            // Close the old leg, then dynamically find the best replacement
+            // by scanning the price table for contracts matching the target delta/DTE.
+            let roll_info = if let Some(leg) = pos.legs.get_mut(*leg_index) {
+                if leg.closed {
+                    None
+                } else {
+                    let exit_side = leg.side.flip();
+                    let cp = lookup_fill_price(
+                        leg.expiration,
+                        leg.strike,
+                        leg.option_type,
+                        exit_side,
+                        today,
+                        ctx,
+                        last_known,
+                    );
+                    let old_entry_price = leg.entry_price;
+                    let info = RollLegInfo {
+                        side: leg.side,
+                        option_type: leg.option_type,
+                        qty: leg.qty,
+                        expiration: leg.expiration,
+                        close_price: cp,
+                        entry_price: old_entry_price,
+                    };
+                    pos.entry_cost -= old_entry_price
+                        * leg.side.multiplier()
+                        * f64::from(leg.qty)
+                        * f64::from(pos.multiplier);
+                    close_leg(leg, today, cp);
+                    Some(info)
+                }
+            } else {
+                None
+            };
+
+            if let Some(ri) = roll_info {
+                // Scan the date index for available contracts on today.
+                if let Some(found) = find_roll_target(
+                    today,
+                    ri.option_type,
+                    target_delta,
+                    target_dte,
+                    ctx,
+                    last_known,
+                ) {
+                    // Realize P&L for the closed leg. The rolled-out leg will no longer
+                    // appear in pos.legs, so close_position won't account for it.
+                    let realized_pnl = (ri.close_price - ri.entry_price)
+                        * ri.side.multiplier()
+                        * f64::from(ri.qty)
+                        * f64::from(pos.multiplier);
+                    state.realized_equity += realized_pnl;
+
+                    // Debit the full round-trip commission for the rolled-out leg (entry +
+                    // exit), since close_position only charges commission for legs that are
+                    // still present in pos.legs when the position eventually closes.
+                    let commission = ctx.params.commission.clone().unwrap_or_default();
+                    state.realized_equity -= commission.calculate(ri.qty.abs()) * 2.0;
+
+                    let (new_strike, new_expiration) = found;
+                    let ep = lookup_fill_price(
+                        new_expiration,
+                        new_strike,
+                        ri.option_type,
+                        ri.side,
+                        today,
+                        ctx,
+                        last_known,
+                    );
+                    pos.entry_cost +=
+                        ep * ri.side.multiplier() * f64::from(ri.qty) * f64::from(pos.multiplier);
+                    let new_leg = PositionLeg {
+                        leg_index: *leg_index,
+                        side: ri.side,
+                        option_type: ri.option_type,
+                        strike: new_strike,
+                        expiration: new_expiration,
+                        entry_price: ep,
+                        qty: ri.qty,
+                        closed: false,
+                        close_price: None,
+                        close_date: None,
+                    };
+                    if let Some(slot) = pos.legs.get_mut(*leg_index) {
+                        *slot = new_leg;
+                    } else {
+                        pos.legs.push(new_leg);
+                    }
+                    if pos.expiration == ri.expiration {
+                        pos.expiration = new_expiration;
+                    } else if pos.secondary_expiration == Some(ri.expiration) {
+                        pos.secondary_expiration = Some(new_expiration);
+                    }
+                }
+                // If no target found, the old leg is closed but no replacement opens.
+                // P&L and commission for the closed leg are handled by
+                // finalize_if_all_closed via mark_to_market when all legs are closed.
+                finalize_if_all_closed(pos, today, ctx, last_known, state);
+            }
+        }
         AdjustmentAction::Add {
             leg: cand_leg,
             side,
@@ -189,6 +309,78 @@ pub(crate) fn execute_adjustment(
             pos.entry_cost += ep * side.multiplier() * f64::from(*qty) * f64::from(pos.multiplier);
         }
     }
+}
+
+/// Scan the price table for the best roll target on `today`: a contract matching
+/// the given option type within the DTE and delta range, closest to `target_delta.target`.
+///
+/// Returns `(strike, expiration)` of the best candidate, or `None` if nothing qualifies.
+fn find_roll_target(
+    today: NaiveDate,
+    option_type: OptionType,
+    target_delta: &TargetRange,
+    target_dte: &DteRange,
+    ctx: &SimContext,
+    last_known: &LastKnown,
+) -> Option<(f64, NaiveDate)> {
+    let keys = ctx.date_index.get(&today)?;
+
+    let mut best: Option<(f64, NaiveDate, f64)> = None; // (strike, exp, delta_dist)
+
+    for key in keys {
+        // key = (quote_date, expiration, strike, option_type)
+        if key.3 != option_type {
+            continue;
+        }
+
+        let dte = (key.1 - today).num_days() as i32;
+        if dte < target_dte.min || dte > target_dte.max {
+            continue;
+        }
+
+        let Some(snap) = ctx
+            .price_table
+            .get(key)
+            .or_else(|| last_known.get(&(key.1, key.2, key.3)))
+        else {
+            continue;
+        };
+
+        // Filter by valid quotes (bid/ask > 0)
+        if snap.bid <= 0.0 || snap.ask <= 0.0 {
+            continue;
+        }
+
+        let abs_delta = snap.delta.abs();
+        if abs_delta < target_delta.min || abs_delta > target_delta.max {
+            continue;
+        }
+
+        let delta_dist = (abs_delta - target_delta.target).abs();
+
+        // Among near-equal delta distances, prefer the DTE closest to target
+        let is_better = match &best {
+            None => true,
+            Some((_, _, best_dist)) => {
+                if delta_dist < *best_dist - f64::EPSILON {
+                    true
+                } else if (delta_dist - *best_dist).abs() < f64::EPSILON {
+                    // Tiebreak on DTE proximity
+                    (dte - target_dte.target).abs()
+                        < ((best.as_ref().unwrap().1 - today).num_days() as i32 - target_dte.target)
+                            .abs()
+                } else {
+                    false
+                }
+            }
+        };
+
+        if is_better {
+            best = Some((key.2.into_inner(), key.1, delta_dist));
+        }
+    }
+
+    best.map(|(strike, exp, _)| (strike, exp))
 }
 
 /// If all legs of a position are closed, mark the position as closed with Adjustment exit.

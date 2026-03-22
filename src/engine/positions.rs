@@ -446,8 +446,10 @@ mod tests {
         let last_known = LastKnown::new();
         let params = make_test_params(Slippage::Mid, 100);
         let sd = make_test_strategy_def();
+        let empty_idx = DateIndex::new();
         let ctx = SimContext {
             price_table: &table,
+            date_index: &empty_idx,
             params: &params,
             strategy_def: &sd,
             ohlcv_closes: None,
@@ -504,8 +506,10 @@ mod tests {
         let last_known = LastKnown::new();
         let params = make_test_params(Slippage::Mid, 100);
         let sd = make_test_strategy_def();
+        let empty_idx = DateIndex::new();
         let ctx = SimContext {
             price_table: &table,
+            date_index: &empty_idx,
             params: &params,
             strategy_def: &sd,
             ohlcv_closes: None,
@@ -545,8 +549,10 @@ mod tests {
         let last_known = LastKnown::new();
         let params = make_test_params(Slippage::Mid, 100);
         let sd = make_test_strategy_def();
+        let empty_idx = DateIndex::new();
         let ctx = SimContext {
             price_table: &table,
+            date_index: &empty_idx,
             params: &params,
             strategy_def: &sd,
             ohlcv_closes: None,
@@ -625,8 +631,10 @@ mod tests {
         let position = make_stock_leg_position();
         let params = make_test_params(Slippage::Mid, 100);
         let sd = make_test_strategy_def();
+        let empty_idx = DateIndex::new();
         let ctx = SimContext {
             price_table: &table,
+            date_index: &empty_idx,
             params: &params,
             strategy_def: &sd,
             ohlcv_closes: Some(&closes),
@@ -645,8 +653,10 @@ mod tests {
         let position = make_stock_leg_position();
         let params = make_test_params(Slippage::Mid, 100);
         let sd = make_test_strategy_def();
+        let empty_idx = DateIndex::new();
         let ctx = SimContext {
             price_table: &table,
+            date_index: &empty_idx,
             params: &params,
             strategy_def: &sd,
             ohlcv_closes: Some(&closes),
@@ -663,8 +673,10 @@ mod tests {
         let position = make_stock_leg_position();
         let params = make_test_params(Slippage::Mid, 100);
         let sd = make_test_strategy_def();
+        let empty_idx = DateIndex::new();
         let ctx = SimContext {
             price_table: &table,
+            date_index: &empty_idx,
             params: &params,
             strategy_def: &sd,
             ohlcv_closes: None,
@@ -682,8 +694,10 @@ mod tests {
         let mut position = make_stock_leg_position();
         let params = make_test_params(Slippage::Mid, 100);
         let sd = make_test_strategy_def();
+        let empty_idx = DateIndex::new();
         let ctx = SimContext {
             price_table: &table,
+            date_index: &empty_idx,
             params: &params,
             strategy_def: &sd,
             ohlcv_closes: Some(&closes),
@@ -703,8 +717,10 @@ mod tests {
         let mut position = make_stock_leg_position();
         let params = make_test_params(Slippage::Mid, 100);
         let sd = make_test_strategy_def();
+        let empty_idx = DateIndex::new();
         let ctx = SimContext {
             price_table: &table,
+            date_index: &empty_idx,
             params: &params,
             strategy_def: &sd,
             ohlcv_closes: Some(&closes),
@@ -721,8 +737,10 @@ mod tests {
         let last_known = LastKnown::new();
         let params = make_test_params(Slippage::Mid, 100);
         let sd = make_test_strategy_def();
+        let empty_idx = DateIndex::new();
         let ctx = SimContext {
             price_table: &table,
+            date_index: &empty_idx,
             params: &params,
             strategy_def: &sd,
             ohlcv_closes: None,
@@ -745,8 +763,10 @@ mod tests {
         let last_known = LastKnown::new();
         let params = make_test_params(Slippage::Mid, 100);
         let sd = make_test_strategy_def();
+        let empty_idx = DateIndex::new();
         let ctx = SimContext {
             price_table: &table,
+            date_index: &empty_idx,
             params: &params,
             strategy_def: &sd,
             ohlcv_closes: None,
@@ -806,8 +826,10 @@ mod tests {
         let strategy_def = crate::strategies::find_strategy("covered_call").unwrap();
         let mut params = make_test_params(Slippage::Mid, 100);
         params.strategy = "covered_call".to_string();
+        let empty_idx = DateIndex::new();
         let ctx = SimContext {
             price_table: &table,
+            date_index: &empty_idx,
             params: &params,
             strategy_def: &strategy_def,
             ohlcv_closes: None,
@@ -843,8 +865,10 @@ mod tests {
         let mut params = make_test_params(Slippage::Mid, 100);
         params.strategy = "covered_call".to_string();
         let closes = make_ohlcv_closes();
+        let empty_idx = DateIndex::new();
         let ctx = SimContext {
             price_table: &table,
+            date_index: &empty_idx,
             params: &params,
             strategy_def: &strategy_def,
             ohlcv_closes: Some(&closes),
@@ -886,8 +910,10 @@ mod tests {
         let strategy_def = crate::strategies::find_strategy("short_call").unwrap();
         let mut params = make_test_params(Slippage::Mid, 100);
         params.strategy = "short_call".to_string();
+        let empty_idx = DateIndex::new();
         let ctx = SimContext {
             price_table: &table,
+            date_index: &empty_idx,
             params: &params,
             strategy_def: &strategy_def,
             ohlcv_closes: None,

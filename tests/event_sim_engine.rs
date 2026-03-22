@@ -154,6 +154,7 @@ fn run_event_loop_single_trade() {
     let (_trade_log, equity_curve, _) = {
         let ctx = SimContext {
             price_table: &table,
+            date_index: &date_idx,
             params: &params,
             strategy_def: &strategy_def,
             ohlcv_closes: None,
@@ -264,6 +265,7 @@ fn run_event_loop_stop_loss() {
     let (trade_log, _, _) = {
         let ctx = SimContext {
             price_table: &table,
+            date_index: &date_idx,
             params: &params,
             strategy_def: &strategy_def,
             ohlcv_closes: None,
@@ -379,6 +381,7 @@ fn run_event_loop_take_profit() {
     let (trade_log, _, _) = {
         let ctx = SimContext {
             price_table: &table,
+            date_index: &date_idx,
             params: &params,
             strategy_def: &strategy_def,
             ohlcv_closes: None,
@@ -489,6 +492,7 @@ fn run_event_loop_max_positions() {
     let (trade_log, _, _) = {
         let ctx = SimContext {
             price_table: &table,
+            date_index: &date_idx,
             params: &params,
             strategy_def: &strategy_def,
             ohlcv_closes: None,
@@ -569,6 +573,7 @@ fn run_event_loop_daily_equity() {
     let (_, equity_curve, _) = {
         let ctx = SimContext {
             price_table: &table,
+            date_index: &date_idx,
             params: &params,
             strategy_def: &strategy_def,
             ohlcv_closes: None,
@@ -967,6 +972,7 @@ fn stagger_days_asserts_trade_count() {
     let (trades_no_stagger, _, _) = {
         let ctx = SimContext {
             price_table: &table,
+            date_index: &date_idx,
             params: &params_no_stagger,
             strategy_def: &strategy_def,
             ohlcv_closes: None,
@@ -981,6 +987,7 @@ fn stagger_days_asserts_trade_count() {
     let (trades_stagger, _, _) = {
         let ctx = SimContext {
             price_table: &table,
+            date_index: &date_idx,
             params: &params_stagger,
             strategy_def: &strategy_def,
             ohlcv_closes: None,
@@ -1365,6 +1372,7 @@ fn delta_exit_triggers_when_threshold_exceeded() {
     let (trade_log, _, _) = {
         let ctx = SimContext {
             price_table: &table,
+            date_index: &date_idx,
             params: &params,
             strategy_def: &strategy_def,
             ohlcv_closes: None,
@@ -1468,6 +1476,7 @@ fn delta_exit_does_not_trigger_within_threshold() {
     let (trade_log, _, _) = {
         let ctx = SimContext {
             price_table: &table,
+            date_index: &date_idx,
             params: &params,
             strategy_def: &strategy_def,
             ohlcv_closes: None,

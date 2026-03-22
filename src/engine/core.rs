@@ -559,6 +559,7 @@ fn run_event_loop_path(
 
     let ctx = crate::engine::sim_types::SimContext {
         price_table: &price_table,
+        date_index: &date_index,
         params,
         strategy_def,
         ohlcv_closes: ohlcv_closes.as_ref(),
