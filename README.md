@@ -21,6 +21,15 @@ Run event-driven simulations across 32 built-in options strategies — from simp
 "Run a short put selling strategy with RSI < 30 as the entry filter"
 ```
 
+### Run the Wheel
+
+Simulate the full wheel strategy — sell puts, get assigned, sell covered calls, get called away, repeat. Separate put/call DTE and delta configuration with cycle-level analytics.
+
+```
+"Run the wheel on SPY with 30-delta puts at 45 DTE and 30-delta calls at 30 DTE"
+"Wheel strategy on SPY with VIX/VIX3M < 1.0 as entry filter"
+```
+
 ### Backtest Stock Strategies
 
 Signal-driven stock backtesting on OHLCV data. Define entry/exit conditions using the formula DSL and simulate long or short equity positions.
@@ -86,6 +95,7 @@ Create entry/exit signals with a formula DSL covering 67 functions (momentum, tr
 | `build_signal` | Create, validate, save, rename, search, and manage custom signals (CRUD + catalog) |
 | `run_options_backtest` | Full event-driven options simulation with trade log and metrics |
 | `run_stock_backtest` | Signal-driven stock/equity backtest on OHLCV data |
+| `run_wheel_backtest` | Wheel strategy: sell puts → assignment → covered calls → repeat |
 | `parameter_sweep` | Grid search across delta/DTE/slippage/signal combos with OOS validation |
 | `compare_strategies` | Side-by-side comparison of multiple strategies |
 | `walk_forward` | Rolling walk-forward analysis with train/test windows |
