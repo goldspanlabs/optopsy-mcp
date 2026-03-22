@@ -840,7 +840,7 @@ mod tests {
     // Helpers for state machine tests
     // -----------------------------------------------------------------------
 
-    /// Create a simple options DataFrame with puts and calls on specific dates.
+    /// Create a simple options `DataFrame` with puts and calls on specific dates.
     ///
     /// Layout:
     /// - Day 1 (Jan 2): put at strike 100, bid 3.00 / ask 3.50, delta -0.30, exp Feb 16
@@ -1019,7 +1019,7 @@ mod tests {
         let result = run_wheel_backtest(&df, &closes, &params, None, &trading_days).unwrap();
 
         // Should have at least 2 trades: put assignment + stop loss exit
-        assert!(result.trade_log.len() >= 1);
+        assert!(!result.trade_log.is_empty());
 
         // Last cycle should have stock_pnl < 0
         let last_cycle = result.cycles.last().unwrap();
@@ -1089,7 +1089,7 @@ mod tests {
     // Original candidate-finding tests
     // -----------------------------------------------------------------------
 
-    /// Build a minimal options DataFrame for testing.
+    /// Build a minimal options `DataFrame` for testing.
     fn make_test_df() -> DataFrame {
         let dates = vec![
             NaiveDate::from_ymd_opt(2024, 1, 15)
@@ -1183,7 +1183,7 @@ mod tests {
         let result = find_put_candidates(&df, &delta, &dte, 0.0).unwrap();
 
         // All returned candidates must be puts
-        for (_date, candidates) in &result {
+        for candidates in result.values() {
             for c in candidates {
                 assert_eq!(c.option_type, OptionType::Put);
             }
@@ -1208,7 +1208,7 @@ mod tests {
 
         let result = find_call_candidates(&df, &delta, &dte, 0.0, None).unwrap();
 
-        for (_date, candidates) in &result {
+        for candidates in result.values() {
             for c in candidates {
                 assert_eq!(c.option_type, OptionType::Call);
             }
@@ -1233,7 +1233,7 @@ mod tests {
 
         // Set min_strike above all call strikes (105.0) — should still find the 105 call
         let result = find_call_candidates(&df, &delta, &dte, 0.0, Some(105.0)).unwrap();
-        for (_date, candidates) in &result {
+        for candidates in result.values() {
             for c in candidates {
                 assert!(c.strike >= 105.0);
             }

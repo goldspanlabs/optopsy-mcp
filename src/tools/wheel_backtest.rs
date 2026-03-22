@@ -18,6 +18,7 @@ use crate::tools::response_types::UnderlyingPrice;
 use super::ai_format;
 
 /// Execute the wheel backtest engine and format the result with metrics, cycles, and assessment.
+#[allow(clippy::implicit_hasher)]
 pub fn execute(
     options_df: &polars::prelude::DataFrame,
     ohlcv_closes: &BTreeMap<NaiveDate, f64>,
