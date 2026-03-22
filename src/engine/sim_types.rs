@@ -12,7 +12,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
-use super::types::{BacktestParams, ExitType, OptionType, Side, StrategyDef, TradeRecord};
+use super::types::{
+    BacktestParams, DteRange, ExitType, OptionType, Side, StrategyDef, TargetRange, TradeRecord,
+};
 
 /// Key for looking up option quotes: (`quote_date`, expiration, strike, `option_type`)
 pub type PriceKey = (NaiveDate, NaiveDate, OrderedFloat<f64>, OptionType);
@@ -110,6 +112,15 @@ pub enum AdjustmentAction {
         new_strike: f64,
         new_expiration: NaiveDate,
     },
+    /// Dynamic roll: close the old leg and open a new one at the closest
+    /// available strike matching the target delta/DTE on the roll date.
+    /// The engine scans the price table for valid contracts at execution time.
+    RollToTarget {
+        position_id: usize,
+        leg_index: usize,
+        target_delta: TargetRange,
+        target_dte: DteRange,
+    },
     Add {
         position_id: usize,
         leg: CandidateLeg,
@@ -141,6 +152,7 @@ pub type LastKnown = HashMap<(NaiveDate, OrderedFloat<f64>, OptionType), QuoteSn
 /// Immutable simulation context shared across the event loop.
 pub struct SimContext<'a> {
     pub price_table: &'a PriceTable,
+    pub date_index: &'a DateIndex,
     pub params: &'a BacktestParams,
     pub strategy_def: &'a StrategyDef,
     pub ohlcv_closes: Option<&'a BTreeMap<NaiveDate, f64>>,

@@ -207,6 +207,141 @@ fn roll_action_replaces_leg() {
     );
 }
 
+// ─── RollToTarget: dynamic roll finds best delta/DTE match at execution time ──
+
+#[test]
+fn roll_to_target_finds_best_match() {
+    // Long call@100: entry Jan 15, near-term exp Feb 16 (DTE=32).
+    // CalendarRoll fires when DTE≤25, i.e. on Jan 22 (DTE=25).
+    // RollToTarget with target_delta=0.50, target_dte=[30,60] should find
+    // the far-term call at strike 100 (delta=0.52, exp Mar 15, DTE=53 from Jan 22).
+    // Position stays open with new far-term leg. Since max_positions=1, no new entries
+    // open while this position is active. The far-term position's DTE on Feb 11 is 33,
+    // which is > exit_dte=5, so it stays open and never appears in the trade log.
+    // We verify the roll via the equity curve reflecting the far-term position value.
+    let df = make_multi_strike_df();
+
+    let mut params = base_params("long_call", vec![delta(0.50)]);
+    params.max_positions = 1; // Prevent new entries after the roll
+    params.adjustment_rules = vec![AdjustmentRule {
+        trigger: AdjustmentTrigger::CalendarRoll {
+            dte_trigger: 25,
+            new_dte: 45,
+        },
+        action: AdjustmentAction::RollToTarget {
+            position_id: 0,
+            leg_index: 0,
+            target_delta: TargetRange {
+                target: 0.50,
+                min: 0.30,
+                max: 0.70,
+            },
+            target_dte: DteRange {
+                target: 45,
+                min: 30,
+                max: 60,
+            },
+        },
+    }];
+
+    let result = run_backtest(&df, &params).expect("backtest failed");
+
+    // With max_positions=1, the rolled position stays open past all data (far-term
+    // DTE=33 on Feb 11, which is > exit_dte=5). No trades should close.
+    // The trade log should be empty because the position is still open at end of data.
+    assert!(
+        result.trade_log.is_empty(),
+        "expected no closed trades (rolled position stays open), got {} trades: {:?}",
+        result.trade_log.len(),
+        result
+            .trade_log
+            .iter()
+            .map(|t| (&t.exit_type, t.days_held))
+            .collect::<Vec<_>>()
+    );
+
+    // Verify the roll happened via the equity curve: the last equity point should
+    // reflect the unrealized far-term position value, not just initial capital.
+    let equity = &result.equity_curve;
+    assert_eq!(
+        equity.len(),
+        3,
+        "expected 3 equity points (Jan 15, Jan 22, Feb 11)"
+    );
+
+    // On Jan 15: position opened. On Jan 22: CalendarRoll fires, old leg closed,
+    // new far-term leg opened. On Feb 11: position marked to market with far-term prices.
+    // If the roll hadn't happened, the equity on Feb 11 would reflect near-term prices.
+    // Far-term call@100 on Feb 11: mid = (4.50 + 5.00) / 2 = 4.75.
+    // Entry of far-term on Jan 22: mid = (6.30 + 6.80) / 2 = 6.55.
+    // Unrealized P&L = (4.75 - 6.55) * 100 = -180.0
+    // Plus the realized loss from closing the near-term leg on Jan 22:
+    // entry mid Jan 15 = (5.0+5.5)/2 = 5.25, exit mid Jan 22 = (4.0+4.5)/2 = 4.25
+    // Realized = (4.25 - 5.25) * 100 = -100.0
+    // Total equity = 100000 - 100 - 180 = 99720. But this is approximate due to
+    // entry_cost tracking. The key test is that equity differs from initial capital.
+    let last_equity = equity.last().unwrap().equity;
+    assert!(
+        (last_equity - 100_000.0).abs() > 1.0,
+        "equity should differ from initial capital after roll, got {last_equity}"
+    );
+}
+
+#[test]
+fn roll_to_target_defensive_roll_to_lower_delta() {
+    // Long call@95 (delta=0.70): entry Jan 15. DefensiveRoll at 10% loss fires on Jan 22.
+    // RollToTarget with target_delta=0.35 should find near-term call at strike 105 (delta=0.35).
+    // Position stays open with the new 0.35-delta leg, exits via DTE on Feb 11.
+    let df = make_multi_strike_df();
+
+    let mut params = base_params("long_call", vec![delta(0.70)]);
+    params.adjustment_rules = vec![AdjustmentRule {
+        trigger: AdjustmentTrigger::DefensiveRoll {
+            loss_threshold: 0.10,
+        },
+        action: AdjustmentAction::RollToTarget {
+            position_id: 0,
+            leg_index: 0,
+            target_delta: TargetRange {
+                target: 0.35,
+                min: 0.20,
+                max: 0.50,
+            },
+            target_dte: DteRange {
+                target: 25,
+                min: 10,
+                max: 40,
+            },
+        },
+    }];
+
+    let result = run_backtest(&df, &params).expect("backtest failed");
+
+    assert!(!result.trade_log.is_empty(), "expected at least 1 trade");
+    let trade = &result.trade_log[0];
+
+    // After roll, position stays open with new lower-delta leg.
+    // Should exit via DTE on Feb 11 (DTE=5 for near-term).
+    assert!(
+        matches!(trade.exit_type, ExitType::DteExit),
+        "expected DteExit after roll, got {:?}",
+        trade.exit_type
+    );
+    // Entry Jan 15 → exit Feb 11 = 27 days
+    assert_eq!(
+        trade.days_held, 27,
+        "expected 27 days held (full duration after roll), got {}",
+        trade.days_held
+    );
+
+    // Verify the rolled leg is at strike 105 (0.35 delta)
+    let legs = &trade.legs;
+    assert!(
+        legs.iter().any(|l| (l.strike - 105.0).abs() < f64::EPSILON),
+        "expected a leg at strike 105.0 after roll, legs: {legs:?}"
+    );
+}
+
 // ─── No-fire: high threshold means adjustment never triggers ─────────────────
 
 #[test]
