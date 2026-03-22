@@ -377,3 +377,51 @@ fn adjustment_no_fire_below_threshold() {
         "expected 27 days held (Jan 15 → Feb 11)"
     );
 }
+
+// ─── RollToTarget: no matching target → position closes ──────────────────────
+
+#[test]
+fn roll_to_target_no_match_closes_position() {
+    // Long call@100: DefensiveRoll fires on Jan 22.
+    // RollToTarget with impossible delta range (0.95-0.99) → no match found.
+    // Old leg closes, no replacement → all legs closed → Adjustment exit.
+    let df = make_multi_strike_df();
+
+    let mut params = base_params("long_call", vec![delta(0.50)]);
+    params.adjustment_rules = vec![AdjustmentRule {
+        trigger: AdjustmentTrigger::DefensiveRoll {
+            loss_threshold: 0.10,
+        },
+        action: AdjustmentAction::RollToTarget {
+            position_id: 0,
+            leg_index: 0,
+            target_delta: TargetRange {
+                target: 0.97,
+                min: 0.95,
+                max: 0.99,
+            },
+            target_dte: DteRange {
+                target: 45,
+                min: 30,
+                max: 60,
+            },
+        },
+    }];
+
+    let result = run_backtest(&df, &params).expect("backtest failed");
+
+    assert!(!result.trade_log.is_empty(), "expected at least 1 trade");
+    let trade = &result.trade_log[0];
+
+    // No matching roll target → position closes as Adjustment
+    assert!(
+        matches!(trade.exit_type, ExitType::Adjustment),
+        "expected Adjustment exit when no roll target found, got {:?}",
+        trade.exit_type
+    );
+    assert_eq!(
+        trade.days_held, 7,
+        "expected 7 days held (Jan 15 → Jan 22), got {}",
+        trade.days_held
+    );
+}
