@@ -376,27 +376,9 @@ fn multi_factor_ols(y: &[f64], factors: &[Vec<f64>]) -> OlsResult {
     }
 }
 
-/// Standard normal CDF approximation (Abramowitz and Stegun 26.2.17).
-#[allow(clippy::many_single_char_names, clippy::unreadable_literal)]
 fn normal_cdf(x: f64) -> f64 {
-    if x < -8.0 {
-        return 0.0;
-    }
-    if x > 8.0 {
-        return 1.0;
-    }
-    let t = 1.0 / (1.0 + 0.2316419 * x.abs());
-    let d = 0.3989422804014327; // 1/sqrt(2*PI)
-    let p = d * (-x * x / 2.0).exp();
-    let c = t
-        * (0.319_381_530
-            + t * (-0.356_563_782
-                + t * (1.781_477_937 + t * (-1.821_255_978 + t * 1.330_274_429))));
-    if x >= 0.0 {
-        1.0 - p * c
-    } else {
-        p * c
-    }
+    use statrs::distribution::{ContinuousCDF, Normal};
+    Normal::new(0.0, 1.0).unwrap().cdf(x)
 }
 
 #[cfg(test)]

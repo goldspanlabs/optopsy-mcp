@@ -249,26 +249,15 @@ impl GaussianProcess {
     }
 }
 
-/// Standard normal CDF using the error function approximation.
-fn standard_normal_cdf(x: f64) -> f64 {
-    // Abramowitz & Stegun approximation (|error| < 1.5e-7)
-    let a1 = 0.254_829_592;
-    let a2 = -0.284_496_736;
-    let a3 = 1.421_413_741;
-    let a4 = -1.453_152_027;
-    let a5 = 1.061_405_429;
-    let p = 0.327_591_1;
+use statrs::distribution::{ContinuousCDF, Normal};
 
-    let sign = if x < 0.0 { -1.0 } else { 1.0 };
-    let x_abs = x.abs() / std::f64::consts::SQRT_2;
-    let t = 1.0 / (1.0 + p * x_abs);
-    let y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * (-x_abs * x_abs).exp();
-    0.5 * (1.0 + sign * y)
+fn standard_normal_cdf(x: f64) -> f64 {
+    Normal::new(0.0, 1.0).unwrap().cdf(x)
 }
 
-/// Standard normal PDF.
 fn standard_normal_pdf(x: f64) -> f64 {
-    (-0.5 * x * x).exp() / (2.0 * std::f64::consts::PI).sqrt()
+    use statrs::distribution::Continuous;
+    Normal::new(0.0, 1.0).unwrap().pdf(x)
 }
 
 /// Expected Improvement acquisition function.

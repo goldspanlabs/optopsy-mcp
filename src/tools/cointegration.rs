@@ -357,8 +357,12 @@ fn adf_test(series: &[f64]) -> AdfTestResult {
         }
     }
 
-    // Solve via Cramer's rule or simple 3x3 inversion
-    let coeffs = solve_3x3(&xtx, &xty);
+    let xtx_mat = nalgebra::Matrix3::from_row_slice(&xtx);
+    let xty_vec = nalgebra::Vector3::from_row_slice(&xty);
+    let coeffs = match xtx_mat.try_inverse() {
+        Some(inv) => inv * xty_vec,
+        None => nalgebra::Vector3::zeros(),
+    };
 
     let gamma = coeffs[1]; // coefficient on y_{t-1}
 
@@ -373,8 +377,10 @@ fn adf_test(series: &[f64]) -> AdfTestResult {
     let sigma_sq = sse / (obs - k) as f64;
 
     // Variance of gamma is sigma^2 * (X'X)^{-1}[1,1]
-    let xtx_inv = invert_3x3(&xtx);
-    let var_gamma = sigma_sq * xtx_inv[k + 1];
+    let var_gamma = match xtx_mat.try_inverse() {
+        Some(inv) => sigma_sq * inv[(1, 1)],
+        None => 0.0,
+    };
     let se_gamma = var_gamma.abs().sqrt();
 
     let t_stat = if se_gamma > 0.0 {
@@ -401,50 +407,6 @@ fn adf_test(series: &[f64]) -> AdfTestResult {
         is_stationary: t_stat < critical_values.pct_5,
         critical_values,
     }
-}
-
-/// Solve a 3x3 linear system Ax = b using Cramer's rule.
-fn solve_3x3(a: &[f64], b: &[f64]) -> Vec<f64> {
-    let det = a[0] * (a[4] * a[8] - a[5] * a[7]) - a[1] * (a[3] * a[8] - a[5] * a[6])
-        + a[2] * (a[3] * a[7] - a[4] * a[6]);
-
-    if det.abs() < 1e-15 {
-        return vec![0.0; 3];
-    }
-
-    let d1 = b[0] * (a[4] * a[8] - a[5] * a[7]) - a[1] * (b[1] * a[8] - a[5] * b[2])
-        + a[2] * (b[1] * a[7] - a[4] * b[2]);
-
-    let d2 = a[0] * (b[1] * a[8] - a[5] * b[2]) - b[0] * (a[3] * a[8] - a[5] * a[6])
-        + a[2] * (a[3] * b[2] - b[1] * a[6]);
-
-    let d3 = a[0] * (a[4] * b[2] - b[1] * a[7]) - a[1] * (a[3] * b[2] - b[1] * a[6])
-        + b[0] * (a[3] * a[7] - a[4] * a[6]);
-
-    vec![d1 / det, d2 / det, d3 / det]
-}
-
-/// Invert a 3x3 matrix stored as a flat 9-element array.
-fn invert_3x3(a: &[f64]) -> Vec<f64> {
-    let det = a[0] * (a[4] * a[8] - a[5] * a[7]) - a[1] * (a[3] * a[8] - a[5] * a[6])
-        + a[2] * (a[3] * a[7] - a[4] * a[6]);
-
-    if det.abs() < 1e-15 {
-        return vec![0.0; 9];
-    }
-
-    let inv_det = 1.0 / det;
-    vec![
-        (a[4] * a[8] - a[5] * a[7]) * inv_det,
-        (a[2] * a[7] - a[1] * a[8]) * inv_det,
-        (a[1] * a[5] - a[2] * a[4]) * inv_det,
-        (a[5] * a[6] - a[3] * a[8]) * inv_det,
-        (a[0] * a[8] - a[2] * a[6]) * inv_det,
-        (a[2] * a[3] - a[0] * a[5]) * inv_det,
-        (a[3] * a[7] - a[4] * a[6]) * inv_det,
-        (a[1] * a[6] - a[0] * a[7]) * inv_det,
-        (a[0] * a[4] - a[1] * a[3]) * inv_det,
-    ]
 }
 
 /// Approximate ADF p-value using `MacKinnon` (1994) response surface.
@@ -551,82 +513,6 @@ mod tests {
         let y = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
         let (_alpha, beta, _r2) = ols_regression(&x, &y);
         assert!((beta - 0.0).abs() < 1e-10);
-    }
-
-    // ─── solve_3x3 ──────────────────────────────────────────────────
-
-    #[test]
-    fn solve_3x3_identity() {
-        // I * x = b → x = b
-        let a = vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
-        let b = vec![3.0, 7.0, 11.0];
-        let x = solve_3x3(&a, &b);
-        assert!((x[0] - 3.0).abs() < 1e-10);
-        assert!((x[1] - 7.0).abs() < 1e-10);
-        assert!((x[2] - 11.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn solve_3x3_known_system() {
-        // Use solve_3x3 then verify A*x = b
-        let a = vec![2.0, 1.0, -1.0, 1.0, 3.0, 2.0, 1.0, -1.0, 1.0];
-        let b = vec![1.0, 13.0, 2.0];
-        let x = solve_3x3(&a, &b);
-        // Verify: A*x should equal b
-        for row in 0..3 {
-            let mut sum = 0.0;
-            for col in 0..3 {
-                sum += a[row * 3 + col] * x[col];
-            }
-            assert!(
-                (sum - b[row]).abs() < 1e-10,
-                "row {row}: A*x={sum}, b={}",
-                b[row]
-            );
-        }
-    }
-
-    #[test]
-    fn solve_3x3_singular_returns_zeros() {
-        let a = vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-        let b = vec![1.0, 2.0, 3.0];
-        let x = solve_3x3(&a, &b);
-        assert!(x.iter().all(|v| v.abs() < 1e-10));
-    }
-
-    // ─── invert_3x3 ─────────────────────────────────────────────────
-
-    #[test]
-    fn invert_3x3_identity() {
-        let a = vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
-        let inv = invert_3x3(&a);
-        for i in 0..3 {
-            for j in 0..3 {
-                let expected = if i == j { 1.0 } else { 0.0 };
-                assert!(
-                    (inv[i * 3 + j] - expected).abs() < 1e-10,
-                    "inv[{i}][{j}]={}",
-                    inv[i * 3 + j]
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn invert_3x3_roundtrip() {
-        let a = vec![2.0, 1.0, -1.0, 1.0, 3.0, 2.0, 1.0, -1.0, 1.0];
-        let inv = invert_3x3(&a);
-        // A * A^{-1} should be I
-        for i in 0..3 {
-            for j in 0..3 {
-                let mut sum = 0.0;
-                for k in 0..3 {
-                    sum += a[i * 3 + k] * inv[k * 3 + j];
-                }
-                let expected = if i == j { 1.0 } else { 0.0 };
-                assert!((sum - expected).abs() < 1e-10, "A*inv[{i}][{j}]={sum}");
-            }
-        }
     }
 
     // ─── approximate_adf_pvalue ──────────────────────────────────────
