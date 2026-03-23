@@ -194,12 +194,11 @@ impl GaussianProcess {
         let y_norm = y.map(|v| (v - self.y_mean) / self.y_std);
 
         let mut k = self.kernel.matrix(&x);
-        // Add noise (jitter) to diagonal for numerical stability
+        // Jitter for numerical stability
         for i in 0..n {
             k[(i, i)] += self.noise;
         }
 
-        // Solve K * alpha = y_norm via Cholesky; keep decomposition for variance computation.
         if let Some(chol) = nalgebra::linalg::Cholesky::new(k.clone()) {
             let alpha = chol.solve(&y_norm);
             self.alpha = Some(alpha);
@@ -539,6 +538,7 @@ pub fn run_bayesian_optimization(
     let mut convergence_trace: Vec<f64> = Vec::new();
     let mut failed: usize = 0;
     let mut best_so_far = f64::NEG_INFINITY;
+    let mut best_idx: Option<usize> = None;
 
     // Phase 1: Random initial sampling
     tracing::info!(
@@ -554,6 +554,7 @@ pub fn run_bayesian_optimization(
                 let obj = params.objective.extract(&result);
                 if obj > best_so_far {
                     best_so_far = obj;
+                    best_idx = Some(all_configs.len());
                 }
                 convergence_trace.push(best_so_far);
                 all_configs.push(config);
@@ -574,7 +575,7 @@ pub fn run_bayesian_optimization(
 
     // Phase 2: GP-guided optimization
     let remaining = params.max_evaluations - params.initial_samples;
-    let n_candidates = 200; // Number of candidate points to evaluate EI over
+    let n_candidates = 200;
 
     // Auto-tune GP hyperparameters based on feature dimensionality
     let length_scale = (space.dim() as f64).sqrt() * 0.5;
@@ -582,46 +583,24 @@ pub fn run_bayesian_optimization(
 
     for i in 0..remaining {
         // Build training matrix from observed points
-        let n_obs = all_configs.len();
-        let d = space.dim();
-        let mut x_mat = DMatrix::zeros(n_obs, d);
-        for (row, config) in all_configs.iter().enumerate() {
-            let encoded = space.encode(config);
-            for col in 0..d {
-                x_mat[(row, col)] = encoded[col];
-            }
-        }
-        let y_vec = DVector::from_vec(all_objectives.clone());
+        let x_mat = configs_to_matrix(&space, &all_configs);
+        let y_vec = DVector::from_column_slice(&all_objectives);
 
         // Fit GP
         gp.fit(x_mat, &y_vec);
-
-        // Find best current config for local search
-        let best_idx = all_objectives
-            .iter()
-            .enumerate()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(idx, _)| idx);
 
         let best_config = best_idx.map(|idx| &all_configs[idx]);
 
         // Generate candidates and evaluate Expected Improvement
         let candidates = space.generate_candidates(&mut rng_instance, n_candidates, best_config);
-        let n_cand = candidates.len();
-        let mut x_cand = DMatrix::zeros(n_cand, d);
-        for (row, config) in candidates.iter().enumerate() {
-            let encoded = space.encode(config);
-            for col in 0..d {
-                x_cand[(row, col)] = encoded[col];
-            }
-        }
+        let x_cand = configs_to_matrix(&space, &candidates);
 
         let (means, variances) = gp.predict(&x_cand);
 
         // Find candidate with highest EI
         let mut best_ei = f64::NEG_INFINITY;
         let mut best_cand_idx = 0;
-        for j in 0..n_cand {
+        for j in 0..candidates.len() {
             let ei = expected_improvement(means[j], variances[j], best_so_far);
             if ei > best_ei {
                 best_ei = ei;
@@ -637,6 +616,7 @@ pub fn run_bayesian_optimization(
                 let obj = params.objective.extract(&result);
                 if obj > best_so_far {
                     best_so_far = obj;
+                    best_idx = Some(all_configs.len());
                     tracing::info!(
                         iteration = params.initial_samples + i + 1,
                         objective = format!("{:.4}", obj),
@@ -711,6 +691,19 @@ pub fn run_bayesian_optimization(
         dimension_sensitivity,
         oos_results,
     })
+}
+
+/// Encode a list of configurations into a feature matrix for the GP.
+fn configs_to_matrix(space: &ParameterSpace, configs: &[Configuration]) -> DMatrix<f64> {
+    let d = space.dim();
+    let mut mat = DMatrix::zeros(configs.len(), d);
+    for (row, config) in configs.iter().enumerate() {
+        let encoded = space.encode(config);
+        for col in 0..d {
+            mat[(row, col)] = encoded[col];
+        }
+    }
+    mat
 }
 
 /// Evaluate a single configuration by running a backtest.
