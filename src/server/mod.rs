@@ -1044,13 +1044,6 @@ impl OptopsyServer {
                     .validate()
                     .map_err(|e| validation_err("bayesian_optimize", e))?;
 
-                if params.entry_dte_min > params.entry_dte_max {
-                    return Err("entry_dte_min must be <= entry_dte_max".to_string());
-                }
-                if params.initial_samples > params.max_evaluations {
-                    return Err("initial_samples must be <= max_evaluations".to_string());
-                }
-
                 tracing::info!(
                     strategy = %params.strategy,
                     symbol = params.symbol.as_deref().unwrap_or("auto"),

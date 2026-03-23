@@ -494,12 +494,6 @@ pub fn format_bayesian(
         })
     };
 
-    let stability = if output.stability_scores.is_empty() {
-        None
-    } else {
-        Some(output.stability_scores)
-    };
-
     let mut key_findings = Vec::new();
 
     // Helper: extract the chosen objective value from a result.
@@ -614,7 +608,6 @@ pub fn format_bayesian(
         convergence_trace: output.convergence_trace,
         dimension_sensitivity: output.dimension_sensitivity,
         out_of_sample,
-        stability,
         ranked_results: output.ranked_results,
         key_findings,
         suggested_next_steps,

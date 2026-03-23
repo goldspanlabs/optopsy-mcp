@@ -175,9 +175,6 @@ pub struct BayesianOptimizeResponse {
     pub dimension_sensitivity: HashMap<String, HashMap<String, DimensionStats>>,
     /// Out-of-sample validation of top results.
     pub out_of_sample: Option<OosValidation>,
-    /// Parameter stability scores for top results.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stability: Option<Vec<StabilityScore>>,
     /// All evaluated configurations ranked by objective descending.
     pub ranked_results: Vec<SweepResult>,
     pub key_findings: Vec<String>,

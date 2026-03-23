@@ -2,11 +2,11 @@
 //!
 //! Replaces exhaustive grid search with an iterative approach:
 //! 1. Evaluate a small initial batch of random configurations
-//! 2. Fit a GP surrogate model to observed (params → Sharpe) pairs
+//! 2. Fit a GP surrogate model to observed (params → objective) pairs
 //! 3. Maximize Expected Improvement to pick the next most informative config
 //! 4. Evaluate, update, repeat until budget exhausted
 //!
-//! Handles mixed parameter spaces (continuous deltas/DTEs + categorical strategies/slippage)
+//! Handles mixed parameter spaces (continuous deltas/DTEs + categorical `exit_dte`/slippage)
 //! via one-hot encoding of categoricals in the GP feature space.
 
 use std::collections::HashMap;
@@ -92,10 +92,9 @@ impl Objective {
     }
 }
 
-/// Output of Bayesian optimization, compatible with existing `SweepOutput` for formatting.
+/// Output of Bayesian optimization.
 #[derive(Debug, Clone)]
 pub struct BayesianOutput {
-    pub mode: Option<String>,
     pub total_evaluations: usize,
     pub failed_evaluations: usize,
     pub objective: String,
@@ -103,7 +102,6 @@ pub struct BayesianOutput {
     pub ranked_results: Vec<SweepResult>,
     pub dimension_sensitivity: HashMap<String, HashMap<String, DimensionStats>>,
     pub oos_results: Vec<OosResult>,
-    pub stability_scores: Vec<super::sweep_analysis::StabilityScore>,
 }
 
 // ---------------------------------------------------------------------------
@@ -165,14 +163,11 @@ struct GaussianProcess {
     kernel: RbfKernel,
     noise: f64,
     x_train: Option<DMatrix<f64>>,
-    y_train: Option<DVector<f64>>,
     y_mean: f64,
     y_std: f64,
     alpha: Option<DVector<f64>>,
-    /// Stored Cholesky decomposition of the kernel matrix (K = L Lᵀ).
-    /// Used to compute predictive variance without forming K⁻¹ explicitly:
-    /// `k_sᵀ K⁻¹ k_s = k_sᵀ v` where `v = K⁻¹ k_s` via Cholesky solve.
-    /// More numerically stable and avoids O(n³) explicit inversion.
+    /// Cholesky decomposition of K (kernel matrix + noise).
+    /// Used for predictive variance via `chol.solve(k_s)` instead of explicit K⁻¹.
     chol_factor: Option<nalgebra::linalg::Cholesky<f64, nalgebra::Dyn>>,
 }
 
@@ -182,7 +177,6 @@ impl GaussianProcess {
             kernel: RbfKernel::new(length_scale, signal_variance),
             noise,
             x_train: None,
-            y_train: None,
             y_mean: 0.0,
             y_std: 1.0,
             alpha: None,
@@ -227,7 +221,6 @@ impl GaussianProcess {
         }
 
         self.x_train = Some(x);
-        self.y_train = Some(y_norm);
     }
 
     /// Predict mean and variance at new points.
@@ -660,9 +653,6 @@ pub fn run_bayesian_optimization(
 
     // Compute sensitivity (reuse sweep analysis)
     let dimension_sensitivity = compute_sensitivity(&all_results);
-    // Note: stability scoring requires grid-based SweepParams for neighbor detection,
-    // which doesn't apply to Bayesian optimization's continuous search.
-    let stability_scores = vec![];
 
     // OOS validation on top 3
     let mut oos_results = Vec::new();
@@ -688,15 +678,13 @@ pub fn run_bayesian_optimization(
     }
 
     Ok(BayesianOutput {
-        mode: None,
-        total_evaluations: params.max_evaluations,
+        total_evaluations: all_results.len() + failed,
         failed_evaluations: failed,
         objective: params.objective.name().to_string(),
         convergence_trace,
         ranked_results: all_results,
         dimension_sensitivity,
         oos_results,
-        stability_scores,
     })
 }
 

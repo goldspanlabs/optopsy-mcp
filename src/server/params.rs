@@ -1558,6 +1558,30 @@ pub struct DeltaBound {
     pub max: f64,
 }
 
+fn validate_dte_max_gte_min(min: &i32) -> impl FnOnce(&i32, &()) -> garde::Result + '_ {
+    let min = *min;
+    move |max: &i32, (): &()| {
+        if *max < min {
+            return Err(garde::Error::new(format!(
+                "entry_dte_max ({max}) must be >= entry_dte_min ({min})"
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn validate_initial_lte_max(max_eval: &usize) -> impl FnOnce(&usize, &()) -> garde::Result + '_ {
+    let max_eval = *max_eval;
+    move |initial: &usize, (): &()| {
+        if *initial > max_eval {
+            return Err(garde::Error::new(format!(
+                "initial_samples ({initial}) must be <= max_evaluations ({max_eval})"
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// Parameters for the `bayesian_optimize` tool.
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct BayesianOptimizeParams {
@@ -1570,8 +1594,8 @@ pub struct BayesianOptimizeParams {
     /// Entry DTE search range: minimum.
     #[garde(range(min = 1))]
     pub entry_dte_min: i32,
-    /// Entry DTE search range: maximum.
-    #[garde(range(min = 1))]
+    /// Entry DTE search range: maximum. Must be >= `entry_dte_min`.
+    #[garde(range(min = 1), custom(validate_dte_max_gte_min(&self.entry_dte_min)))]
     pub entry_dte_max: i32,
     /// Exit DTE candidates to consider (categorical). Default: `[0]`.
     #[serde(default = "default_exit_dtes")]
@@ -1587,8 +1611,9 @@ pub struct BayesianOptimizeParams {
     #[garde(range(min = 5, max = 200))]
     pub max_evaluations: usize,
     /// Number of initial random samples before GP-guided search begins. Default: 10.
+    /// Must be <= `max_evaluations`.
     #[serde(default = "default_initial_samples")]
-    #[garde(range(min = 2, max = 100))]
+    #[garde(range(min = 2, max = 100), custom(validate_initial_lte_max(&self.max_evaluations)))]
     pub initial_samples: usize,
     /// Out-of-sample percentage [0, 100). Default: 30.
     #[serde(default = "default_oos_pct")]

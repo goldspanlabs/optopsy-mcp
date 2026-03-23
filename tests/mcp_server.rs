@@ -120,6 +120,7 @@ async fn tool_router_lists_all_tools() {
         "factor_attribution",
         "portfolio_optimize",
         "benchmark_analysis",
+        "bayesian_optimize",
     ] {
         assert!(
             tool_names.contains(&expected.to_string()),
