@@ -1535,14 +1535,26 @@ fn validate_objective(value: &Option<String>, _ctx: &()) -> garde::Result {
     }
 }
 
+fn validate_delta_max_gte_min(min: &f64) -> impl FnOnce(&f64, &()) -> garde::Result + '_ {
+    let min = *min;
+    move |max: &f64, (): &()| {
+        if *max < min {
+            return Err(garde::Error::new(format!(
+                "DeltaBound max ({max:.2}) must be >= min ({min:.2})"
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// Delta bounds for a single leg: `[min, max]` range for the optimizer to search.
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct DeltaBound {
     /// Minimum delta target for this leg (inclusive).
     #[garde(range(min = 0.01, max = 0.99))]
     pub min: f64,
-    /// Maximum delta target for this leg (inclusive).
-    #[garde(range(min = 0.01, max = 0.99))]
+    /// Maximum delta target for this leg (inclusive). Must be >= min.
+    #[garde(range(min = 0.01, max = 0.99), custom(validate_delta_max_gte_min(&self.min)))]
     pub max: f64,
 }
 
@@ -1563,15 +1575,16 @@ pub struct BayesianOptimizeParams {
     pub entry_dte_max: i32,
     /// Exit DTE candidates to consider (categorical). Default: `[0]`.
     #[serde(default = "default_exit_dtes")]
-    #[garde(length(min = 1, max = 10))]
+    #[garde(length(min = 1, max = 10), inner(range(min = 0)))]
     pub exit_dtes: Vec<i32>,
     /// Slippage models to consider. Default: `[{type: "mid"}]`.
     #[serde(default = "default_slippage_models")]
-    #[garde(skip)]
+    #[garde(length(min = 1), dive)]
     pub slippage_models: Vec<Slippage>,
-    /// Maximum number of backtest evaluations (budget). Default: 50.
+    /// Maximum number of backtest evaluations (budget). Default: 50, hard max: 200.
+    /// Higher budgets are CPU-heavy due to O(n³) GP refits each step.
     #[serde(default = "default_max_evaluations")]
-    #[garde(range(min = 5, max = 500))]
+    #[garde(range(min = 5, max = 200))]
     pub max_evaluations: usize,
     /// Number of initial random samples before GP-guided search begins. Default: 10.
     #[serde(default = "default_initial_samples")]
