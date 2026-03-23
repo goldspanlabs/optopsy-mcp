@@ -488,13 +488,9 @@ pub fn run_backtest_with_cache(
         "Strategy resolved"
     );
 
-    if params.leg_deltas.len() != strategy_def.legs.len() {
-        bail!(
-            "Strategy '{}' has {} legs but {} delta targets provided",
-            params.strategy,
-            strategy_def.legs.len(),
-            params.leg_deltas.len()
-        );
+    // Validate delta count and ordering against strategy structure
+    if let Err(e) = strategy_def.validate_delta_ordering(&params.leg_deltas) {
+        bail!("{e}");
     }
 
     // Derive cache_dir from ohlcv_path (path is {cache_dir}/{category}/{SYMBOL}.parquet)
