@@ -1524,6 +1524,153 @@ pub struct RunWheelBacktestParams {
     pub end_date: Option<String>,
 }
 
+/// Validate objective values for `bayesian_optimize`.
+#[allow(clippy::trivially_copy_pass_by_ref, clippy::ref_option)]
+fn validate_objective(value: &Option<String>, _ctx: &()) -> garde::Result {
+    match value.as_deref() {
+        None | Some("sharpe" | "sortino" | "calmar" | "profit_factor") => Ok(()),
+        Some(other) => Err(garde::Error::new(format!(
+            "objective must be one of: sharpe, sortino, calmar, profit_factor (got \"{other}\")"
+        ))),
+    }
+}
+
+/// Delta bounds for a single leg: `[min, max]` range for the optimizer to search.
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+pub struct DeltaBound {
+    /// Minimum delta target for this leg (inclusive).
+    #[garde(range(min = 0.01, max = 0.99))]
+    pub min: f64,
+    /// Maximum delta target for this leg (inclusive).
+    #[garde(range(min = 0.01, max = 0.99))]
+    pub max: f64,
+}
+
+/// Parameters for the `bayesian_optimize` tool.
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+pub struct BayesianOptimizeParams {
+    /// Strategy name (e.g. `bull_call_spread`, `long_call`). Required.
+    #[garde(length(min = 1))]
+    pub strategy: String,
+    /// Per-leg delta bounds `[{min, max}]`. The optimizer searches within these ranges.
+    #[garde(dive, length(min = 1, max = 10))]
+    pub leg_delta_bounds: Vec<DeltaBound>,
+    /// Entry DTE search range: minimum.
+    #[garde(range(min = 1))]
+    pub entry_dte_min: i32,
+    /// Entry DTE search range: maximum.
+    #[garde(range(min = 1))]
+    pub entry_dte_max: i32,
+    /// Exit DTE candidates to consider (categorical). Default: `[0]`.
+    #[serde(default = "default_exit_dtes")]
+    #[garde(length(min = 1, max = 10))]
+    pub exit_dtes: Vec<i32>,
+    /// Slippage models to consider. Default: `[{type: "mid"}]`.
+    #[serde(default = "default_slippage_models")]
+    #[garde(skip)]
+    pub slippage_models: Vec<Slippage>,
+    /// Maximum number of backtest evaluations (budget). Default: 50.
+    #[serde(default = "default_max_evaluations")]
+    #[garde(range(min = 5, max = 500))]
+    pub max_evaluations: usize,
+    /// Number of initial random samples before GP-guided search begins. Default: 10.
+    #[serde(default = "default_initial_samples")]
+    #[garde(range(min = 2, max = 100))]
+    pub initial_samples: usize,
+    /// Out-of-sample percentage [0, 100). Default: 30.
+    #[serde(default = "default_oos_pct")]
+    #[garde(range(min = 0.0, max = 99.99))]
+    pub out_of_sample_pct: f64,
+    /// Objective metric to maximize. One of: "sharpe" (default), "sortino", "calmar", "`profit_factor`".
+    #[serde(default)]
+    #[garde(custom(validate_objective))]
+    pub objective: Option<String>,
+    /// RNG seed for reproducibility.
+    #[serde(default)]
+    #[garde(skip)]
+    pub seed: Option<u64>,
+    /// Symbol to optimize on (required if multiple symbols loaded).
+    #[serde(default)]
+    #[garde(inner(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$")))]
+    pub symbol: Option<String>,
+    /// Shared simulation parameters (capital, quantity, `stop_loss`, etc.)
+    #[garde(dive)]
+    pub sim_params: BayesianSimParams,
+}
+
+/// Simulation parameters for Bayesian optimization (subset of sweep sim params).
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+pub struct BayesianSimParams {
+    /// Starting capital. Default: 10000.
+    #[serde(default = "default_capital")]
+    #[garde(range(min = 1.0))]
+    pub capital: f64,
+    /// Fixed quantity per trade. Default: 1.
+    #[serde(default = "default_quantity")]
+    #[garde(range(min = 1))]
+    pub quantity: i32,
+    /// Contract multiplier. Default: 100.
+    #[serde(default = "default_multiplier")]
+    #[garde(range(min = 1))]
+    pub multiplier: i32,
+    /// Max simultaneous positions. Default: 1.
+    #[serde(default = "default_max_positions")]
+    #[garde(range(min = 1))]
+    pub max_positions: i32,
+    /// Stop loss as fraction (e.g. 0.5 = 50% of max loss).
+    #[serde(default)]
+    #[garde(inner(range(min = 0.001, max = 10.0)))]
+    pub stop_loss: Option<f64>,
+    /// Take profit as fraction (e.g. 0.5 = 50% of max gain).
+    #[serde(default)]
+    #[garde(inner(range(min = 0.001, max = 100.0)))]
+    pub take_profit: Option<f64>,
+    /// Max hold days.
+    #[serde(default)]
+    #[garde(inner(range(min = 1)))]
+    pub max_hold_days: Option<i32>,
+    /// Entry signal formula (fixed, not swept).
+    #[serde(default)]
+    #[garde(skip)]
+    pub entry_signal: Option<SignalSpec>,
+    /// Exit signal formula (fixed, not swept).
+    #[serde(default)]
+    #[garde(skip)]
+    pub exit_signal: Option<SignalSpec>,
+    /// Trade selector.
+    #[serde(default)]
+    #[garde(skip)]
+    pub selector: Option<TradeSelector>,
+    /// Dynamic position sizing config.
+    #[serde(default)]
+    #[garde(skip)]
+    pub sizing: Option<SizingConfig>,
+    /// Min days between entries.
+    #[serde(default)]
+    #[garde(inner(range(min = 0)))]
+    pub min_days_between_entries: Option<i32>,
+    /// Exit when portfolio net delta exceeds this threshold.
+    #[serde(default)]
+    #[garde(skip)]
+    pub exit_net_delta: Option<f64>,
+}
+
+fn default_exit_dtes() -> Vec<i32> {
+    vec![0]
+}
+
+fn default_slippage_models() -> Vec<Slippage> {
+    vec![Slippage::Mid]
+}
+
+fn default_max_evaluations() -> usize {
+    50
+}
+
+fn default_initial_samples() -> usize {
+    10
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

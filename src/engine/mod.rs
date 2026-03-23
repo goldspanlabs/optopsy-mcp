@@ -7,6 +7,7 @@
 //! walk-forward validation, permutation tests, and strike ordering rules.
 
 pub mod adjustments;
+pub mod bayesian;
 pub mod core;
 pub mod event_sim;
 pub mod filters;

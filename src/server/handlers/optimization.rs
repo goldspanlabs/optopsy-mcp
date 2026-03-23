@@ -1,13 +1,15 @@
-//! Handler bodies for optimization tools: `parameter_sweep`, `walk_forward`, `permutation_test`.
+//! Handler bodies for optimization tools: `parameter_sweep`, `walk_forward`, `permutation_test`, `bayesian_optimize`.
 
 use crate::data::cache::validate_path_segment;
 use crate::engine::types::SimParams;
 use crate::tools;
-use crate::tools::response_types::{PermutationTestResponse, SweepResponse, WalkForwardResponse};
+use crate::tools::response_types::{
+    BayesianOptimizeResponse, PermutationTestResponse, SweepResponse, WalkForwardResponse,
+};
 
 use super::super::params::{
-    resolve_sweep_strategies, tool_err, BacktestBaseParams, ParameterSweepParams,
-    PermutationTestParams, WalkForwardParams,
+    resolve_sweep_strategies, tool_err, BacktestBaseParams, BayesianOptimizeParams,
+    ParameterSweepParams, PermutationTestParams, WalkForwardParams,
 };
 use super::super::OptopsyServer;
 
@@ -425,4 +427,86 @@ async fn permutation_test_options(
     .await
     .map_err(|e| format!("Permutation test task panicked: {e}"))?
     .map_err(tool_err)
+}
+
+// ── bayesian_optimize ─────────────────────────────────────────────────
+
+/// Execute the `bayesian_optimize` tool logic.
+pub async fn execute_bayesian_optimize(
+    server: &OptopsyServer,
+    params: BayesianOptimizeParams,
+) -> Result<BayesianOptimizeResponse, String> {
+    let (symbol, df) = server.ensure_data_loaded(params.symbol.as_deref()).await?;
+
+    // Parse objective
+    let objective = match params.objective.as_deref() {
+        None | Some("sharpe") => crate::engine::bayesian::Objective::Sharpe,
+        Some("sortino") => crate::engine::bayesian::Objective::Sortino,
+        Some("calmar") => crate::engine::bayesian::Objective::Calmar,
+        Some("profit_factor") => crate::engine::bayesian::Objective::ProfitFactor,
+        Some(other) => return Err(format!("Unknown objective: {other}")),
+    };
+
+    // Load OHLCV if signals are used
+    let needs_ohlcv =
+        params.sim_params.entry_signal.is_some() || params.sim_params.exit_signal.is_some();
+    let ohlcv_path = if needs_ohlcv {
+        Some(server.ensure_ohlcv(&symbol)?)
+    } else {
+        None
+    };
+
+    let cross_ohlcv_paths = server.resolve_cross_ohlcv_paths(
+        params.sim_params.entry_signal.as_ref(),
+        params.sim_params.exit_signal.as_ref(),
+        &[],
+        &[],
+    )?;
+
+    // Build BayesianParams
+    let leg_delta_bounds: Vec<(f64, f64)> = params
+        .leg_delta_bounds
+        .iter()
+        .map(|b| (b.min, b.max))
+        .collect();
+
+    let bayesian_params = crate::engine::bayesian::BayesianParams {
+        strategy: params.strategy,
+        leg_delta_bounds,
+        entry_dte_bounds: (params.entry_dte_min, params.entry_dte_max),
+        exit_dtes: params.exit_dtes,
+        slippage_models: params.slippage_models,
+        sim_params: SimParams {
+            capital: params.sim_params.capital,
+            quantity: params.sim_params.quantity,
+            multiplier: params.sim_params.multiplier,
+            max_positions: params.sim_params.max_positions,
+            selector: params.sim_params.selector.unwrap_or_default(),
+            stop_loss: params.sim_params.stop_loss,
+            take_profit: params.sim_params.take_profit,
+            max_hold_days: params.sim_params.max_hold_days,
+            max_hold_bars: None,
+            entry_signal: params.sim_params.entry_signal.clone(),
+            exit_signal: params.sim_params.exit_signal.clone(),
+            ohlcv_path,
+            cross_ohlcv_paths,
+            min_days_between_entries: params.sim_params.min_days_between_entries,
+            min_bars_between_entries: None,
+            conflict_resolution: None,
+            sizing: params.sim_params.sizing,
+            exit_net_delta: params.sim_params.exit_net_delta,
+        },
+        max_evaluations: params.max_evaluations,
+        initial_samples: params.initial_samples,
+        out_of_sample_pct: params.out_of_sample_pct / 100.0,
+        seed: params.seed,
+        objective,
+        entry_signal: params.sim_params.entry_signal,
+        exit_signal: params.sim_params.exit_signal,
+    };
+
+    tokio::task::spawn_blocking(move || tools::bayesian_optimize::execute(&df, &bayesian_params))
+        .await
+        .map_err(|e| format!("Bayesian optimize task panicked: {e}"))?
+        .map_err(tool_err)
 }

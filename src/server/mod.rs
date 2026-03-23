@@ -27,22 +27,22 @@ use crate::engine::types::{BacktestParams, EPOCH_DAYS_CE_OFFSET};
 use crate::signals::registry::{collect_cross_symbols, SignalSpec};
 use crate::tools;
 use crate::tools::response_types::{
-    AggregatePricesResponse, BacktestResponse, BenchmarkAnalysisResponse, BuildSignalResponse,
-    CointegrationResponse, CompareResponse, CorrelateResponse, DistributionResponse,
-    DrawdownAnalysisResponse, FactorAttributionResponse, HypothesisParams, HypothesisResponse,
-    ListSymbolsResponse, MonteCarloResponse, PermutationTestResponse, PortfolioBacktestResponse,
-    PortfolioOptimizeResponse, RawPricesResponse, RegimeDetectResponse, RollingMetricResponse,
-    StockBacktestResponse, StrategiesResponse, SweepResponse, WalkForwardResponse,
-    WheelBacktestResponse,
+    AggregatePricesResponse, BacktestResponse, BayesianOptimizeResponse, BenchmarkAnalysisResponse,
+    BuildSignalResponse, CointegrationResponse, CompareResponse, CorrelateResponse,
+    DistributionResponse, DrawdownAnalysisResponse, FactorAttributionResponse, HypothesisParams,
+    HypothesisResponse, ListSymbolsResponse, MonteCarloResponse, PermutationTestResponse,
+    PortfolioBacktestResponse, PortfolioOptimizeResponse, RawPricesResponse, RegimeDetectResponse,
+    RollingMetricResponse, StockBacktestResponse, StrategiesResponse, SweepResponse,
+    WalkForwardResponse, WheelBacktestResponse,
 };
 use params::{
     resolve_leg_deltas, tool_err, validation_err, AggregatePricesParams, BacktestBaseParams,
-    BenchmarkAnalysisParams, BuildSignalParams, CointegrationParams, CompareStrategiesParams,
-    CorrelateParams, DistributionParams, DrawdownAnalysisParams, FactorAttributionParams,
-    GetRawPricesParams, ListSymbolsParams, MonteCarloParams, ParameterSweepParams,
-    PermutationTestParams, PortfolioBacktestParams, PortfolioOptimizeParams, RegimeDetectParams,
-    RollingMetricParams, RunBacktestParams, RunStockBacktestParams, RunWheelBacktestParams,
-    WalkForwardParams,
+    BayesianOptimizeParams, BenchmarkAnalysisParams, BuildSignalParams, CointegrationParams,
+    CompareStrategiesParams, CorrelateParams, DistributionParams, DrawdownAnalysisParams,
+    FactorAttributionParams, GetRawPricesParams, ListSymbolsParams, MonteCarloParams,
+    ParameterSweepParams, PermutationTestParams, PortfolioBacktestParams, PortfolioOptimizeParams,
+    RegimeDetectParams, RollingMetricParams, RunBacktestParams, RunStockBacktestParams,
+    RunWheelBacktestParams, WalkForwardParams,
 };
 use sanitize::{SanitizedJson, SanitizedResult};
 
@@ -995,6 +995,71 @@ impl OptopsyServer {
                     .validate()
                     .map_err(|e| validation_err("parameter_sweep", e))?;
                 handlers::optimization::execute_sweep(self, params).await
+            }
+            .await,
+        )
+    }
+
+    /// Bayesian optimization: find optimal strategy parameters using a Gaussian Process surrogate.
+    ///
+    /// **When to use**: When you have a large parameter space (many delta/DTE/slippage combinations)
+    ///   and exhaustive grid search via `parameter_sweep` is too slow. Bayesian optimization
+    ///   typically finds near-optimal configurations in 50-100 evaluations instead of exhaustive search.
+    ///
+    /// **How it works**:
+    ///   1. Evaluates a small random initial batch (default: 10)
+    ///   2. Fits a Gaussian Process surrogate model to observed (params → objective) pairs
+    ///   3. Maximizes Expected Improvement acquisition function to pick the next most informative config
+    ///   4. Evaluates, updates surrogate, repeats until budget exhausted
+    ///
+    /// **Key differences from `parameter_sweep`**:
+    ///   - Continuous search over delta/DTE ranges (not discrete grid points)
+    ///   - Budget-aware: specify max evaluations instead of enumerating all combinations
+    ///   - Returns convergence trace showing how the objective improved over time
+    ///   - Single strategy only (use `parameter_sweep` for multi-strategy comparison)
+    ///
+    /// **Output**: Ranked results, convergence trace, sensitivity analysis, OOS validation
+    ///
+    /// **Example call**:
+    /// ```json
+    /// {
+    ///   "symbol": "SPY",
+    ///   "strategy": "bull_call_spread",
+    ///   "leg_delta_bounds": [{"min": 0.30, "max": 0.70}, {"min": 0.10, "max": 0.40}],
+    ///   "entry_dte_min": 20,
+    ///   "entry_dte_max": 60,
+    ///   "exit_dtes": [0, 5, 10],
+    ///   "max_evaluations": 50,
+    ///   "sim_params": {"capital": 100000, "quantity": 1, "multiplier": 100}
+    /// }
+    /// ```
+    #[tool(name = "bayesian_optimize", annotations(read_only_hint = true))]
+    async fn bayesian_optimize(
+        &self,
+        Parameters(params): Parameters<BayesianOptimizeParams>,
+    ) -> SanitizedResult<BayesianOptimizeResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("bayesian_optimize", e))?;
+
+                if params.entry_dte_min > params.entry_dte_max {
+                    return Err("entry_dte_min must be <= entry_dte_max".to_string());
+                }
+                if params.initial_samples > params.max_evaluations {
+                    return Err("initial_samples must be <= max_evaluations".to_string());
+                }
+
+                tracing::info!(
+                    strategy = %params.strategy,
+                    symbol = params.symbol.as_deref().unwrap_or("auto"),
+                    max_evaluations = params.max_evaluations,
+                    objective = params.objective.as_deref().unwrap_or("sharpe"),
+                    "Bayesian optimization request received"
+                );
+
+                handlers::optimization::execute_bayesian_optimize(self, params).await
             }
             .await,
         )

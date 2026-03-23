@@ -9,6 +9,7 @@ pub mod aggregate_prices;
 pub mod ai_format;
 pub mod ai_helpers;
 pub mod backtest;
+pub mod bayesian_optimize;
 pub mod benchmark_analysis;
 pub mod build_signal;
 pub mod cointegration;

@@ -156,3 +156,30 @@ pub struct SweepResponse {
     pub ranked_results: Vec<SweepResult>,
     pub suggested_next_steps: Vec<String>,
 }
+
+/// AI-enriched response for `bayesian_optimize`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct BayesianOptimizeResponse {
+    pub summary: String,
+    /// Objective metric that was maximized (e.g. "Sharpe", "Sortino").
+    pub objective: String,
+    /// Total backtest evaluations performed.
+    pub total_evaluations: usize,
+    /// Evaluations that failed (backtest errors).
+    pub failed_evaluations: usize,
+    /// Best configuration found.
+    pub best_result: Option<SweepResult>,
+    /// Best objective value at each evaluation step (monotonically non-decreasing).
+    pub convergence_trace: Vec<f64>,
+    /// Dimension sensitivity analysis (same format as `parameter_sweep`).
+    pub dimension_sensitivity: HashMap<String, HashMap<String, DimensionStats>>,
+    /// Out-of-sample validation of top results.
+    pub out_of_sample: Option<OosValidation>,
+    /// Parameter stability scores for top results.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stability: Option<Vec<StabilityScore>>,
+    /// All evaluated configurations ranked by objective descending.
+    pub ranked_results: Vec<SweepResult>,
+    pub key_findings: Vec<String>,
+    pub suggested_next_steps: Vec<String>,
+}

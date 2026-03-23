@@ -106,7 +106,7 @@ Control runtime behavior and data sources:
 
 ## Architecture
 
-**optopsy-mcp** is an options and stock backtesting engine exposed as an MCP (Model Context Protocol) server via `rmcp 0.17`. It provides 24 tools for running event-driven backtests (options and equities), comparing strategies, parameter optimization, walk-forward analysis, statistical testing, risk analysis, factor attribution, portfolio optimization, and returning raw price data for charting.
+**optopsy-mcp** is an options and stock backtesting engine exposed as an MCP (Model Context Protocol) server via `rmcp 0.17`. It provides 25 tools for running event-driven backtests (options and equities), comparing strategies, parameter optimization (grid search and Bayesian), walk-forward analysis, statistical testing, risk analysis, factor attribution, portfolio optimization, and returning raw price data for charting.
 
 ### Transport (`src/main.rs`)
 - **stdio** (default): for local Claude Desktop integration
@@ -172,9 +172,13 @@ TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, tr
 - **`run_wheel_backtest`** — Wheel strategy: sell puts → assignment → sell covered calls → repeat. Separate put/call DTE and delta configuration, one cycle at a time, works with entry signals.
 
 ### Optimization & Validation Tools
-- **`parameter_sweep`** — Grid search across delta/DTE/slippage/signal combos with OOS validation. Preferred for optimization.
+- **`parameter_sweep`** — Grid search across delta/DTE/slippage/signal combos with OOS validation. Best for small, discrete parameter spaces.
   - `entry_signals` (plural) goes inside `sim_params`, NOT at the top level.
   - Use `direction` for auto strategy selection, or explicit `strategies` list.
+- **`bayesian_optimize`** — GP-based Bayesian optimization for large parameter spaces. Finds near-optimal configs in 50-100 evaluations instead of exhaustive grid search. Single strategy; continuous delta/DTE search with categorical slippage/exit_dte.
+  - Requires: `strategy`, `leg_delta_bounds` `[{min, max}]`, `entry_dte_min`, `entry_dte_max`.
+  - Optional: `exit_dtes`, `slippage_models`, `max_evaluations` (default 50), `initial_samples` (default 10), `objective` (sharpe/sortino/calmar/profit_factor).
+  - Returns convergence trace, ranked results, sensitivity analysis, OOS validation.
 - **`walk_forward`** — Rolling train/test windows. Default: 252d train, 63d test, 63d step.
 - **`compare_strategies`** — Side-by-side comparison of 2-3 specific configs. Use `parameter_sweep` for grid search instead.
 - **`permutation_test`** — Sharpe significance via shuffled entry dates. Min 10 permutations.
