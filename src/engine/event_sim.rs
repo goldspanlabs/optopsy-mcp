@@ -98,6 +98,7 @@ pub fn find_entry_candidates(
     }
 
     // Apply strike ordering rules for multi-leg strategies
+    let pre_strike_count = combined.height();
     let combined = rules::filter_strike_order(
         &combined,
         num_legs,
@@ -110,6 +111,16 @@ pub fn find_entry_candidates(
     )?;
 
     if combined.height() == 0 {
+        // All candidates were eliminated by strike ordering. This can happen with
+        // inverted delta targets or thin data — return empty so callers produce a
+        // 0-trade result rather than failing the entire sweep/optimization.
+        tracing::warn!(
+            strategy = %params.strategy,
+            pre_filter = pre_strike_count,
+            "All {} entry candidates eliminated by strike ordering filter — \
+             check that delta targets produce strikes in the correct order",
+            pre_strike_count,
+        );
         return Ok(BTreeMap::new());
     }
 

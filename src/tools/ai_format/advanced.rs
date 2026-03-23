@@ -454,6 +454,166 @@ fn format_permutation_test_inner(
     }
 }
 
+/// Format Bayesian optimization output into an AI-enriched response.
+#[allow(clippy::too_many_lines)]
+pub fn format_bayesian(
+    output: crate::engine::bayesian::BayesianOutput,
+) -> crate::tools::response_types::BayesianOptimizeResponse {
+    let best = output.ranked_results.first().cloned();
+
+    let summary = if let Some(ref b) = best {
+        format!(
+            "Bayesian optimization ({} objective): evaluated {} configurations ({} failed). \
+             Best: {} ({} {:.2}, {}).",
+            output.objective,
+            output.total_evaluations,
+            output.failed_evaluations,
+            b.label,
+            output.objective,
+            match output.objective.as_str() {
+                "Sortino" => b.sortino,
+                "Calmar" => b.calmar,
+                "Profit Factor" => b.profit_factor,
+                _ => b.sharpe,
+            },
+            format_pnl(b.pnl),
+        )
+    } else {
+        format!(
+            "Bayesian optimization ({} objective): evaluated {} configurations but none produced results ({} failed).",
+            output.objective, output.total_evaluations, output.failed_evaluations,
+        )
+    };
+
+    let out_of_sample = if output.oos_results.is_empty() {
+        None
+    } else {
+        Some(OosValidation {
+            top_n_validated: output.oos_results.len(),
+            results: output.oos_results,
+        })
+    };
+
+    let mut key_findings = Vec::new();
+
+    // Helper: extract the chosen objective value from a result.
+    // Covers all variants from `Objective::name()`: Sharpe, Sortino, Calmar, Profit Factor.
+    // "Sharpe" (the default) is handled by the fallback arm below.
+    let objective_value = |r: &crate::engine::types::SweepResult| -> f64 {
+        match output.objective.as_str() {
+            "Sortino" => r.sortino,
+            "Calmar" => r.calmar,
+            "Profit Factor" => r.profit_factor,
+            // "Sharpe" and any future objectives default to Sharpe.
+            _ => r.sharpe,
+        }
+    };
+
+    // Convergence analysis — skip non-finite entries (early failures initialize to -inf).
+    if output.convergence_trace.len() >= 2 {
+        if let Some(first_finite_idx) = output.convergence_trace.iter().position(|v| v.is_finite())
+        {
+            let first = output.convergence_trace[first_finite_idx];
+            let last = output
+                .convergence_trace
+                .iter()
+                .copied()
+                .rfind(|v| v.is_finite())
+                .unwrap_or(first);
+            let improvement = last - first;
+            key_findings.push(format!(
+                "Objective improved from {first:.3} to {last:.3} ({improvement:+.3}) over {} evaluations",
+                output.convergence_trace.len()
+            ));
+
+            // Check if converged (last 20% had no improvement among finite entries).
+            let tail_start = output.convergence_trace.len() * 4 / 5;
+            let tail: Vec<f64> = output.convergence_trace[tail_start..]
+                .iter()
+                .copied()
+                .filter(|v| v.is_finite())
+                .collect();
+            if !tail.is_empty() {
+                let tail_min = tail.iter().copied().fold(f64::INFINITY, f64::min);
+                let tail_max = tail.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                if (tail_max - tail_min).abs() < 0.01 {
+                    key_findings.push(
+                        "Optimization appears converged (no improvement in final 20% of evaluations)"
+                            .to_string(),
+                    );
+                } else {
+                    key_findings.push(
+                        "Optimization may benefit from additional evaluations (still improving)"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+    }
+
+    if let Some(ref b) = best {
+        let obj_val = objective_value(b);
+        key_findings.push(format!(
+            "Best config (by {} objective): {} ({} {:.2}, PnL {}, Max DD {:.1}%, Win Rate {:.0}%)",
+            output.objective,
+            b.label,
+            output.objective,
+            obj_val,
+            format_pnl(b.pnl),
+            b.max_dd * 100.0,
+            b.win_rate * 100.0,
+        ));
+    }
+
+    let n_evaluated = output.ranked_results.len();
+    if n_evaluated >= 2 {
+        let top_obj = objective_value(&output.ranked_results[0]);
+        let second_obj = objective_value(&output.ranked_results[1]);
+        let gap = top_obj - second_obj;
+        if gap > 0.3 {
+            key_findings.push(format!(
+                "Large gap between #1 and #2 ({gap:.2} {}) — best may be an outlier, validate with walk_forward",
+                output.objective,
+            ));
+        }
+    }
+
+    let mut suggested_next_steps = Vec::new();
+    if let Some(ref b) = best {
+        suggested_next_steps.push(format!(
+            "[NEXT] Use run_options_backtest(strategy=\"{}\") on best config \"{}\" for detailed trade analysis",
+            b.strategy, b.label,
+        ));
+        suggested_next_steps.push(
+            "[VALIDATE] Run walk_forward on the best config to check out-of-sample stability"
+                .to_string(),
+        );
+        suggested_next_steps.push(
+            "[REFINE] Re-run bayesian_optimize with tighter bounds around the best region"
+                .to_string(),
+        );
+    }
+    if output.total_evaluations < 50 && !output.ranked_results.is_empty() {
+        suggested_next_steps.push(
+            "[BUDGET] Consider increasing max_evaluations for better convergence".to_string(),
+        );
+    }
+
+    crate::tools::response_types::BayesianOptimizeResponse {
+        summary,
+        objective: output.objective,
+        total_evaluations: output.total_evaluations,
+        failed_evaluations: output.failed_evaluations,
+        best_result: best,
+        convergence_trace: output.convergence_trace,
+        dimension_sensitivity: output.dimension_sensitivity,
+        out_of_sample,
+        ranked_results: output.ranked_results,
+        key_findings,
+        suggested_next_steps,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -64,6 +64,110 @@ impl StrategyDef {
     pub fn default_deltas(&self) -> Vec<TargetRange> {
         self.legs.iter().map(|l| l.delta.clone()).collect()
     }
+
+    /// Validate that user-provided delta targets are compatible with this strategy's
+    /// strike ordering requirements. Returns `Ok(())` if valid, or an `Err` with a
+    /// diagnostic message explaining the expected delta ordering.
+    ///
+    /// For strategies with `strict_strike_order`, strikes must be ascending across legs.
+    /// Since delta and strike have an inverse relationship for calls (higher strike =
+    /// lower delta) and a direct relationship for puts (higher strike = higher delta),
+    /// the expected delta ordering depends on the option types of consecutive legs.
+    pub fn validate_delta_ordering(&self, leg_deltas: &[TargetRange]) -> Result<(), String> {
+        if leg_deltas.len() != self.legs.len() {
+            return Err(format!(
+                "Strategy '{}' has {} leg(s) but {} delta target(s) were provided.",
+                self.name,
+                self.legs.len(),
+                leg_deltas.len(),
+            ));
+        }
+
+        // Only validate strategies with strict strike ordering and 2+ legs
+        if !self.strict_strike_order || self.legs.len() < 2 {
+            return Ok(());
+        }
+
+        // Skip multi-expiration strategies (calendar/diagonal) — strike ordering
+        // is per-cycle, not sequential across all legs
+        if self.is_multi_expiration() {
+            return Ok(());
+        }
+
+        let mut warnings = Vec::new();
+
+        for i in 0..self.legs.len() - 1 {
+            let leg_a = &self.legs[i];
+            let leg_b = &self.legs[i + 1];
+            let delta_a = leg_deltas[i].target;
+            let delta_b = leg_deltas[i + 1].target;
+
+            // Strike ordering: strike[i] < strike[i+1]
+            // For calls: higher strike = lower delta, so delta[i] > delta[i+1]
+            // For puts:  higher strike = higher delta, so delta[i] < delta[i+1]
+            // For mixed (put→call at the boundary): put delta < call delta is typical
+            //   but depends on where the strikes fall — skip mixed-type pairs
+
+            let (expected, relation) = match (leg_a.option_type, leg_b.option_type) {
+                (OptionType::Call, OptionType::Call) => {
+                    // Both calls, ascending strikes → descending deltas
+                    (delta_a > delta_b, "greater than")
+                }
+                (OptionType::Put, OptionType::Put) => {
+                    // Both puts, ascending strikes → ascending deltas
+                    (delta_a < delta_b, "less than")
+                }
+                _ => {
+                    // Mixed types (e.g., iron condor put→call boundary) — skip
+                    continue;
+                }
+            };
+
+            if !expected {
+                let side_a = if leg_a.side == Side::Long {
+                    "Long"
+                } else {
+                    "Short"
+                };
+                let side_b = if leg_b.side == Side::Long {
+                    "Long"
+                } else {
+                    "Short"
+                };
+                let type_a = if leg_a.option_type == OptionType::Call {
+                    "Call"
+                } else {
+                    "Put"
+                };
+                let type_b = if leg_b.option_type == OptionType::Call {
+                    "Call"
+                } else {
+                    "Put"
+                };
+                warnings.push(format!(
+                    "leg {i} ({side_a} {type_a}, delta={delta_a:.2}) should have delta {relation} \
+                     leg {} ({side_b} {type_b}, delta={delta_b:.2}) \
+                     to produce ascending strikes. \
+                     The strategy's default deltas are: leg {i}={:.2}, leg {}={:.2}.",
+                    i + 1,
+                    leg_a.delta.target,
+                    i + 1,
+                    leg_b.delta.target,
+                ));
+            }
+        }
+
+        if warnings.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "Delta targets for '{}' will likely produce no valid entries due to \
+                 strike ordering violations: {}",
+                self.name,
+                warnings.join("; "),
+            ))
+        }
+    }
 }
 
 /// Look up the market direction bias for a named strategy, defaulting to `Neutral` if unknown.

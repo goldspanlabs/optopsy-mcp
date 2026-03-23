@@ -15,6 +15,7 @@ use chrono::NaiveDate;
 use ordered_float::OrderedFloat;
 
 use super::event_sim;
+use super::price_table::PriceTableCache;
 use super::pricing;
 #[allow(clippy::wildcard_imports)]
 use super::types::*;
@@ -40,26 +41,52 @@ pub fn build_carry_index(price_table: &PriceTable) -> CarryIndex {
 /// Run the vectorized backtest pipeline.
 ///
 /// Assumes no adjustment rules — caller should dispatch to event loop for those.
+///
+/// Convenience wrapper that calls [`run_vectorized_backtest_with_cache`] with `None`.
 pub fn run_vectorized_backtest<S1: BuildHasher, S2: BuildHasher>(
     df: &polars::prelude::DataFrame,
     params: &BacktestParams,
     entry_dates: &Option<HashSet<NaiveDate, S1>>,
     exit_dates: Option<&HashSet<NaiveDate, S2>>,
 ) -> Result<(Vec<TradeRecord>, Vec<EquityPoint>, BacktestQualityStats)> {
+    run_vectorized_backtest_with_cache(df, params, entry_dates, exit_dates, None)
+}
+
+/// Run the vectorized backtest pipeline, optionally reusing a pre-built [`PriceTableCache`].
+///
+/// When `cache` is `Some`, the price table, trading days, and carry index are reused
+/// instead of being rebuilt from `df`. This avoids redundant work when the same `DataFrame`
+/// is backtested multiple times (e.g. parameter sweeps).
+///
+/// Assumes no adjustment rules — caller should dispatch to event loop for those.
+pub fn run_vectorized_backtest_with_cache<S1: BuildHasher, S2: BuildHasher>(
+    df: &polars::prelude::DataFrame,
+    params: &BacktestParams,
+    entry_dates: &Option<HashSet<NaiveDate, S1>>,
+    exit_dates: Option<&HashSet<NaiveDate, S2>>,
+    cache: Option<&PriceTableCache>,
+) -> Result<(Vec<TradeRecord>, Vec<EquityPoint>, BacktestQualityStats)> {
     let strategy_def = strategies::find_strategy(&params.strategy)
         .ok_or_else(|| anyhow::anyhow!("Unknown strategy: {}", params.strategy))?;
 
-    // Build price table and get trading days
-    let t0 = std::time::Instant::now();
-    let (price_table, trading_days, _date_index) = event_sim::build_price_table(df)?;
-    tracing::info!(
-        elapsed_ms = t0.elapsed().as_millis(),
-        entries = price_table.len(),
-        "Price table built"
-    );
-
-    // Build secondary index for carry-forward lookups
-    let carry_index = build_carry_index(&price_table);
+    // Build or reuse price table and carry index
+    let owned_pt;
+    let owned_ci;
+    let (price_table, trading_days, carry_index) = if let Some(c) = cache {
+        tracing::debug!(entries = c.price_table.len(), "Reusing cached price table");
+        (&c.price_table, c.trading_days.as_slice(), &c.carry_index)
+    } else {
+        let t0 = std::time::Instant::now();
+        let (pt, td, _di) = event_sim::build_price_table(df)?;
+        tracing::info!(
+            elapsed_ms = t0.elapsed().as_millis(),
+            entries = pt.len(),
+            "Price table built"
+        );
+        owned_ci = build_carry_index(&pt);
+        owned_pt = (pt, td);
+        (&owned_pt.0, owned_pt.1.as_slice(), &owned_ci)
+    };
 
     // Phase 1: Find entry candidates (same pipeline as event loop)
     let t1 = std::time::Instant::now();
@@ -81,9 +108,9 @@ pub fn run_vectorized_backtest<S1: BuildHasher, S2: BuildHasher>(
 
     run_with_candidates(
         &candidates,
-        &price_table,
-        &carry_index,
-        &trading_days,
+        price_table,
+        carry_index,
+        trading_days,
         &strategy_def,
         params,
         exit_dates,
