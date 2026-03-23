@@ -13,6 +13,7 @@ use super::helpers::{
 };
 use super::momentum::compute_stochastic;
 use super::spec::SignalSpec;
+use super::storage::ChartConfig;
 use super::volatility::{compute_atr, compute_bollinger_bands, compute_keltner_channel};
 use super::volume::{compute_cmf, compute_typical_price};
 
@@ -86,6 +87,75 @@ fn compute_indicator_data_inner(
             extract_indicators_from_formula(formula, ohlcv_df, date_col)
         }
     }
+}
+
+/// Compute a formula-based indicator as a continuous time series for charting.
+///
+/// Uses `ChartConfig` to determine display type, label, thresholds, and an
+/// optional expression override. The expression is parsed via `parse_formula`,
+/// evaluated against the `DataFrame`, and the resulting numeric column is returned
+/// as an `IndicatorData`. Boolean results are rejected (they are signals, not
+/// indicators).
+pub fn compute_formula_indicator(
+    formula: &str,
+    chart: &ChartConfig,
+    df: &DataFrame,
+    date_col: &str,
+) -> Option<IndicatorData> {
+    let expr_str = chart.expression.as_deref().unwrap_or(formula);
+    let expr = super::custom::parse_formula(expr_str).ok()?;
+
+    let result_df = df
+        .clone()
+        .lazy()
+        .with_column(expr.alias("__formula_val"))
+        .collect()
+        .ok()?;
+
+    let val_col = result_df.column("__formula_val").ok()?;
+
+    if val_col.dtype() == &DataType::Boolean {
+        eprintln!(
+            "compute_formula_indicator: expression '{expr_str}' produced Boolean, expected numeric"
+        );
+        return None;
+    }
+
+    let f64_col = val_col.cast(&DataType::Float64).ok()?;
+    let ca = f64_col.f64().ok()?;
+    let values: Vec<f64> = ca.into_no_null_iter().collect();
+
+    let dates = extract_epoch_seconds(df, date_col).ok()?;
+
+    let mut points: Vec<IndicatorPoint> = values
+        .iter()
+        .zip(dates.iter())
+        .filter(|(&v, &d)| !v.is_nan() && d != 0)
+        .map(|(&v, &d)| IndicatorPoint {
+            date: d,
+            value: (v * 10000.0).round() / 10000.0,
+        })
+        .collect();
+
+    let total_points = points.len();
+    if points.len() > MAX_INDICATOR_POINTS {
+        points = sample_points(points, MAX_INDICATOR_POINTS);
+    }
+
+    Some(IndicatorData {
+        name: chart.label.clone(),
+        display_type: chart.display_type,
+        series: vec![IndicatorSeries {
+            label: chart.label.clone(),
+            values: points,
+        }],
+        thresholds: chart.thresholds.clone(),
+        total_points: if total_points > MAX_INDICATOR_POINTS {
+            Some(total_points)
+        } else {
+            None
+        },
+    })
 }
 
 /// Extract indicator chart data from a formula string by scanning for recognized
@@ -1462,5 +1532,55 @@ mod tests {
         assert_eq!(sampled.len(), 200);
         assert_eq!(sampled[0].value, 0.0);
         assert_eq!(sampled[199].value, 499.0);
+    }
+
+    // ── compute_formula_indicator ────────────────────────────────────────────
+
+    #[test]
+    fn compute_formula_indicator_basic_arithmetic() {
+        let df = make_ohlcv_df(10);
+        let chart = crate::signals::storage::ChartConfig {
+            display_type: DisplayType::Subchart,
+            label: "Close / Open".to_string(),
+            thresholds: vec![1.0],
+            expression: None,
+        };
+        let result = compute_formula_indicator("close / open", &chart, &df, "date");
+        assert!(result.is_some());
+        let ind = result.unwrap();
+        assert_eq!(ind.name, "Close / Open");
+        assert_eq!(ind.display_type, DisplayType::Subchart);
+        assert_eq!(ind.thresholds, vec![1.0]);
+        assert_eq!(ind.series.len(), 1);
+        assert_eq!(ind.series[0].values.len(), 10);
+    }
+
+    #[test]
+    fn compute_formula_indicator_boolean_returns_none() {
+        let df = make_ohlcv_df(10);
+        let chart = crate::signals::storage::ChartConfig {
+            display_type: DisplayType::Subchart,
+            label: "Should Fail".to_string(),
+            thresholds: vec![],
+            expression: None,
+        };
+        let result = compute_formula_indicator("close > 100", &chart, &df, "date");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn compute_formula_indicator_expression_override() {
+        let df = make_ohlcv_df(10);
+        let chart = crate::signals::storage::ChartConfig {
+            display_type: DisplayType::Subchart,
+            label: "Close Ratio".to_string(),
+            thresholds: vec![1.0],
+            expression: Some("close / open".to_string()),
+        };
+        let result = compute_formula_indicator("close > 100", &chart, &df, "date");
+        assert!(result.is_some());
+        let ind = result.unwrap();
+        assert_eq!(ind.name, "Close Ratio");
+        assert_eq!(ind.series[0].values.len(), 10);
     }
 }
