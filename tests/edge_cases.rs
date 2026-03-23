@@ -18,7 +18,7 @@ fn filter_dte_range_on_empty_df() {
         "value" => Vec::<i32>::new(),
     }
     .unwrap();
-    let result = optopsy_mcp::engine::filters::filter_dte_range(&df, 60, 30).unwrap();
+    let result = optopsy_mcp::engine::filters::filter_dte_range(df, 60, 30).unwrap();
     assert_eq!(result.height(), 0);
 }
 
@@ -29,7 +29,7 @@ fn filter_valid_quotes_on_empty_df() {
         "ask" => Vec::<f64>::new(),
     }
     .unwrap();
-    let result = optopsy_mcp::engine::filters::filter_valid_quotes(&df, 0.05).unwrap();
+    let result = optopsy_mcp::engine::filters::filter_valid_quotes(df, 0.05).unwrap();
     assert_eq!(result.height(), 0);
 }
 
@@ -39,7 +39,7 @@ fn filter_option_type_on_empty_df() {
         "option_type" => Vec::<&str>::new(),
     }
     .unwrap();
-    let result = optopsy_mcp::engine::filters::filter_option_type(&df, "c").unwrap();
+    let result = optopsy_mcp::engine::filters::filter_option_type(df, "c").unwrap();
     assert_eq!(result.height(), 0);
 }
 
@@ -61,7 +61,7 @@ fn select_closest_delta_on_empty_df() {
         min: 0.20,
         max: 0.40,
     };
-    let result = optopsy_mcp::engine::filters::select_closest_delta(&df, &target).unwrap();
+    let result = optopsy_mcp::engine::filters::select_closest_delta(df, &target).unwrap();
     assert_eq!(result.height(), 0);
 }
 
@@ -141,7 +141,7 @@ fn zero_width_dte_range_returns_exact_match() {
         "value" => &[1, 2, 3],
     }
     .unwrap();
-    let result = optopsy_mcp::engine::filters::filter_dte_range(&df, 30, 30).unwrap();
+    let result = optopsy_mcp::engine::filters::filter_dte_range(df, 30, 30).unwrap();
     assert_eq!(result.height(), 1);
 }
 

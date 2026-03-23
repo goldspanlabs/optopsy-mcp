@@ -814,7 +814,7 @@ pub fn find_single_leg_candidates(
     }
 
     // Step 3: Select closest delta per (datetime, expiration)
-    let selected = filters::select_closest_delta(&filtered, delta)?;
+    let selected = filters::select_closest_delta(filtered, delta)?;
 
     if selected.height() == 0 {
         return Ok(BTreeMap::new());

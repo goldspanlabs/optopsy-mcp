@@ -19,13 +19,13 @@ use super::types::{ExpirationCycle, StrategyDef};
 /// For multi-expiration strategies, ordering is applied **within each expiration cycle**
 /// independently (Primary legs among themselves, Secondary legs among themselves).
 pub fn filter_strike_order(
-    df: &DataFrame,
+    df: DataFrame,
     num_legs: usize,
     strict: bool,
     strategy_def: Option<&StrategyDef>,
 ) -> Result<DataFrame> {
     if num_legs <= 1 {
-        return Ok(df.clone());
+        return Ok(df);
     }
 
     // For multi-expiration strategies, apply ordering within each cycle group
@@ -36,7 +36,7 @@ pub fn filter_strike_order(
     }
 
     // Standard ordering: sequential across all legs
-    let mut lazy = df.clone().lazy();
+    let mut lazy = df.lazy();
 
     for i in 1..num_legs {
         let prev_col = format!("strike_{}", i - 1);
@@ -53,7 +53,7 @@ pub fn filter_strike_order(
 
 /// Apply strike ordering within each expiration cycle group independently.
 fn filter_strike_order_by_cycle(
-    df: &DataFrame,
+    df: DataFrame,
     strategy_def: &StrategyDef,
     strict: bool,
 ) -> Result<DataFrame> {
@@ -68,7 +68,7 @@ fn filter_strike_order_by_cycle(
         }
     }
 
-    let lazy = df.clone().lazy();
+    let lazy = df.lazy();
     let lazy = apply_window_ordering(lazy, &primary_indices, strict);
     let lazy = apply_window_ordering(lazy, &secondary_indices, strict);
     Ok(lazy.collect()?)
@@ -108,7 +108,7 @@ mod tests {
             "value" => &[1, 2],
         }
         .unwrap();
-        let result = filter_strike_order(&df, 1, true, None).unwrap();
+        let result = filter_strike_order(df, 1, true, None).unwrap();
         assert_eq!(result.height(), 2);
     }
 
@@ -119,7 +119,7 @@ mod tests {
             "strike_1" => &[110.0, 100.0, 100.0],
         }
         .unwrap();
-        let result = filter_strike_order(&df, 2, true, None).unwrap();
+        let result = filter_strike_order(df, 2, true, None).unwrap();
         // Only first row has strike_0 < strike_1
         assert_eq!(result.height(), 1);
         assert!(
@@ -143,7 +143,7 @@ mod tests {
             "strike_1" => &[110.0, 100.0, 100.0],
         }
         .unwrap();
-        let result = filter_strike_order(&df, 2, false, None).unwrap();
+        let result = filter_strike_order(df, 2, false, None).unwrap();
         // First row (100 < 110) and third row (100 == 100) pass with <=
         assert_eq!(result.height(), 2);
     }
@@ -157,7 +157,7 @@ mod tests {
             "strike_3" => &[115.0, 115.0],
         }
         .unwrap();
-        let result = filter_strike_order(&df, 4, true, None).unwrap();
+        let result = filter_strike_order(df, 4, true, None).unwrap();
         // Only first row is strictly ascending
         assert_eq!(result.height(), 1);
     }
@@ -203,7 +203,7 @@ mod tests {
             false,
         );
         // Both rows should pass since each cycle has only 1 leg (no ordering to enforce)
-        let result = filter_strike_order(&df, 2, false, Some(&sdef)).unwrap();
+        let result = filter_strike_order(df, 2, false, Some(&sdef)).unwrap();
         assert_eq!(result.height(), 2);
     }
 
@@ -231,7 +231,7 @@ mod tests {
         // Row 1: primary [0]=100, [2]=95 → 95 < 100 ✓ (relaxed >=)? No: 95 < 100 means
         // strike_2 >= strike_0 fails (95 >= 100 is false). So row 1 is filtered.
         // Row 2: primary [0]=100, [2]=110 → 110 >= 100 ✓
-        let result = filter_strike_order(&df, 4, false, Some(&sdef)).unwrap();
+        let result = filter_strike_order(df, 4, false, Some(&sdef)).unwrap();
         assert_eq!(result.height(), 1);
     }
 
@@ -248,7 +248,7 @@ mod tests {
             true,
         );
         // Single leg per cycle means windows(2) is empty — all rows pass
-        let result = filter_strike_order(&df, 2, true, Some(&sdef)).unwrap();
+        let result = filter_strike_order(df, 2, true, Some(&sdef)).unwrap();
         assert_eq!(result.height(), 2);
     }
 }

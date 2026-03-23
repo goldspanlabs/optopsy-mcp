@@ -12,10 +12,9 @@ use crate::data::parquet::DATETIME_COL;
 
 /// Compute DTE (days to expiration) from `datetime` and expiration columns.
 /// Casts both to Date for integer-day DTE regardless of intraday granularity.
-pub fn compute_dte(df: &DataFrame) -> Result<DataFrame> {
+pub fn compute_dte(df: DataFrame) -> Result<DataFrame> {
     let ms_per_day = 86_400_000i64;
     let result = df
-        .clone()
         .lazy()
         .with_column(
             ((col("expiration").cast(DataType::Date) - col(DATETIME_COL).cast(DataType::Date))
@@ -30,9 +29,8 @@ pub fn compute_dte(df: &DataFrame) -> Result<DataFrame> {
 }
 
 /// Filter by DTE range [`min_dte`, `max_dte`]
-pub fn filter_dte_range(df: &DataFrame, max_dte: i32, min_dte: i32) -> Result<DataFrame> {
+pub fn filter_dte_range(df: DataFrame, max_dte: i32, min_dte: i32) -> Result<DataFrame> {
     let result = df
-        .clone()
         .lazy()
         .filter(
             col("dte")
@@ -44,9 +42,8 @@ pub fn filter_dte_range(df: &DataFrame, max_dte: i32, min_dte: i32) -> Result<Da
 }
 
 /// Filter by option type (call or put)
-pub fn filter_option_type(df: &DataFrame, option_type: &str) -> Result<DataFrame> {
+pub fn filter_option_type(df: DataFrame, option_type: &str) -> Result<DataFrame> {
     let result = df
-        .clone()
         .lazy()
         .filter(col("option_type").eq(lit(option_type)))
         .collect()?;
@@ -55,9 +52,8 @@ pub fn filter_option_type(df: &DataFrame, option_type: &str) -> Result<DataFrame
 
 /// Select the closest option to a target delta within a range.
 /// Groups by (`datetime`, expiration) and picks the row closest to target delta.
-pub fn select_closest_delta(df: &DataFrame, target: &TargetRange) -> Result<DataFrame> {
+pub fn select_closest_delta(df: DataFrame, target: &TargetRange) -> Result<DataFrame> {
     let result = df
-        .clone()
         .lazy()
         .filter(
             col("delta")
@@ -251,9 +247,8 @@ pub fn join_legs(
 }
 
 /// Filter out options with bid/ask below the minimum threshold
-pub fn filter_valid_quotes(df: &DataFrame, min_bid_ask: f64) -> Result<DataFrame> {
+pub fn filter_valid_quotes(df: DataFrame, min_bid_ask: f64) -> Result<DataFrame> {
     let result = df
-        .clone()
         .lazy()
         .filter(
             col("bid")
@@ -275,7 +270,7 @@ pub fn filter_leg_candidates(
 ) -> Result<DataFrame> {
     let ms_per_day = 86_400_000i64;
     let result = df
-        .clone()
+        .clone() // clone required: called per-leg on shared options DataFrame
         .lazy()
         // filter_option_type
         .filter(col("option_type").eq(lit(option_type)))
@@ -321,9 +316,9 @@ pub fn is_third_friday(date: chrono::NaiveDate) -> bool {
 /// * `Any` — no-op, returns the `DataFrame` as-is.
 /// * `Weekly` — keeps rows where expiration falls on a Friday.
 /// * `Monthly` — keeps rows where expiration is the third Friday of the month.
-pub fn filter_expiration_type(df: &DataFrame, filter: &ExpirationFilter) -> Result<DataFrame> {
+pub fn filter_expiration_type(df: DataFrame, filter: &ExpirationFilter) -> Result<DataFrame> {
     if matches!(filter, ExpirationFilter::Any) {
-        return Ok(df.clone());
+        return Ok(df);
     }
 
     let exp_col = df.column("expiration")?;
@@ -431,7 +426,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = compute_dte(&df).unwrap();
+        let result = compute_dte(df).unwrap();
         let dte = result.column("dte").unwrap().i32().unwrap();
         let values: Vec<Option<i32>> = dte.into_iter().collect();
         assert_eq!(values[0], Some(1));
@@ -448,11 +443,11 @@ mod tests {
         }
         .unwrap();
         // Filter [20, 45]
-        let result = filter_dte_range(&df, 45, 20).unwrap();
+        let result = filter_dte_range(df.clone(), 45, 20).unwrap();
         assert_eq!(result.height(), 3); // 20, 30, 45
 
         // Exact boundary [30, 30]
-        let result = filter_dte_range(&df, 30, 30).unwrap();
+        let result = filter_dte_range(df, 30, 30).unwrap();
         assert_eq!(result.height(), 1);
     }
 
@@ -463,28 +458,28 @@ mod tests {
             "value" => &[1, 2, 3],
         }
         .unwrap();
-        let result = filter_dte_range(&df, 5, 1).unwrap();
+        let result = filter_dte_range(df, 5, 1).unwrap();
         assert_eq!(result.height(), 0);
     }
 
     #[test]
     fn filter_option_type_calls() {
         let df = make_options_df();
-        let result = filter_option_type(&df, "c").unwrap();
+        let result = filter_option_type(df, "c").unwrap();
         assert_eq!(result.height(), 3);
     }
 
     #[test]
     fn filter_option_type_puts() {
         let df = make_options_df();
-        let result = filter_option_type(&df, "p").unwrap();
+        let result = filter_option_type(df, "p").unwrap();
         assert_eq!(result.height(), 1);
     }
 
     #[test]
     fn filter_valid_quotes_removes_zero_bid() {
         let df = make_options_df();
-        let result = filter_valid_quotes(&df, 0.0).unwrap();
+        let result = filter_valid_quotes(df, 0.0).unwrap();
         // Row with bid=0.0 should be filtered out
         assert_eq!(result.height(), 3);
     }
@@ -496,7 +491,7 @@ mod tests {
             "ask" => &[1.0, 3.0],
         }
         .unwrap();
-        let result = filter_valid_quotes(&df, 0.0).unwrap();
+        let result = filter_valid_quotes(df, 0.0).unwrap();
         assert_eq!(result.height(), 1);
     }
 
@@ -508,7 +503,7 @@ mod tests {
         }
         .unwrap();
         // min_bid_ask=0.05 should filter out rows where bid or ask <= 0.05
-        let result = filter_valid_quotes(&df, 0.05).unwrap();
+        let result = filter_valid_quotes(df, 0.05).unwrap();
         assert_eq!(result.height(), 2); // only 0.10/0.15 and 2.0/3.0 pass
     }
 
@@ -537,7 +532,7 @@ mod tests {
             min: 0.25,
             max: 0.55,
         };
-        let result = select_closest_delta(&df, &target).unwrap();
+        let result = select_closest_delta(df, &target).unwrap();
         // Should pick delta=0.48 or 0.52 (both distance 0.02 from 0.50)
         assert_eq!(result.height(), 1);
         let selected_delta = result
@@ -575,7 +570,7 @@ mod tests {
             min: 0.40,
             max: 0.60,
         };
-        let result = select_closest_delta(&df, &target).unwrap();
+        let result = select_closest_delta(df, &target).unwrap();
         assert_eq!(result.height(), 0);
     }
 
@@ -622,7 +617,7 @@ mod tests {
                 .into_column(),
         )
         .unwrap();
-        let result = filter_expiration_type(&df, &ExpirationFilter::Any).unwrap();
+        let result = filter_expiration_type(df, &ExpirationFilter::Any).unwrap();
         assert_eq!(result.height(), 2);
     }
 
@@ -649,7 +644,7 @@ mod tests {
                 .into_column(),
         )
         .unwrap();
-        let result = filter_expiration_type(&df, &ExpirationFilter::Weekly).unwrap();
+        let result = filter_expiration_type(df, &ExpirationFilter::Weekly).unwrap();
         assert_eq!(result.height(), 1, "Only Friday expiration should remain");
     }
 
@@ -679,7 +674,7 @@ mod tests {
             .into_column(),
         )
         .unwrap();
-        let result = filter_expiration_type(&df, &ExpirationFilter::Monthly).unwrap();
+        let result = filter_expiration_type(df, &ExpirationFilter::Monthly).unwrap();
         assert_eq!(
             result.height(),
             1,

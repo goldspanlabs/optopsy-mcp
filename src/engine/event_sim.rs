@@ -69,8 +69,8 @@ pub fn find_entry_candidates(
             params.min_bid_ask,
         )?;
         // Apply expiration type filter before delta selection
-        let exp_filtered = filters::filter_expiration_type(&valid, &params.expiration_filter)?;
-        let selected = filters::select_closest_delta(&exp_filtered, delta_target)?;
+        let exp_filtered = filters::filter_expiration_type(valid, &params.expiration_filter)?;
+        let selected = filters::select_closest_delta(exp_filtered, delta_target)?;
 
         if selected.height() == 0 {
             bail!(
@@ -100,7 +100,7 @@ pub fn find_entry_candidates(
     // Apply strike ordering rules for multi-leg strategies
     let pre_strike_count = combined.height();
     let combined = rules::filter_strike_order(
-        &combined,
+        combined,
         num_legs,
         strategy_def.strict_strike_order,
         if is_multi_exp {

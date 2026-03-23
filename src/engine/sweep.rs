@@ -3,12 +3,14 @@
 //! stability scores, and optionally performs out-of-sample validation and
 //! permutation-based multiple comparisons correction.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{bail, Result};
 use polars::prelude::*;
 
-use super::core::run_backtest_with_cache;
+use super::core::{
+    build_signal_filters, run_backtest_with_cache, run_backtest_with_signals, DateFilter,
+};
 use super::multiple_comparisons::{self, MultipleComparisonsResult};
 use super::price_table::PriceTableCache;
 use super::sweep_analysis::{build_signal_combos, build_sweep_label};
@@ -178,6 +180,25 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
     let train_cache = PriceTableCache::build(&train_df)?;
     let test_cache = test_df.as_ref().map(PriceTableCache::build).transpose()?;
 
+    // 2c. Pre-compute signal date filters for each unique (entry_signal, exit_signal) pair.
+    // This avoids redundant OHLCV loading and signal evaluation across combos that share
+    // the same signals (common when sweeping delta/DTE/slippage with fixed signals).
+    let signal_pairs: Vec<(Option<SignalSpec>, Option<SignalSpec>)> = combos
+        .iter()
+        .map(|c| {
+            let entry = c
+                .entry_signal
+                .clone()
+                .or_else(|| params.sim_params.entry_signal.clone());
+            let exit = c
+                .exit_signal
+                .clone()
+                .or_else(|| params.sim_params.exit_signal.clone());
+            (entry, exit)
+        })
+        .collect();
+    let signal_cache = precompute_signal_filters(&signal_pairs, &params.sim_params, &train_df)?;
+
     // 3. Run backtests on training set
     let mut results: Vec<SweepResult> = Vec::new();
     let mut failed: usize = 0;
@@ -199,12 +220,26 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
             combo.entry_dte.clone(),
             combo.exit_dte,
             combo.slippage.clone(),
-            entry_signal,
-            exit_signal,
+            entry_signal.clone(),
+            exit_signal.clone(),
             &params.sim_params,
         );
 
-        match run_backtest_with_cache(&train_df, &backtest_params, Some(&train_cache)) {
+        // Look up pre-computed signal filters from cache; fall back to per-combo evaluation
+        let cache_key = signal_cache_key(entry_signal.as_ref(), exit_signal.as_ref());
+        let bt_result = if let Some((cached_entry, cached_exit)) = signal_cache.get(&cache_key) {
+            run_backtest_with_signals(
+                &train_df,
+                &backtest_params,
+                Some(&train_cache),
+                cached_entry.clone(),
+                cached_exit.clone(),
+            )
+        } else {
+            run_backtest_with_cache(&train_df, &backtest_params, Some(&train_cache))
+        };
+
+        match bt_result {
             Ok(bt) => {
                 let independent_periods = count_independent_entry_periods(&bt.trade_log);
                 results.push(SweepResult {
@@ -447,6 +482,104 @@ fn run_multiple_comparisons(
     let bon = multiple_comparisons::bonferroni(&labels, &p_values, 0.05);
     let bh = multiple_comparisons::benjamini_hochberg(&labels, &p_values, 0.05);
     Some((bon, bh))
+}
+
+// ---------------------------------------------------------------------------
+// Signal filter cache helpers
+// ---------------------------------------------------------------------------
+
+/// Derive a stable cache key from an `(entry_signal, exit_signal)` pair.
+/// Uses the `Debug` representation since `SignalSpec` doesn't impl `Hash`.
+fn signal_cache_key(entry: Option<&SignalSpec>, exit: Option<&SignalSpec>) -> String {
+    format!("{entry:?}||{exit:?}")
+}
+
+/// Pre-compute signal date filters for all unique signal pairs across sweep combos.
+///
+/// Returns a `HashMap` keyed by `signal_cache_key`. Each combo's resolved
+/// `(entry_signal, exit_signal)` is evaluated at most once, then cloned for each
+/// backtest that shares the same pair.
+#[allow(clippy::unnecessary_wraps)]
+fn precompute_signal_filters(
+    signal_pairs: &[(Option<SignalSpec>, Option<SignalSpec>)],
+    sim_params: &SimParams,
+    df: &DataFrame,
+) -> Result<HashMap<String, (DateFilter, DateFilter)>> {
+    let mut cache: HashMap<String, (DateFilter, DateFilter)> = HashMap::new();
+
+    for (entry_signal, exit_signal) in signal_pairs {
+        let key = signal_cache_key(entry_signal.as_ref(), exit_signal.as_ref());
+        if cache.contains_key(&key) {
+            continue;
+        }
+
+        // No signals → no filter needed
+        if entry_signal.is_none() && exit_signal.is_none() {
+            cache.insert(key, (None, None));
+            continue;
+        }
+
+        // Build a minimal BacktestParams just for signal evaluation
+        let probe_params = BacktestParams {
+            strategy: String::new(), // unused by build_signal_filters
+            leg_deltas: vec![],
+            entry_dte: DteRange {
+                target: 45,
+                min: 30,
+                max: 60,
+            },
+            exit_dte: 0,
+            slippage: Slippage::Mid,
+            commission: None,
+            min_bid_ask: default_min_bid_ask(),
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            capital: sim_params.capital,
+            quantity: sim_params.quantity,
+            sizing: None,
+            multiplier: sim_params.multiplier,
+            max_positions: sim_params.max_positions,
+            selector: sim_params.selector.clone(),
+            adjustment_rules: vec![],
+            entry_signal: entry_signal.clone(),
+            exit_signal: exit_signal.clone(),
+            ohlcv_path: sim_params.ohlcv_path.clone(),
+            cross_ohlcv_paths: sim_params.cross_ohlcv_paths.clone(),
+            min_net_premium: None,
+            max_net_premium: None,
+            min_net_delta: None,
+            max_net_delta: None,
+            min_days_between_entries: None,
+            expiration_filter: ExpirationFilter::Any,
+            exit_net_delta: None,
+        };
+
+        let cache_dir = sim_params
+            .ohlcv_path
+            .as_deref()
+            .and_then(|p| std::path::Path::new(p).parent())
+            .and_then(|p| p.parent());
+
+        match build_signal_filters(&probe_params, df, cache_dir) {
+            Ok((entry_dates, exit_dates)) => {
+                cache.insert(key, (entry_dates, exit_dates));
+            }
+            Err(e) => {
+                // Signal evaluation may fail (e.g. missing ohlcv_path); combos using this
+                // pair will fall back to computing signals individually in run_backtest_with_cache.
+                tracing::warn!("Failed to pre-compute signal filters: {e}");
+            }
+        }
+    }
+
+    tracing::info!(
+        unique_signal_pairs = cache.len(),
+        total_combos = signal_pairs.len(),
+        "Signal filters pre-computed for sweep"
+    );
+
+    Ok(cache)
 }
 
 // ---------------------------------------------------------------------------

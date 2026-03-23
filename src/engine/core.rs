@@ -19,7 +19,9 @@ use crate::signals;
 use crate::signals::registry::{collect_cross_symbols, SignalSpec};
 use crate::strategies;
 
-type DateFilter = Option<HashSet<NaiveDate>>;
+/// Pre-computed set of dates on which a signal fires.
+/// `None` means no signal filter (all dates allowed).
+pub type DateFilter = Option<HashSet<NaiveDate>>;
 
 /// Load OHLCV close prices into a `BTreeMap<NaiveDate, f64>` for sizing or stock-leg strategies.
 ///
@@ -479,6 +481,32 @@ pub fn run_backtest_with_cache(
     params: &BacktestParams,
     cache: Option<&PriceTableCache>,
 ) -> Result<BacktestResult> {
+    // Derive cache_dir from ohlcv_path (path is {cache_dir}/{category}/{SYMBOL}.parquet)
+    let cache_dir = params
+        .ohlcv_path
+        .as_deref()
+        .and_then(|p| std::path::Path::new(p).parent())
+        .and_then(|p| p.parent());
+
+    // Build signal date filters if specified (loads OHLCV at most once)
+    let (entry_dates, exit_dates) = build_signal_filters(params, df, cache_dir)?;
+
+    run_backtest_with_signals(df, params, cache, entry_dates, exit_dates)
+}
+
+/// Run a full backtest with pre-computed signal date filters and an optional price table cache.
+///
+/// This is the core backtest entry point. Use this directly when signal filters have been
+/// pre-computed (e.g. in parameter sweeps where many combos share the same signals) to
+/// avoid redundant OHLCV loading and signal evaluation.
+#[allow(clippy::needless_pass_by_value)] // callers benefit from move semantics
+pub fn run_backtest_with_signals(
+    df: &DataFrame,
+    params: &BacktestParams,
+    cache: Option<&PriceTableCache>,
+    entry_dates: DateFilter,
+    exit_dates: DateFilter,
+) -> Result<BacktestResult> {
     let strategy_def = strategies::find_strategy(&params.strategy)
         .ok_or_else(|| anyhow::anyhow!("Unknown strategy: {}", params.strategy))?;
 
@@ -492,16 +520,6 @@ pub fn run_backtest_with_cache(
     if let Err(e) = strategy_def.validate_delta_ordering(&params.leg_deltas) {
         bail!("{e}");
     }
-
-    // Derive cache_dir from ohlcv_path (path is {cache_dir}/{category}/{SYMBOL}.parquet)
-    let cache_dir = params
-        .ohlcv_path
-        .as_deref()
-        .and_then(|p| std::path::Path::new(p).parent())
-        .and_then(|p| p.parent());
-
-    // Build signal date filters if specified (loads OHLCV at most once)
-    let (entry_dates, exit_dates) = build_signal_filters(params, df, cache_dir)?;
 
     if entry_dates.is_some() || exit_dates.is_some() {
         tracing::info!(
