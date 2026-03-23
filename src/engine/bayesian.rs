@@ -16,7 +16,8 @@ use nalgebra::{DMatrix, DVector};
 use polars::prelude::*;
 use rand::prelude::*;
 
-use super::core::run_backtest;
+use super::core::run_backtest_with_cache;
+use super::price_table::PriceTableCache;
 use super::sweep::{
     count_independent_entry_periods, delta_target_to_range, dte_target_to_range, split_by_date,
 };
@@ -516,6 +517,13 @@ pub fn run_bayesian_optimization(
         (df.clone(), None)
     };
 
+    // Build price table caches once, reused across all evaluations
+    let train_cache = PriceTableCache::build(&train_df)?;
+    let test_cache = test_df
+        .as_ref()
+        .map(|tdf| PriceTableCache::build(tdf))
+        .transpose()?;
+
     let mut all_configs: Vec<Configuration> = Vec::new();
     let mut all_results: Vec<SweepResult> = Vec::new();
     let mut all_objectives: Vec<f64> = Vec::new();
@@ -532,7 +540,7 @@ pub fn run_bayesian_optimization(
 
     for i in 0..params.initial_samples {
         let config = space.sample_random(&mut rng_instance);
-        match evaluate_config(&train_df, params, &config) {
+        match evaluate_config(&train_df, params, &config, Some(&train_cache)) {
             Ok(result) => {
                 let obj = params.objective.extract(&result);
                 if obj > best_so_far {
@@ -615,7 +623,7 @@ pub fn run_bayesian_optimization(
         let next_config = candidates[best_cand_idx].clone();
 
         // Evaluate the chosen configuration
-        match evaluate_config(&train_df, params, &next_config) {
+        match evaluate_config(&train_df, params, &next_config, Some(&train_cache)) {
             Ok(result) => {
                 let obj = params.objective.extract(&result);
                 if obj > best_so_far {
@@ -665,7 +673,7 @@ pub fn run_bayesian_optimization(
                 exit_dte: r.exit_dte,
                 slippage: r.slippage.clone(),
             };
-            if let Ok(test_result) = evaluate_config(test_df, params, &config) {
+            if let Ok(test_result) = evaluate_config(test_df, params, &config, test_cache.as_ref()) {
                 oos_results.push(OosResult {
                     label: r.label.clone(),
                     train_sharpe: r.sharpe,
@@ -693,6 +701,7 @@ fn evaluate_config(
     df: &DataFrame,
     params: &BayesianParams,
     config: &Configuration,
+    cache: Option<&PriceTableCache>,
 ) -> Result<SweepResult> {
     let leg_deltas: Vec<TargetRange> = config
         .leg_deltas
@@ -749,7 +758,7 @@ fn evaluate_config(
         exit_net_delta: params.sim_params.exit_net_delta,
     };
 
-    let bt = run_backtest(df, &backtest_params)?;
+    let bt = run_backtest_with_cache(df, &backtest_params, cache)?;
     let independent_periods = count_independent_entry_periods(&bt.trade_log);
 
     Ok(SweepResult {
