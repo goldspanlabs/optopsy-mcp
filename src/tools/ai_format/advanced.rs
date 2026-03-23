@@ -502,41 +502,69 @@ pub fn format_bayesian(
 
     let mut key_findings = Vec::new();
 
-    // Convergence analysis
-    if output.convergence_trace.len() >= 2 {
-        let first = output.convergence_trace[0];
-        let last = *output.convergence_trace.last().unwrap();
-        let improvement = last - first;
-        key_findings.push(format!(
-            "Objective improved from {first:.3} to {last:.3} ({improvement:+.3}) over {} evaluations",
-            output.convergence_trace.len()
-        ));
+    // Helper: extract the chosen objective value from a result.
+    // Covers all variants from `Objective::name()`: Sharpe, Sortino, Calmar, Profit Factor.
+    // "Sharpe" (the default) is handled by the fallback arm below.
+    let objective_value = |r: &crate::engine::types::SweepResult| -> f64 {
+        match output.objective.as_str() {
+            "Sortino" => r.sortino,
+            "Calmar" => r.calmar,
+            "Profit Factor" => r.profit_factor,
+            // "Sharpe" and any future objectives default to Sharpe.
+            _ => r.sharpe,
+        }
+    };
 
-        // Check if converged (last 20% had no improvement)
-        let tail_start = output.convergence_trace.len() * 4 / 5;
-        let tail = &output.convergence_trace[tail_start..];
-        if !tail.is_empty() {
-            let tail_min = tail.iter().copied().fold(f64::INFINITY, f64::min);
-            let tail_max = tail.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-            if (tail_max - tail_min).abs() < 0.01 {
-                key_findings.push(
-                    "Optimization appears converged (no improvement in final 20% of evaluations)"
-                        .to_string(),
-                );
-            } else {
-                key_findings.push(
-                    "Optimization may benefit from additional evaluations (still improving)"
-                        .to_string(),
-                );
+    // Convergence analysis — skip non-finite entries (early failures initialize to -inf).
+    if output.convergence_trace.len() >= 2 {
+        if let Some(first_finite_idx) = output.convergence_trace.iter().position(|v| v.is_finite())
+        {
+            let first = output.convergence_trace[first_finite_idx];
+            let last = output
+                .convergence_trace
+                .iter()
+                .copied()
+                .rfind(|v| v.is_finite())
+                .unwrap_or(first);
+            let improvement = last - first;
+            key_findings.push(format!(
+                "Objective improved from {first:.3} to {last:.3} ({improvement:+.3}) over {} evaluations",
+                output.convergence_trace.len()
+            ));
+
+            // Check if converged (last 20% had no improvement among finite entries).
+            let tail_start = output.convergence_trace.len() * 4 / 5;
+            let tail: Vec<f64> = output.convergence_trace[tail_start..]
+                .iter()
+                .copied()
+                .filter(|v| v.is_finite())
+                .collect();
+            if !tail.is_empty() {
+                let tail_min = tail.iter().copied().fold(f64::INFINITY, f64::min);
+                let tail_max = tail.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                if (tail_max - tail_min).abs() < 0.01 {
+                    key_findings.push(
+                        "Optimization appears converged (no improvement in final 20% of evaluations)"
+                            .to_string(),
+                    );
+                } else {
+                    key_findings.push(
+                        "Optimization may benefit from additional evaluations (still improving)"
+                            .to_string(),
+                    );
+                }
             }
         }
     }
 
     if let Some(ref b) = best {
+        let obj_val = objective_value(b);
         key_findings.push(format!(
-            "Best config: {} (Sharpe {:.2}, PnL {}, Max DD {:.1}%, Win Rate {:.0}%)",
+            "Best config (by {} objective): {} ({} {:.2}, PnL {}, Max DD {:.1}%, Win Rate {:.0}%)",
+            output.objective,
             b.label,
-            b.sharpe,
+            output.objective,
+            obj_val,
             format_pnl(b.pnl),
             b.max_dd * 100.0,
             b.win_rate * 100.0,
@@ -545,12 +573,13 @@ pub fn format_bayesian(
 
     let n_evaluated = output.ranked_results.len();
     if n_evaluated >= 2 {
-        let top_sharpe = output.ranked_results[0].sharpe;
-        let second_sharpe = output.ranked_results[1].sharpe;
-        let gap = top_sharpe - second_sharpe;
+        let top_obj = objective_value(&output.ranked_results[0]);
+        let second_obj = objective_value(&output.ranked_results[1]);
+        let gap = top_obj - second_obj;
         if gap > 0.3 {
             key_findings.push(format!(
-                "Large gap between #1 and #2 ({gap:.2} Sharpe) — best may be an outlier, validate with walk_forward"
+                "Large gap between #1 and #2 ({gap:.2} {}) — best may be an outlier, validate with walk_forward",
+                output.objective,
             ));
         }
     }

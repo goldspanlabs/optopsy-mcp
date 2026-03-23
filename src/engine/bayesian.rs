@@ -169,7 +169,11 @@ struct GaussianProcess {
     y_mean: f64,
     y_std: f64,
     alpha: Option<DVector<f64>>,
-    k_inv: Option<DMatrix<f64>>,
+    /// Stored Cholesky decomposition of the kernel matrix (K = L Lᵀ).
+    /// Used to compute predictive variance without forming K⁻¹ explicitly:
+    /// `k_sᵀ K⁻¹ k_s = k_sᵀ v` where `v = K⁻¹ k_s` via Cholesky solve.
+    /// More numerically stable and avoids O(n³) explicit inversion.
+    chol_factor: Option<nalgebra::linalg::Cholesky<f64, nalgebra::Dyn>>,
 }
 
 impl GaussianProcess {
@@ -182,7 +186,7 @@ impl GaussianProcess {
             y_mean: 0.0,
             y_std: 1.0,
             alpha: None,
-            k_inv: None,
+            chol_factor: None,
         }
     }
 
@@ -205,12 +209,11 @@ impl GaussianProcess {
             k[(i, i)] += self.noise;
         }
 
-        // Solve K * alpha = y_norm via Cholesky
+        // Solve K * alpha = y_norm via Cholesky; keep decomposition for variance computation.
         if let Some(chol) = nalgebra::linalg::Cholesky::new(k.clone()) {
             let alpha = chol.solve(&y_norm);
-            let k_inv = chol.inverse();
             self.alpha = Some(alpha);
-            self.k_inv = Some(k_inv);
+            self.chol_factor = Some(chol);
         } else {
             // Fallback: add more jitter
             for i in 0..n {
@@ -218,9 +221,8 @@ impl GaussianProcess {
             }
             if let Some(chol) = nalgebra::linalg::Cholesky::new(k) {
                 let alpha = chol.solve(&y_norm);
-                let k_inv = chol.inverse();
                 self.alpha = Some(alpha);
-                self.k_inv = Some(k_inv);
+                self.chol_factor = Some(chol);
             }
         }
 
@@ -232,18 +234,23 @@ impl GaussianProcess {
     fn predict(&self, x_test: &DMatrix<f64>) -> (DVector<f64>, DVector<f64>) {
         let x_train = self.x_train.as_ref().expect("GP not fitted");
         let alpha = self.alpha.as_ref().expect("GP not fitted");
-        let k_inv = self.k_inv.as_ref().expect("GP not fitted");
+        let chol = self.chol_factor.as_ref().expect("GP not fitted");
 
         let k_star = self.kernel.cross(x_train, x_test);
         let mean_norm = &k_star * alpha;
 
+        // Compute predictive variance via Cholesky solve, avoiding explicit K⁻¹.
+        // For each test point i:
+        //   v = K⁻¹ k_sᵢ  (via Cholesky solve)
+        //   var_i = k_ss - k_sᵢᵀ v
         let n_test = x_test.nrows();
         let mut var = DVector::zeros(n_test);
         for i in 0..n_test {
             let k_ss = self.kernel.signal_variance;
             let k_s = k_star.row(i).transpose();
-            let v = k_ss - (k_s.transpose() * k_inv * &k_s)[(0, 0)];
-            var[i] = v.max(1e-10);
+            let v = chol.solve(&k_s);
+            let v_dot = k_s.dot(&v);
+            var[i] = (k_ss - v_dot).max(1e-10);
         }
 
         // Un-normalize
@@ -291,6 +298,20 @@ fn expected_improvement(mean: f64, variance: f64, f_best: f64) -> f64 {
 // Parameter space encoding
 // ---------------------------------------------------------------------------
 
+/// Deduplicate values while preserving order of first occurrence.
+///
+/// O(n²) — acceptable here since the input is always a small slice
+/// (typically ≤ 10 exit DTEs or slippage models per call).
+fn dedup_preserve_order<T: PartialEq + Clone>(values: &[T]) -> Vec<T> {
+    let mut unique: Vec<T> = Vec::with_capacity(values.len());
+    for v in values {
+        if !unique.iter().any(|existing| existing == v) {
+            unique.push(v.clone());
+        }
+    }
+    unique
+}
+
 /// Encodes the mixed parameter space into a continuous feature vector for the GP.
 struct ParameterSpace {
     n_legs: usize,
@@ -315,8 +336,8 @@ impl ParameterSpace {
             n_legs: params.leg_delta_bounds.len(),
             leg_delta_bounds: params.leg_delta_bounds.clone(),
             entry_dte_bounds: params.entry_dte_bounds,
-            exit_dte_values: params.exit_dtes.clone(),
-            slippage_values: params.slippage_models.clone(),
+            exit_dte_values: dedup_preserve_order(&params.exit_dtes),
+            slippage_values: dedup_preserve_order(&params.slippage_models),
         }
     }
 
@@ -455,14 +476,7 @@ impl ParameterSpace {
 }
 
 fn slippage_eq(a: &Slippage, b: &Slippage) -> bool {
-    matches!(
-        (a, b),
-        (Slippage::Mid, Slippage::Mid)
-            | (Slippage::Spread, Slippage::Spread)
-            | (Slippage::Liquidity { .. }, Slippage::Liquidity { .. })
-            | (Slippage::PerLeg { .. }, Slippage::PerLeg { .. })
-            | (Slippage::BidAskTravel { .. }, Slippage::BidAskTravel { .. })
-    )
+    a == b
 }
 
 // ---------------------------------------------------------------------------
@@ -1119,6 +1133,15 @@ mod tests {
         assert!(slippage_eq(&Slippage::Mid, &Slippage::Mid));
         assert!(slippage_eq(&Slippage::Spread, &Slippage::Spread));
         assert!(!slippage_eq(&Slippage::Mid, &Slippage::Spread));
+        // Inner fields must match — different PerLeg values must not be equal.
+        assert!(!slippage_eq(
+            &Slippage::PerLeg { per_leg: 0.01 },
+            &Slippage::PerLeg { per_leg: 0.05 }
+        ));
+        assert!(slippage_eq(
+            &Slippage::PerLeg { per_leg: 0.01 },
+            &Slippage::PerLeg { per_leg: 0.01 }
+        ));
     }
 
     // -- Objective extraction ---------------------------------------------

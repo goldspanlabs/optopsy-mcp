@@ -208,7 +208,7 @@ pub struct SizingConfig {
 }
 
 /// Slippage model controlling how fill prices are derived from bid/ask quotes.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Validate)]
 #[serde(tag = "type")]
 #[derive(Default)]
 pub enum Slippage {
