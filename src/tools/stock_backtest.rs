@@ -56,6 +56,7 @@ pub fn execute(
         params.exit_signal.as_ref(),
         &ohlcv_df,
         date_col,
+        &[],
     );
 
     // Run the simulation

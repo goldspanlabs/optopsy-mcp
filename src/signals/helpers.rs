@@ -56,6 +56,7 @@ pub fn collect_indicator_data(
     exit_signal: Option<&crate::signals::registry::SignalSpec>,
     ohlcv_df: &DataFrame,
     date_col: &str,
+    chart_indicators: &[(String, crate::signals::storage::ChartConfig)],
 ) -> Vec<IndicatorData> {
     let mut indicator_data: Vec<IndicatorData> = vec![];
     if let Some(spec) = entry_signal {
@@ -69,6 +70,19 @@ pub fn collect_indicator_data(
             crate::signals::indicators::compute_indicator_data(spec, ohlcv_df, date_col),
         );
     }
+
+    // Evaluate chart indicators (custom formula indicators with ChartConfig)
+    for (formula, chart) in chart_indicators {
+        if indicator_data.iter().any(|ind| ind.name == chart.label) {
+            continue;
+        }
+        if let Some(ind) = crate::signals::indicators::compute_formula_indicator(
+            formula, chart, ohlcv_df, date_col,
+        ) {
+            indicator_data.push(ind);
+        }
+    }
+
     indicator_data
 }
 
@@ -230,5 +244,50 @@ mod tests {
         let result = pad_series(&values, 3);
         assert_eq!(result.len(), 3);
         assert!(result.iter().all(|v| v.is_nan()));
+    }
+
+    #[test]
+    fn collect_indicator_data_with_chart_indicators() {
+        use chrono::NaiveDate;
+
+        let n = 30usize;
+        let dates: Vec<NaiveDate> = (0..n)
+            .map(|i| {
+                NaiveDate::from_ymd_opt(2024, 1, 1).unwrap() + chrono::Duration::days(i as i64)
+            })
+            .collect();
+        let close: Vec<f64> = (0..n).map(|i| 100.0 + (i as f64) * 0.5).collect();
+        let open: Vec<f64> = close.iter().map(|c| c - 0.5).collect();
+        let high: Vec<f64> = close.iter().map(|c| c + 2.0).collect();
+        let low: Vec<f64> = close.iter().map(|c| c - 2.0).collect();
+        let volume: Vec<f64> = vec![1000.0; n];
+
+        let df = df! {
+            "date" => DateChunked::from_naive_date(PlSmallStr::from("date"), dates),
+            "open" => &open,
+            "high" => &high,
+            "low" => &low,
+            "close" => &close,
+            "volume" => &volume,
+        }
+        .unwrap();
+
+        let chart = crate::signals::storage::ChartConfig {
+            display_type: DisplayType::Subchart,
+            label: "Close/Open Ratio".to_string(),
+            thresholds: vec![1.0],
+            expression: None,
+        };
+
+        let result = collect_indicator_data(
+            None,
+            None,
+            &df,
+            "date",
+            &[("close / open".to_string(), chart)],
+        );
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "Close/Open Ratio");
+        assert_eq!(result[0].thresholds, vec![1.0]);
     }
 }

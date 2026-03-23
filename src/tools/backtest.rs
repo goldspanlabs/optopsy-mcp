@@ -35,6 +35,7 @@ pub fn execute(
             params.exit_signal.as_ref(),
             ohlcv,
             "date",
+            &[],
         )
     } else {
         vec![]
