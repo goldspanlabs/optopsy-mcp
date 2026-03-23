@@ -297,7 +297,7 @@ fn active_dates_multi_depth<S: std::hash::BuildHasher>(
         }
         // Saved: load the inner spec and recurse with incremented depth
         SignalSpec::Saved { name } => match storage::load_signal(name) {
-            Ok((loaded, _)) => {
+            Ok((loaded, _, _)) => {
                 active_dates_multi_depth(&loaded, primary_df, cross_dfs, date_col, depth + 1)
             }
             Err(_) => active_dates(spec, primary_df, date_col),
@@ -385,7 +385,7 @@ fn active_datetimes_multi_depth<S: std::hash::BuildHasher>(
         }
         // Saved: load the inner spec and recurse with incremented depth
         SignalSpec::Saved { name } => match storage::load_signal(name) {
-            Ok((loaded, _)) => {
+            Ok((loaded, _, _)) => {
                 active_datetimes_multi_depth(&loaded, primary_df, cross_dfs, date_col, depth + 1)
             }
             Err(_) => active_datetimes(spec, primary_df, date_col),

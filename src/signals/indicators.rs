@@ -79,7 +79,7 @@ fn compute_indicator_data_inner(
             result
         }
         SignalSpec::Saved { name } => match super::storage::load_signal(name) {
-            Ok((loaded, _)) => compute_indicator_data_inner(&loaded, ohlcv_df, date_col),
+            Ok((loaded, _, _)) => compute_indicator_data_inner(&loaded, ohlcv_df, date_col),
             Err(_) => vec![],
         },
         SignalSpec::Formula { formula } => {

@@ -6,11 +6,28 @@
 //! transparently (backward compatible).
 
 use anyhow::{bail, Context, Result};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Component, PathBuf};
 
+use super::helpers::DisplayType;
 use super::registry::SignalSpec;
+
+/// Chart display configuration for a saved signal.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ChartConfig {
+    /// How the indicator should be displayed (overlay on price or subchart).
+    pub display_type: DisplayType,
+    /// Human-readable label for the chart (e.g. "RSI(14)").
+    pub label: String,
+    /// Threshold lines to draw (e.g. [30.0, 70.0] for RSI).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub thresholds: Vec<f64>,
+    /// Optional expression override for computing indicator data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expression: Option<String>,
+}
 
 /// On-disk envelope for a saved signal. Wraps `SignalSpec` with optional metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,6 +37,9 @@ struct SavedSignal {
     display_name: Option<String>,
     /// The signal specification
     spec: SignalSpec,
+    /// Optional chart display configuration
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chart: Option<ChartConfig>,
 }
 
 /// Test-only override for signals directory, allowing isolation via temp dirs.
@@ -197,7 +217,12 @@ pub fn find_duplicate_formula(formula: &str, exclude_name: &str) -> Result<Optio
 /// Writes to a uniquely-named temporary file in the same directory first, then atomically
 /// renames it into place. Both the temporary path and final target path are checked for
 /// symlinks before writing to prevent symlink-based redirect attacks.
-pub fn save_signal(name: &str, spec: &SignalSpec, display_name: Option<&str>) -> Result<()> {
+pub fn save_signal(
+    name: &str,
+    spec: &SignalSpec,
+    display_name: Option<&str>,
+    chart: Option<&ChartConfig>,
+) -> Result<()> {
     validate_name(name)?;
     let dir = signals_dir()?;
     let path = dir.join(format!("{name}.json"));
@@ -215,6 +240,7 @@ pub fn save_signal(name: &str, spec: &SignalSpec, display_name: Option<&str>) ->
     let envelope = SavedSignal {
         display_name: display_name.map(String::from),
         spec: spec.clone(),
+        chart: chart.cloned(),
     };
     let json = serde_json::to_string_pretty(&envelope).context("Failed to serialize signal")?;
 
@@ -248,7 +274,7 @@ pub fn save_signal(name: &str, spec: &SignalSpec, display_name: Option<&str>) ->
 ///
 /// Supports both the new envelope format (`{ display_name, spec }`) and
 /// legacy bare `SignalSpec` files for backward compatibility.
-pub fn load_signal(name: &str) -> Result<(SignalSpec, Option<String>)> {
+pub fn load_signal(name: &str) -> Result<(SignalSpec, Option<String>, Option<ChartConfig>)> {
     validate_name(name)?;
     let dir = signals_dir()?;
     let path = dir.join(format!("{name}.json"));
@@ -260,11 +286,11 @@ pub fn load_signal(name: &str) -> Result<(SignalSpec, Option<String>)> {
 
     // Try envelope format first, then fall back to bare SignalSpec
     if let Ok(envelope) = serde_json::from_str::<SavedSignal>(&json) {
-        return Ok((envelope.spec, envelope.display_name));
+        return Ok((envelope.spec, envelope.display_name, envelope.chart));
     }
     let spec: SignalSpec =
         serde_json::from_str(&json).with_context(|| format!("Failed to parse signal '{name}'"))?;
-    Ok((spec, None))
+    Ok((spec, None, None))
 }
 
 /// Delete a saved signal by name.
@@ -280,12 +306,18 @@ pub fn delete_signal(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Update a saved signal: rename, change display name, and/or update formula.
+/// Update a saved signal: rename, change display name, update formula, and/or change chart config.
+///
+/// `new_chart` uses `Option<Option<&ChartConfig>>` semantics:
+/// - `None` — preserve the existing chart config
+/// - `Some(Some(config))` — replace with a new chart config
+/// - `Some(None)` — remove the chart config
 pub fn update_signal(
     old_name: &str,
     new_name: &str,
     new_display_name: Option<&str>,
     new_formula: Option<&str>,
+    new_chart: Option<Option<&ChartConfig>>,
 ) -> Result<()> {
     validate_name(old_name)?;
     validate_name(new_name)?;
@@ -305,15 +337,22 @@ pub fn update_signal(
             .map_err(|e| anyhow::anyhow!("Invalid formula: {e}"))?;
     }
 
-    // Load existing spec, optionally replace formula, then re-save
-    let (spec, _old_display) = load_signal(old_name)?;
+    // Load existing spec (and chart), optionally replace formula, then re-save
+    let (spec, _old_display, old_chart) = load_signal(old_name)?;
     let spec = match new_formula {
         Some(formula) => SignalSpec::Formula {
             formula: formula.to_string(),
         },
         None => spec,
     };
-    save_signal(new_name, &spec, new_display_name)?;
+
+    // Resolve chart: None = preserve existing, Some(Some(c)) = replace, Some(None) = remove
+    let resolved_chart = match new_chart {
+        None => old_chart,
+        Some(maybe_chart) => maybe_chart.cloned(),
+    };
+
+    save_signal(new_name, &spec, new_display_name, resolved_chart.as_ref())?;
 
     // Delete old file if the name actually changed
     if old_name != new_name {
@@ -351,6 +390,7 @@ pub fn list_saved_signals() -> Result<Vec<SavedSignalInfo>> {
                                 display_name: env.display_name,
                                 formula,
                                 description,
+                                chartable: env.chart.is_some(),
                             });
                         } else {
                             // Legacy bare SignalSpec
@@ -364,6 +404,7 @@ pub fn list_saved_signals() -> Result<Vec<SavedSignalInfo>> {
                                 display_name: None,
                                 formula,
                                 description,
+                                chartable: false,
                             });
                         }
                     }
@@ -373,6 +414,7 @@ pub fn list_saved_signals() -> Result<Vec<SavedSignalInfo>> {
                             display_name: None,
                             formula: None,
                             description: None,
+                            chartable: false,
                         });
                     }
                 }
@@ -390,6 +432,8 @@ pub struct SavedSignalInfo {
     pub display_name: Option<String>,
     pub formula: Option<String>,
     pub description: Option<String>,
+    /// Whether this signal has a chart configuration attached.
+    pub chartable: bool,
 }
 
 #[cfg(test)]
@@ -504,7 +548,7 @@ mod tests {
         let spec = SignalSpec::Formula {
             formula: formula.to_string(),
         };
-        save_signal(name_a, &spec, None).unwrap();
+        save_signal(name_a, &spec, None, None).unwrap();
 
         // Same formula under different name should be detected
         let result = find_duplicate_formula(formula, name_b).unwrap();
@@ -526,7 +570,7 @@ mod tests {
         let spec = SignalSpec::Formula {
             formula: formula.to_string(),
         };
-        save_signal(name, &spec, None).unwrap();
+        save_signal(name, &spec, None, None).unwrap();
 
         // Extra whitespace should still match
         assert_eq!(
@@ -558,7 +602,7 @@ mod tests {
         let spec = SignalSpec::Formula {
             formula: formula.to_string(),
         };
-        save_signal(name, &spec, None).unwrap();
+        save_signal(name, &spec, None, None).unwrap();
 
         // Different formula should not match
         let result = find_duplicate_formula("close < ema(close, 20)", "other").unwrap();
@@ -575,19 +619,102 @@ mod tests {
         let spec1 = SignalSpec::Formula {
             formula: "close > sma(close, 10)".to_string(),
         };
-        save_signal(name, &spec1, None).unwrap();
+        save_signal(name, &spec1, None, None).unwrap();
 
         let spec2 = SignalSpec::Formula {
             formula: "close > sma(close, 20)".to_string(),
         };
-        save_signal(name, &spec2, None).unwrap();
+        save_signal(name, &spec2, None, None).unwrap();
 
         // Should have the updated formula
-        let (loaded, _) = load_signal(name).unwrap();
+        let (loaded, _, _) = load_signal(name).unwrap();
         if let SignalSpec::Formula { formula } = loaded {
             assert_eq!(formula, "close > sma(close, 20)");
         } else {
             panic!("Expected Formula signal spec");
         }
+    }
+
+    #[test]
+    fn chart_config_serde_round_trip() {
+        let _lock = FS_LOCK.lock().unwrap();
+        let _dir = TempSignalsDir::new();
+
+        let name = "chart-round-trip";
+        let spec = SignalSpec::Formula {
+            formula: "rsi(close, 14) < 30".to_string(),
+        };
+        let chart = ChartConfig {
+            display_type: super::super::helpers::DisplayType::Subchart,
+            label: "RSI(14)".to_string(),
+            thresholds: vec![30.0, 70.0],
+            expression: Some("rsi(close, 14)".to_string()),
+        };
+        save_signal(name, &spec, Some("My RSI Signal"), Some(&chart)).unwrap();
+
+        let (loaded_spec, loaded_display, loaded_chart) = load_signal(name).unwrap();
+        assert!(matches!(loaded_spec, SignalSpec::Formula { .. }));
+        assert_eq!(loaded_display, Some("My RSI Signal".to_string()));
+        let loaded_chart = loaded_chart.expect("chart should be Some");
+        assert!(matches!(
+            loaded_chart.display_type,
+            super::super::helpers::DisplayType::Subchart
+        ));
+        assert_eq!(loaded_chart.label, "RSI(14)");
+        assert_eq!(loaded_chart.thresholds, vec![30.0, 70.0]);
+        assert_eq!(loaded_chart.expression, Some("rsi(close, 14)".to_string()));
+    }
+
+    #[test]
+    fn load_signal_without_chart_returns_none() {
+        let _lock = FS_LOCK.lock().unwrap();
+        let _dir = TempSignalsDir::new();
+
+        let name = "no-chart-test";
+        let spec = SignalSpec::Formula {
+            formula: "close > sma(close, 20)".to_string(),
+        };
+        save_signal(name, &spec, None, None).unwrap();
+
+        let (_, _, chart) = load_signal(name).unwrap();
+        assert!(chart.is_none(), "chart should be None when not provided");
+    }
+
+    #[test]
+    fn update_signal_preserves_chart_config() {
+        let _lock = FS_LOCK.lock().unwrap();
+        let _dir = TempSignalsDir::new();
+
+        let name = "preserve-chart";
+        let spec = SignalSpec::Formula {
+            formula: "rsi(close, 14) < 30".to_string(),
+        };
+        let chart = ChartConfig {
+            display_type: super::super::helpers::DisplayType::Subchart,
+            label: "RSI(14)".to_string(),
+            thresholds: vec![30.0, 70.0],
+            expression: None,
+        };
+        save_signal(name, &spec, Some("RSI Signal"), Some(&chart)).unwrap();
+
+        // Update only the formula, chart should be preserved (new_chart = None)
+        update_signal(
+            name,
+            name,
+            Some("RSI Signal"),
+            Some("rsi(close, 14) < 25"),
+            None,
+        )
+        .unwrap();
+
+        let (loaded_spec, _, loaded_chart) = load_signal(name).unwrap();
+        if let SignalSpec::Formula { formula } = loaded_spec {
+            assert_eq!(formula, "rsi(close, 14) < 25");
+        } else {
+            panic!("Expected Formula signal spec");
+        }
+        let loaded_chart = loaded_chart.expect("chart should be preserved after update");
+        assert_eq!(loaded_chart.label, "RSI(14)");
+        assert_eq!(loaded_chart.thresholds, vec![30.0, 70.0]);
     }
 }

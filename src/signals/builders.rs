@@ -29,7 +29,7 @@ fn build_signal_depth(spec: &SignalSpec, depth: usize) -> Box<dyn SignalFn> {
         SignalSpec::Formula { formula } => Box::new(FormulaSignal::new(formula.clone())),
 
         SignalSpec::Saved { name } => match super::storage::load_signal(name) {
-            Ok((loaded, _)) => {
+            Ok((loaded, _, _)) => {
                 if matches!(loaded, SignalSpec::Saved { .. }) {
                     tracing::error!(
                         "Saved signal '{}' references another Saved signal — cycle rejected",

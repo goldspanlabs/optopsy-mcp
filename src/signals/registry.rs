@@ -507,7 +507,7 @@ fn collect_cross_symbols_inner(
             if !visited_saved.insert(name.clone()) {
                 return;
             }
-            if let Ok((loaded_spec, _)) = super::storage::load_signal(name) {
+            if let Ok((loaded_spec, _, _)) = super::storage::load_signal(name) {
                 collect_cross_symbols_inner(&loaded_spec, out, visited_saved, depth + 1);
             }
         }

@@ -114,7 +114,7 @@ fn execute_create(name: &str, formula: &str, save: bool) -> BuildSignalResponse 
         match storage::find_duplicate_formula(formula, name) {
             Ok(Some(existing_name)) => {
                 // Load the existing signal and return it instead of creating a duplicate
-                let existing_spec = storage::load_signal(&existing_name).ok().map(|(s, _)| s);
+                let existing_spec = storage::load_signal(&existing_name).ok().map(|(s, _, _)| s);
                 return base_response(
                     format!(
                         "Duplicate formula detected: this formula already exists as signal '{existing_name}'. Use the existing signal instead of creating a duplicate."
@@ -149,7 +149,7 @@ fn execute_create(name: &str, formula: &str, save: bool) -> BuildSignalResponse 
         // Check if we're overwriting an existing signal with the same name
         let is_overwrite = storage::load_signal(name).is_ok();
 
-        if let Err(e) = storage::save_signal(name, &spec, None) {
+        if let Err(e) = storage::save_signal(name, &spec, None, None) {
             return base_response(
                 format!("Signal validated but save failed: {e}"),
                 false,
@@ -272,7 +272,7 @@ fn execute_update(
     display_name: Option<&str>,
     formula: Option<&str>,
 ) -> BuildSignalResponse {
-    match storage::update_signal(old_name, new_name, display_name, formula) {
+    match storage::update_signal(old_name, new_name, display_name, formula, None) {
         Ok(()) => base_response(
             format!("Signal '{old_name}' updated successfully."),
             true,
@@ -325,7 +325,7 @@ fn execute_validate(formula: &str) -> BuildSignalResponse {
 
 fn execute_get(name: &str) -> BuildSignalResponse {
     match storage::load_signal(name) {
-        Ok((spec, _display_name)) => base_response(
+        Ok((spec, _display_name, _chart)) => base_response(
             format!("Loaded saved signal '{name}'."),
             true,
             Some(spec),
@@ -689,7 +689,7 @@ mod tests {
         let spec = SignalSpec::Formula {
             formula: "close < sma(close, 20)".to_string(),
         };
-        storage::save_signal("ibs_mean_reversion_entry", &spec, None).unwrap();
+        storage::save_signal("ibs_mean_reversion_entry", &spec, None, None).unwrap();
 
         // Search should find it by name
         let resp = execute(Action::Search {
@@ -716,7 +716,7 @@ mod tests {
         let spec = SignalSpec::Formula {
             formula: "close > high[1]".to_string(),
         };
-        storage::save_signal("my_exit", &spec, None).unwrap();
+        storage::save_signal("my_exit", &spec, None, None).unwrap();
 
         // Search by saved signal name
         let resp = execute(Action::Search {
@@ -737,7 +737,7 @@ mod tests {
         let spec = SignalSpec::Formula {
             formula: "close > open".to_string(),
         };
-        storage::save_signal("unrelated_signal", &spec, None).unwrap();
+        storage::save_signal("unrelated_signal", &spec, None, None).unwrap();
 
         let resp = execute(Action::Search {
             prompt: "RSI oversold".to_string(),
@@ -775,7 +775,7 @@ mod tests {
         let spec = SignalSpec::Formula {
             formula: "close < sma(close, 14)".to_string(),
         };
-        storage::save_signal("rsi_custom_entry", &spec, None).unwrap();
+        storage::save_signal("rsi_custom_entry", &spec, None, None).unwrap();
 
         let resp = execute(Action::Search {
             prompt: "rsi".to_string(),

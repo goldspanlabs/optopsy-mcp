@@ -150,7 +150,7 @@ fn traverse_signal_spec(
                 inner(left, pred, depth + 1) || inner(right, pred, depth + 1)
             }
             SignalSpec::Saved { name } => signals::storage::load_signal(name)
-                .map(|(s, _)| inner(&s, pred, depth + 1))
+                .map(|(s, _, _)| inner(&s, pred, depth + 1))
                 .unwrap_or(false),
         }
     }
