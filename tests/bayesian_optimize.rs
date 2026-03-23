@@ -52,8 +52,6 @@ fn bayesian_single_leg_produces_ranked_results() {
         out_of_sample_pct: 0.0,
         seed: Some(42),
         objective: Objective::Sharpe,
-        entry_signal: None,
-        exit_signal: None,
     };
 
     let output = run_bayesian_optimization(&df, &params).unwrap();
@@ -74,11 +72,11 @@ fn bayesian_single_leg_produces_ranked_results() {
         );
     }
 
-    // Convergence trace should have one entry per evaluation attempt
-    assert_eq!(
-        output.convergence_trace.len(),
-        params.max_evaluations,
-        "Convergence trace length should equal max_evaluations"
+    // Convergence trace has one entry per successful evaluation (non-finite entries
+    // from failed evaluations are filtered out before returning).
+    assert!(
+        output.convergence_trace.len() <= params.max_evaluations,
+        "Convergence trace length should be <= max_evaluations"
     );
 
     // Convergence trace should be monotonically non-decreasing
@@ -114,8 +112,6 @@ fn bayesian_two_leg_spread() {
         out_of_sample_pct: 0.0,
         seed: Some(123),
         objective: Objective::Sharpe,
-        entry_signal: None,
-        exit_signal: None,
     };
 
     let output = run_bayesian_optimization(&df, &params).unwrap();
@@ -142,8 +138,6 @@ fn bayesian_with_oos_validation() {
         out_of_sample_pct: 0.3,
         seed: Some(42),
         objective: Objective::Sharpe,
-        entry_signal: None,
-        exit_signal: None,
     };
 
     let output = run_bayesian_optimization(&df, &params).unwrap();
@@ -191,8 +185,6 @@ fn bayesian_sortino_objective() {
         out_of_sample_pct: 0.0,
         seed: Some(99),
         objective: Objective::Sortino,
-        entry_signal: None,
-        exit_signal: None,
     };
 
     let output = run_bayesian_optimization(&df, &params).unwrap();
@@ -224,8 +216,6 @@ fn bayesian_calmar_objective() {
         out_of_sample_pct: 0.0,
         seed: Some(77),
         objective: Objective::Calmar,
-        entry_signal: None,
-        exit_signal: None,
     };
 
     let output = run_bayesian_optimization(&df, &params).unwrap();
@@ -247,8 +237,6 @@ fn bayesian_profit_factor_objective() {
         out_of_sample_pct: 0.0,
         seed: Some(55),
         objective: Objective::ProfitFactor,
-        entry_signal: None,
-        exit_signal: None,
     };
 
     let output = run_bayesian_optimization(&df, &params).unwrap();
@@ -274,8 +262,6 @@ fn bayesian_multiple_slippage_models() {
         out_of_sample_pct: 0.0,
         seed: Some(42),
         objective: Objective::Sharpe,
-        entry_signal: None,
-        exit_signal: None,
     };
 
     let output = run_bayesian_optimization(&df, &params).unwrap();
@@ -311,8 +297,6 @@ fn bayesian_produces_dimension_sensitivity() {
         out_of_sample_pct: 0.0,
         seed: Some(42),
         objective: Objective::Sharpe,
-        entry_signal: None,
-        exit_signal: None,
     };
 
     let output = run_bayesian_optimization(&df, &params).unwrap();
@@ -345,8 +329,6 @@ fn bayesian_deterministic_with_same_seed() {
         out_of_sample_pct: 0.0,
         seed: Some(42),
         objective: Objective::Sharpe,
-        entry_signal: None,
-        exit_signal: None,
     };
 
     let output1 = run_bayesian_optimization(&df, &make_params()).unwrap();
@@ -384,8 +366,6 @@ fn bayesian_fails_when_max_evals_lt_initial_samples() {
         out_of_sample_pct: 0.0,
         seed: Some(42),
         objective: Objective::Sharpe,
-        entry_signal: None,
-        exit_signal: None,
     };
 
     let result = run_bayesian_optimization(&df, &params);
@@ -415,8 +395,6 @@ fn bayesian_fails_with_empty_delta_bounds() {
         out_of_sample_pct: 0.0,
         seed: Some(42),
         objective: Objective::Sharpe,
-        entry_signal: None,
-        exit_signal: None,
     };
 
     let result = run_bayesian_optimization(&df, &params);
@@ -438,8 +416,6 @@ fn bayesian_fails_with_empty_exit_dtes() {
         out_of_sample_pct: 0.0,
         seed: Some(42),
         objective: Objective::Sharpe,
-        entry_signal: None,
-        exit_signal: None,
     };
 
     let result = run_bayesian_optimization(&df, &params);
@@ -461,8 +437,6 @@ fn bayesian_fails_with_empty_slippage() {
         out_of_sample_pct: 0.0,
         seed: Some(42),
         objective: Objective::Sharpe,
-        entry_signal: None,
-        exit_signal: None,
     };
 
     let result = run_bayesian_optimization(&df, &params);
@@ -484,8 +458,6 @@ fn bayesian_fails_with_inverted_dte_bounds() {
         out_of_sample_pct: 0.0,
         seed: Some(42),
         objective: Objective::Sharpe,
-        entry_signal: None,
-        exit_signal: None,
     };
 
     let result = run_bayesian_optimization(&df, &params);
@@ -514,8 +486,6 @@ fn bayesian_tool_execute_formats_response() {
         out_of_sample_pct: 0.0,
         seed: Some(42),
         objective: Objective::Sharpe,
-        entry_signal: None,
-        exit_signal: None,
     };
 
     let response = optopsy_mcp::tools::bayesian_optimize::execute(&df, &params).unwrap();
@@ -555,8 +525,6 @@ fn bayesian_short_put_strategy() {
         out_of_sample_pct: 0.0,
         seed: Some(42),
         objective: Objective::Sharpe,
-        entry_signal: None,
-        exit_signal: None,
     };
 
     let output = run_bayesian_optimization(&df, &params).unwrap();

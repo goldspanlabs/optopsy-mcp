@@ -508,8 +508,6 @@ pub async fn execute_bayesian_optimize(
         out_of_sample_pct: params.out_of_sample_pct / 100.0,
         seed: params.seed,
         objective,
-        entry_signal: params.sim_params.entry_signal,
-        exit_signal: params.sim_params.exit_signal,
     };
 
     tokio::task::spawn_blocking(move || tools::bayesian_optimize::execute(&df, &bayesian_params))

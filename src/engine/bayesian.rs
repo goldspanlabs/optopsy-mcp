@@ -26,7 +26,6 @@ use super::types::{
     default_min_bid_ask, to_display_name, BacktestParams, ExpirationFilter, SimParams, Slippage,
     SweepResult, TargetRange,
 };
-use crate::signals::registry::SignalSpec;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -57,10 +56,6 @@ pub struct BayesianParams {
     pub seed: Option<u64>,
     /// Objective metric to maximize. Default: Sharpe.
     pub objective: Objective,
-    /// Entry signal (fixed, not swept).
-    pub entry_signal: Option<SignalSpec>,
-    /// Exit signal (fixed, not swept).
-    pub exit_signal: Option<SignalSpec>,
 }
 
 /// Objective metric to maximize during optimization.
@@ -503,6 +498,23 @@ pub fn run_bayesian_optimization(
         bail!("entry_dte_bounds min must be <= max");
     }
 
+    // Validate strategy exists upfront — fail fast with a clear error instead of
+    // wasting the evaluation budget on backtests that all fail with "Unknown strategy".
+    let strategy_def = crate::strategies::find_strategy(&params.strategy).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Unknown strategy '{}'. Use list_strategies() to see available strategies.",
+            params.strategy
+        )
+    })?;
+    if params.leg_delta_bounds.len() != strategy_def.legs.len() {
+        bail!(
+            "Strategy '{}' has {} leg(s) but {} delta bound(s) were provided.",
+            params.strategy,
+            strategy_def.legs.len(),
+            params.leg_delta_bounds.len(),
+        );
+    }
+
     let space = ParameterSpace::new(params);
     let mut rng_instance = match params.seed {
         Some(seed) => SmallRng::seed_from_u64(seed),
@@ -683,6 +695,13 @@ pub fn run_bayesian_optimization(
         }
     }
 
+    // Filter non-finite values from convergence trace — serde_json cannot serialize
+    // ±inf/NaN, and early failures push NEG_INFINITY via best_so_far's initial value.
+    let convergence_trace: Vec<f64> = convergence_trace
+        .into_iter()
+        .filter(|v| v.is_finite())
+        .collect();
+
     Ok(BayesianOutput {
         total_evaluations: all_results.len() + failed,
         failed_evaluations: failed,
@@ -743,8 +762,8 @@ fn evaluate_config(
         max_positions: params.sim_params.max_positions,
         selector: params.sim_params.selector.clone(),
         adjustment_rules: vec![],
-        entry_signal: params.entry_signal.clone(),
-        exit_signal: params.exit_signal.clone(),
+        entry_signal: params.sim_params.entry_signal.clone(),
+        exit_signal: params.sim_params.exit_signal.clone(),
         ohlcv_path: params.sim_params.ohlcv_path.clone(),
         cross_ohlcv_paths: params.sim_params.cross_ohlcv_paths.clone(),
         min_net_premium: None,
@@ -777,8 +796,8 @@ fn evaluate_config(
         calmar: bt.metrics.calmar,
         total_return_pct: bt.metrics.total_return_pct,
         independent_entry_periods: independent_periods,
-        entry_signal: params.entry_signal.clone(),
-        exit_signal: params.exit_signal.clone(),
+        entry_signal: params.sim_params.entry_signal.clone(),
+        exit_signal: params.sim_params.exit_signal.clone(),
         signal_dim_keys: vec![],
         p_value: None,
         sizing: None,
@@ -991,8 +1010,6 @@ mod tests {
             out_of_sample_pct: 0.0,
             seed: None,
             objective: Objective::Sharpe,
-            entry_signal: None,
-            exit_signal: None,
         };
         let space = ParameterSpace::new(&params);
         // 1 leg + 1 DTE + 2 exit_dte one-hot + 2 slippage one-hot = 6
@@ -1013,8 +1030,6 @@ mod tests {
             out_of_sample_pct: 0.0,
             seed: None,
             objective: Objective::Sharpe,
-            entry_signal: None,
-            exit_signal: None,
         };
         let space = ParameterSpace::new(&params);
 
@@ -1058,8 +1073,6 @@ mod tests {
             out_of_sample_pct: 0.0,
             seed: None,
             objective: Objective::Sharpe,
-            entry_signal: None,
-            exit_signal: None,
         };
         let space = ParameterSpace::new(&params);
         let mut rng = SmallRng::seed_from_u64(42);
@@ -1088,8 +1101,6 @@ mod tests {
             out_of_sample_pct: 0.0,
             seed: None,
             objective: Objective::Sharpe,
-            entry_signal: None,
-            exit_signal: None,
         };
         let space = ParameterSpace::new(&params);
         let mut rng = SmallRng::seed_from_u64(42);
