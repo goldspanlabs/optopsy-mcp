@@ -55,7 +55,7 @@ pub fn run_vectorized_backtest<S1: BuildHasher, S2: BuildHasher>(
 /// Run the vectorized backtest pipeline, optionally reusing a pre-built [`PriceTableCache`].
 ///
 /// When `cache` is `Some`, the price table, trading days, and carry index are reused
-/// instead of being rebuilt from `df`. This avoids redundant work when the same DataFrame
+/// instead of being rebuilt from `df`. This avoids redundant work when the same `DataFrame`
 /// is backtested multiple times (e.g. parameter sweeps).
 ///
 /// Assumes no adjustment rules — caller should dispatch to event loop for those.

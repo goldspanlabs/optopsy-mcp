@@ -312,7 +312,7 @@ pub(crate) fn extract_datetime_from_column(
 }
 
 /// Pre-built price lookup infrastructure, reusable across multiple backtests
-/// on the same DataFrame. Contains the price table, trading days, date index,
+/// on the same `DataFrame`. Contains the price table, trading days, date index,
 /// and carry-forward index.
 pub struct PriceTableCache {
     pub price_table: PriceTable,
@@ -322,7 +322,7 @@ pub struct PriceTableCache {
 }
 
 impl PriceTableCache {
-    /// Build all price lookup structures from a DataFrame.
+    /// Build all price lookup structures from a `DataFrame`.
     pub fn build(df: &polars::prelude::DataFrame) -> anyhow::Result<Self> {
         let t0 = std::time::Instant::now();
         let (price_table, trading_days, date_index) = build_price_table(df)?;

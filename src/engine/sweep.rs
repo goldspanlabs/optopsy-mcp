@@ -9,8 +9,8 @@ use anyhow::{bail, Result};
 use polars::prelude::*;
 
 use super::core::run_backtest_with_cache;
-use super::price_table::PriceTableCache;
 use super::multiple_comparisons::{self, MultipleComparisonsResult};
+use super::price_table::PriceTableCache;
 use super::sweep_analysis::{build_signal_combos, build_sweep_label};
 use super::types::{
     to_display_name, BacktestParams, DteRange, ExpirationFilter, SimParams, Slippage, SweepResult,
@@ -176,10 +176,7 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
 
     // 2b. Build price table caches (options mode only — built once, reused across all combos)
     let train_cache = PriceTableCache::build(&train_df)?;
-    let test_cache = test_df
-        .as_ref()
-        .map(|tdf| PriceTableCache::build(tdf))
-        .transpose()?;
+    let test_cache = test_df.as_ref().map(PriceTableCache::build).transpose()?;
 
     // 3. Run backtests on training set
     let mut results: Vec<SweepResult> = Vec::new();

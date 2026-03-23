@@ -519,10 +519,7 @@ pub fn run_bayesian_optimization(
 
     // Build price table caches once, reused across all evaluations
     let train_cache = PriceTableCache::build(&train_df)?;
-    let test_cache = test_df
-        .as_ref()
-        .map(|tdf| PriceTableCache::build(tdf))
-        .transpose()?;
+    let test_cache = test_df.as_ref().map(PriceTableCache::build).transpose()?;
 
     let mut all_configs: Vec<Configuration> = Vec::new();
     let mut all_results: Vec<SweepResult> = Vec::new();
@@ -673,7 +670,8 @@ pub fn run_bayesian_optimization(
                 exit_dte: r.exit_dte,
                 slippage: r.slippage.clone(),
             };
-            if let Ok(test_result) = evaluate_config(test_df, params, &config, test_cache.as_ref()) {
+            if let Ok(test_result) = evaluate_config(test_df, params, &config, test_cache.as_ref())
+            {
                 oos_results.push(OosResult {
                     label: r.label.clone(),
                     train_sharpe: r.sharpe,

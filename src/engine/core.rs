@@ -470,7 +470,7 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
 ///
 /// When `cache` is `Some`, the price table, trading days, date index, and carry index
 /// are reused from the cache instead of being rebuilt from `df`. This avoids redundant
-/// work when the same DataFrame is backtested multiple times (e.g. parameter sweeps).
+/// work when the same `DataFrame` is backtested multiple times (e.g. parameter sweeps).
 ///
 /// Dispatches to the vectorized path when no adjustment rules are configured,
 /// falling back to the event-driven day-by-day loop for adjustment rules.
