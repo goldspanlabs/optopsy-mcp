@@ -775,3 +775,396 @@ fn evaluate_config(
         sizing: None,
     })
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- Standard normal helpers ------------------------------------------
+
+    #[test]
+    fn standard_normal_cdf_known_values() {
+        // Φ(0) = 0.5
+        assert!((standard_normal_cdf(0.0) - 0.5).abs() < 1e-6);
+        // Φ(-∞) ≈ 0, Φ(+∞) ≈ 1
+        assert!(standard_normal_cdf(-6.0) < 1e-6);
+        assert!((standard_normal_cdf(6.0) - 1.0).abs() < 1e-6);
+        // Φ(1.96) ≈ 0.975
+        assert!((standard_normal_cdf(1.96) - 0.975).abs() < 0.002);
+        // Symmetry: Φ(-x) ≈ 1 - Φ(x)
+        assert!((standard_normal_cdf(-1.0) + standard_normal_cdf(1.0) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn standard_normal_pdf_known_values() {
+        // φ(0) = 1/√(2π) ≈ 0.3989
+        let expected = 1.0 / (2.0 * std::f64::consts::PI).sqrt();
+        assert!((standard_normal_pdf(0.0) - expected).abs() < 1e-6);
+        // φ(x) > 0 for all x
+        assert!(standard_normal_pdf(3.0) > 0.0);
+        // Symmetry: φ(-x) = φ(x)
+        assert!((standard_normal_pdf(-1.5) - standard_normal_pdf(1.5)).abs() < 1e-10);
+    }
+
+    // -- Expected Improvement ---------------------------------------------
+
+    #[test]
+    fn ei_zero_when_variance_zero() {
+        // With zero variance, EI should be 0
+        let ei = expected_improvement(1.0, 0.0, 1.5);
+        assert!((ei - 0.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn ei_positive_when_mean_above_best() {
+        // When mean is above f_best, EI should be positive
+        let ei = expected_improvement(2.0, 0.5, 1.0);
+        assert!(ei > 0.0, "EI should be positive when mean > f_best");
+    }
+
+    #[test]
+    fn ei_positive_even_when_mean_below_best_with_high_variance() {
+        // Even when mean < f_best, high variance gives nonzero EI
+        let ei = expected_improvement(0.5, 4.0, 1.0);
+        assert!(ei > 0.0, "EI should be positive with high variance");
+    }
+
+    #[test]
+    fn ei_increases_with_variance() {
+        let ei_low = expected_improvement(1.0, 0.1, 1.0);
+        let ei_high = expected_improvement(1.0, 2.0, 1.0);
+        assert!(
+            ei_high > ei_low,
+            "Higher variance should give higher EI at same mean"
+        );
+    }
+
+    // -- RBF Kernel -------------------------------------------------------
+
+    #[test]
+    fn rbf_kernel_self_similarity() {
+        let kernel = RbfKernel::new(1.0, 1.0);
+        let x = DVector::from_vec(vec![1.0, 2.0, 3.0]);
+        let val = kernel.compute(&x, &x);
+        assert!(
+            (val - 1.0).abs() < 1e-10,
+            "k(x, x) should equal signal_variance"
+        );
+    }
+
+    #[test]
+    fn rbf_kernel_symmetry() {
+        let kernel = RbfKernel::new(1.0, 1.0);
+        let x1 = DVector::from_vec(vec![1.0, 0.0]);
+        let x2 = DVector::from_vec(vec![0.0, 1.0]);
+        assert!((kernel.compute(&x1, &x2) - kernel.compute(&x2, &x1)).abs() < 1e-10);
+    }
+
+    #[test]
+    fn rbf_kernel_decreases_with_distance() {
+        let kernel = RbfKernel::new(1.0, 1.0);
+        let origin = DVector::from_vec(vec![0.0, 0.0]);
+        let near = DVector::from_vec(vec![0.1, 0.0]);
+        let far = DVector::from_vec(vec![2.0, 0.0]);
+        assert!(
+            kernel.compute(&origin, &near) > kernel.compute(&origin, &far),
+            "Closer points should have higher kernel value"
+        );
+    }
+
+    #[test]
+    fn rbf_kernel_matrix_is_symmetric() {
+        let kernel = RbfKernel::new(1.0, 1.0);
+        let x = DMatrix::from_row_slice(3, 2, &[0.0, 0.0, 1.0, 0.0, 0.0, 1.0]);
+        let k = kernel.matrix(&x);
+        assert_eq!(k.nrows(), 3);
+        assert_eq!(k.ncols(), 3);
+        for i in 0..3 {
+            for j in 0..3 {
+                assert!(
+                    (k[(i, j)] - k[(j, i)]).abs() < 1e-10,
+                    "Kernel matrix should be symmetric"
+                );
+            }
+        }
+    }
+
+    // -- Gaussian Process -------------------------------------------------
+
+    #[test]
+    fn gp_fit_and_predict() {
+        let mut gp = GaussianProcess::new(1.0, 1.0, 1e-3);
+        // Simple 1D: y = x
+        let x = DMatrix::from_column_slice(3, 1, &[0.0, 0.5, 1.0]);
+        let y = DVector::from_vec(vec![0.0, 0.5, 1.0]);
+        gp.fit(x, &y);
+
+        // Predict at training points — should be close to observed
+        let x_test = DMatrix::from_column_slice(3, 1, &[0.0, 0.5, 1.0]);
+        let (mean, var) = gp.predict(&x_test);
+
+        for i in 0..3 {
+            assert!(
+                (mean[i] - y[i]).abs() < 0.1,
+                "GP prediction at training point {i} should be close: got {}, expected {}",
+                mean[i],
+                y[i],
+            );
+            // Variance at training points should be low
+            assert!(
+                var[i] < 0.1,
+                "Variance at training point should be small, got {}",
+                var[i]
+            );
+        }
+    }
+
+    #[test]
+    fn gp_higher_variance_away_from_data() {
+        let mut gp = GaussianProcess::new(0.5, 1.0, 1e-3);
+        let x = DMatrix::from_column_slice(2, 1, &[0.0, 1.0]);
+        let y = DVector::from_vec(vec![0.0, 1.0]);
+        gp.fit(x, &y);
+
+        // Predict at a training point and far away
+        let x_test = DMatrix::from_column_slice(2, 1, &[0.5, 5.0]);
+        let (_, var) = gp.predict(&x_test);
+
+        assert!(
+            var[1] > var[0],
+            "Variance should be higher far from training data: near={}, far={}",
+            var[0],
+            var[1]
+        );
+    }
+
+    // -- Parameter Space --------------------------------------------------
+
+    fn test_sim_params() -> SimParams {
+        use super::super::types::TradeSelector;
+        SimParams {
+            capital: 100_000.0,
+            quantity: 1,
+            sizing: None,
+            multiplier: 100,
+            max_positions: 3,
+            selector: TradeSelector::First,
+            stop_loss: None,
+            take_profit: None,
+            max_hold_days: None,
+            max_hold_bars: None,
+            entry_signal: None,
+            exit_signal: None,
+            ohlcv_path: None,
+            cross_ohlcv_paths: std::collections::HashMap::new(),
+            min_days_between_entries: None,
+            min_bars_between_entries: None,
+            conflict_resolution: None,
+            exit_net_delta: None,
+        }
+    }
+
+    #[test]
+    fn parameter_space_dimension() {
+        let params = BayesianParams {
+            strategy: "long_call".to_string(),
+            leg_delta_bounds: vec![(0.2, 0.7)],
+            entry_dte_bounds: (30, 60),
+            exit_dtes: vec![0, 5],
+            slippage_models: vec![Slippage::Mid, Slippage::Spread],
+            sim_params: test_sim_params(),
+            max_evaluations: 10,
+            initial_samples: 5,
+            out_of_sample_pct: 0.0,
+            seed: None,
+            objective: Objective::Sharpe,
+            entry_signal: None,
+            exit_signal: None,
+        };
+        let space = ParameterSpace::new(&params);
+        // 1 leg + 1 DTE + 2 exit_dte one-hot + 2 slippage one-hot = 6
+        assert_eq!(space.dim(), 6);
+    }
+
+    #[test]
+    fn parameter_space_encode_decode_roundtrip() {
+        let params = BayesianParams {
+            strategy: "long_call".to_string(),
+            leg_delta_bounds: vec![(0.2, 0.8)],
+            entry_dte_bounds: (30, 60),
+            exit_dtes: vec![0, 5, 10],
+            slippage_models: vec![Slippage::Mid, Slippage::Spread],
+            sim_params: test_sim_params(),
+            max_evaluations: 10,
+            initial_samples: 5,
+            out_of_sample_pct: 0.0,
+            seed: None,
+            objective: Objective::Sharpe,
+            entry_signal: None,
+            exit_signal: None,
+        };
+        let space = ParameterSpace::new(&params);
+
+        let config = Configuration {
+            leg_deltas: vec![0.5],
+            entry_dte: 45,
+            exit_dte: 5,
+            slippage: Slippage::Mid,
+        };
+
+        let encoded = space.encode(&config);
+        assert_eq!(encoded.len(), space.dim());
+
+        // Delta 0.5 in [0.2, 0.8] → (0.5-0.2)/(0.8-0.2) = 0.5
+        assert!((encoded[0] - 0.5).abs() < 1e-6);
+
+        // DTE 45 in [30, 60] → (45-30)/(60-30) = 0.5
+        assert!((encoded[1] - 0.5).abs() < 1e-6);
+
+        // Exit DTE one-hot: [0, 5, 10] → 5 is index 1 → [0, 1, 0]
+        assert!((encoded[2] - 0.0).abs() < 1e-6);
+        assert!((encoded[3] - 1.0).abs() < 1e-6);
+        assert!((encoded[4] - 0.0).abs() < 1e-6);
+
+        // Slippage one-hot: [Mid, Spread] → Mid is index 0 → [1, 0]
+        assert!((encoded[5] - 1.0).abs() < 1e-6);
+        assert!((encoded[6] - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn parameter_space_random_sampling_in_bounds() {
+        let params = BayesianParams {
+            strategy: "long_call".to_string(),
+            leg_delta_bounds: vec![(0.2, 0.7), (0.1, 0.4)],
+            entry_dte_bounds: (30, 60),
+            exit_dtes: vec![0, 5],
+            slippage_models: vec![Slippage::Mid],
+            sim_params: test_sim_params(),
+            max_evaluations: 10,
+            initial_samples: 5,
+            out_of_sample_pct: 0.0,
+            seed: None,
+            objective: Objective::Sharpe,
+            entry_signal: None,
+            exit_signal: None,
+        };
+        let space = ParameterSpace::new(&params);
+        let mut rng = SmallRng::seed_from_u64(42);
+
+        for _ in 0..50 {
+            let config = space.sample_random(&mut rng);
+            assert!(config.leg_deltas[0] >= 0.2 && config.leg_deltas[0] <= 0.7);
+            assert!(config.leg_deltas[1] >= 0.1 && config.leg_deltas[1] <= 0.4);
+            assert!(config.entry_dte >= 30 && config.entry_dte <= 60);
+            assert!(config.exit_dte == 0 || config.exit_dte == 5);
+            assert!(matches!(config.slippage, Slippage::Mid));
+        }
+    }
+
+    #[test]
+    fn parameter_space_perturbation_stays_in_bounds() {
+        let params = BayesianParams {
+            strategy: "long_call".to_string(),
+            leg_delta_bounds: vec![(0.2, 0.7)],
+            entry_dte_bounds: (30, 60),
+            exit_dtes: vec![0, 5, 10],
+            slippage_models: vec![Slippage::Mid, Slippage::Spread],
+            sim_params: test_sim_params(),
+            max_evaluations: 10,
+            initial_samples: 5,
+            out_of_sample_pct: 0.0,
+            seed: None,
+            objective: Objective::Sharpe,
+            entry_signal: None,
+            exit_signal: None,
+        };
+        let space = ParameterSpace::new(&params);
+        let mut rng = SmallRng::seed_from_u64(42);
+
+        let base = Configuration {
+            leg_deltas: vec![0.2],
+            entry_dte: 30,
+            exit_dte: 0,
+            slippage: Slippage::Mid,
+        };
+
+        for _ in 0..100 {
+            let perturbed = space.perturb(&mut rng, &base);
+            assert!(
+                perturbed.leg_deltas[0] >= 0.2 && perturbed.leg_deltas[0] <= 0.7,
+                "Perturbed delta {} out of bounds",
+                perturbed.leg_deltas[0]
+            );
+            assert!(
+                perturbed.entry_dte >= 30 && perturbed.entry_dte <= 60,
+                "Perturbed DTE {} out of bounds",
+                perturbed.entry_dte
+            );
+            assert!(
+                perturbed.exit_dte == 0 || perturbed.exit_dte == 5 || perturbed.exit_dte == 10,
+                "Perturbed exit DTE {} not in allowed values",
+                perturbed.exit_dte
+            );
+        }
+    }
+
+    // -- Slippage equality ------------------------------------------------
+
+    #[test]
+    fn slippage_eq_matches_same_variant() {
+        assert!(slippage_eq(&Slippage::Mid, &Slippage::Mid));
+        assert!(slippage_eq(&Slippage::Spread, &Slippage::Spread));
+        assert!(!slippage_eq(&Slippage::Mid, &Slippage::Spread));
+    }
+
+    // -- Objective extraction ---------------------------------------------
+
+    #[test]
+    fn objective_extract_correct_metric() {
+        let result = SweepResult {
+            label: "test".to_string(),
+            strategy: "long_call".to_string(),
+            display_name: "Long Call".to_string(),
+            leg_deltas: vec![],
+            entry_dte: super::super::types::DteRange {
+                target: 45,
+                min: 30,
+                max: 60,
+            },
+            exit_dte: 0,
+            slippage: Slippage::Mid,
+            trades: 10,
+            pnl: 1000.0,
+            sharpe: 1.5,
+            sortino: 2.0,
+            max_dd: -0.1,
+            win_rate: 0.6,
+            profit_factor: 1.8,
+            calmar: 3.0,
+            total_return_pct: 10.0,
+            independent_entry_periods: 10,
+            entry_signal: None,
+            exit_signal: None,
+            signal_dim_keys: vec![],
+            p_value: None,
+            sizing: None,
+        };
+
+        assert!((Objective::Sharpe.extract(&result) - 1.5).abs() < 1e-10);
+        assert!((Objective::Sortino.extract(&result) - 2.0).abs() < 1e-10);
+        assert!((Objective::Calmar.extract(&result) - 3.0).abs() < 1e-10);
+        assert!((Objective::ProfitFactor.extract(&result) - 1.8).abs() < 1e-10);
+    }
+
+    #[test]
+    fn objective_name_strings() {
+        assert_eq!(Objective::Sharpe.name(), "Sharpe");
+        assert_eq!(Objective::Sortino.name(), "Sortino");
+        assert_eq!(Objective::Calmar.name(), "Calmar");
+        assert_eq!(Objective::ProfitFactor.name(), "Profit Factor");
+    }
+}
