@@ -169,7 +169,10 @@ pub struct BayesianOptimizeResponse {
     pub failed_evaluations: usize,
     /// Best configuration found.
     pub best_result: Option<SweepResult>,
-    /// Best objective value at each evaluation step (monotonically non-decreasing).
+    /// Best finite objective value observed after each evaluation step
+    /// (monotonically non-decreasing). Leading evaluations that failed or
+    /// produced non-finite values are omitted, so `len()` may be smaller
+    /// than `total_evaluations`.
     pub convergence_trace: Vec<f64>,
     /// Dimension sensitivity analysis (same format as `parameter_sweep`).
     pub dimension_sensitivity: HashMap<String, HashMap<String, DimensionStats>>,

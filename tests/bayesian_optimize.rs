@@ -72,8 +72,9 @@ fn bayesian_single_leg_produces_ranked_results() {
         );
     }
 
-    // Convergence trace has one entry per successful evaluation (non-finite entries
-    // from failed evaluations are filtered out before returning).
+    // Convergence trace records best-so-far at each step; non-finite entries from
+    // early failures (before first success) are filtered out, so len() may be
+    // smaller than max_evaluations.
     assert!(
         output.convergence_trace.len() <= params.max_evaluations,
         "Convergence trace length should be <= max_evaluations"

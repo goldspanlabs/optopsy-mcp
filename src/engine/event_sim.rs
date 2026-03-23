@@ -111,43 +111,17 @@ pub fn find_entry_candidates(
     )?;
 
     if combined.height() == 0 {
-        // All candidates were eliminated by strike ordering — likely inverted delta targets.
-        // Build a diagnostic message to help AI agents and users fix their configuration.
-        let delta_summary: Vec<String> = params
-            .leg_deltas
-            .iter()
-            .enumerate()
-            .map(|(i, d)| {
-                let leg = &strategy_def.legs[i];
-                let side_str = match leg.side {
-                    super::types::Side::Long => "Long",
-                    super::types::Side::Short => "Short",
-                };
-                let opt_str = match leg.option_type {
-                    super::types::OptionType::Call => "Call",
-                    super::types::OptionType::Put => "Put",
-                };
-                format!(
-                    "leg {i} ({side_str} {opt_str}): delta target={:.2}",
-                    d.target
-                )
-            })
-            .collect();
-
-        bail!(
-            "No valid entry candidates for '{}' after strike ordering filter. \
-             All {} pre-filter candidates were eliminated because the resulting strikes \
-             did not satisfy the required ascending order (strike_0 < strike_1 < ...). \
-             This usually means your delta targets are inverted for this strategy. \
-             Current delta targets: [{}]. \
-             Hint: for call legs in ascending strike order, deltas must DECREASE \
-             (higher strike = lower delta). For put legs in ascending strike order, \
-             deltas must INCREASE (higher strike = higher delta). \
-             Check the strategy's leg definitions and adjust your delta targets accordingly.",
-            params.strategy,
+        // All candidates were eliminated by strike ordering. This can happen with
+        // inverted delta targets or thin data — return empty so callers produce a
+        // 0-trade result rather than failing the entire sweep/optimization.
+        tracing::warn!(
+            strategy = %params.strategy,
+            pre_filter = pre_strike_count,
+            "All {} entry candidates eliminated by strike ordering filter — \
+             check that delta targets produce strikes in the correct order",
             pre_strike_count,
-            delta_summary.join(", "),
         );
+        return Ok(BTreeMap::new());
     }
 
     // Convert to EntryCandidate structs grouped by date
