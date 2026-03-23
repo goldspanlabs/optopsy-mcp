@@ -11,6 +11,7 @@ use polars::prelude::*;
 
 use super::event_sim;
 use super::metrics;
+use super::price_table::PriceTableCache;
 #[allow(clippy::wildcard_imports)]
 use super::types::*;
 use super::vectorized_sim;
@@ -459,7 +460,25 @@ pub fn build_signal_filters(
 ///
 /// Dispatches to the vectorized path when no adjustment rules are configured,
 /// falling back to the event-driven day-by-day loop for adjustment rules.
+///
+/// Convenience wrapper that calls [`run_backtest_with_cache`] with `None`.
 pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestResult> {
+    run_backtest_with_cache(df, params, None)
+}
+
+/// Run a full backtest simulation, optionally reusing a pre-built [`PriceTableCache`].
+///
+/// When `cache` is `Some`, the price table, trading days, date index, and carry index
+/// are reused from the cache instead of being rebuilt from `df`. This avoids redundant
+/// work when the same DataFrame is backtested multiple times (e.g. parameter sweeps).
+///
+/// Dispatches to the vectorized path when no adjustment rules are configured,
+/// falling back to the event-driven day-by-day loop for adjustment rules.
+pub fn run_backtest_with_cache(
+    df: &DataFrame,
+    params: &BacktestParams,
+    cache: Option<&PriceTableCache>,
+) -> Result<BacktestResult> {
     let strategy_def = strategies::find_strategy(&params.strategy)
         .ok_or_else(|| anyhow::anyhow!("Unknown strategy: {}", params.strategy))?;
 
@@ -511,10 +530,16 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
 
     let (trade_log, equity_curve, quality) = if use_vectorized {
         // Vectorized path — much faster for strategies without adjustments
-        vectorized_sim::run_vectorized_backtest(df, params, &entry_dates, exit_dates.as_ref())?
+        vectorized_sim::run_vectorized_backtest_with_cache(
+            df,
+            params,
+            &entry_dates,
+            exit_dates.as_ref(),
+            cache,
+        )?
     } else {
         // Adjustment rules or dynamic sizing require sequential state — fall back to event loop
-        run_event_loop_path(df, params, &strategy_def, &entry_dates, &exit_dates)?
+        run_event_loop_path_with_cache(df, params, &strategy_def, &entry_dates, &exit_dates, cache)?
     };
 
     let perf_metrics =
@@ -538,15 +563,23 @@ pub fn run_backtest(df: &DataFrame, params: &BacktestParams) -> Result<BacktestR
     })
 }
 
-/// Event-loop fallback path for strategies with adjustment rules.
-fn run_event_loop_path(
+/// Event-loop fallback path for strategies with adjustment rules, optionally reusing a cache.
+fn run_event_loop_path_with_cache(
     df: &DataFrame,
     params: &BacktestParams,
     strategy_def: &StrategyDef,
     entry_dates: &DateFilter,
     exit_dates: &DateFilter,
+    cache: Option<&PriceTableCache>,
 ) -> Result<(Vec<TradeRecord>, Vec<EquityPoint>, BacktestQualityStats)> {
-    let (price_table, trading_days, date_index) = event_sim::build_price_table(df)?;
+    let owned;
+    let (price_table, trading_days, date_index) = if let Some(c) = cache {
+        (&c.price_table, c.trading_days.as_slice(), &c.date_index)
+    } else {
+        owned = event_sim::build_price_table(df)?;
+        (&owned.0, owned.1.as_slice(), &owned.2)
+    };
+
     let mut candidates = event_sim::find_entry_candidates(df, strategy_def, params)?;
 
     // Filter entry candidates to only dates where the entry signal is active
@@ -558,8 +591,8 @@ fn run_event_loop_path(
     let ohlcv_closes = load_ohlcv_closes(params, strategy_def)?;
 
     let ctx = crate::engine::sim_types::SimContext {
-        price_table: &price_table,
-        date_index: &date_index,
+        price_table,
+        date_index,
         params,
         strategy_def,
         ohlcv_closes: ohlcv_closes.as_ref(),
@@ -567,9 +600,9 @@ fn run_event_loop_path(
     let (trade_log, equity_curve, quality) = event_sim::run_event_loop(
         &ctx,
         &candidates,
-        &trading_days,
+        trading_days,
         exit_dates.as_ref(),
-        &date_index,
+        date_index,
     );
 
     Ok((trade_log, equity_curve, quality))
