@@ -8,7 +8,8 @@ use std::collections::HashSet;
 use anyhow::{bail, Result};
 use polars::prelude::*;
 
-use super::core::run_backtest;
+use super::core::run_backtest_with_cache;
+use super::price_table::PriceTableCache;
 use super::multiple_comparisons::{self, MultipleComparisonsResult};
 use super::sweep_analysis::{build_signal_combos, build_sweep_label};
 use super::types::{
@@ -173,6 +174,13 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
         (df.clone(), None)
     };
 
+    // 2b. Build price table caches (options mode only — built once, reused across all combos)
+    let train_cache = PriceTableCache::build(&train_df)?;
+    let test_cache = test_df
+        .as_ref()
+        .map(|tdf| PriceTableCache::build(tdf))
+        .transpose()?;
+
     // 3. Run backtests on training set
     let mut results: Vec<SweepResult> = Vec::new();
     let mut failed: usize = 0;
@@ -199,7 +207,7 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
             &params.sim_params,
         );
 
-        match run_backtest(&train_df, &backtest_params) {
+        match run_backtest_with_cache(&train_df, &backtest_params, Some(&train_cache)) {
             Ok(bt) => {
                 let independent_periods = count_independent_entry_periods(&bt.trade_log);
                 results.push(SweepResult {
@@ -270,7 +278,7 @@ pub fn run_sweep(df: &DataFrame, params: &SweepParams) -> Result<SweepOutput> {
                 &params.sim_params,
             );
 
-            match run_backtest(test_df, &backtest_params) {
+            match run_backtest_with_cache(test_df, &backtest_params, test_cache.as_ref()) {
                 Ok(test_bt) => {
                     oos_results.push(OosResult {
                         label: r.label.clone(),
