@@ -10,6 +10,7 @@ use polars::prelude::*;
 
 #[allow(clippy::wildcard_imports)]
 use super::types::*;
+use super::vectorized_sim::CarryIndex;
 use crate::data::parquet::DATETIME_COL;
 
 /// Build a price lookup table from the raw options `DataFrame`.
@@ -307,6 +308,36 @@ pub(crate) fn extract_datetime_from_column(
             }
         }
         other => bail!("Unsupported column type for datetime extraction: {other:?}"),
+    }
+}
+
+/// Pre-built price lookup infrastructure, reusable across multiple backtests
+/// on the same DataFrame. Contains the price table, trading days, date index,
+/// and carry-forward index.
+pub struct PriceTableCache {
+    pub price_table: PriceTable,
+    pub trading_days: Vec<NaiveDate>,
+    pub date_index: DateIndex,
+    pub carry_index: CarryIndex,
+}
+
+impl PriceTableCache {
+    /// Build all price lookup structures from a DataFrame.
+    pub fn build(df: &polars::prelude::DataFrame) -> anyhow::Result<Self> {
+        let t0 = std::time::Instant::now();
+        let (price_table, trading_days, date_index) = build_price_table(df)?;
+        let carry_index = super::vectorized_sim::build_carry_index(&price_table);
+        tracing::info!(
+            elapsed_ms = t0.elapsed().as_millis(),
+            entries = price_table.len(),
+            "PriceTableCache built"
+        );
+        Ok(Self {
+            price_table,
+            trading_days,
+            date_index,
+            carry_index,
+        })
     }
 }
 
