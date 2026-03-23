@@ -447,9 +447,16 @@ pub async fn execute_bayesian_optimize(
         Some(other) => return Err(format!("Unknown objective: {other}")),
     };
 
-    // Load OHLCV if signals are used
-    let needs_ohlcv =
-        params.sim_params.entry_signal.is_some() || params.sim_params.exit_signal.is_some();
+    // Load OHLCV if signals are used, the strategy has a stock leg, or volatility-target sizing is
+    // requested (mirrors the condition in `OptopsyServer::resolve_backtest_params`).
+    let strategy_def = crate::strategies::find_strategy(&params.strategy);
+    let needs_ohlcv = params.sim_params.entry_signal.is_some()
+        || params.sim_params.exit_signal.is_some()
+        || matches!(
+            params.sim_params.sizing.as_ref().map(|s| &s.method),
+            Some(crate::engine::types::PositionSizing::VolatilityTarget { .. })
+        )
+        || strategy_def.as_ref().is_some_and(|s| s.has_stock_leg);
     let ohlcv_path = if needs_ohlcv {
         Some(server.ensure_ohlcv(&symbol)?)
     } else {
