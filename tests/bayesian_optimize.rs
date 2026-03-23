@@ -4,7 +4,7 @@
 //! synthetic data used by the parameter sweep tests, validating the GP-guided
 //! search, convergence, OOS validation, and edge-case handling.
 
-use optopsy_mcp::engine::bayesian::{BayesianParams, Objective, run_bayesian_optimization};
+use optopsy_mcp::engine::bayesian::{run_bayesian_optimization, BayesianParams, Objective};
 use optopsy_mcp::engine::types::{Slippage, TradeSelector};
 
 mod common;
@@ -93,7 +93,10 @@ fn bayesian_single_leg_produces_ranked_results() {
 
     // At least one result should have actual trades
     let has_trades = output.ranked_results.iter().any(|r| r.trades > 0);
-    assert!(has_trades, "Expected at least one evaluation to produce trades");
+    assert!(
+        has_trades,
+        "Expected at least one evaluation to produce trades"
+    );
 }
 
 #[test]
@@ -386,7 +389,10 @@ fn bayesian_fails_when_max_evals_lt_initial_samples() {
     };
 
     let result = run_bayesian_optimization(&df, &params);
-    assert!(result.is_err(), "Should fail when max_evaluations < initial_samples");
+    assert!(
+        result.is_err(),
+        "Should fail when max_evaluations < initial_samples"
+    );
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("max_evaluations") && err.contains("initial_samples"),
@@ -483,7 +489,10 @@ fn bayesian_fails_with_inverted_dte_bounds() {
     };
 
     let result = run_bayesian_optimization(&df, &params);
-    assert!(result.is_err(), "Should fail with inverted entry_dte_bounds");
+    assert!(
+        result.is_err(),
+        "Should fail with inverted entry_dte_bounds"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -517,7 +526,10 @@ fn bayesian_tool_execute_formats_response() {
     assert_eq!(response.total_evaluations, 10);
     assert!(!response.convergence_trace.is_empty());
     assert!(!response.ranked_results.is_empty());
-    assert!(!response.key_findings.is_empty(), "Key findings should not be empty");
+    assert!(
+        !response.key_findings.is_empty(),
+        "Key findings should not be empty"
+    );
     assert!(
         !response.suggested_next_steps.is_empty(),
         "Suggested next steps should not be empty"
