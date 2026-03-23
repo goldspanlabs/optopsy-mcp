@@ -14,8 +14,10 @@ use rand::SeedableRng;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::core::run_backtest_with_cache;
 use super::event_sim;
 use super::metrics;
+use super::price_table::PriceTableCache;
 use super::stock_sim::{self, Bar, StockBacktestParams};
 use super::types::{BacktestParams, BacktestResult, EntryCandidate, PerformanceMetrics};
 use super::vectorized_sim;
@@ -78,12 +80,11 @@ pub fn run_permutation_test<S1: BuildHasher, S2: BuildHasher>(
     let strategy_def = strategies::find_strategy(&params.strategy)
         .ok_or_else(|| anyhow::anyhow!("Unknown strategy: {}", params.strategy))?;
 
-    // Run real backtest
-    let real_result = crate::engine::core::run_backtest(df, params)?;
-
     // Build shared infrastructure once
-    let (price_table, trading_days, _date_index) = event_sim::build_price_table(df)?;
-    let carry_index = vectorized_sim::build_carry_index(&price_table);
+    let cache = PriceTableCache::build(df)?;
+
+    // Run real backtest
+    let real_result = run_backtest_with_cache(df, params, Some(&cache))?;
 
     // Build candidates (same as vectorized path)
     let mut candidates = event_sim::find_entry_candidates(df, &strategy_def, params)?;
@@ -101,9 +102,9 @@ pub fn run_permutation_test<S1: BuildHasher, S2: BuildHasher>(
     }
 
     let ctx = SimContext {
-        price_table: &price_table,
-        carry_index: &carry_index,
-        trading_days: &trading_days,
+        price_table: &cache.price_table,
+        carry_index: &cache.carry_index,
+        trading_days: &cache.trading_days,
         strategy_def: &strategy_def,
         params,
     };
