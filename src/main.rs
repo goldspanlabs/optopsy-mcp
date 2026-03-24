@@ -81,6 +81,7 @@ async fn indicators_list_handler(
 }
 
 /// Compute indicator data for given symbol and indicator names.
+#[allow(clippy::too_many_lines)]
 async fn indicators_compute_handler(
     cache: Arc<data::cache::CachedStore>,
     axum::extract::Query(query): axum::extract::Query<IndicatorComputeQuery>,
