@@ -4,6 +4,7 @@
 //! price, and volume categories, plus custom formula-based signals and combinators.
 
 pub mod builders;
+pub mod catalog;
 pub mod combinators;
 pub mod custom;
 pub mod custom_funcs;
