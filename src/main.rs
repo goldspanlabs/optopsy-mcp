@@ -169,8 +169,7 @@ async fn indicators_compute_handler(
                     else {
                         continue;
                     };
-                    let cross_date_col =
-                        optopsy_mcp::engine::stock_sim::detect_date_col(&cross_df);
+                    let cross_date_col = optopsy_mcp::engine::stock_sim::detect_date_col(&cross_df);
                     if let Ok(joined) = enriched_df
                         .clone()
                         .lazy()
