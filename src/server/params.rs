@@ -593,6 +593,22 @@ pub struct BuildSignalParams {
     #[serde(default = "default_save")]
     #[garde(skip)]
     pub save: bool,
+    /// Chart display type: "overlay" or "subchart" (requires `chart_label` too)
+    #[serde(default)]
+    #[garde(skip)]
+    pub chart_display_type: Option<String>,
+    /// Chart label shown in the UI (requires `chart_display_type` too)
+    #[serde(default)]
+    #[garde(skip)]
+    pub chart_label: Option<String>,
+    /// Threshold levels to draw on the chart (e.g. [30.0, 70.0] for RSI)
+    #[serde(default)]
+    #[garde(skip)]
+    pub chart_thresholds: Option<Vec<f64>>,
+    /// Expression to chart (defaults to the signal formula if omitted)
+    #[serde(default)]
+    #[garde(skip)]
+    pub chart_expression: Option<String>,
 }
 
 fn default_save() -> bool {

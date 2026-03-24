@@ -14,6 +14,9 @@ pub struct SavedSignalEntry {
     pub description: Option<String>,
     /// JSON snippet showing how to reference this signal as a `Saved` spec.
     pub usage: SavedSignalUsage,
+    /// Whether this signal has a chart configuration attached.
+    #[serde(default)]
+    pub chartable: bool,
 }
 
 /// Usage hint embedded in each `SavedSignalEntry`.

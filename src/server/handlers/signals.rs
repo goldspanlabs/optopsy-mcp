@@ -22,6 +22,10 @@ pub fn execute(params: BuildSignalParams) -> Result<BuildSignalResponse, String>
                 formula,
                 description: params.description,
                 save: params.save,
+                chart_display_type: params.chart_display_type,
+                chart_label: params.chart_label,
+                chart_thresholds: params.chart_thresholds,
+                chart_expression: params.chart_expression,
             }
         }
         "search" => {

@@ -15,6 +15,10 @@ pub enum Action {
         formula: String,
         description: Option<String>,
         save: bool,
+        chart_display_type: Option<String>,
+        chart_label: Option<String>,
+        chart_thresholds: Option<Vec<f64>>,
+        chart_expression: Option<String>,
     },
     /// List all saved custom signals
     List,
@@ -44,10 +48,22 @@ pub fn execute(action: Action) -> BuildSignalResponse {
             formula,
             description,
             save,
+            chart_display_type,
+            chart_label,
+            chart_thresholds,
+            chart_expression,
         } => {
             // `description` is accepted for backward compatibility but not persisted
             let _ = description;
-            execute_create(&name, &formula, save)
+            execute_create(
+                &name,
+                &formula,
+                save,
+                chart_display_type.as_deref(),
+                chart_label.as_deref(),
+                chart_thresholds.as_deref(),
+                chart_expression.as_deref(),
+            )
         }
         Action::List => execute_list(),
         Action::Delete { name } => execute_delete(&name),
@@ -93,7 +109,16 @@ fn base_response(
     }
 }
 
-fn execute_create(name: &str, formula: &str, save: bool) -> BuildSignalResponse {
+#[allow(clippy::too_many_lines)]
+fn execute_create(
+    name: &str,
+    formula: &str,
+    save: bool,
+    chart_display_type: Option<&str>,
+    chart_label: Option<&str>,
+    chart_thresholds: Option<&[f64]>,
+    chart_expression: Option<&str>,
+) -> BuildSignalResponse {
     // Validate the formula first
     if let Err(e) = validate_formula(formula) {
         return base_response(
@@ -145,11 +170,27 @@ fn execute_create(name: &str, formula: &str, save: bool) -> BuildSignalResponse 
         formula: formula.to_string(),
     };
 
+    let chart = match (chart_display_type, chart_label) {
+        (Some(dt), Some(label)) => {
+            let display_type = match dt {
+                "overlay" => crate::signals::helpers::DisplayType::Overlay,
+                _ => crate::signals::helpers::DisplayType::Subchart,
+            };
+            Some(crate::signals::storage::ChartConfig {
+                display_type,
+                label: label.to_string(),
+                thresholds: chart_thresholds.map(<[f64]>::to_vec).unwrap_or_default(),
+                expression: chart_expression.map(String::from),
+            })
+        }
+        _ => None,
+    };
+
     if save {
         // Check if we're overwriting an existing signal with the same name
         let is_overwrite = storage::load_signal(name).is_ok();
 
-        if let Err(e) = storage::save_signal(name, &spec, None, None) {
+        if let Err(e) = storage::save_signal(name, &spec, None, chart.as_ref()) {
             return base_response(
                 format!("Signal validated but save failed: {e}"),
                 false,
@@ -209,6 +250,7 @@ fn execute_list() -> BuildSignalResponse {
                         kind: "Saved".to_string(),
                         name: s.name,
                     },
+                    chartable: s.chartable,
                 })
                 .collect();
 
@@ -325,27 +367,27 @@ fn execute_validate(formula: &str) -> BuildSignalResponse {
 
 fn execute_get(name: &str) -> BuildSignalResponse {
     match storage::load_signal(name) {
-        Ok((spec, _display_name, _chart)) => base_response(
-            format!("Loaded saved signal '{name}'."),
-            true,
-            Some(spec),
-            vec![],
-            None,
-            vec![
-                "[INFO] OHLCV data is loaded from cache when signals are used in run_options_backtest".to_string(),
-                "[NEXT]Use this signal_spec as entry_signal or exit_signal in run_options_backtest — you MUST also provide a strategy (e.g. short_put, iron_condor). Signals filter WHEN to trade, not WHAT to trade.".to_string(),
-            ],
-        ),
+        Ok((spec, _display_name, chart)) => {
+            let chart_note = if chart.is_some() { " (chartable)" } else { "" };
+            base_response(
+                format!("Loaded saved signal '{name}'{chart_note}."),
+                true,
+                Some(spec),
+                vec![],
+                None,
+                vec![
+                    "[INFO] OHLCV data is loaded from cache when signals are used in run_options_backtest".to_string(),
+                    "[NEXT]Use this signal_spec as entry_signal or exit_signal in run_options_backtest — you MUST also provide a strategy (e.g. short_put, iron_condor). Signals filter WHEN to trade, not WHAT to trade.".to_string(),
+                ],
+            )
+        }
         Err(e) => base_response(
             format!("Failed to load signal '{name}': {e}"),
             false,
             None,
             vec![],
             None,
-            vec![
-                "[RETRY]Check that the signal name exists with action='list'"
-                    .to_string(),
-            ],
+            vec!["[RETRY]Check that the signal name exists with action='list'".to_string()],
         ),
     }
 }
@@ -374,6 +416,7 @@ fn execute_search(prompt: &str) -> BuildSignalResponse {
                 kind: "Saved".to_string(),
                 name: s.name.clone(),
             },
+            chartable: s.chartable,
             name: s.name,
             formula: s.formula,
             description: s.description,
