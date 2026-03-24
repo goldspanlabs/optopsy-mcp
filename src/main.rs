@@ -156,14 +156,17 @@ async fn indicators_compute_handler(
             }),
         };
 
-        // For MACD, map the func_name to "macd_hist" which dispatch_indicator_call expects
-        let call = if ind_type == "macd" {
-            optopsy_mcp::signals::custom::IndicatorCall {
+        // Map catalog IDs to the func_name that dispatch_indicator_call expects
+        let call = match ind_type.as_str() {
+            "macd" => optopsy_mcp::signals::custom::IndicatorCall {
                 func_name: "macd_hist".into(),
                 ..call
-            }
-        } else {
-            call
+            },
+            "bbands" => optopsy_mcp::signals::custom::IndicatorCall {
+                func_name: "bbands_mid".into(),
+                ..call
+            },
+            _ => call,
         };
 
         let ohlcv_path = cache
