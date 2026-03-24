@@ -47,6 +47,40 @@ pub struct IndicatorData {
     pub total_points: Option<usize>,
 }
 
+/// Extract chart indicator config from a signal spec if it's a Saved signal with chart metadata.
+pub fn extract_chart_indicators(
+    signal: Option<&crate::signals::registry::SignalSpec>,
+) -> Vec<(String, crate::signals::storage::ChartConfig)> {
+    let Some(spec) = signal else {
+        return vec![];
+    };
+    match spec {
+        crate::signals::registry::SignalSpec::Saved { name } => {
+            match crate::signals::storage::load_signal(name) {
+                Ok((loaded_spec, _, Some(chart))) => {
+                    let formula = chart
+                        .expression
+                        .clone()
+                        .or_else(|| match &loaded_spec {
+                            crate::signals::registry::SignalSpec::Formula { formula } => {
+                                Some(formula.clone())
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or_default();
+                    if formula.is_empty() {
+                        vec![]
+                    } else {
+                        vec![(formula, chart)]
+                    }
+                }
+                _ => vec![],
+            }
+        }
+        _ => vec![],
+    }
+}
+
 /// Collect indicator data from entry and exit signal specs, deduplicating by name.
 ///
 /// Shared helper used by both options and stock backtest tools to avoid
@@ -277,6 +311,7 @@ mod tests {
             label: "Close/Open Ratio".to_string(),
             thresholds: vec![1.0],
             expression: None,
+            intervals: vec![],
         };
 
         let result = collect_indicator_data(

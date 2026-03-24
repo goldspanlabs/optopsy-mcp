@@ -82,6 +82,7 @@ fn period_param(default: i64) -> ParamDef {
 }
 
 /// Returns the built-in indicator catalog with 10 entries.
+#[allow(clippy::too_many_lines)]
 pub fn builtin_catalog() -> Vec<CatalogEntry> {
     vec![
         CatalogEntry {

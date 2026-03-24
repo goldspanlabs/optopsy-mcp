@@ -25,9 +25,25 @@ struct PricesQuery {
 
 /// Query parameters for the `/api/indicators/compute` REST endpoint.
 #[derive(serde::Deserialize)]
+#[allow(dead_code)]
 struct IndicatorComputeQuery {
     symbol: String,
-    indicators: String,
+    #[serde(default)]
+    indicators: Option<String>,
+    #[serde(default)]
+    indicator: Option<String>,
+    #[serde(default)]
+    period: Option<usize>,
+    #[serde(default)]
+    column: Option<String>,
+    #[serde(default)]
+    fast: Option<usize>,
+    #[serde(default)]
+    slow: Option<usize>,
+    #[serde(default)]
+    signal: Option<usize>,
+    #[serde(default)]
+    mult: Option<f64>,
     start_date: Option<String>,
     end_date: Option<String>,
     interval: Option<optopsy_mcp::engine::types::Interval>,
@@ -81,6 +97,34 @@ async fn indicators_list_handler(
     Ok(axum::Json(serde_json::json!({ "indicators": indicators })))
 }
 
+/// Return the full indicator catalog (built-in + custom saved signals).
+async fn indicators_catalog_handler(
+) -> Result<axum::Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    let mut catalog = optopsy_mcp::signals::catalog::builtin_catalog();
+
+    // Append custom saved signals with chart config
+    if let Ok(signals) = optopsy_mcp::signals::storage::list_saved_signals() {
+        for s in signals.into_iter().filter(|s| s.chartable) {
+            if let Ok((spec, _, Some(chart))) = optopsy_mcp::signals::storage::load_signal(&s.name)
+            {
+                let _ = spec; // suppress unused warning
+                catalog.push(optopsy_mcp::signals::catalog::CatalogEntry {
+                    id: format!("custom:{}", s.name),
+                    label: chart.label,
+                    category: "custom".into(),
+                    display_type: chart.display_type,
+                    params: vec![],
+                    thresholds: chart.thresholds,
+                    intervals: chart.intervals,
+                    source: "custom".into(),
+                });
+            }
+        }
+    }
+
+    Ok(axum::Json(serde_json::json!({ "indicators": catalog })))
+}
+
 /// Compute indicator data for given symbol and indicator names.
 #[allow(clippy::too_many_lines)]
 async fn indicators_compute_handler(
@@ -90,9 +134,90 @@ async fn indicators_compute_handler(
     use polars::prelude::*;
 
     let symbol = query.symbol.to_uppercase();
+
+    // Built-in indicator path
+    if let Some(ref ind_type) = query.indicator {
+        let column = query.column.as_deref().unwrap_or("close").to_string();
+
+        let call = optopsy_mcp::signals::custom::IndicatorCall {
+            func_name: ind_type.clone(),
+            col_args: match ind_type.as_str() {
+                "stochastic" | "atr" | "adx" => vec![column, "high".into(), "low".into()],
+                "obv" => vec![column, "volume".into()],
+                _ => vec![column],
+            },
+            period: query.period.or(match ind_type.as_str() {
+                "sma" | "ema" | "bbands" | "cci" => Some(20),
+                _ => Some(14),
+            }),
+            multiplier: query.mult.or(match ind_type.as_str() {
+                "bbands" => Some(2.0),
+                _ => None,
+            }),
+        };
+
+        // For MACD, map the func_name to "macd_hist" which dispatch_indicator_call expects
+        let call = if ind_type == "macd" {
+            optopsy_mcp::signals::custom::IndicatorCall {
+                func_name: "macd_hist".into(),
+                ..call
+            }
+        } else {
+            call
+        };
+
+        let ohlcv_path = cache
+            .find_ohlcv(&symbol)
+            .ok_or_else(|| {
+                (
+                    axum::http::StatusCode::NOT_FOUND,
+                    format!("No OHLCV data for {symbol}"),
+                )
+            })?
+            .to_string_lossy()
+            .to_string();
+        let interval = query.interval.unwrap_or_default();
+        let start = query
+            .start_date
+            .as_deref()
+            .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+        let end = query
+            .end_date
+            .as_deref()
+            .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+
+        let indicator_data = tokio::task::spawn_blocking(
+            move || -> Result<Vec<optopsy_mcp::signals::helpers::IndicatorData>, String> {
+                let df = optopsy_mcp::engine::stock_sim::load_ohlcv_df(&ohlcv_path, start, end)
+                    .map_err(|e| e.to_string())?;
+                let df = optopsy_mcp::engine::stock_sim::resample_ohlcv(&df, interval)
+                    .map_err(|e| e.to_string())?;
+                let date_col = optopsy_mcp::engine::stock_sim::detect_date_col(&df);
+                let dates = optopsy_mcp::signals::indicators::extract_epoch_seconds(&df, date_col)
+                    .map_err(|e| e.to_string())?;
+                Ok(optopsy_mcp::signals::indicators::dispatch_indicator_call(
+                    &call, &df, &dates,
+                ))
+            },
+        )
+        .await
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+        return Ok(axum::Json(
+            serde_json::json!({ "indicator_data": indicator_data }),
+        ));
+    }
+
+    // Saved-signal path — requires `indicators` query param
+    let indicators_str = query.indicators.ok_or_else(|| {
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            "Either `indicator` or `indicators` query parameter is required".to_string(),
+        )
+    })?;
     let interval = query.interval.unwrap_or_default();
-    let indicator_names: Vec<String> = query
-        .indicators
+    let indicator_names: Vec<String> = indicators_str
         .split(',')
         .map(|s| s.trim().to_string())
         .collect();
@@ -256,6 +381,10 @@ async fn main() -> Result<()> {
             .route(
                 "/api/indicators",
                 axum::routing::get(indicators_list_handler),
+            )
+            .route(
+                "/api/indicators/catalog",
+                axum::routing::get(indicators_catalog_handler),
             )
             .route(
                 "/api/indicators/compute",

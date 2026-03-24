@@ -27,7 +27,7 @@ pub struct ChartConfig {
     /// Optional expression override for computing indicator data.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expression: Option<String>,
-    /// Supported chart intervals (e.g. ["D", "W", "M"]). If empty, all intervals are supported.
+    /// Supported chart intervals (e.g. `["D", "W", "M"]`). If empty, all intervals are supported.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub intervals: Vec<String>,
 }
@@ -652,6 +652,7 @@ mod tests {
             label: "RSI(14)".to_string(),
             thresholds: vec![30.0, 70.0],
             expression: Some("rsi(close, 14)".to_string()),
+            intervals: vec![],
         };
         save_signal(name, &spec, Some("My RSI Signal"), Some(&chart)).unwrap();
 
@@ -697,6 +698,7 @@ mod tests {
             label: "RSI(14)".to_string(),
             thresholds: vec![30.0, 70.0],
             expression: None,
+            intervals: vec![],
         };
         save_signal(name, &spec, Some("RSI Signal"), Some(&chart)).unwrap();
 

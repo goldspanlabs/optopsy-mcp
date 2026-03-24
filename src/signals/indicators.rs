@@ -192,7 +192,7 @@ fn extract_indicators_from_formula(
 
 /// Dispatch a single `IndicatorCall` to the appropriate compute function.
 #[allow(clippy::too_many_lines)]
-fn dispatch_indicator_call(
+pub fn dispatch_indicator_call(
     call: &super::custom::IndicatorCall,
     df: &DataFrame,
     dates: &[i64],
@@ -358,7 +358,7 @@ fn dispatch_indicator_call(
 ///
 /// Returns an error if the column doesn't exist. Individual date extraction failures
 /// produce a sentinel `0` — `build_series` filters these out alongside NaN values.
-fn extract_epoch_seconds(df: &DataFrame, date_col: &str) -> Result<Vec<i64>, PolarsError> {
+pub fn extract_epoch_seconds(df: &DataFrame, date_col: &str) -> Result<Vec<i64>, PolarsError> {
     let col = df.column(date_col)?;
     let n = df.height();
     let is_datetime = date_col == "datetime";
@@ -1544,6 +1544,7 @@ mod tests {
             label: "Close / Open".to_string(),
             thresholds: vec![1.0],
             expression: None,
+            intervals: vec![],
         };
         let result = compute_formula_indicator("close / open", &chart, &df, "date");
         assert!(result.is_some());
@@ -1563,6 +1564,7 @@ mod tests {
             label: "Should Fail".to_string(),
             thresholds: vec![],
             expression: None,
+            intervals: vec![],
         };
         let result = compute_formula_indicator("close > 100", &chart, &df, "date");
         assert!(result.is_none());
@@ -1576,6 +1578,7 @@ mod tests {
             label: "Close Ratio".to_string(),
             thresholds: vec![1.0],
             expression: Some("close / open".to_string()),
+            intervals: vec![],
         };
         let result = compute_formula_indicator("close > 100", &chart, &df, "date");
         assert!(result.is_some());
