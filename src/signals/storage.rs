@@ -27,6 +27,9 @@ pub struct ChartConfig {
     /// Optional expression override for computing indicator data.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expression: Option<String>,
+    /// Supported chart intervals (e.g. ["D", "W", "M"]). If empty, all intervals are supported.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub intervals: Vec<String>,
 }
 
 /// On-disk envelope for a saved signal. Wraps `SignalSpec` with optional metadata.

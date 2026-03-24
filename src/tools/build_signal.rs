@@ -181,6 +181,7 @@ fn execute_create(
                 label: label.to_string(),
                 thresholds: chart_thresholds.map(<[f64]>::to_vec).unwrap_or_default(),
                 expression: chart_expression.map(String::from),
+                intervals: vec![],
             })
         }
         _ => None,

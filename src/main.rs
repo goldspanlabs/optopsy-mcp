@@ -73,6 +73,7 @@ async fn indicators_list_handler(
                 "label": chart.label,
                 "display_type": chart.display_type,
                 "thresholds": chart.thresholds,
+                "intervals": chart.intervals,
             }))
         })
         .collect();
