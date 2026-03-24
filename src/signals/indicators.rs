@@ -705,15 +705,18 @@ fn compute_bollinger_indicator(
         return vec![];
     }
     let (lower, upper) = compute_bollinger_bands(&prices, period);
+    let mid = compute_sma(&prices, period);
     let lower_padded = pad_series(&lower, n);
     let upper_padded = pad_series(&upper, n);
+    let mid_padded = pad_series(&mid, n);
     let (lower_series, lower_total) = build_series("Lower Band", &lower_padded, dates);
     let (upper_series, upper_total) = build_series("Upper Band", &upper_padded, dates);
-    let max_total = lower_total.max(upper_total);
+    let (mid_series, mid_total) = build_series("Mid Band", &mid_padded, dates);
+    let max_total = lower_total.max(upper_total).max(mid_total);
     vec![IndicatorData {
         name: format!("Bollinger Bands({period})"),
         display_type: DisplayType::Overlay,
-        series: vec![lower_series, upper_series],
+        series: vec![lower_series, mid_series, upper_series],
         thresholds: vec![],
         total_points: if max_total > MAX_INDICATOR_POINTS {
             Some(max_total)
