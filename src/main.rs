@@ -157,13 +157,20 @@ async fn indicators_compute_handler(
                 .map_err(|e| e.to_string())?;
             let date_col = optopsy_mcp::engine::stock_sim::detect_date_col(&ohlcv_df);
 
-            // Join cross-symbol data
+            // Join cross-symbol data (resampled to same interval as primary)
             let mut enriched_df = ohlcv_df;
             for (sym, path) in &cross_paths {
                 if let Ok(cross_df) =
                     optopsy_mcp::engine::stock_sim::load_ohlcv_df(path, None, None)
                 {
-                    let cross_date_col = optopsy_mcp::engine::stock_sim::detect_date_col(&cross_df);
+                    // Resample cross-symbol to same interval so date columns match
+                    let Ok(cross_df) =
+                        optopsy_mcp::engine::stock_sim::resample_ohlcv(&cross_df, interval)
+                    else {
+                        continue;
+                    };
+                    let cross_date_col =
+                        optopsy_mcp::engine::stock_sim::detect_date_col(&cross_df);
                     if let Ok(joined) = enriched_df
                         .clone()
                         .lazy()
