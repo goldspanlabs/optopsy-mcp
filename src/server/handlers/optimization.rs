@@ -16,6 +16,7 @@ use super::super::OptopsyServer;
 // ── parameter_sweep ──────────────────────────────────────────────────────
 
 /// Execute the `parameter_sweep` tool logic (stock mode).
+#[allow(clippy::too_many_lines)]
 async fn sweep_stock(
     server: &OptopsyServer,
     params: ParameterSweepParams,
@@ -34,8 +35,13 @@ async fn sweep_stock(
 
     // Resolve cross-symbol OHLCV paths from all entry/exit signals
     let exit_sigs_ref = stock_dims.exit_signals.as_deref().unwrap_or(&[]);
-    let cross_ohlcv_paths =
-        server.resolve_cross_ohlcv_paths(None, None, &stock_dims.entry_signals, exit_sigs_ref)?;
+    let cross_ohlcv_paths = server.resolve_cross_ohlcv_paths(
+        None,
+        None,
+        &stock_dims.entry_signals,
+        exit_sigs_ref,
+        &[],
+    )?;
 
     let start_date = params
         .sim_params
@@ -172,6 +178,7 @@ async fn sweep_options(
         params.sim_params.exit_signal.as_ref(),
         &params.sim_params.entry_signals,
         &params.sim_params.exit_signals,
+        &[],
     )?;
 
     // Options mode: sweep dimensions are required (validated upstream)
@@ -466,6 +473,7 @@ pub async fn execute_bayesian_optimize(
     let cross_ohlcv_paths = server.resolve_cross_ohlcv_paths(
         params.sim_params.entry_signal.as_ref(),
         params.sim_params.exit_signal.as_ref(),
+        &[],
         &[],
         &[],
     )?;
