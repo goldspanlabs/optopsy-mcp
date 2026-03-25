@@ -1314,7 +1314,7 @@ impl ServerHandler for OptopsyServer {
                 \n- NEVER pass strategy: null for options — pick one like short_put, iron_condor, etc.\
                 \n- For STOCKS: quantity means NUMBER OF SHARES (default: 100 = 1 standard lot). Do NOT pass large values like 10000.\
                 \n  Ensure capital ≥ quantity × share_price, or all entries will be skipped. If `warnings` are returned, address them.\
-                \n- For optimization, prefer parameter_sweep over manually enumerating compare_strategies entries\
+                \n- For optimization, prefer parameter_sweep. Or run run_script multiple times with different params to compare manually.\
                 \n- Each tool response includes suggested_next_steps — follow them"
                     .into(),
             ),

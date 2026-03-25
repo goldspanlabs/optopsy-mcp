@@ -116,16 +116,31 @@ Control runtime behavior and data sources:
 Holds shared state: `Arc<RwLock<HashMap<String, DataFrame>>>` for multi-symbol data storage, `Arc<CachedStore>` for the data layer, and `ToolRouter<Self>` for rmcp routing. Tool handlers delegate to `src/tools/` modules which call into `src/engine/`. Data is auto-loaded from cache when a symbol is passed to any analysis tool.
 
 ### Tool Layer (`src/tools/`)
-Each tool has its own module. `ai_format/` (directory module with `backtest.rs`, `data.rs`, `advanced.rs`) enriches every response with `summary`, `key_findings`, and `suggested_next_steps`; shared constants and helper functions live in `ai_helpers.rs`. `construct_signal/` (directory module with `search.rs`, `examples.rs`) handles signal discovery and example generation. Response types live in `response_types.rs` and derive both `Serialize` and `JsonSchema`.
+Each tool has its own module. `ai_format/` (directory module with `data.rs`, `advanced.rs`) enriches every response with `summary`, `key_findings`, and `suggested_next_steps`; shared constants and helper functions live in `ai_helpers.rs`. `construct_signal/` (directory module with `search.rs`, `examples.rs`) handles signal discovery and example generation. Response types live in `response_types/` and derive both `Serialize` and `JsonSchema`.
+
+### Scripting Engine (`src/scripting/`)
+Rhai-based scripting engine for user-defined backtesting strategies. Scripts define callback functions (`config`, `on_bar`, `on_exit_check`, etc.) and the engine drives a unified simulation loop for both options and stock backtests.
+
+- **`engine.rs`** — Unified simulation loop with immediate exit processing, scope rewind, PriceTable MTM, and assignment detection
+- **`types.rs`** — `BarContext` (exposed to scripts as `ctx`), `ScriptPosition`, `ScriptConfig`, action enums
+- **`indicators.rs`** — Pre-computed indicator store (SMA, EMA, RSI, ATR, MACD, BBands, Stochastic, CCI, OBV) with O(1) per-bar lookups
+- **`registration.rs`** — Sandboxed Rhai engine builder (ops limit, print interception, type registration)
+- **`stdlib.rs`** — Parameter injection (`const` and scope modes), strategy script listing
+
+Strategy scripts live in `scripts/strategies/`. See `scripts/SCRIPTING_REFERENCE.md` for the full `ctx` API.
 
 ### Engine (`src/engine/`)
-Three main execution paths:
+Internal backtest engines used by the scripting layer and optimization tools:
 
-- **evaluate_strategy()** (`core.rs`) — Statistical analysis. Filters options per leg (option type → DTE → valid quotes → closest delta), matches entry/exit rows, joins legs, applies strike ordering, computes per-leg P&L, then bins by DTE × delta buckets with aggregate stats.
-- **run_backtest()** (`core.rs`) — Options event-driven simulation. Builds a `HashMap<(date, exp, strike, OptionType), QuoteSnapshot>` price table for O(1) lookups, finds entry candidates, then runs a day-by-day event loop managing position opens (with `max_positions` constraint) and closes (DTE exit, stop loss, take profit, max hold, expiration). Produces trade log, equity curve, and performance metrics (Sharpe, Sortino, CAGR, VaR, etc.).
-- **run_stock_backtest()** (`stock_sim.rs`) — Stock/equity event-driven simulation on OHLCV bars. Signal-driven entries (required) with optional exit signals. Manages long/short positions with stop-loss, take-profit, max-hold exits. Uses synthetic bid-ask spread (10% of daily range) for slippage models. Reuses `PerformanceMetrics`, `TradeRecord`, and `BacktestResult`.
-
-Key submodules: `filters.rs` (DTE/delta filtering, `filter_valid_quotes(df, min_bid_ask)`), `evaluation.rs` (entry-exit matching), `event_sim.rs` (options backtest event loop), `stock_sim.rs` (stock backtest event loop), `pricing.rs` (4 slippage models: Mid/Spread/Liquidity/PerLeg), `rules.rs` (strike ordering), `metrics.rs` (performance calculations), `output.rs` (DTE×delta bucketing with right-closed `(a, b]` intervals), `sizing.rs` (dynamic position sizing: 5 methods with max-loss computation per strategy type).
+- **`ohlcv.rs`** — OHLCV data loading, parsing, resampling (`load_ohlcv_df`, `bars_from_df`, `resample_ohlcv`, `detect_date_col`)
+- **`core.rs`** — Options backtest orchestration (strategy resolution, signal filters, price table construction)
+- **`event_sim.rs`** — Options event-driven simulation loop
+- **`stock_sim.rs`** — Stock/equity event-driven simulation loop
+- **`wheel_sim.rs`** — Wheel strategy simulation (put → assignment → covered call cycles)
+- **`filters.rs`** — DTE/delta filtering pipeline
+- **`pricing.rs`** — 5 slippage models (Mid/Spread/Liquidity/PerLeg/BidAskTravel)
+- **`metrics.rs`** — Performance calculations (Sharpe, Sortino, CAGR, VaR, etc.)
+- **`sizing.rs`** — Dynamic position sizing (5 methods with max-loss computation)
 
 ### Strategies (`src/strategies/`)
 31 strategies across singles, spreads, butterflies, condors, iron, and calendar categories. Built using helpers (`call_leg`, `put_leg`, `strategy`) in `helpers.rs`. `all_strategies()` returns the full list; `find_strategy(name)` does linear scan. Multi-expiration strategies (calendar/diagonal) use `ExpirationCycle::Primary`/`Secondary` tags on legs.
@@ -164,23 +179,17 @@ TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, tr
     - `VIX > 30 and rsi(close, 14) < 30` — mixed: cross-symbol + primary
     - Cross-symbol data is auto-loaded from cache and pre-joined into the primary DataFrame
 
-### Backtest Tools
-- **`run_options_backtest`** — Event-driven options backtest. Requires `strategy` + `leg_deltas` + `entry_dte` + `symbol`. Options data auto-loaded from cache.
-- **`run_stock_backtest`** — Signal-driven stock backtest. `entry_signal` is REQUIRED (not optional).
-  - **Intraday data cap**: When no `start_date` is specified and the interval is intraday, a default lookback cap is applied to avoid loading 10+ years of minute/hourly data: 1m=6mo, 5m=1yr, 10-30m=2yr, 1-4h=3yr. Override by passing explicit `start_date`.
-- **`portfolio_backtest`** — Run multiple stock strategies as a weighted portfolio. Min 2 strategies. Returns combined metrics + correlation matrix.
-- **`run_wheel_backtest`** — Wheel strategy: sell puts → assignment → sell covered calls → repeat. Separate put/call DTE and delta configuration, one cycle at a time, works with entry signals.
+### Backtest Tool
+- **`run_script`** — Execute Rhai backtest scripts for options, stock, and wheel strategies.
+  Pass `strategy` (filename from `scripts/strategies/`) or `script` (inline Rhai source).
+  See `scripts/SCRIPTING_REFERENCE.md` for the full `ctx` API (`build_strategy`, indicators, cross-symbol data, etc.).
 
 ### Optimization & Validation Tools
-- **`parameter_sweep`** — Grid search across delta/DTE/slippage/signal combos with OOS validation. Best for small, discrete parameter spaces.
+- **`parameter_sweep`** — Grid search across delta/DTE/slippage/signal combos with OOS validation.
   - `entry_signals` (plural) goes inside `sim_params`, NOT at the top level.
   - Use `direction` for auto strategy selection, or explicit `strategies` list.
-- **`bayesian_optimize`** — GP-based Bayesian optimization for large parameter spaces. Finds near-optimal configs in 50-100 evaluations instead of exhaustive grid search. Single strategy; continuous delta/DTE search with categorical slippage/exit_dte.
-  - Requires: `strategy`, `leg_delta_bounds` `[{min, max}]`, `entry_dte_min`, `entry_dte_max`.
-  - Optional: `exit_dtes`, `slippage_models`, `max_evaluations` (default 50), `initial_samples` (default 10), `objective` (sharpe/sortino/calmar/profit_factor).
-  - Returns convergence trace, ranked results, sensitivity analysis, OOS validation.
+- **`bayesian_optimize`** — GP-based Bayesian optimization for large parameter spaces (50-100 evaluations).
 - **`walk_forward`** — Rolling train/test windows. Default: 252d train, 63d test, 63d step.
-- **`compare_strategies`** — Side-by-side comparison of 2-3 specific configs. Use `parameter_sweep` for grid search instead.
 - **`permutation_test`** — Sharpe significance via shuffled entry dates. Min 10 permutations.
 
 ### Statistics Tools
