@@ -11,85 +11,51 @@ A high-performance options and stock backtesting engine exposed as an [MCP](http
 
 ## What You Can Do
 
-### Backtest Options Strategies
+### Write Custom Strategies
 
-Run event-driven simulations across 32 built-in options strategies — from simple singles to multi-leg iron condors, butterflies, calendars, diagonals, and stock-leg strategies (covered calls, protective puts). Full position management with stop-loss, take-profit, max-hold exits, and 5 dynamic position sizing methods.
+Describe a strategy in plain English and Claude generates a [Rhai](https://rhai.rs/) script that runs against historical data. Define entry logic, exit rules, position sizing, and stateful multi-phase strategies in a single script — or use the built-in wheel strategy script with parameter injection.
+
+```
+"Write a strategy that sells puts on SPY when VIX > 20 and RSI < 30, with a 50% stop loss"
+"Build a custom mean-reversion strategy that buys QQQ on 3 consecutive down days and exits after a 2% gain or 5-day hold"
+"Run the wheel script on SPY with 30-delta puts at 45 DTE and 25-delta calls at 30 DTE"
+```
+
+### Backtest Options and Stocks
+
+Run event-driven simulations across 32 built-in options strategies — singles, spreads, iron condors, butterflies, calendars, diagonals, and stock-leg combos. Signal-driven stock backtesting on OHLCV data. Full position management with stop-loss, take-profit, max-hold exits, and 5 dynamic sizing methods.
 
 ```
 "Backtest an iron condor on SPY with $100k capital, 30-delta wings, and a 50% stop loss"
-"Run a covered call strategy on AAPL with a 30-delta short call"
-"Run a short put selling strategy with RSI < 30 as the entry filter"
-```
-
-### Run the Wheel
-
-Simulate the full wheel strategy — sell puts, get assigned, sell covered calls, get called away, repeat. Separate put/call DTE and delta configuration with cycle-level analytics.
-
-```
-"Run the wheel on SPY with 30-delta puts at 45 DTE and 30-delta calls at 30 DTE"
-"Wheel strategy on SPY with VIX/VIX3M < 1.0 as entry filter"
-```
-
-### Backtest Stock Strategies
-
-Signal-driven stock backtesting on OHLCV data. Define entry/exit conditions using the formula DSL and simulate long or short equity positions.
-
-```
 "Backtest buying SPY when RSI drops below 30 and selling when it crosses above 70"
-"Test a mean-reversion strategy on QQQ with a 3% stop loss"
+"Run the wheel on SPY with 30-delta puts at 45 DTE and 30-delta calls at 30 DTE"
 ```
 
-### Optimize Parameters
+### Optimize and Validate
 
-Grid-search across delta, DTE, slippage, and signal combinations with out-of-sample validation, stability scoring, and sensitivity analysis.
+Grid-search across delta, DTE, slippage, and signal combinations with out-of-sample validation. Walk-forward analysis with rolling train/test windows. Permutation testing for statistical significance.
 
 ```
 "Sweep DTE and delta for short puts on SPY — find the best risk-adjusted setup"
-"Compare iron condors vs iron butterflies with different entry signals"
-```
-
-### Validate Robustness
-
-Walk-forward analysis with rolling train/test windows and permutation testing for statistical significance.
-
-```
 "Run walk-forward on this strategy with 4 windows to check if it holds up over time"
 "Is this backtest result statistically significant or just luck?"
 ```
 
-### Filter by Market Regime
+### Analyze Markets
 
-Gate entries using Hidden Markov Model regime detection. Fit on historical data, classify forward in real-time (no look-ahead bias), and only trade in favorable regimes.
-
-```
-"Only enter covered calls when SPY is in a bullish HMM regime"
-"Skip trades during bearish regimes: hmm_regime(3, 5) != bearish"
-"Combine regime with technicals: hmm_regime(2, 5) == bullish and rsi(close, 14) < 30"
-```
-
-### Analyze Price Patterns
-
-Discover seasonality and time-based patterns with aggregate statistics, distribution analysis, correlation matrices, rolling metrics, and regime detection.
+Discover seasonality, regime shifts, and price patterns. Gate entries using HMM regime detection. Cross-symbol correlation, rolling metrics, and distribution analysis.
 
 ```
 "Show me SPY's average return by day of week — are any statistically significant?"
-"What's the return distribution for QQQ over the last 5 years?"
+"Only enter covered calls when SPY is in a bullish HMM regime"
 "Detect volatility regimes in SPY and show when they shift"
-```
-
-### Build Custom Signals
-
-Create entry/exit signals with a formula DSL covering 67 functions (momentum, trend, volatility, volume, regime, derived stats). Save, rename, and reuse signals across sessions.
-
-```
-"Create a signal that fires when RSI < 30 and price is below the lower Bollinger Band"
-"Build an exit signal for when the 3-day price change exceeds 3%"
 ```
 
 ## MCP Tools
 
 | Tool | Description |
 |------|-------------|
+| `run_script` | Execute a Rhai backtest script (inline or built-in strategy) |
 | `list_symbols` | Discover available symbols in the data cache |
 | `list_strategies` | Browse all 32 built-in options strategies with leg definitions |
 | `build_signal` | Create, validate, save, rename, search, and manage custom signals (CRUD + catalog) |
@@ -166,24 +132,36 @@ Mid, spread (bid/ask worst-case), liquidity-based (volume-scaled), and per-leg f
 
 Fixed quantity, fixed fractional, risk per trade, Kelly criterion, and volatility targeting.
 
-### 67 Built-in Signals
+### Rhai Scripting Engine
 
-RSI, MACD, Stochastic, Bollinger Bands, Keltner Channels, Supertrend, Aroon, ATR, OBV, MFI, IV Rank/Percentile, HMM regime filter, and more — plus AND/OR/NOT combinators and cross-symbol signals (e.g., VIX as a filter for SPY trades).
+Write backtests as [Rhai](https://rhai.rs/) scripts with a callback-driven API. The engine provides a `BarContext` (`ctx`) object with access to OHLCV data, pre-computed indicators (SMA, EMA, RSI, ATR, MACD, Bollinger Bands, Stochastic, CCI, OBV), options chain lookup, portfolio state, and cross-symbol data. Scripts are fully sandboxed with no file or network access.
 
-### Formula DSL
+```rhai
+fn config() {
+    #{ symbol: SYMBOL, capital: CAPITAL,
+       data: #{ ohlcv: true, options: true, indicators: ["rsi:14", "sma:50"] } }
+}
 
-Build custom signals with a compact expression language:
+fn on_bar(ctx) {
+    if ctx.position_count() >= 3 { return []; }
+    let strat = ctx.build_strategy([
+        #{ side: "short", option_type: "put", delta: 0.30, dte: 45 },
+    ]);
+    if strat == () { return []; }
+    [#{ action: "open_options", legs: strat.legs }]
+}
 
+fn on_exit_check(ctx, pos) {
+    if pos.dte <= 7 { return #{ action: "close", reason: "dte_exit" }; }
+    #{ action: "hold" }
+}
 ```
-close > sma(close, 50) and rsi(close, 14) < 30
-macd_hist(close) > 0 and rel_volume(volume, 20) > 2.0
-consecutive_down(close) >= 3 and volume > sma(volume, 20) * 1.5
-iv_rank(iv, 252) > 50 and bbands_lower(close, 20) > close
-hmm_regime(3, 5) == bullish and rsi(close, 14) < 30
-day_of_week() == 1 and pct_change(close, 1) < -0.005
-```
 
-Supports lookback (`close[1]`), date/time functions (`day_of_week()`, `month()`, `hour()`), conditionals (`if(cond, then, else)`), HMM regime gating (`hmm_regime()`), cross-symbol references (`VIX > 20`), and 67 rolling/statistical functions.
+A built-in wheel strategy script is included and parameterized via constant injection.
+
+### 67 Indicators and Signal DSL
+
+RSI, MACD, Stochastic, Bollinger Bands, Keltner Channels, Supertrend, ATR, OBV, MFI, IV Rank, HMM regime filter, and more. Available as pre-computed O(1) lookups in Rhai scripts (`ctx.rsi(14)`, `ctx.sma(50)`) and as a formula DSL for the built-in backtest tools (`rsi(close, 14) < 30 and VIX > 20`).
 
 ## Data
 
@@ -257,5 +235,6 @@ PORT=8000 cargo run          # Run as HTTP server (optional)
 - [Tokio](https://tokio.rs/) — Async runtime
 - [Axum](https://github.com/tokio-rs/axum) — HTTP server (optional, via `PORT` env var)
 - [rust_ti](https://crates.io/crates/rust_ti) — Technical analysis indicators
+- [Rhai](https://rhai.rs/) — Embedded scripting language for custom strategies
 - [garde](https://crates.io/crates/garde) — Input validation
 - [serde](https://serde.rs/) + [schemars](https://docs.rs/schemars/) — JSON serialization and MCP schema generation

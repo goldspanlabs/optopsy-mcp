@@ -6,7 +6,7 @@
 use anyhow::Result;
 
 use crate::engine::stock_sim::{self, StockBacktestParams};
-use crate::signals::helpers::collect_indicator_data;
+use crate::signals::helpers::{collect_indicator_data, extract_chart_indicators};
 
 use super::ai_format;
 use super::response_types::{StockBacktestResponse, UnderlyingPrice};
@@ -51,12 +51,14 @@ pub fn execute(
     )?;
 
     // Compute raw indicator data for charting from signals
+    let mut chart_indicators = extract_chart_indicators(params.entry_signal.as_ref());
+    chart_indicators.extend(extract_chart_indicators(params.exit_signal.as_ref()));
     let indicator_data = collect_indicator_data(
         params.entry_signal.as_ref(),
         params.exit_signal.as_ref(),
         &ohlcv_df,
         date_col,
-        &[],
+        &chart_indicators,
     );
 
     // Run the simulation

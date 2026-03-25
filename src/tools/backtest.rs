@@ -8,7 +8,7 @@ use anyhow::Result;
 use polars::prelude::*;
 
 use crate::engine::types::BacktestParams;
-use crate::signals::helpers::{collect_indicator_data, IndicatorData};
+use crate::signals::helpers::{collect_indicator_data, extract_chart_indicators, IndicatorData};
 
 use super::ai_format;
 use super::response_types::{BacktestResponse, UnderlyingPrice};
@@ -30,12 +30,14 @@ pub fn execute(
 
     // Compute raw indicator data for charting from signals (if OHLCV data available)
     let indicator_data: Vec<IndicatorData> = if let Some(ohlcv) = ohlcv_df {
+        let mut chart_indicators = extract_chart_indicators(params.entry_signal.as_ref());
+        chart_indicators.extend(extract_chart_indicators(params.exit_signal.as_ref()));
         collect_indicator_data(
             params.entry_signal.as_ref(),
             params.exit_signal.as_ref(),
             ohlcv,
             "date",
-            &[],
+            &chart_indicators,
         )
     } else {
         vec![]

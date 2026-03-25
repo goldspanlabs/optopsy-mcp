@@ -15,6 +15,7 @@ pub mod hmm;
 pub mod hypothesis;
 pub mod metrics;
 pub mod multiple_comparisons;
+pub mod ohlcv;
 pub mod permutation;
 pub mod portfolio;
 pub mod positions;

@@ -27,12 +27,24 @@ pub async fn execute(
     // Ensure OHLCV data is available (also used for chart overlay)
     let ohlcv_path = server.ensure_ohlcv(&symbol)?;
 
+    // Extract chart indicator formulas for cross-symbol resolution
+    let chart_indicators_entry =
+        crate::signals::helpers::extract_chart_indicators(Some(&params.entry_signal));
+    let mut chart_formulas: Vec<String> = chart_indicators_entry
+        .iter()
+        .map(|(f, _)| f.clone())
+        .collect();
+    let chart_indicators_exit =
+        crate::signals::helpers::extract_chart_indicators(params.exit_signal.as_ref());
+    chart_formulas.extend(chart_indicators_exit.iter().map(|(f, _)| f.clone()));
+
     // Resolve cross-symbol OHLCV paths for signals
     let cross_ohlcv_paths = server.resolve_cross_ohlcv_paths(
         Some(&params.entry_signal),
         params.exit_signal.as_ref(),
         &[],
         &[],
+        &chart_formulas,
     )?;
 
     let start_date = params
