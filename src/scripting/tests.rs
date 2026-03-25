@@ -256,13 +256,13 @@ mod tests {
             params: vec![IndicatorParam::Int(14)],
         };
 
-        // First 14 bars should be NaN
+        // First 13 bars should be NaN (rust_ti uses windows of size period)
         assert!(store.get(&key, 0).unwrap().is_nan());
-        assert!(store.get(&key, 13).unwrap().is_nan());
+        assert!(store.get(&key, 12).unwrap().is_nan());
 
-        // Bar 14 should have a value (all gains → RSI close to 100)
-        let val = store.get(&key, 14).unwrap();
-        assert!(!val.is_nan(), "RSI at bar 14 should not be NaN");
+        // Bar 13 should have a value (first window completes at period-1)
+        let val = store.get(&key, 13).unwrap();
+        assert!(!val.is_nan(), "RSI at bar 13 should not be NaN");
         assert!(
             val > 90.0,
             "RSI should be high for monotonically increasing prices, got {val}"
@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn test_indicator_store_macd() {
-        // MACD needs enough data for the slow EMA warmup (26 bars default)
+        // MACD needs enough data (rust_ti requires 34-bar windows)
         let prices: Vec<f64> = (0..50).map(|i| 100.0 + (i as f64) * 0.3).collect();
         let bars = make_bars(&prices);
         let store = IndicatorStore::build(&["macd_line".to_string()], &bars).unwrap();
@@ -285,11 +285,12 @@ mod tests {
             ],
         };
 
-        // First 25 bars should be NaN (slow EMA warmup)
+        // First 33 bars should be NaN (rust_ti uses 34-bar windows)
         assert!(store.get(&key, 0).unwrap().is_nan());
-        // Bar 25+ should have values
-        let val = store.get(&key, 30).unwrap();
-        assert!(!val.is_nan(), "MACD at bar 30 should not be NaN");
+        assert!(store.get(&key, 32).unwrap().is_nan());
+        // Bar 33+ should have values
+        let val = store.get(&key, 33).unwrap();
+        assert!(!val.is_nan(), "MACD at bar 33 should not be NaN");
     }
 
     #[test]
@@ -328,9 +329,11 @@ mod tests {
             params: vec![],
         };
 
-        // OBV has no warmup — all bars should have values
-        let val = store.get(&key, 0).unwrap();
-        assert!(!val.is_nan(), "OBV at bar 0 should not be NaN");
+        // rust_ti OBV needs 2 prices minimum; first bar is NaN (warmup)
+        assert!(store.get(&key, 0).unwrap().is_nan());
+        // Bar 1+ should have values
+        let val = store.get(&key, 1).unwrap();
+        assert!(!val.is_nan(), "OBV at bar 1 should not be NaN");
     }
 
     #[test]

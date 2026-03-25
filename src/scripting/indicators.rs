@@ -7,6 +7,11 @@
 use std::collections::HashMap;
 
 use anyhow::{bail, Result};
+use rust_ti::candle_indicators::bulk as cti;
+use rust_ti::momentum_indicators::bulk as mti;
+use rust_ti::other_indicators::bulk as oti;
+use rust_ti::standard_indicators::bulk as sti;
+use rust_ti::trend_indicators::bulk as tti;
 
 use super::types::OhlcvBar;
 
@@ -152,6 +157,20 @@ fn parse_indicator_declaration(decl: &str) -> Result<(String, Vec<usize>)> {
     Ok((name, params))
 }
 
+// ---------------------------------------------------------------------------
+// Helper: pad a shorter rust_ti output to match bar count (NaN front-fill).
+// ---------------------------------------------------------------------------
+
+/// Pad a shorter vector with NaN at the front to align with the target length.
+/// rust_ti bulk functions return vectors shorter than the input (missing warmup),
+/// so we must pad to keep indices aligned with bar positions.
+fn pad_front(vals: &[f64], target_len: usize) -> Vec<f64> {
+    let pad = target_len.saturating_sub(vals.len());
+    let mut result = vec![f64::NAN; pad];
+    result.extend_from_slice(vals);
+    result
+}
+
 /// Compute a full indicator series from OHLCV data.
 ///
 /// Returns a `Vec<f64>` with one value per bar. Values before the warmup
@@ -165,7 +184,7 @@ fn compute_indicator(
     lows: &[f64],
     volumes: &[f64],
 ) -> Result<Vec<f64>> {
-    let _n = closes.len();
+    let n = closes.len();
     let period = params.first().copied().unwrap_or(14);
 
     // Multi-param indicators: extract additional params
@@ -173,381 +192,566 @@ fn compute_indicator(
     let param3 = params.get(2).copied();
 
     match name {
-        "sma" => Ok(rolling_sma(closes, period)),
-        "ema" => Ok(rolling_ema(closes, period)),
-        "rsi" => Ok(rolling_rsi(closes, period)),
-        "atr" => Ok(rolling_atr(highs, lows, closes, period)),
-
-        // MACD: params = [fast, slow, signal] or defaults [12, 26, 9]
-        "macd_line" => {
-            let fast = period; // or 12 from "macd_line" with no params
-            let slow = param2.unwrap_or(26);
-            let signal = param3.unwrap_or(9);
-            let (line, _, _) = rolling_macd(closes, fast, slow, signal);
-            Ok(line)
+        // ── Standard indicators (SMA, EMA) ───────────────────────────────
+        "sma" => {
+            if period == 0 || n < period {
+                return Ok(vec![f64::NAN; n]);
+            }
+            let vals = sti::simple_moving_average(closes, period);
+            Ok(pad_front(&vals, n))
         }
-        "macd_signal" => {
-            let fast = period;
-            let slow = param2.unwrap_or(26);
-            let signal = param3.unwrap_or(9);
-            let (_, sig, _) = rolling_macd(closes, fast, slow, signal);
-            Ok(sig)
-        }
-        "macd_hist" => {
-            let fast = period;
-            let slow = param2.unwrap_or(26);
-            let signal = param3.unwrap_or(9);
-            let (_, _, hist) = rolling_macd(closes, fast, slow, signal);
-            Ok(hist)
+        "ema" => {
+            if period == 0 || n < period {
+                return Ok(vec![f64::NAN; n]);
+            }
+            let vals = sti::exponential_moving_average(closes, period);
+            Ok(pad_front(&vals, n))
         }
 
-        // Bollinger Bands: params = [period, std_mult*10] (e.g., 20 for std=2.0)
-        "bbands_upper" => {
+        // ── RSI ──────────────────────────────────────────────────────────
+        "rsi" => {
+            if period == 0 || n <= period {
+                return Ok(vec![f64::NAN; n]);
+            }
+            let vals = mti::relative_strength_index(
+                closes,
+                rust_ti::ConstantModelType::SmoothedMovingAverage,
+                period,
+            );
+            Ok(pad_front(&vals, n))
+        }
+
+        // ── ATR ──────────────────────────────────────────────────────────
+        "atr" => {
+            if period == 0 || n < period {
+                return Ok(vec![f64::NAN; n]);
+            }
+            let vals = oti::average_true_range(
+                closes,
+                highs,
+                lows,
+                rust_ti::ConstantModelType::SmoothedMovingAverage,
+                period,
+            );
+            Ok(pad_front(&vals, n))
+        }
+
+        // ── MACD: params = [fast, slow, signal] or defaults [12, 26, 9] ─
+        "macd_line" | "macd_signal" | "macd_hist" => {
+            // rust_ti::standard_indicators::bulk::macd uses fixed 12/26/9 params
+            if n < 34 {
+                return Ok(vec![f64::NAN; n]);
+            }
+            let macd_values = sti::macd(closes);
+            let extracted: Vec<f64> = macd_values
+                .iter()
+                .map(|t| match name {
+                    "macd_line" => t.0,
+                    "macd_signal" => t.1,
+                    _ => t.2, // macd_hist
+                })
+                .collect();
+            Ok(pad_front(&extracted, n))
+        }
+
+        // ── Bollinger Bands: params = [period, std_mult*10] ──────────────
+        "bbands_upper" | "bbands_mid" | "bbands_lower" => {
             let std_mult = param2.map(|v| v as f64 / 10.0).unwrap_or(2.0);
-            let (upper, _, _) = rolling_bbands(closes, period, std_mult);
-            Ok(upper)
-        }
-        "bbands_mid" => {
-            let (_, mid, _) = rolling_bbands(closes, period, 2.0);
-            Ok(mid)
-        }
-        "bbands_lower" => {
-            let std_mult = param2.map(|v| v as f64 / 10.0).unwrap_or(2.0);
-            let (_, _, lower) = rolling_bbands(closes, period, std_mult);
-            Ok(lower)
+            if period == 0 || n < period {
+                return Ok(vec![f64::NAN; n]);
+            }
+            let bbands = cti::moving_constant_bands(
+                closes,
+                rust_ti::ConstantModelType::SimpleMovingAverage,
+                rust_ti::DeviationModel::StandardDeviation,
+                std_mult,
+                period,
+            );
+            let extracted: Vec<f64> = bbands
+                .iter()
+                .map(|t| match name {
+                    "bbands_lower" => t.0,
+                    "bbands_mid" => t.1,
+                    _ => t.2, // bbands_upper
+                })
+                .collect();
+            Ok(pad_front(&extracted, n))
         }
 
-        // Stochastic %K: params = [k_period, d_smoothing]
+        // ── Stochastic %K with D-period SMA smoothing ────────────────────
         "stochastic" => {
             let d_smooth = param2.unwrap_or(3);
-            Ok(rolling_stochastic_k(highs, lows, closes, period, d_smooth))
+            if period == 0 || n < period {
+                return Ok(vec![f64::NAN; n]);
+            }
+            let raw_k = mti::stochastic_oscillator(closes, period);
+            let padded_raw = pad_front(&raw_k, n);
+
+            // Apply D-period SMA smoothing (d_smooth <= 1 means no smoothing)
+            if d_smooth <= 1 {
+                return Ok(padded_raw);
+            }
+            let first_valid = padded_raw.iter().position(|v| !v.is_nan());
+            let Some(start) = first_valid else {
+                return Ok(padded_raw);
+            };
+            let tail = &padded_raw[start..];
+            if tail.len() < d_smooth {
+                return Ok(padded_raw);
+            }
+            let smoothed_vals = sti::simple_moving_average(tail, d_smooth);
+            let mut result = vec![f64::NAN; n];
+            let offset = n - smoothed_vals.len() - (n - start - tail.len());
+            for (i, &v) in smoothed_vals.iter().enumerate() {
+                let idx = start + (tail.len() - smoothed_vals.len()) + i;
+                if idx < n {
+                    result[idx] = v;
+                }
+            }
+            // Simpler: just pad the smoothed values relative to start
+            let smoothed_start = start + d_smooth - 1;
+            let mut result2 = vec![f64::NAN; n];
+            for (i, &v) in smoothed_vals.iter().enumerate() {
+                let idx = smoothed_start + i;
+                if idx < n {
+                    result2[idx] = v;
+                }
+            }
+            let _ = result;
+            let _ = offset;
+            Ok(result2)
         }
 
-        // CCI: Commodity Channel Index
-        "cci" => Ok(rolling_cci(highs, lows, closes, period)),
+        // ── CCI: Commodity Channel Index ─────────────────────────────────
+        "cci" => {
+            if period == 0 || n < period {
+                return Ok(vec![f64::NAN; n]);
+            }
+            // CCI needs typical price as input
+            let tp: Vec<f64> = (0..n)
+                .map(|i| (highs[i] + lows[i] + closes[i]) / 3.0)
+                .collect();
+            let vals = mti::commodity_channel_index(
+                &tp,
+                rust_ti::ConstantModelType::SimpleMovingAverage,
+                rust_ti::DeviationModel::MeanAbsoluteDeviation,
+                0.015,
+                period,
+            );
+            Ok(pad_front(&vals, n))
+        }
 
-        // OBV: On-Balance Volume (no period param)
-        "obv" => Ok(rolling_obv(closes, volumes)),
+        // ── OBV: On-Balance Volume ───────────────────────────────────────
+        "obv" => {
+            if n < 2 {
+                return Ok(vec![0.0; n]);
+            }
+            let vals = mti::on_balance_volume(closes, volumes, 0.0);
+            Ok(pad_front(&vals, n))
+        }
+
+        // ── ADX / +DI / -DI: Directional Movement System ────────────────
+        "adx" | "plus_di" | "minus_di" => {
+            if period == 0 || n < period + 1 {
+                return Ok(vec![f64::NAN; n]);
+            }
+            let dms = tti::directional_movement_system(
+                highs,
+                lows,
+                closes,
+                period,
+                rust_ti::ConstantModelType::SmoothedMovingAverage,
+            );
+            let extracted: Vec<f64> = dms
+                .iter()
+                .map(|t| match name {
+                    "plus_di" => t.0,
+                    "minus_di" => t.1,
+                    _ => t.2, // adx
+                })
+                .collect();
+            Ok(pad_front(&extracted, n))
+        }
+
+        // ── PSAR: Parabolic SAR ─────────────────────────────────────────
+        "psar" => {
+            let accel = param2.map(|v| v as f64 / 100.0).unwrap_or(0.02);
+            let max_accel = param3.map(|v| v as f64 / 100.0).unwrap_or(0.20);
+            if n < 2 {
+                return Ok(vec![f64::NAN; n]);
+            }
+            let vals = tti::parabolic_time_price_system(
+                highs,
+                lows,
+                accel,
+                max_accel,
+                accel,
+                rust_ti::Position::Long,
+                lows[0],
+            );
+            Ok(pad_front(&vals, n))
+        }
+
+        // ── Supertrend ──────────────────────────────────────────────────
+        "supertrend" => {
+            let mult = param2.map(|v| v as f64 / 10.0).unwrap_or(3.0);
+            if period == 0 || n < period {
+                return Ok(vec![f64::NAN; n]);
+            }
+            let vals = cti::supertrend(
+                highs,
+                lows,
+                closes,
+                rust_ti::ConstantModelType::SimpleMovingAverage,
+                mult,
+                period,
+            );
+            Ok(pad_front(&vals, n))
+        }
+
+        // ── Keltner Channels (hand-rolled — no rust_ti equivalent) ───────
+        "keltner_upper" | "keltner_lower" => {
+            let mult = param2.map(|v| v as f64 / 10.0).unwrap_or(2.0);
+            let (upper, lower) = rolling_keltner(closes, highs, lows, period, mult);
+            match name {
+                "keltner_upper" => Ok(upper),
+                _ => Ok(lower),
+            }
+        }
+
+        // ── Donchian Channels ────────────────────────────────────────────
+        "donchian_upper" | "donchian_mid" | "donchian_lower" => {
+            if period == 0 || n < period {
+                return Ok(vec![f64::NAN; n]);
+            }
+            let dc = cti::donchian_channels(highs, lows, period);
+            let extracted: Vec<f64> = dc
+                .iter()
+                .map(|t| match name {
+                    "donchian_upper" => t.0,
+                    "donchian_mid" => t.1,
+                    _ => t.2, // donchian_lower
+                })
+                .collect();
+            Ok(pad_front(&extracted, n))
+        }
+
+        // ── True Range (no period — single-bar value) ────────────────────
+        "tr" => {
+            if n == 0 {
+                return Ok(vec![f64::NAN; n]);
+            }
+            let vals = oti::true_range(closes, highs, lows);
+            Ok(pad_front(&vals, n))
+        }
+
+        // ── Williams %R ──────────────────────────────────────────────────
+        "williams_r" => {
+            if period == 0 || n < period {
+                return Ok(vec![f64::NAN; n]);
+            }
+            let vals = mti::williams_percent_r(highs, lows, closes, period);
+            Ok(pad_front(&vals, n))
+        }
+
+        // ── PPO: Percentage Price Oscillator ─────────────────────────────
+        "ppo" => {
+            let long = param2.unwrap_or(26);
+            if period == 0 || long == 0 || n <= long {
+                return Ok(vec![f64::NAN; n]);
+            }
+            let vals = mti::percentage_price_oscillator(
+                closes,
+                period,
+                long,
+                rust_ti::ConstantModelType::ExponentialMovingAverage,
+            );
+            Ok(pad_front(&vals, n))
+        }
+
+        // ── CMO: Chande Momentum Oscillator ──────────────────────────────
+        "cmo" => {
+            if period == 0 || n <= period {
+                return Ok(vec![f64::NAN; n]);
+            }
+            let vals = mti::chande_momentum_oscillator(closes, period);
+            Ok(pad_front(&vals, n))
+        }
+
+        // ── MFI: Money Flow Index ────────────────────────────────────────
+        "mfi" => {
+            if period == 0 || n <= period {
+                return Ok(vec![f64::NAN; n]);
+            }
+            let tp: Vec<f64> = (0..n)
+                .map(|i| (highs[i] + lows[i] + closes[i]) / 3.0)
+                .collect();
+            let vals = mti::money_flow_index(&tp, volumes, period);
+            Ok(pad_front(&vals, n))
+        }
+
+        // ── VPT: Volume Price Trend ──────────────────────────────────────
+        "vpt" => {
+            if n < 2 {
+                return Ok(vec![0.0; n]);
+            }
+            let vals = tti::volume_price_trend(closes, &volumes[1..], 0.0);
+            Ok(pad_front(&vals, n))
+        }
+
+        // ── ROC: Rate of Change (hand-rolled — no rust_ti equivalent) ────
+        "roc" => Ok(rolling_roc(closes, period)),
+
+        // ── Rank: Percentile rank (hand-rolled) ──────────────────────────
+        "rank" => Ok(rolling_rank(closes, period)),
+
+        // ── IV Rank: Min-max normalization (hand-rolled) ─────────────────
+        "iv_rank" => Ok(rolling_iv_rank(closes, period)),
+
+        // ── CMF: Chaikin Money Flow (hand-rolled) ────────────────────────
+        "cmf" => Ok(rolling_cmf(highs, lows, closes, volumes, period)),
+
+        // ── Transform functions (hand-rolled) ────────────────────────────
+        "change" => Ok(rolling_change(closes, period)),
+        "pct_change" => Ok(rolling_pct_change(closes, period)),
+        "std" => Ok(rolling_std(closes, period)),
+        "max" => Ok(rolling_max(closes, period)),
+        "min" => Ok(rolling_min(closes, period)),
+        "consecutive_up" => Ok(rolling_consecutive_up(closes)),
+        "consecutive_down" => Ok(rolling_consecutive_down(closes)),
 
         _ => bail!(
-            "Indicator '{name}' not recognized. Supported: sma, ema, rsi, atr, \
-             macd_line, macd_signal, macd_hist, bbands_upper, bbands_mid, bbands_lower, \
-             stochastic, cci, obv"
+            "Indicator '{name}' not recognized. See SCRIPTING_REFERENCE.md for the full list."
         ),
     }
 }
 
 // ---------------------------------------------------------------------------
-// Rolling indicator implementations (strictly causal, no lookahead)
+// Hand-rolled implementations for indicators not available in rust_ti
 // ---------------------------------------------------------------------------
 
-fn rolling_sma(data: &[f64], period: usize) -> Vec<f64> {
-    let mut result = vec![f64::NAN; data.len()];
-    if period == 0 || data.len() < period {
-        return result;
+/// Keltner Channels: returns (upper, lower).
+fn rolling_keltner(
+    closes: &[f64],
+    highs: &[f64],
+    lows: &[f64],
+    period: usize,
+    mult: f64,
+) -> (Vec<f64>, Vec<f64>) {
+    let n = closes.len();
+    let mut upper = vec![f64::NAN; n];
+    let mut lower = vec![f64::NAN; n];
+    if period == 0 || n < period {
+        return (upper, lower);
     }
-    let mut sum: f64 = data[..period].iter().sum();
-    result[period - 1] = sum / period as f64;
-    for i in period..data.len() {
-        sum += data[i] - data[i - period];
-        result[i] = sum / period as f64;
-    }
-    result
-}
-
-fn rolling_ema(data: &[f64], period: usize) -> Vec<f64> {
-    let mut result = vec![f64::NAN; data.len()];
-    if period == 0 || data.len() < period {
-        return result;
-    }
-    let alpha = 2.0 / (period as f64 + 1.0);
-    // Seed with SMA
-    let sma: f64 = data[..period].iter().sum::<f64>() / period as f64;
-    result[period - 1] = sma;
-    let mut prev = sma;
-    for i in period..data.len() {
-        let ema = alpha * data[i] + (1.0 - alpha) * prev;
-        result[i] = ema;
-        prev = ema;
-    }
-    result
-}
-
-fn rolling_rsi(data: &[f64], period: usize) -> Vec<f64> {
-    let mut result = vec![f64::NAN; data.len()];
-    if period == 0 || data.len() <= period {
-        return result;
-    }
-
-    let mut gains = 0.0;
-    let mut losses = 0.0;
-
-    // Initial average gain/loss over the first `period` changes
-    for i in 1..=period {
-        let change = data[i] - data[i - 1];
-        if change > 0.0 {
-            gains += change;
-        } else {
-            losses -= change; // make positive
+    let ema_vals = sti::exponential_moving_average(closes, period);
+    let ema = pad_front(&ema_vals, n);
+    let atr_vals = oti::average_true_range(
+        closes,
+        highs,
+        lows,
+        rust_ti::ConstantModelType::SmoothedMovingAverage,
+        period,
+    );
+    let atr = pad_front(&atr_vals, n);
+    for i in 0..n {
+        if !ema[i].is_nan() && !atr[i].is_nan() {
+            upper[i] = ema[i] + mult * atr[i];
+            lower[i] = ema[i] - mult * atr[i];
         }
     }
+    (upper, lower)
+}
 
-    let mut avg_gain = gains / period as f64;
-    let mut avg_loss = losses / period as f64;
-
-    let rsi = if avg_loss < f64::EPSILON {
-        100.0
-    } else {
-        100.0 - (100.0 / (1.0 + avg_gain / avg_loss))
-    };
-    result[period] = rsi;
-
-    // Smoothed subsequent values (Wilder's smoothing)
-    for i in (period + 1)..data.len() {
-        let change = data[i] - data[i - 1];
-        let (gain, loss) = if change > 0.0 {
-            (change, 0.0)
-        } else {
-            (0.0, -change)
-        };
-        avg_gain = (avg_gain * (period as f64 - 1.0) + gain) / period as f64;
-        avg_loss = (avg_loss * (period as f64 - 1.0) + loss) / period as f64;
-
-        let rsi = if avg_loss < f64::EPSILON {
-            100.0
-        } else {
-            100.0 - (100.0 / (1.0 + avg_gain / avg_loss))
-        };
-        result[i] = rsi;
+/// Rolling maximum over a window.
+fn rolling_max(data: &[f64], period: usize) -> Vec<f64> {
+    let n = data.len();
+    let mut result = vec![f64::NAN; n];
+    if period == 0 || n < period {
+        return result;
     }
-
+    for i in (period - 1)..n {
+        result[i] = data[(i + 1 - period)..=i]
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max);
+    }
     result
 }
 
-fn rolling_atr(highs: &[f64], lows: &[f64], closes: &[f64], period: usize) -> Vec<f64> {
-    let n = highs.len();
+/// Rolling minimum over a window.
+fn rolling_min(data: &[f64], period: usize) -> Vec<f64> {
+    let n = data.len();
+    let mut result = vec![f64::NAN; n];
+    if period == 0 || n < period {
+        return result;
+    }
+    for i in (period - 1)..n {
+        result[i] = data[(i + 1 - period)..=i]
+            .iter()
+            .copied()
+            .fold(f64::INFINITY, f64::min);
+    }
+    result
+}
+
+/// ROC: Rate of Change (percentage).
+fn rolling_roc(data: &[f64], period: usize) -> Vec<f64> {
+    let n = data.len();
     let mut result = vec![f64::NAN; n];
     if period == 0 || n <= period {
         return result;
     }
-
-    // True Range
-    let mut tr = vec![0.0; n];
-    tr[0] = highs[0] - lows[0];
-    for i in 1..n {
-        let hl = highs[i] - lows[i];
-        let hc = (highs[i] - closes[i - 1]).abs();
-        let lc = (lows[i] - closes[i - 1]).abs();
-        tr[i] = hl.max(hc).max(lc);
-    }
-
-    // Initial ATR is SMA of first `period` TRs
-    let first_atr: f64 = tr[..period].iter().sum::<f64>() / period as f64;
-    result[period - 1] = first_atr;
-    let mut prev = first_atr;
-
-    // Wilder's smoothing
     for i in period..n {
-        let atr = (prev * (period as f64 - 1.0) + tr[i]) / period as f64;
-        result[i] = atr;
-        prev = atr;
+        if data[i - period].abs() > f64::EPSILON {
+            result[i] = (data[i] - data[i - period]) / data[i - period] * 100.0;
+        }
     }
-
     result
 }
 
-/// MACD: returns (line, signal, histogram).
-fn rolling_macd(
-    data: &[f64],
-    fast: usize,
-    slow: usize,
-    signal_period: usize,
-) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+/// Percentile rank within rolling window (0-100).
+fn rolling_rank(data: &[f64], period: usize) -> Vec<f64> {
     let n = data.len();
-    let mut line = vec![f64::NAN; n];
-    let mut signal = vec![f64::NAN; n];
-    let mut hist = vec![f64::NAN; n];
-
-    if fast == 0 || slow == 0 || signal_period == 0 {
-        return (line, signal, hist);
+    let mut result = vec![f64::NAN; n];
+    if period == 0 || n < period {
+        return result;
     }
-
-    let fast_ema = rolling_ema(data, fast);
-    let slow_ema = rolling_ema(data, slow);
-
-    // MACD line = fast EMA - slow EMA
-    let warmup = slow.max(fast);
-    for i in (warmup - 1)..n {
-        if !fast_ema[i].is_nan() && !slow_ema[i].is_nan() {
-            line[i] = fast_ema[i] - slow_ema[i];
-        }
-    }
-
-    // Signal line = EMA of MACD line
-    // Collect non-NaN MACD values for signal EMA seed
-    let macd_values: Vec<f64> = line.iter().copied().filter(|v| !v.is_nan()).collect();
-    if macd_values.len() >= signal_period {
-        let alpha = 2.0 / (signal_period as f64 + 1.0);
-        let seed: f64 = macd_values[..signal_period].iter().sum::<f64>() / signal_period as f64;
-
-        let mut sig = seed;
-        let mut macd_idx = 0;
-        for i in 0..n {
-            if line[i].is_nan() {
-                continue;
-            }
-            if macd_idx < signal_period - 1 {
-                macd_idx += 1;
-                continue;
-            }
-            if macd_idx == signal_period - 1 {
-                sig = seed;
-            } else {
-                sig = alpha * line[i] + (1.0 - alpha) * sig;
-            }
-            signal[i] = sig;
-            hist[i] = line[i] - sig;
-            macd_idx += 1;
-        }
-    }
-
-    (line, signal, hist)
-}
-
-/// Bollinger Bands: returns (upper, middle, lower).
-fn rolling_bbands(data: &[f64], period: usize, std_mult: f64) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
-    let n = data.len();
-    let mut upper = vec![f64::NAN; n];
-    let mut mid = vec![f64::NAN; n];
-    let mut lower = vec![f64::NAN; n];
-
-    if period == 0 || data.len() < period {
-        return (upper, mid, lower);
-    }
-
-    let sma = rolling_sma(data, period);
-
     for i in (period - 1)..n {
-        if sma[i].is_nan() {
-            continue;
-        }
-        // Rolling std dev
-        let slice = &data[(i + 1 - period)..=i];
-        let mean = sma[i];
-        let variance = slice.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / period as f64;
-        let std_dev = variance.sqrt();
-
-        mid[i] = mean;
-        upper[i] = mean + std_mult * std_dev;
-        lower[i] = mean - std_mult * std_dev;
+        let s = i + 1 - period;
+        let cur = data[i];
+        let below = data[s..=i].iter().filter(|&&v| v < cur).count();
+        result[i] = below as f64 / (period - 1).max(1) as f64 * 100.0;
     }
-
-    (upper, mid, lower)
+    result
 }
 
-/// Stochastic %K with D-period SMA smoothing.
-fn rolling_stochastic_k(
-    highs: &[f64],
-    lows: &[f64],
-    closes: &[f64],
-    k_period: usize,
-    d_smooth: usize,
-) -> Vec<f64> {
-    let n = closes.len();
-    let mut raw_k = vec![f64::NAN; n];
-
-    if k_period == 0 || n < k_period {
-        return raw_k;
+/// IV Rank: Min-max normalization within rolling window (0-100).
+fn rolling_iv_rank(data: &[f64], period: usize) -> Vec<f64> {
+    let n = data.len();
+    let mut result = vec![f64::NAN; n];
+    if period == 0 || n < period {
+        return result;
     }
-
-    // Raw %K
-    for i in (k_period - 1)..n {
-        let start = i + 1 - k_period;
-        let highest: f64 = highs[start..=i]
-            .iter()
-            .copied()
-            .fold(f64::NEG_INFINITY, f64::max);
-        let lowest: f64 = lows[start..=i]
-            .iter()
-            .copied()
-            .fold(f64::INFINITY, f64::min);
-
-        let range = highest - lowest;
-        raw_k[i] = if range > f64::EPSILON {
-            (closes[i] - lowest) / range * 100.0
+    for i in (period - 1)..n {
+        let s = i + 1 - period;
+        let sl = &data[s..=i];
+        let mn = sl.iter().copied().fold(f64::INFINITY, f64::min);
+        let mx = sl.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let r = mx - mn;
+        result[i] = if r > f64::EPSILON {
+            (data[i] - mn) / r * 100.0
         } else {
             50.0
         };
     }
-
-    // Apply D-period SMA smoothing (d_smooth <= 1 means no smoothing)
-    if d_smooth <= 1 {
-        return raw_k;
-    }
-    // Only start smoothing once raw_k has produced finite values.
-    // Passing leading NaNs into rolling_sma would poison its running sum
-    // and yield an all-NaN series.
-    let first_valid = raw_k.iter().position(|v| !v.is_nan());
-    let Some(start) = first_valid else {
-        return raw_k;
-    };
-    let smoothed_tail = rolling_sma(&raw_k[start..], d_smooth);
-    let mut result = vec![f64::NAN; n];
-    for (offset, value) in smoothed_tail.into_iter().enumerate() {
-        result[start + offset] = value;
-    }
     result
 }
 
-/// CCI: Commodity Channel Index.
-fn rolling_cci(highs: &[f64], lows: &[f64], closes: &[f64], period: usize) -> Vec<f64> {
+/// CMF: Chaikin Money Flow.
+fn rolling_cmf(
+    highs: &[f64],
+    lows: &[f64],
+    closes: &[f64],
+    volumes: &[f64],
+    period: usize,
+) -> Vec<f64> {
     let n = closes.len();
     let mut result = vec![f64::NAN; n];
-
     if period == 0 || n < period {
         return result;
     }
-
-    // Typical price = (H + L + C) / 3
-    let tp: Vec<f64> = (0..n)
-        .map(|i| (highs[i] + lows[i] + closes[i]) / 3.0)
-        .collect();
-
     for i in (period - 1)..n {
-        let start = i + 1 - period;
-        let slice = &tp[start..=i];
-        let mean = slice.iter().sum::<f64>() / period as f64;
-        let mean_dev = slice.iter().map(|&x| (x - mean).abs()).sum::<f64>() / period as f64;
-
-        if mean_dev > f64::EPSILON {
-            result[i] = (tp[i] - mean) / (0.015 * mean_dev);
-        } else {
-            result[i] = 0.0;
+        let s = i + 1 - period;
+        let mut mfv = 0.0;
+        let mut vol = 0.0;
+        for j in s..=i {
+            let hl = highs[j] - lows[j];
+            let clv = if hl > f64::EPSILON {
+                ((closes[j] - lows[j]) - (highs[j] - closes[j])) / hl
+            } else {
+                0.0
+            };
+            mfv += clv * volumes[j];
+            vol += volumes[j];
         }
+        result[i] = if vol > f64::EPSILON { mfv / vol } else { 0.0 };
     }
-
     result
 }
 
-/// OBV: On-Balance Volume (cumulative, no period).
-fn rolling_obv(closes: &[f64], volumes: &[f64]) -> Vec<f64> {
-    let n = closes.len();
-    if n == 0 {
-        return vec![];
+/// Change: data[i] - data[i-period].
+fn rolling_change(data: &[f64], period: usize) -> Vec<f64> {
+    let n = data.len();
+    let mut result = vec![f64::NAN; n];
+    if period == 0 || n <= period {
+        return result;
     }
-    let mut result = vec![0.0; n];
-    result[0] = volumes.first().copied().unwrap_or(0.0);
+    for i in period..n {
+        result[i] = data[i] - data[i - period];
+    }
+    result
+}
 
-    for i in 1..n {
-        let vol = volumes.get(i).copied().unwrap_or(0.0);
-        if closes[i] > closes[i - 1] {
-            result[i] = result[i - 1] + vol;
-        } else if closes[i] < closes[i - 1] {
-            result[i] = result[i - 1] - vol;
-        } else {
-            result[i] = result[i - 1];
+/// Pct Change: (data[i] - data[i-period]) / data[i-period].
+fn rolling_pct_change(data: &[f64], period: usize) -> Vec<f64> {
+    let n = data.len();
+    let mut result = vec![f64::NAN; n];
+    if period == 0 || n <= period {
+        return result;
+    }
+    for i in period..n {
+        if data[i - period].abs() > f64::EPSILON {
+            result[i] = (data[i] - data[i - period]) / data[i - period];
         }
     }
+    result
+}
 
+/// Rolling standard deviation.
+fn rolling_std(data: &[f64], period: usize) -> Vec<f64> {
+    let n = data.len();
+    let mut result = vec![f64::NAN; n];
+    if period == 0 || n < period {
+        return result;
+    }
+    let sma_vals = sti::simple_moving_average(data, period);
+    let sma = pad_front(&sma_vals, n);
+    for i in (period - 1)..n {
+        if sma[i].is_nan() {
+            continue;
+        }
+        let sl = &data[(i + 1 - period)..=i];
+        let var = sl.iter().map(|&x| (x - sma[i]).powi(2)).sum::<f64>() / period as f64;
+        result[i] = var.sqrt();
+    }
+    result
+}
+
+/// Consecutive bars where data rises.
+fn rolling_consecutive_up(data: &[f64]) -> Vec<f64> {
+    let n = data.len();
+    let mut result = vec![0.0; n];
+    for i in 1..n {
+        result[i] = if data[i] > data[i - 1] {
+            result[i - 1] + 1.0
+        } else {
+            0.0
+        };
+    }
+    result
+}
+
+/// Consecutive bars where data falls.
+fn rolling_consecutive_down(data: &[f64]) -> Vec<f64> {
+    let n = data.len();
+    let mut result = vec![0.0; n];
+    for i in 1..n {
+        result[i] = if data[i] < data[i - 1] {
+            result[i - 1] + 1.0
+        } else {
+            0.0
+        };
+    }
     result
 }

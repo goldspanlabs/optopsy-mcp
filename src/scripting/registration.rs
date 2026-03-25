@@ -73,11 +73,41 @@ fn register_bar_context(engine: &mut Engine) {
     engine.register_fn("bbands_mid", BarContext::bbands_mid);
     engine.register_fn("bbands_lower", BarContext::bbands_lower);
     engine.register_fn("stochastic", BarContext::stochastic);
-    // ADX omitted — requires +DI/-DI implementation not yet in IndicatorStore
     engine.register_fn("cci", BarContext::cci);
     engine.register_fn("obv", BarContext::obv);
+
+    // Trend indicators
+    engine.register_fn("adx", BarContext::adx);
+    engine.register_fn("plus_di", BarContext::plus_di);
+    engine.register_fn("minus_di", BarContext::minus_di);
+    engine.register_fn("psar", BarContext::psar);
+    engine.register_fn("supertrend", BarContext::supertrend);
+
+    // Volatility
+    engine.register_fn("keltner_upper", BarContext::keltner_upper);
+    engine.register_fn("keltner_lower", BarContext::keltner_lower);
+    engine.register_fn("donchian_upper", BarContext::donchian_upper);
+    engine.register_fn("donchian_mid", BarContext::donchian_mid);
+    engine.register_fn("donchian_lower", BarContext::donchian_lower);
+    engine.register_fn("tr", BarContext::tr);
+
+    // Momentum
+    engine.register_fn("williams_r", BarContext::williams_r);
+    engine.register_fn("mfi", BarContext::mfi);
+    engine.register_fn("rank", BarContext::rank);
+    engine.register_fn("iv_rank", BarContext::iv_rank);
+
+    // Generic + multi-param
     engine.register_fn("indicator", BarContext::indicator);
     engine.register_fn("indicator_with", BarContext::indicator_with);
+
+    // Date/time
+    engine.register_fn("day_of_week", BarContext::day_of_week);
+    engine.register_fn("month", BarContext::month);
+    engine.register_fn("day_of_month", BarContext::day_of_month);
+    engine.register_fn("hour", BarContext::hour);
+    engine.register_fn("minute", BarContext::minute);
+    engine.register_fn("week_of_year", BarContext::week_of_year);
 
     // Indicator lookback (for crossover detection)
     engine.register_fn("sma_at", BarContext::sma_at);
