@@ -297,47 +297,21 @@ pub fn resample_ohlcv(
 ) -> Result<polars::prelude::DataFrame> {
     use polars::prelude::{IntoLazy, SortMultipleOptions};
 
-    let has_datetime_col = df
-        .column("datetime")
-        .ok()
-        .and_then(|c| c.datetime().ok())
-        .is_some();
-
-    // --- Passthrough checks ---
+    // 1-minute is already the minimum granularity — just sort.
     if interval == Interval::Min1 {
-        if !has_datetime_col {
-            return Err(anyhow::anyhow!(
-                "Cannot resample daily data to intraday interval ({interval}). \
-                 Provide intraday (datetime) data instead."
-            ));
-        }
-        // Already at minimum granularity — no downsampling needed.
-        // Sort by datetime for consistency with other intraday resamples so
-        // downstream consumers can assume chronological order.
         return Ok(df
             .clone()
             .lazy()
             .sort(["datetime"], SortMultipleOptions::default())
             .collect()?);
     }
-    if !has_datetime_col && interval == Interval::Daily {
-        // Daily input, daily target → no-op
+
+    // Daily target on daily source (no datetime column) → passthrough.
+    if interval == Interval::Daily && df.column("datetime").is_err() {
         return Ok(df.clone());
     }
-    if !has_datetime_col && interval.is_intraday() {
-        return Err(anyhow::anyhow!(
-            "Cannot resample daily data to intraday interval ({interval}). \
-             Provide intraday (datetime) data instead."
-        ));
-    }
 
-    // --- Datetime-based resampling (intraday source) ---
-    if has_datetime_col {
-        return resample_datetime(df, interval);
-    }
-
-    // --- Legacy date-based resampling (daily source → weekly/monthly) ---
-    resample_date(df, interval)
+    resample_datetime(df, interval)
 }
 
 /// Extracted OHLCV column references from a `DataFrame`.
@@ -574,154 +548,6 @@ fn resample_datetime(
             DataFrame::new(groups.len(), columns).map_err(|e| anyhow::anyhow!("DataFrame: {e}"))?;
         Ok(result)
     }
-}
-
-/// Legacy resample path for `DataFrame` with `"date"` (Date) column → Weekly/Monthly.
-#[allow(clippy::too_many_lines)]
-fn resample_date(
-    df: &polars::prelude::DataFrame,
-    interval: Interval,
-) -> Result<polars::prelude::DataFrame> {
-    use polars::prelude::*;
-
-    let epoch_offset = super::types::EPOCH_DAYS_CE_OFFSET;
-
-    let dates = df
-        .column("date")
-        .map_err(|e| anyhow::anyhow!("Missing 'date' column: {e}"))?
-        .date()
-        .map_err(|e| anyhow::anyhow!("'date' not Date type: {e}"))?;
-
-    let ohlcv = extract_ohlcv_columns(df)?;
-
-    // Build group keys for each row.
-    // `iso_week().year()` correctly handles year boundaries (e.g., Dec 30 → ISO week 1 of next year).
-    let n = df.height();
-    let mut group_keys: Vec<(i32, u32)> = Vec::with_capacity(n);
-    for i in 0..n {
-        let days = dates.phys.get(i).ok_or_else(|| {
-            anyhow::anyhow!("NULL date at row {i}; cannot resample with missing dates")
-        })?;
-        let date = NaiveDate::from_num_days_from_ce_opt(days + epoch_offset)
-            .ok_or_else(|| anyhow::anyhow!("Invalid date value at row {i}"))?;
-        let key = match interval {
-            Interval::Weekly => (date.iso_week().year(), date.iso_week().week()),
-            Interval::Monthly => (date.year(), date.month()),
-            // Daily and intraday intervals cannot reach here
-            _ => unreachable!(),
-        };
-        group_keys.push(key);
-    }
-
-    // Group consecutive rows by key
-    let mut groups: Vec<ResampleGroup> = Vec::new();
-    let mut i = 0;
-    while i < n {
-        let key = group_keys[i];
-        let start = i;
-        while i < n && group_keys[i] == key {
-            i += 1;
-        }
-        groups.push(ResampleGroup { start, end: i });
-    }
-
-    let mut out_dates: Vec<i32> = Vec::with_capacity(groups.len());
-    let mut out_opens: Vec<f64> = Vec::with_capacity(groups.len());
-    let mut out_highs: Vec<f64> = Vec::with_capacity(groups.len());
-    let mut out_lows: Vec<f64> = Vec::with_capacity(groups.len());
-    let mut out_closes: Vec<f64> = Vec::with_capacity(groups.len());
-    let mut out_adjcloses: Vec<f64> = Vec::with_capacity(groups.len());
-    let mut out_volumes: Vec<i64> = Vec::with_capacity(groups.len());
-
-    for (gi, g) in groups.iter().enumerate() {
-        let last = g.end - 1;
-        // Use the last trading day's date for weekly/monthly candles (period-end convention).
-        // This differs from resample_datetime which uses the first bar's timestamp (candle
-        // open time), because daily→weekly/monthly candles conventionally carry the date of
-        // the last bar whose close price they represent.
-        out_dates.push(
-            dates
-                .phys
-                .get(last)
-                .ok_or_else(|| anyhow::anyhow!("NULL date in group {gi} at row {last}"))?,
-        );
-        out_opens.push(
-            ohlcv
-                .opens
-                .get(g.start)
-                .ok_or_else(|| anyhow::anyhow!("NULL open in group {gi} at row {}", g.start))?,
-        );
-
-        let mut max_high = f64::NEG_INFINITY;
-        let mut min_low = f64::INFINITY;
-        let mut vol_sum: i64 = 0;
-        for j in g.start..g.end {
-            if let Some(h) = ohlcv.highs.get(j).filter(|v| v.is_finite()) {
-                if h > max_high {
-                    max_high = h;
-                }
-            }
-            if let Some(l) = ohlcv.lows.get(j).filter(|v| v.is_finite()) {
-                if l < min_low {
-                    min_low = l;
-                }
-            }
-            vol_sum += ohlcv.volumes.get(j).unwrap_or(0);
-        }
-        let fallback = ohlcv.opens.get(g.start).unwrap_or(0.0);
-        if max_high == f64::NEG_INFINITY {
-            max_high = fallback;
-        }
-        if min_low == f64::INFINITY {
-            min_low = fallback;
-        }
-        out_highs.push(max_high);
-        out_lows.push(min_low);
-        out_closes.push(
-            ohlcv
-                .closes
-                .get(last)
-                .ok_or_else(|| anyhow::anyhow!("NULL close in group {gi} at row {last}"))?,
-        );
-        out_adjcloses.push(
-            ohlcv
-                .adjcloses
-                .as_ref()
-                .and_then(|ac| ac.get(last))
-                .unwrap_or(ohlcv.closes.get(last).ok_or_else(|| {
-                    anyhow::anyhow!("NULL close for adjclose fallback in group {gi}")
-                })?),
-        );
-        out_volumes.push(vol_sum);
-    }
-
-    let reconstructed_dates: Vec<NaiveDate> = out_dates
-        .iter()
-        .enumerate()
-        .map(|(i, &d)| {
-            NaiveDate::from_num_days_from_ce_opt(d + epoch_offset).ok_or_else(|| {
-                anyhow::anyhow!("Invalid date value in resampled output at index {i}")
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let date_col =
-        DateChunked::from_naive_date(PlSmallStr::from("date"), reconstructed_dates).into_column();
-
-    let mut columns = vec![
-        date_col,
-        Series::new("open".into(), &out_opens).into(),
-        Series::new("high".into(), &out_highs).into(),
-        Series::new("low".into(), &out_lows).into(),
-        Series::new("close".into(), &out_closes).into(),
-    ];
-    if ohlcv.has_adjclose {
-        columns.push(Series::new("adjclose".into(), &out_adjcloses).into());
-    }
-    columns.push(Series::new("volume".into(), &out_volumes).into());
-
-    let result =
-        DataFrame::new(groups.len(), columns).map_err(|e| anyhow::anyhow!("DataFrame: {e}"))?;
-    Ok(result)
 }
 
 /// Derive the cache root directory from an OHLCV parquet path.
