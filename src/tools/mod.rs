@@ -29,6 +29,7 @@ pub mod raw_prices;
 pub mod regime_detect;
 pub mod response_types;
 pub mod rolling_metric;
+pub mod run_script;
 pub mod signals;
 pub mod stock_backtest;
 pub mod strategies;
