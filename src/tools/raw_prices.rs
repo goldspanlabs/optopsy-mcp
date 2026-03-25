@@ -28,7 +28,7 @@ pub fn execute(
     interval: crate::engine::types::Interval,
     tail: Option<bool>,
 ) -> Result<RawPricesResponse> {
-    let date_col_name = crate::engine::stock_sim::detect_date_col(df);
+    let date_col_name = crate::engine::ohlcv::detect_date_col(df);
     let mut lazy = df.clone().lazy();
 
     // Apply optional date filters
@@ -61,10 +61,10 @@ pub fn execute(
     let filtered = lazy.collect()?;
 
     // Apply interval resampling (passthrough for same-interval / Min1)
-    let filtered = crate::engine::stock_sim::resample_ohlcv(&filtered, interval)?;
+    let filtered = crate::engine::ohlcv::resample_ohlcv(&filtered, interval)?;
 
     // Re-detect date column — resampling may change it (e.g., datetime → date for Daily)
-    let date_col_name = crate::engine::stock_sim::detect_date_col(&filtered);
+    let date_col_name = crate::engine::ohlcv::detect_date_col(&filtered);
 
     // For intraday intervals with no explicit start_date, limit to the last 7 calendar days.
     // This keeps response sizes manageable; callers can pass start_date to override.

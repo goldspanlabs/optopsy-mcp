@@ -1382,7 +1382,7 @@ mod tests {
         };
 
         let df = if let Some(interval) = resample_interval {
-            crate::engine::stock_sim::resample_ohlcv(&df, interval).unwrap_or(df)
+            crate::engine::ohlcv::resample_ohlcv(&df, interval).unwrap_or(df)
         } else {
             df
         };
