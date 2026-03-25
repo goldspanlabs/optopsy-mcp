@@ -1,26 +1,24 @@
 //! Standard library of built-in strategy scripts and parameter injection.
 
 use std::collections::HashMap;
-use std::fmt::Write;
 
-/// Inject parameters as `const` declarations prepended to script source.
-///
-/// Used for one-shot `run_script` calls. For sweep iterations, use
-/// `inject_into_scope` instead (avoids recompilation).
+use rhai::Dynamic;
+
+/// Build a Rhai `Map` from JSON parameters and push it into scope as an
+/// immutable `params` constant.  Scripts access values via `params.SYMBOL`,
+/// `params.CAPITAL`, etc.
 ///
 /// Callers must pass `null` for optional parameters they want to leave unset —
-/// this injects `const X = ();` so scripts can use `if X != () { ... }`.
-pub fn inject_as_const(source: &str, params: &HashMap<String, serde_json::Value>) -> String {
-    let mut preamble = String::new();
+/// this inserts `()` so scripts can use `if params.X != () { ... }`.
+pub fn inject_params_map(scope: &mut rhai::Scope, params: &HashMap<String, serde_json::Value>) {
+    let mut map = rhai::Map::new();
     for (key, value) in params {
-        // Validate key is a valid Rhai identifier (prevents code injection)
         if !is_valid_identifier(key) {
             continue;
         }
-        let rhai_val = json_to_rhai_literal(value);
-        let _ = writeln!(preamble, "const {key} = {rhai_val};");
+        map.insert(key.as_str().into(), json_to_dynamic(value));
     }
-    format!("{preamble}\n{source}")
+    scope.push_constant("params", map);
 }
 
 /// Check if a string is a valid Rhai identifier (ASCII alphanumeric + underscore, not starting with digit).
@@ -32,67 +30,45 @@ fn is_valid_identifier(s: &str) -> bool {
         && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Inject parameters into an existing Rhai `Scope` as variables.
+/// Rebuild the `params` map in an existing scope with new values.
 ///
 /// Used for `parameter_sweep` iterations where the AST is compiled once
 /// and only scope values change per iteration.
 pub fn inject_into_scope(scope: &mut rhai::Scope, params: &HashMap<String, serde_json::Value>) {
+    let mut map = rhai::Map::new();
     for (key, value) in params {
         if !is_valid_identifier(key) {
             continue;
         }
-        match value {
-            serde_json::Value::Number(n) => {
-                if let Some(f) = n.as_f64() {
-                    scope.set_or_push(key.as_str(), f);
-                }
-            }
-            serde_json::Value::String(s) => {
-                scope.set_or_push(key.as_str(), s.clone());
-            }
-            serde_json::Value::Bool(b) => {
-                scope.set_or_push(key.as_str(), *b);
-            }
-            serde_json::Value::Null => {
-                scope.set_or_push(key.as_str(), ());
-            }
-            _ => {
-                // Arrays and objects: convert to string representation
-                scope.set_or_push(key.as_str(), value.to_string());
-            }
-        }
+        map.insert(key.as_str().into(), json_to_dynamic(value));
     }
+    scope.set_or_push("params", map);
 }
 
-/// Convert a JSON value to a Rhai literal string for `const` injection.
-fn json_to_rhai_literal(value: &serde_json::Value) -> String {
+/// Convert a JSON value to a Rhai `Dynamic`.
+fn json_to_dynamic(value: &serde_json::Value) -> Dynamic {
     match value {
-        serde_json::Value::Null => "()".to_string(),
-        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Null => Dynamic::UNIT,
+        serde_json::Value::Bool(b) => Dynamic::from(*b),
         serde_json::Value::Number(n) => {
-            // Preserve int vs float distinction for Rhai type system
-            n.to_string()
+            if let Some(i) = n.as_i64() {
+                Dynamic::from(i)
+            } else if let Some(f) = n.as_f64() {
+                Dynamic::from(f)
+            } else {
+                Dynamic::UNIT
+            }
         }
-        serde_json::Value::String(s) => {
-            // Escape special characters for Rhai string literals
-            let escaped = s
-                .replace('\\', "\\\\")
-                .replace('"', "\\\"")
-                .replace('\n', "\\n")
-                .replace('\r', "\\r")
-                .replace('\t', "\\t");
-            format!("\"{escaped}\"")
-        }
+        serde_json::Value::String(s) => Dynamic::from(s.clone()),
         serde_json::Value::Array(arr) => {
-            let items: Vec<String> = arr.iter().map(json_to_rhai_literal).collect();
-            format!("[{}]", items.join(", "))
+            Dynamic::from(arr.iter().map(json_to_dynamic).collect::<Vec<Dynamic>>())
         }
-        serde_json::Value::Object(map) => {
-            let items: Vec<String> = map
-                .iter()
-                .map(|(k, v)| format!("{k}: {}", json_to_rhai_literal(v)))
-                .collect();
-            format!("#{{{}}}", items.join(", "))
+        serde_json::Value::Object(obj) => {
+            let mut m = rhai::Map::new();
+            for (k, v) in obj {
+                m.insert(k.as_str().into(), json_to_dynamic(v));
+            }
+            Dynamic::from(m)
         }
     }
 }

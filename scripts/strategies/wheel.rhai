@@ -4,6 +4,8 @@
 // Optional params: PUT_DELTA (0.30), PUT_DTE (45), CALL_DELTA (0.30),
 //   CALL_DTE (30), EXIT_DTE (21), SLIPPAGE ("mid"), MULTIPLIER (100),
 //   STOP_LOSS (()), TAKE_PROFIT (0.50)
+//
+// Parameters are accessed via the `params` map (e.g., params.SYMBOL).
 
 // State machine: selling_puts -> holding_stock -> selling_calls
 let state = "selling_puts";
@@ -18,8 +20,8 @@ let cycles_completed = 0;
 
 fn config() {
     #{
-        symbol: SYMBOL,
-        capital: CAPITAL,
+        symbol: params.SYMBOL,
+        capital: params.CAPITAL,
         interval: "daily",
         data: #{
             ohlcv: true,
@@ -27,7 +29,7 @@ fn config() {
             indicators: ["rsi:14"],
         },
         engine: #{
-            slippage: SLIPPAGE,
+            slippage: params.SLIPPAGE,
             expiration_filter: "monthly",
         },
         defaults: #{
@@ -41,7 +43,7 @@ fn on_bar(ctx) {
         if ctx.has_positions() { return []; }
 
         let spread = ctx.build_strategy([
-            #{ side: "short", option_type: "put", delta: PUT_DELTA, dte: PUT_DTE },
+            #{ side: "short", option_type: "put", delta: params.PUT_DELTA, dte: params.PUT_DTE },
         ]);
         if spread == () { return []; }
 
@@ -53,7 +55,7 @@ fn on_bar(ctx) {
         if ctx.has_positions() { return []; }
 
         let spread = ctx.build_strategy([
-            #{ side: "short", option_type: "call", delta: CALL_DELTA, dte: CALL_DTE },
+            #{ side: "short", option_type: "call", delta: params.CALL_DELTA, dte: params.CALL_DTE },
         ]);
         if spread == () { return []; }
 
@@ -70,17 +72,17 @@ fn on_bar(ctx) {
 
 fn on_exit_check(ctx, pos) {
     // Early profit take on puts or calls
-    if TAKE_PROFIT != () && pos.pnl_pct > TAKE_PROFIT {
+    if params.TAKE_PROFIT != () && pos.pnl_pct > params.TAKE_PROFIT {
         return #{ action: "close", reason: "early_profit_take" };
     }
 
     // Stop loss on puts
-    if state == "selling_puts" && STOP_LOSS != () && pos.pnl_pct < -STOP_LOSS {
+    if state == "selling_puts" && params.STOP_LOSS != () && pos.pnl_pct < -params.STOP_LOSS {
         return #{ action: "close", reason: "stop_loss" };
     }
 
     // DTE exit
-    if pos.dte != () && pos.dte <= EXIT_DTE {
+    if pos.dte != () && pos.dte <= params.EXIT_DTE {
         return #{ action: "close", reason: "dte_exit" };
     }
 
@@ -92,7 +94,7 @@ fn on_position_closed(ctx, pos, exit_type) {
         if exit_type == "assignment" {
             stock.entry_price = pos.legs[0].strike;
             stock.adjusted_basis = pos.legs[0].strike - pos.legs[0].entry_price;
-            stock.quantity = MULTIPLIER;
+            stock.quantity = params.MULTIPLIER;
             stock.entry_date = ctx.date;
             stock.total_premium += pos.legs[0].entry_price;
             state = "holding_stock";

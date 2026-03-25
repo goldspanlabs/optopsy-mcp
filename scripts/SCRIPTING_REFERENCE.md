@@ -12,7 +12,7 @@ let state = "initial";
 let counter = 0;
 
 fn config() {
-    #{ symbol: SYMBOL, capital: CAPITAL, ... }
+    #{ symbol: params.SYMBOL, capital: params.CAPITAL, ... }
 }
 
 fn on_bar(ctx) {
@@ -43,8 +43,8 @@ fn on_end(ctx) {
 ```rhai
 fn config() {
     #{
-        symbol: SYMBOL,              // required: ticker symbol
-        capital: CAPITAL,            // required: starting equity
+        symbol: params.SYMBOL,       // required: ticker symbol
+        capital: params.CAPITAL,     // required: starting equity
         start_date: "2020-01-01",    // optional
         end_date: "2024-12-31",      // optional
         interval: "daily",           // "daily", "1m", "5m", "15m", "1h", etc.
@@ -237,25 +237,22 @@ if strat != () {
 
 ## Parameter Injection
 
-Scripts use injected `const` values for customization:
+Parameters are injected as an immutable `params` map in the script scope. Scripts access values via `params.SYMBOL`, `params.CAPITAL`, etc. The `params` map is available in all callbacks (`config()`, `on_bar()`, `on_exit_check()`, etc.).
 
 ```rhai
-// These are injected by the engine before compilation:
-// const SYMBOL = "SPY";
-// const CAPITAL = 50000.0;
-// const DELTA_TARGET = 0.30;
-
 fn config() {
-    #{ symbol: SYMBOL, capital: CAPITAL }
+    #{ symbol: params.SYMBOL, capital: params.CAPITAL }
 }
 ```
 
-**Optional params:** Use `!= ()` to check. Callers must pass `null` for unset optional params (injected as `const X = ();`).
+**Optional params:** Use `!= ()` to check. Callers must pass `null` for unset optional params (stored as `()` in the map).
 ```rhai
-if STOP_LOSS != () && pos.pnl_pct < -STOP_LOSS {
+if params.STOP_LOSS != () && pos.pnl_pct < -params.STOP_LOSS {
     return #{ action: "close", reason: "stop_loss" };
 }
 ```
+
+The `params` map is read-only — scripts cannot reassign its values.
 
 ## Indicator Declaration
 

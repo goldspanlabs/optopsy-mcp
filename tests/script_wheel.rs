@@ -12,7 +12,6 @@ use polars::prelude::*;
 
 use optopsy_mcp::data::parquet::DATETIME_COL;
 use optopsy_mcp::scripting::engine::{run_script_backtest, DataLoader, ScriptBacktestResult};
-use optopsy_mcp::scripting::stdlib;
 use optopsy_mcp::scripting::types::OhlcvBar;
 
 // ---------------------------------------------------------------------------
@@ -120,16 +119,8 @@ fn make_bars_from_closes(closes: &BTreeMap<NaiveDate, f64>) -> Vec<OhlcvBar> {
         .collect()
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-/// Verify `wheel.rhai` compiles and `config()` returns valid settings.
-#[tokio::test]
-async fn wheel_script_compiles_and_configures() {
-    let script_source =
-        std::fs::read_to_string("scripts/strategies/wheel.rhai").expect("wheel.rhai should exist");
-
+/// Standard wheel params used across tests.
+fn wheel_params() -> std::collections::HashMap<String, serde_json::Value> {
     let mut params = std::collections::HashMap::new();
     params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
     params.insert("CAPITAL".to_string(), serde_json::json!(100_000));
@@ -142,20 +133,33 @@ async fn wheel_script_compiles_and_configures() {
     params.insert("MULTIPLIER".to_string(), serde_json::json!(100));
     params.insert("STOP_LOSS".to_string(), serde_json::json!(null));
     params.insert("TAKE_PROFIT".to_string(), serde_json::json!(0.50));
+    params
+}
 
-    let full_source = stdlib::inject_as_const(&script_source, &params);
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+/// Verify `wheel.rhai` compiles and `config()` returns valid settings.
+#[tokio::test]
+async fn wheel_script_compiles_and_configures() {
+    let script_source =
+        std::fs::read_to_string("scripts/strategies/wheel.rhai").expect("wheel.rhai should exist");
+    let params = wheel_params();
 
     // Verify it compiles
     let engine = optopsy_mcp::scripting::registration::build_engine();
-    let ast = engine.compile(&full_source);
+    let ast = engine.compile(&script_source);
     assert!(ast.is_ok(), "wheel.rhai should compile: {:?}", ast.err());
 
-    // Verify config() can be called
+    // Verify config() can be called with params in scope
     let ast = ast.unwrap();
     let mut scope = rhai::Scope::new();
     let _ = engine
         .eval_ast_with_scope::<rhai::Dynamic>(&mut scope, &ast)
         .unwrap();
+
+    optopsy_mcp::scripting::stdlib::inject_params_map(&mut scope, &params);
 
     let options = rhai::CallFnOptions::new()
         .eval_ast(false)
@@ -205,21 +209,10 @@ async fn wheel_script_put_expires_otm() {
     };
 
     let script_source = std::fs::read_to_string("scripts/strategies/wheel.rhai").unwrap();
-    let mut params = std::collections::HashMap::new();
-    params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
-    params.insert("CAPITAL".to_string(), serde_json::json!(100_000));
-    params.insert("PUT_DELTA".to_string(), serde_json::json!(0.30));
-    params.insert("PUT_DTE".to_string(), serde_json::json!(45));
-    params.insert("CALL_DELTA".to_string(), serde_json::json!(0.30));
-    params.insert("CALL_DTE".to_string(), serde_json::json!(30));
-    params.insert("EXIT_DTE".to_string(), serde_json::json!(5));
-    params.insert("SLIPPAGE".to_string(), serde_json::json!("mid"));
-    params.insert("MULTIPLIER".to_string(), serde_json::json!(100));
-    params.insert("STOP_LOSS".to_string(), serde_json::json!(null));
+    let mut params = wheel_params();
     params.insert("TAKE_PROFIT".to_string(), serde_json::json!(null));
 
-    let full_source = stdlib::inject_as_const(&script_source, &params);
-    let result = run_script_backtest(&full_source, &loader).await;
+    let result = run_script_backtest(&script_source, &params, &loader).await;
     assert!(
         result.is_ok(),
         "Script backtest should succeed: {:?}",
@@ -280,13 +273,10 @@ async fn wheel_script_stock_only_smoke_test() {
     };
 
     let script = r#"
-        const SYMBOL = "SPY";
-        const CAPITAL = 100000.0;
-
         fn config() {
             #{
-                symbol: SYMBOL,
-                capital: CAPITAL,
+                symbol: params.SYMBOL,
+                capital: params.CAPITAL,
                 interval: "daily",
                 data: #{ ohlcv: true, options: false },
                 engine: #{ slippage: "mid" },
@@ -308,7 +298,11 @@ async fn wheel_script_stock_only_smoke_test() {
         }
     "#;
 
-    let result = run_script_backtest(script, &loader).await.unwrap();
+    let mut params = std::collections::HashMap::new();
+    params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
+    params.insert("CAPITAL".to_string(), serde_json::json!(100_000.0));
+
+    let result = run_script_backtest(script, &params, &loader).await.unwrap();
 
     assert_eq!(result.result.trade_count, 1, "Should have 1 closed trade");
     assert_eq!(
@@ -356,13 +350,10 @@ async fn script_opens_options_position() {
 
     // Minimal script that opens a short put on first bar
     let script = r#"
-        const SYMBOL = "SPY";
-        const CAPITAL = 100000.0;
-
         fn config() {
             #{
-                symbol: SYMBOL,
-                capital: CAPITAL,
+                symbol: params.SYMBOL,
+                capital: params.CAPITAL,
                 interval: "daily",
                 data: #{ ohlcv: true, options: true },
                 engine: #{ slippage: "mid" },
@@ -379,7 +370,11 @@ async fn script_opens_options_position() {
         }
     "#;
 
-    let result = run_script_backtest(script, &loader).await.unwrap();
+    let mut params = std::collections::HashMap::new();
+    params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
+    params.insert("CAPITAL".to_string(), serde_json::json!(100_000.0));
+
+    let result = run_script_backtest(script, &params, &loader).await.unwrap();
 
     // Should have opened a position on bar 0
     assert!(
@@ -407,22 +402,12 @@ async fn wheel_script_result_has_expected_fields() {
     };
 
     let script_source = std::fs::read_to_string("scripts/strategies/wheel.rhai").unwrap();
-    let mut params = std::collections::HashMap::new();
-    params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
-    params.insert("CAPITAL".to_string(), serde_json::json!(100_000));
-    params.insert("PUT_DELTA".to_string(), serde_json::json!(0.30));
-    params.insert("PUT_DTE".to_string(), serde_json::json!(45));
-    params.insert("CALL_DELTA".to_string(), serde_json::json!(0.30));
-    params.insert("CALL_DTE".to_string(), serde_json::json!(30));
-    params.insert("EXIT_DTE".to_string(), serde_json::json!(5));
-    params.insert("SLIPPAGE".to_string(), serde_json::json!("mid"));
-    params.insert("MULTIPLIER".to_string(), serde_json::json!(100));
-    params.insert("STOP_LOSS".to_string(), serde_json::json!(null));
+    let mut params = wheel_params();
     params.insert("TAKE_PROFIT".to_string(), serde_json::json!(null));
 
-    let full_source = stdlib::inject_as_const(&script_source, &params);
-    let ScriptBacktestResult { result, .. } =
-        run_script_backtest(&full_source, &loader).await.unwrap();
+    let ScriptBacktestResult { result, .. } = run_script_backtest(&script_source, &params, &loader)
+        .await
+        .unwrap();
 
     // Verify all fields the FE needs are present and serializable
     let json = serde_json::to_value(&result.metrics).unwrap();
@@ -502,21 +487,10 @@ async fn wheel_full_cycle_assignment_and_called_away() {
 
     // Use the wheel script with params
     let script_source = std::fs::read_to_string("scripts/strategies/wheel.rhai").unwrap();
-    let mut params = std::collections::HashMap::new();
-    params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
-    params.insert("CAPITAL".to_string(), serde_json::json!(100_000));
-    params.insert("PUT_DELTA".to_string(), serde_json::json!(0.30));
-    params.insert("PUT_DTE".to_string(), serde_json::json!(45));
-    params.insert("CALL_DELTA".to_string(), serde_json::json!(0.30));
-    params.insert("CALL_DTE".to_string(), serde_json::json!(30));
-    params.insert("EXIT_DTE".to_string(), serde_json::json!(5));
-    params.insert("SLIPPAGE".to_string(), serde_json::json!("mid"));
-    params.insert("MULTIPLIER".to_string(), serde_json::json!(100));
-    params.insert("STOP_LOSS".to_string(), serde_json::json!(null));
+    let mut params = wheel_params();
     params.insert("TAKE_PROFIT".to_string(), serde_json::json!(null));
 
-    let full_source = stdlib::inject_as_const(&script_source, &params);
-    let result = run_script_backtest(&full_source, &loader).await;
+    let result = run_script_backtest(&script_source, &params, &loader).await;
     assert!(
         result.is_ok(),
         "Wheel backtest should succeed: {:?}",

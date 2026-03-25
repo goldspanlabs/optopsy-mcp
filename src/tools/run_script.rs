@@ -25,9 +25,9 @@ pub struct RunScriptParams {
     #[garde(skip)]
     pub script: Option<String>,
 
-    /// Constants injected as `const` declarations, prepended to the script.
+    /// Parameters injected as an immutable `params` map in the script scope.
+    /// Scripts access values via `params.SYMBOL`, `params.CAPITAL`, etc.
     /// Must include SYMBOL and CAPITAL. Strategy-specific params vary by script.
-    /// Script's own `const` declarations shadow injected ones.
     #[serde(default)]
     #[garde(skip)]
     pub params: HashMap<String, serde_json::Value>,
@@ -47,26 +47,23 @@ pub struct RunScriptResponse {
     pub suggested_next_steps: Vec<String>,
 }
 
-/// Resolve the script source, inject parameters, and return the final Rhai source code.
+/// Resolve the script source code.
 ///
 /// Resolution order:
 /// 1. `strategy` — load from `scripts/strategies/{name}.rhai` (file on disk)
 /// 2. `script` — use inline source directly (fallback for one-off tests)
+///
+/// Parameter injection happens later in `engine.rs` via scope (not source prepending).
 pub fn resolve_script_source(params: &RunScriptParams) -> Result<String> {
-    use crate::scripting::stdlib;
-
-    let base_source = match (&params.strategy, &params.script) {
-        (Some(name), _) => load_strategy_file(name)?,
-        (None, Some(script)) => script.clone(),
+    match (&params.strategy, &params.script) {
+        (Some(name), _) => load_strategy_file(name),
+        (None, Some(script)) => Ok(script.clone()),
         (None, None) => {
             anyhow::bail!(
                 "Either 'strategy' (script filename) or 'script' (inline source) is required"
             )
         }
-    };
-
-    // Inject params as const declarations (always called — even empty maps are safe)
-    Ok(stdlib::inject_as_const(&base_source, &params.params))
+    }
 }
 
 /// Load a strategy script from `scripts/strategies/{name}.rhai`.
