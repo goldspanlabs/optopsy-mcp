@@ -3,8 +3,6 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 
-use anyhow::{bail, Result};
-
 /// Inject parameters as `const` declarations prepended to script source.
 ///
 /// Used for one-shot `run_script` calls. For sweep iterations, use
@@ -79,21 +77,18 @@ fn json_to_rhai_literal(value: &serde_json::Value) -> String {
     }
 }
 
-/// List available built-in strategy script names.
+/// List `.rhai` strategy files in `scripts/strategies/`.
 #[must_use]
-pub fn list_strategies() -> Vec<&'static str> {
-    vec!["short_put", "iron_condor", "wheel"]
-}
-
-/// Load a built-in strategy script source by name.
-pub fn load_strategy(name: &str) -> Result<&'static str> {
-    match name {
-        "short_put" => Ok(include_str!("../../scripts/strategies/short_put.rhai")),
-        "iron_condor" => Ok(include_str!("../../scripts/strategies/iron_condor.rhai")),
-        "wheel" => Ok(include_str!("../../scripts/strategies/wheel.rhai")),
-        _ => bail!(
-            "Strategy script '{name}' not found. Available: {:?}",
-            list_strategies()
-        ),
-    }
+pub fn list_strategies() -> Vec<String> {
+    let dir = std::path::Path::new("scripts/strategies");
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return vec![];
+    };
+    entries
+        .filter_map(|e| {
+            let e = e.ok()?;
+            let name = e.file_name().to_string_lossy().to_string();
+            name.strip_suffix(".rhai").map(String::from)
+        })
+        .collect()
 }

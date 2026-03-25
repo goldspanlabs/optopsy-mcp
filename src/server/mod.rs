@@ -1634,16 +1634,19 @@ impl OptopsyServer {
     /// **When to use**: Execute custom backtest strategies defined as Rhai scripts.
     /// Scripts define `config()`, `on_bar(ctx)`, and optional callbacks
     /// (`on_exit_check`, `on_position_opened`, `on_position_closed`).
+    /// See `scripts/SCRIPTING_REFERENCE.md` for the full API.
     ///
-    /// **Two modes**:
-    /// - **Inline script**: Pass `script` with the full Rhai source code
-    /// - **Built-in strategy**: Pass `strategy` (e.g., `"short_put"`, `"iron_condor"`, `"wheel"`) with `params`
+    /// **Primary mode**: Pass `strategy` with a script filename (without `.rhai`).
+    /// Scripts are loaded from `scripts/strategies/{name}.rhai`.
+    /// Write the `.rhai` file first, then reference it by name.
     ///
-    /// **Example call** (inline stock backtest):
+    /// **Fallback**: Pass `script` with inline Rhai source for quick one-off tests.
+    ///
+    /// **Example call**:
     /// ```json
     /// {
-    ///   "script": "fn config() { #{ symbol: \"SPY\", capital: 50000.0 } }\nfn on_bar(ctx) { if ctx.rsi(14) < 30 { [#{ action: \"open_stock\", side: \"long\", qty: 100 }] } else { [] } }",
-    ///   "params": {}
+    ///   "strategy": "short_put",
+    ///   "params": { "SYMBOL": "SPY", "CAPITAL": 50000, "DELTA_TARGET": 0.30, "DTE_TARGET": 45 }
     /// }
     /// ```
     ///
