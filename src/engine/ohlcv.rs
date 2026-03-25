@@ -1,4 +1,4 @@
-//! General OHLCV DataFrame utilities.
+//! General OHLCV `DataFrame` utilities.
 //!
 //! Re-exports from `stock_sim` that are used across the codebase (scripting,
 //! signals, server, tools). These will move here permanently when `stock_sim`

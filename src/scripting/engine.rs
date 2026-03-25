@@ -61,10 +61,8 @@ pub async fn run_script_backtest(
     // 4a. Resample to daily when options are involved (options data is daily-only)
     let ohlcv_df = if config.needs_options && config.interval != Interval::Daily {
         let original_rows = ohlcv_df.height();
-        let resampled = crate::engine::stock_sim::resample_ohlcv(
-            &ohlcv_df,
-            crate::engine::types::Interval::Daily,
-        )?;
+        let resampled =
+            crate::engine::ohlcv::resample_ohlcv(&ohlcv_df, crate::engine::types::Interval::Daily)?;
         early_warnings.push(format!(
             "Options require daily data; resampled {} intraday ({:?}) bars to {} daily bars",
             original_rows,
@@ -1551,7 +1549,7 @@ impl DataLoader for CachedDataLoader {
             })?;
 
             let path_str = path.to_string_lossy().to_string();
-            crate::engine::stock_sim::load_ohlcv_df(&path_str, start, end)
+            crate::engine::ohlcv::load_ohlcv_df(&path_str, start, end)
         })
         .await
         .map_err(|e| anyhow::anyhow!("Task join error: {e}"))?
@@ -1642,7 +1640,7 @@ fn forward_fill_cross_symbol(
 /// `Bar` → `OhlcvBar` with volume (which the stock sim `Bar` struct lacks).
 fn ohlcv_bars_from_df(df: &polars::prelude::DataFrame) -> Result<Vec<OhlcvBar>> {
     // Use the existing bars_from_df for datetime parsing (handles date vs datetime columns)
-    let stock_bars = crate::engine::stock_sim::bars_from_df(df)?;
+    let stock_bars = crate::engine::ohlcv::bars_from_df(df)?;
 
     // Extract volume column if present
     let volumes: Option<Vec<f64>> = df
