@@ -1637,7 +1637,7 @@ impl OptopsyServer {
     ///
     /// **Two modes**:
     /// - **Inline script**: Pass `script` with the full Rhai source code
-    /// - **Stdlib script**: Pass `stdlib` (e.g., `"short_put"`) with `params` for customization
+    /// - **Built-in strategy**: Pass `strategy` (e.g., `"short_put"`, `"iron_condor"`, `"wheel"`) with `params`
     ///
     /// **Example call** (inline stock backtest):
     /// ```json

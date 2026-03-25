@@ -10,16 +10,16 @@ use serde::{Deserialize, Serialize};
 /// Parameters for the `run_script` MCP tool.
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct RunScriptParams {
-    /// Rhai script source code (inline). Required unless `stdlib` is set.
+    /// Rhai script source code (inline). Required unless `strategy` is set.
     #[garde(skip)]
     pub script: Option<String>,
 
-    /// Use a stdlib script by name (e.g., "short_put", "iron_condor", "wheel").
+    /// Use a built-in strategy script by name (e.g., "short_put", "iron_condor", "wheel").
     #[garde(skip)]
-    pub stdlib: Option<String>,
+    pub strategy: Option<String>,
 
     /// Constants injected as `const` declarations, prepended to both inline and
-    /// stdlib scripts. For stdlib: must include SYMBOL, CAPITAL, and strategy-
+    /// strategy scripts. For strategies: must include SYMBOL, CAPITAL, and strategy-
     /// specific params. Script's own `const` declarations shadow injected ones.
     #[serde(default)]
     #[garde(skip)]
@@ -40,18 +40,18 @@ pub struct RunScriptResponse {
     pub suggested_next_steps: Vec<String>,
 }
 
-/// Execute the `run_script` tool.
-///
-/// Resolves the script source (inline or stdlib), injects parameters,
-/// and delegates to the scripting engine.
+/// Resolve the script source (inline or strategy), inject parameters,
+/// and return the final Rhai source code.
 pub fn resolve_script_source(params: &RunScriptParams) -> Result<String> {
     use crate::scripting::stdlib;
 
-    let base_source = match (&params.script, &params.stdlib) {
+    let base_source = match (&params.script, &params.strategy) {
         (Some(script), _) => script.clone(),
-        (None, Some(name)) => stdlib::load_stdlib(name)?.to_string(),
+        (None, Some(name)) => stdlib::load_strategy(name)?.to_string(),
         (None, None) => {
-            anyhow::bail!("Either 'script' (inline source) or 'stdlib' (library name) is required")
+            anyhow::bail!(
+                "Either 'script' (inline source) or 'strategy' (built-in name) is required"
+            )
         }
     };
 
