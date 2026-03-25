@@ -135,9 +135,20 @@ pub async fn run_script_backtest(
     let mut next_id = 1usize;
     let mut last_entry_date: Option<NaiveDate> = None;
     let mut stop_requested = false;
+    let loop_start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(config.timeout_secs);
 
     for (bar_idx, bar) in price_history.iter().enumerate() {
         if stop_requested {
+            break;
+        }
+
+        // Wall-clock timeout check (every 100 bars to minimize overhead)
+        if bar_idx % 100 == 0 && loop_start.elapsed() > timeout {
+            warnings.push(format!(
+                "Backtest exceeded {}s timeout at bar {bar_idx}",
+                config.timeout_secs
+            ));
             break;
         }
 
@@ -152,11 +163,15 @@ pub async fn run_script_backtest(
             let mut should_close = false;
             let mut exit_reason = String::new();
 
-            // Built-in: option expiration
-            if let ScriptPositionInner::Options { expiration, .. } = &pos.inner {
+            // Built-in: option expiration with ITM detection
+            if let ScriptPositionInner::Options {
+                expiration, legs, ..
+            } = &pos.inner
+            {
                 if today >= *expiration {
                     should_close = true;
-                    exit_reason = "expiration".to_string();
+                    // Determine if any leg is ITM to classify as assignment/called_away
+                    exit_reason = classify_expiration(legs, bar.close);
                 }
             }
 
@@ -200,9 +215,10 @@ pub async fn run_script_backtest(
             }
 
             if should_close {
-                // Close position immediately
+                // Close position immediately (deduct exit commission)
                 let pnl = compute_close_pnl(&positions[i], bar);
-                realized_equity += pnl;
+                let exit_comm = compute_commission(&config.commission, &positions[i]);
+                realized_equity += pnl - exit_comm;
 
                 // Fire on_position_closed synchronously
                 if has_on_position_closed {
@@ -294,9 +310,12 @@ pub async fn run_script_backtest(
                                 entry_cost: bar.close * qty as f64 * side.multiplier(),
                                 unrealized_pnl: 0.0,
                                 days_held: 0,
+                                current_date: today,
                                 source: "script".to_string(),
                                 implicit: false,
                             };
+                            // Deduct entry commission for stock
+                            realized_equity -= compute_commission(&config.commission, &pos);
                             next_id += 1;
                             last_entry_date = Some(today);
 
@@ -397,9 +416,12 @@ pub async fn run_script_backtest(
                                     * config.multiplier as f64,
                                 unrealized_pnl: 0.0,
                                 days_held: 0,
+                                current_date: today,
                                 source: "script".to_string(),
                                 implicit: false,
                             };
+                            // Deduct entry commission for options
+                            realized_equity -= compute_commission(&config.commission, &pos);
                             next_id += 1;
                             last_entry_date = Some(today);
 
@@ -438,9 +460,10 @@ pub async fn run_script_backtest(
 
         // --- Phase C: Bookkeeping ---
 
-        // Update days_held for all open positions
+        // Update days_held and current_date for all open positions
         for pos in &mut positions {
             pos.days_held = (today - pos.entry_date).num_days();
+            pos.current_date = today;
         }
 
         // Update last_known prices for data-gap fill pricing
@@ -1089,6 +1112,42 @@ fn compute_close_pnl(pos: &ScriptPosition, bar: &OhlcvBar) -> f64 {
 
 /// Look up current option price from PriceTable or LastKnown fallback.
 /// Returns the fill price under the configured slippage model, or None.
+/// Compute commission for a position (entry or exit).
+fn compute_commission(commission: &Option<Commission>, pos: &ScriptPosition) -> f64 {
+    let Some(comm) = commission else {
+        return 0.0;
+    };
+    let contracts = match &pos.inner {
+        ScriptPositionInner::Options { legs, .. } => legs.iter().map(|l| l.qty).sum::<i32>(),
+        ScriptPositionInner::Stock { qty, .. } => *qty,
+    };
+    comm.calculate(contracts)
+}
+
+/// Classify an options expiration as "expiration" (OTM), "assignment" (short put ITM),
+/// or "called_away" (short call ITM) based on strike vs underlying close.
+fn classify_expiration(legs: &[ScriptPositionLeg], underlying_close: f64) -> String {
+    for leg in legs {
+        match (leg.side, leg.option_type) {
+            // Short put is ITM when strike >= close → assignment
+            (Side::Short, crate::engine::types::OptionType::Put) => {
+                if leg.strike >= underlying_close {
+                    return "assignment".to_string();
+                }
+            }
+            // Short call is ITM when strike <= close → called away
+            (Side::Short, crate::engine::types::OptionType::Call) => {
+                if leg.strike <= underlying_close {
+                    return "called_away".to_string();
+                }
+            }
+            _ => {}
+        }
+    }
+    // All legs OTM → standard expiration
+    "expiration".to_string()
+}
+
 fn lookup_option_price(
     price_table: &Option<Arc<crate::engine::sim_types::PriceTable>>,
     last_known: &crate::engine::sim_types::LastKnown,
@@ -1291,7 +1350,17 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ScriptAction> {
                     Some(ScriptAction::Stop { reason })
                 }
                 "open_options" | "open_spread" => {
-                    let legs_arr = map.get("legs")?.clone().try_cast::<rhai::Array>()?;
+                    // Support two shapes:
+                    // 1. #{ action: "open_options", legs: [...] }
+                    // 2. #{ action: "open_spread", spread: #{ legs: [...], ... } }
+                    let legs_arr = if let Some(legs) = map.get("legs") {
+                        legs.clone().try_cast::<rhai::Array>()?
+                    } else if let Some(spread) = map.get("spread") {
+                        let spread_map = spread.clone().try_cast::<rhai::Map>()?;
+                        spread_map.get("legs")?.clone().try_cast::<rhai::Array>()?
+                    } else {
+                        return None;
+                    };
                     let qty = map
                         .get("qty")
                         .and_then(|v| v.as_int().ok())
@@ -1441,19 +1510,12 @@ impl DataLoader for CachedDataLoader {
         start: Option<NaiveDate>,
         end: Option<NaiveDate>,
     ) -> Result<polars::prelude::DataFrame> {
-        let cache = Arc::clone(&self.cache);
-        let symbol = symbol.to_uppercase();
-
-        tokio::task::spawn_blocking(move || {
-            // Use the DataStore trait's load_options (synchronous path within spawn_blocking)
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(async {
-                use crate::data::DataStore;
-                cache.load_options(&symbol, start, end).await
-            })
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("Task join error: {e}"))?
+        use crate::data::DataStore;
+        // Await directly — DataStore::load_options is async and internally uses
+        // spawn_blocking for Parquet I/O. No need to nest spawn_blocking + block_on.
+        self.cache
+            .load_options(&symbol.to_uppercase(), start, end)
+            .await
     }
 }
 

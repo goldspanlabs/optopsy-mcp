@@ -184,6 +184,8 @@ pub struct ScriptPosition {
     pub entry_cost: f64,
     pub unrealized_pnl: f64,
     pub days_held: i64,
+    /// Current simulation date — used by `get_dte()` to compute days to expiration.
+    pub current_date: NaiveDate,
     /// `"script"` for positions opened by the script, `"assignment"` for
     /// positions auto-created by the engine on ITM put expiration.
     pub source: String,
@@ -275,9 +277,10 @@ impl ScriptPosition {
         }
     }
     pub fn get_dte(&mut self) -> Dynamic {
-        // dte is computed at snapshot time and stored in a field we don't have here.
-        // For now return days_held as placeholder — the engine sets this when building the position.
-        Dynamic::UNIT
+        match self.dte(self.current_date) {
+            Some(days) => Dynamic::from(days),
+            None => Dynamic::UNIT,
+        }
     }
     pub fn get_entry_cost(&mut self) -> f64 {
         self.entry_cost
