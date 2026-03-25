@@ -67,6 +67,16 @@ pub async fn run_script_backtest(
     let price_history = Arc::new(bars);
     let cross_symbol_data = Arc::new(HashMap::new()); // TODO: load cross-symbol data
 
+    // Load options data if needed
+    let options_df: Option<Arc<polars::prelude::DataFrame>> = if config.needs_options {
+        let df = data_loader
+            .load_options(&config.symbol, config.start_date, config.end_date)
+            .await?;
+        Some(Arc::new(df))
+    } else {
+        None
+    };
+
     let has_on_exit_check = has_fn(&ast, "on_exit_check", 2);
     let has_on_position_opened = has_fn(&ast, "on_position_opened", 2);
     let has_on_position_closed = has_fn(&ast, "on_position_closed", 3);
@@ -116,6 +126,7 @@ pub async fn run_script_backtest(
                     &price_history,
                     &cross_symbol_data,
                     &config,
+                    &options_df,
                 );
                 let pos_dyn = Dynamic::from(positions[i].clone());
 
@@ -159,6 +170,7 @@ pub async fn run_script_backtest(
                         &price_history,
                         &cross_symbol_data,
                         &config,
+                        &options_df,
                     );
                     let pos_dyn = Dynamic::from(positions[i].clone());
                     let exit_type_dyn = Dynamic::from(exit_reason.clone());
@@ -202,6 +214,7 @@ pub async fn run_script_backtest(
             &price_history,
             &cross_symbol_data,
             &config,
+            &options_df,
         );
 
         // Call on_bar(ctx)
@@ -252,6 +265,7 @@ pub async fn run_script_backtest(
                                     &price_history,
                                     &cross_symbol_data,
                                     &config,
+                                    &options_df,
                                 );
                                 let pos_dyn = Dynamic::from(pos.clone());
                                 let _ = call_fn_persistent(
@@ -284,6 +298,7 @@ pub async fn run_script_backtest(
                                             &price_history,
                                             &cross_symbol_data,
                                             &config,
+                                            &options_df,
                                         );
                                         let pos_dyn = Dynamic::from(positions[idx].clone());
                                         let exit_dyn = Dynamic::from(reason.clone());
@@ -380,6 +395,7 @@ pub async fn run_script_backtest(
                 &price_history,
                 &cross_symbol_data,
                 &config,
+                &options_df,
             )
         } else {
             // Empty bars — shouldn't reach here due to early bail
@@ -762,6 +778,7 @@ fn build_bar_context(
     price_history: &Arc<Vec<OhlcvBar>>,
     cross_symbol_data: &Arc<HashMap<String, Vec<CrossSymbolBar>>>,
     config: &Arc<ScriptConfig>,
+    options_df: &Option<Arc<polars::prelude::DataFrame>>,
 ) -> BarContext {
     let cash = equity - positions.iter().map(|p| p.unrealized_pnl).sum::<f64>();
     BarContext {
@@ -778,6 +795,7 @@ fn build_bar_context(
         indicator_store: Arc::clone(indicator_store),
         price_history: Arc::clone(price_history),
         cross_symbol_data: Arc::clone(cross_symbol_data),
+        options_df: options_df.clone(),
         config: Arc::clone(config),
     }
 }
@@ -988,6 +1006,13 @@ pub trait DataLoader: Send + Sync {
         end: Option<NaiveDate>,
         interval: Interval,
     ) -> Result<Vec<OhlcvBar>>;
+
+    async fn load_options(
+        &self,
+        symbol: &str,
+        start: Option<NaiveDate>,
+        end: Option<NaiveDate>,
+    ) -> Result<polars::prelude::DataFrame>;
 }
 
 /// `DataLoader` backed by `CachedStore` — the production implementation.
@@ -1026,6 +1051,27 @@ impl DataLoader for CachedDataLoader {
             let df = crate::engine::stock_sim::load_ohlcv_df(&path_str, start, end)?;
 
             ohlcv_bars_from_df(&df)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Task join error: {e}"))?
+    }
+
+    async fn load_options(
+        &self,
+        symbol: &str,
+        start: Option<NaiveDate>,
+        end: Option<NaiveDate>,
+    ) -> Result<polars::prelude::DataFrame> {
+        let cache = Arc::clone(&self.cache);
+        let symbol = symbol.to_uppercase();
+
+        tokio::task::spawn_blocking(move || {
+            // Use the DataStore trait's load_options (synchronous path within spawn_blocking)
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(async {
+                use crate::data::DataStore;
+                cache.load_options(&symbol, start, end).await
+            })
         })
         .await
         .map_err(|e| anyhow::anyhow!("Task join error: {e}"))?

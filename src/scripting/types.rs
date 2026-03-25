@@ -143,6 +143,9 @@ pub struct BarContext {
     pub price_history: Arc<Vec<OhlcvBar>>,
     pub cross_symbol_data: Arc<HashMap<String, Vec<CrossSymbolBar>>>,
 
+    // Options data (None for pure stock backtests)
+    pub options_df: Option<Arc<polars::prelude::DataFrame>>,
+
     // Config reference for ctx.config.defaults access
     pub config: Arc<ScriptConfig>,
 }
@@ -575,17 +578,118 @@ impl BarContext {
     }
 
     // --- Options chain ---
-    pub fn find_option(&mut self, _option_type: String, _delta: f64, _dte: i64) -> Dynamic {
-        // TODO: implement via filters.rs pipeline
-        Dynamic::UNIT
+
+    /// Find a single option contract matching the given criteria.
+    /// Simple form: scalar delta target with sensible defaults (±0.10 delta range, ±15 DTE range).
+    /// Returns a Map with { strike, bid, ask, delta, expiration, dte } or () if not found.
+    pub fn find_option(&mut self, option_type: String, delta: f64, dte: i64) -> Dynamic {
+        use crate::engine::types::TargetRange;
+        let target = TargetRange {
+            target: delta,
+            min: (delta - 0.10).max(0.01),
+            max: (delta + 0.10).min(1.0),
+        };
+        self.find_option_internal(
+            &option_type,
+            &target,
+            dte as i32,
+            (dte - 15).max(1) as i32,
+            (dte + 15) as i32,
+        )
     }
+
+    /// Find a single option contract with full TargetRange/DteRange control.
+    /// delta_range: #{ target: 0.30, min: 0.20, max: 0.40 }
+    /// dte_range: #{ target: 45, min: 30, max: 60 }
     pub fn find_option_with(
         &mut self,
-        _option_type: String,
-        _delta_range: rhai::Map,
-        _dte_range: rhai::Map,
+        option_type: String,
+        delta_range: rhai::Map,
+        dte_range: rhai::Map,
     ) -> Dynamic {
-        Dynamic::UNIT
+        use crate::engine::types::TargetRange;
+        let target = TargetRange {
+            target: delta_range
+                .get("target")
+                .and_then(|v| v.as_float().ok())
+                .unwrap_or(0.30),
+            min: delta_range
+                .get("min")
+                .and_then(|v| v.as_float().ok())
+                .unwrap_or(0.20),
+            max: delta_range
+                .get("max")
+                .and_then(|v| v.as_float().ok())
+                .unwrap_or(0.40),
+        };
+        let dte_target = dte_range
+            .get("target")
+            .and_then(|v| v.as_int().ok())
+            .unwrap_or(45) as i32;
+        let dte_min = dte_range
+            .get("min")
+            .and_then(|v| v.as_int().ok())
+            .unwrap_or(30) as i32;
+        let dte_max = dte_range
+            .get("max")
+            .and_then(|v| v.as_int().ok())
+            .unwrap_or(60) as i32;
+        self.find_option_internal(&option_type, &target, dte_target, dte_min, dte_max)
+    }
+
+    /// Internal: run the filter pipeline and return the best match for the current date.
+    fn find_option_internal(
+        &self,
+        option_type: &str,
+        target: &crate::engine::types::TargetRange,
+        _dte_target: i32,
+        dte_min: i32,
+        dte_max: i32,
+    ) -> Dynamic {
+        use crate::engine::filters;
+        use polars::prelude::*;
+
+        let df = match &self.options_df {
+            Some(df) => df.as_ref(),
+            None => return Dynamic::UNIT, // no options data loaded
+        };
+
+        let today = self.datetime.date();
+        let min_bid_ask = 0.05;
+
+        // Map option_type string to the code used in data ("c" or "p")
+        let opt_type_code = match option_type.to_lowercase().as_str() {
+            "call" | "c" => "c",
+            "put" | "p" => "p",
+            _ => return Dynamic::UNIT,
+        };
+
+        // 1. Filter by option type, DTE range, valid quotes
+        let filtered = match filters::filter_leg_candidates(
+            df,
+            opt_type_code,
+            dte_max,
+            dte_min,
+            min_bid_ask,
+        ) {
+            Ok(f) if f.height() > 0 => f,
+            _ => return Dynamic::UNIT,
+        };
+
+        // 2. Filter to current date only
+        let today_filtered = match filter_to_date(&filtered, today) {
+            Some(f) if f.height() > 0 => f,
+            _ => return Dynamic::UNIT,
+        };
+
+        // 3. Select closest delta
+        let selected = match filters::select_closest_delta(today_filtered, target) {
+            Ok(s) if s.height() > 0 => s,
+            _ => return Dynamic::UNIT,
+        };
+
+        // 4. Pick the first (closest) match
+        row_to_option_map(&selected, 0, today)
     }
     pub fn find_spread(&mut self, _legs: rhai::Array) -> Dynamic {
         Dynamic::UNIT
@@ -673,6 +777,96 @@ fn parse_indicator_ref(s: &str) -> (String, i64) {
     let name = parts[0].to_string();
     let period = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(0);
     (name, period)
+}
+
+// ---------------------------------------------------------------------------
+// Options chain helpers
+// ---------------------------------------------------------------------------
+
+/// Filter a DataFrame to rows matching a specific quote date.
+fn filter_to_date(
+    df: &polars::prelude::DataFrame,
+    date: NaiveDate,
+) -> Option<polars::prelude::DataFrame> {
+    use polars::prelude::*;
+
+    // The datetime column may be NaiveDateTime — we need to compare just the date part
+    let datetime_col = df.column("datetime").ok()?;
+
+    // Build a boolean mask: date part of datetime == target date
+    let target_start = date.and_hms_opt(0, 0, 0)?;
+    let target_end = date.succ_opt()?.and_hms_opt(0, 0, 0)?;
+
+    let result = df
+        .clone()
+        .lazy()
+        .filter(
+            col("datetime")
+                .gt_eq(lit(target_start))
+                .and(col("datetime").lt(lit(target_end))),
+        )
+        .collect()
+        .ok()?;
+
+    Some(result)
+}
+
+/// Convert a DataFrame row to a Rhai Map for find_option results.
+/// Returns `#{ strike, bid, ask, delta, expiration, dte }` or `()`.
+fn row_to_option_map(df: &polars::prelude::DataFrame, row: usize, today: NaiveDate) -> Dynamic {
+    use polars::prelude::*;
+
+    let get_f64 =
+        |col_name: &str| -> Option<f64> { df.column(col_name).ok()?.f64().ok()?.get(row) };
+
+    let strike = match get_f64("strike") {
+        Some(v) => v,
+        None => return Dynamic::UNIT,
+    };
+    let bid = get_f64("bid").unwrap_or(0.0);
+    let ask = get_f64("ask").unwrap_or(0.0);
+    let delta = get_f64("delta").unwrap_or(0.0);
+
+    // Get expiration date — handle both Date and Datetime column types
+    let expiration: Option<NaiveDate> = df.column("expiration").ok().and_then(|c| {
+        use polars::prelude::*;
+        // Try as Date first (physical i32 = days since epoch)
+        if let Ok(date_ca) = c.date() {
+            let series = date_ca.clone().into_series();
+            let physical = series.i32().ok()?;
+            let epoch_days = physical.get(row)?;
+            return NaiveDate::from_num_days_from_ce_opt(
+                epoch_days + crate::engine::types::EPOCH_DAYS_CE_OFFSET,
+            );
+        }
+        // Try as Datetime (physical i64 = microseconds since epoch)
+        if let Ok(dt_ca) = c.datetime() {
+            let series = dt_ca.clone().into_series();
+            let physical = series.i64().ok()?;
+            let us = physical.get(row)?;
+            let secs = us / 1_000_000;
+            let nsecs = ((us % 1_000_000) * 1000) as u32;
+            let dt = chrono::DateTime::from_timestamp(secs, nsecs)?;
+            return Some(dt.date_naive());
+        }
+        None
+    });
+
+    let expiration = match expiration {
+        Some(e) => e,
+        None => return Dynamic::UNIT,
+    };
+
+    let dte = (expiration - today).num_days();
+
+    let mut map = rhai::Map::new();
+    map.insert("strike".into(), Dynamic::from(strike));
+    map.insert("bid".into(), Dynamic::from(bid));
+    map.insert("ask".into(), Dynamic::from(ask));
+    map.insert("delta".into(), Dynamic::from(delta));
+    map.insert("expiration".into(), Dynamic::from(expiration.to_string()));
+    map.insert("dte".into(), Dynamic::from(dte));
+    Dynamic::from(map)
 }
 
 // ---------------------------------------------------------------------------
