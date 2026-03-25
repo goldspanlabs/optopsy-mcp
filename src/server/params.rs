@@ -390,42 +390,6 @@ fn default_save() -> bool {
     true
 }
 
-#[allow(clippy::unnecessary_wraps)]
-fn default_price_limit() -> Option<usize> {
-    Some(500)
-}
-
-/// Parameters for the `get_raw_prices` tool.
-#[derive(Debug, Deserialize, JsonSchema, Validate)]
-pub struct GetRawPricesParams {
-    /// Ticker symbol (e.g. "SPY")
-    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
-    pub symbol: String,
-    /// Start date filter (YYYY-MM-DD)
-    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))]
-    pub start_date: Option<String>,
-    /// End date filter (YYYY-MM-DD)
-    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")), custom(validate_end_date_after_start(&self.start_date)))]
-    pub end_date: Option<String>,
-    /// Maximum number of price bars to return (default: 500 if omitted).
-    /// Data is evenly sampled if the total exceeds this limit.
-    /// Pass `null` explicitly to disable the limit and return all bars.
-    #[serde(default = "default_price_limit")]
-    #[garde(skip)]
-    pub limit: Option<usize>,
-    /// Bar interval: "daily" (default), "weekly", or "monthly".
-    /// Resamples OHLCV data before returning price bars.
-    #[serde(default)]
-    #[garde(skip)]
-    pub interval: Option<Interval>,
-    /// When `true` and `limit` is set, return the last N bars (tail) instead of evenly sampling.
-    /// Use this for backward pagination: `end_date` + `limit=500` + `tail=true` returns
-    /// the 500 most recent bars before `end_date`.
-    #[serde(default)]
-    #[garde(skip)]
-    pub tail: Option<bool>,
-}
-
 fn default_sweep_max_positions() -> i32 {
     3
 }
@@ -923,16 +887,6 @@ pub struct RegimeDetectParams {
 
 fn default_regime_method() -> String {
     "volatility_cluster".to_string()
-}
-
-/// Parameters for the `list_symbols` tool.
-#[derive(Debug, Deserialize, JsonSchema, Validate)]
-#[garde(context(()))]
-pub struct ListSymbolsParams {
-    /// Search query — case-insensitive prefix/substring match across all categories.
-    /// Omit to get a summary of category counts without listing individual symbols.
-    #[garde(inner(length(min = 1, max = 20)))]
-    pub query: Option<String>,
 }
 
 fn resolve_strategy_entries(

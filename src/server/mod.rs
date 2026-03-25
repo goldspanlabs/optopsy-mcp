@@ -30,19 +30,17 @@ use crate::tools::response_types::{
     AggregatePricesResponse, BayesianOptimizeResponse, BenchmarkAnalysisResponse,
     BuildSignalResponse, CointegrationResponse, CorrelateResponse, DistributionResponse,
     DrawdownAnalysisResponse, FactorAttributionResponse, HypothesisParams, HypothesisResponse,
-    ListSymbolsResponse, MonteCarloResponse, PermutationTestResponse, PortfolioOptimizeResponse,
-    RawPricesResponse, RegimeDetectResponse, RollingMetricResponse, StrategiesResponse,
-    SweepResponse, WalkForwardResponse,
+    MonteCarloResponse, PermutationTestResponse, PortfolioOptimizeResponse, RegimeDetectResponse,
+    RollingMetricResponse, SweepResponse, WalkForwardResponse,
 };
 use params::{
     resolve_leg_deltas, tool_err, validation_err, AggregatePricesParams, BacktestBaseParams,
     BayesianOptimizeParams, BenchmarkAnalysisParams, BuildSignalParams, CointegrationParams,
     CorrelateParams, DistributionParams, DrawdownAnalysisParams, FactorAttributionParams,
-    GetRawPricesParams, ListSymbolsParams, MonteCarloParams, ParameterSweepParams,
-    PermutationTestParams, PortfolioOptimizeParams, RegimeDetectParams, RollingMetricParams,
-    WalkForwardParams,
+    MonteCarloParams, ParameterSweepParams, PermutationTestParams, PortfolioOptimizeParams,
+    RegimeDetectParams, RollingMetricParams, WalkForwardParams,
 };
-use sanitize::{SanitizedJson, SanitizedResult};
+use sanitize::SanitizedResult;
 
 /// Loaded data: `HashMap<Symbol, DataFrame>` for multi-symbol support.
 type LoadedData = HashMap<String, DataFrame>;
@@ -428,44 +426,6 @@ use rmcp::handler::server::wrapper::Parameters;
 
 #[tool_router]
 impl OptopsyServer {
-    /// Search or browse symbols available in the local Parquet cache.
-    ///
-    /// **Without query**: Returns a summary of cached data — category names and counts
-    ///   (options, etf, stocks, futures, indices) — so you know what's available.
-    /// **With query**: Case-insensitive prefix/substring search across all categories.
-    ///   Returns up to 50 matching symbols with their category.
-    ///
-    /// **When to use**: To discover what data is available before running backtests or analysis.
-    /// **Prerequisites**: None (reads the cache directory)
-    /// **Next tools**: `run_options_backtest()`, `run_stock_backtest()`, or `get_raw_prices()`
-    #[tool(name = "list_symbols", annotations(read_only_hint = true))]
-    async fn list_symbols(
-        &self,
-        Parameters(params): Parameters<ListSymbolsParams>,
-    ) -> SanitizedResult<ListSymbolsResponse, String> {
-        SanitizedResult(
-            async {
-                params
-                    .validate()
-                    .map_err(|e| validation_err("list_symbols", e))?;
-                tools::list_symbols::execute(&self.cache, params.query.as_deref()).map_err(tool_err)
-            }
-            .await,
-        )
-    }
-
-    /// Browse all 32 built-in options strategies grouped by category.
-    ///
-    /// **When to use**: To choose a strategy for analysis
-    /// **Prerequisites**: None (informational, no data required)
-    /// **Categories**: singles, spreads, straddles, strangles, butterflies, condors, iron, calendars, diagonals
-    /// **Next tools**: `suggest_parameters()` or `run_options_backtest()` (once you pick a strategy)
-    #[tool(name = "list_strategies", annotations(read_only_hint = true))]
-    async fn list_strategies(&self) -> SanitizedJson<StrategiesResponse> {
-        SanitizedJson(tools::strategies::execute())
-    }
-
-    /// Build, validate, save, list, search, and manage signals.
     ///
     /// **When to use**: When you want to discover and work with trading signals—both
     ///   searching the built-in signal catalog and defining custom entry/exit conditions
@@ -721,48 +681,6 @@ impl OptopsyServer {
             .await,
         )
     }
-    /// Return raw OHLCV price data for a symbol, ready for chart generation.
-    /// Data is loaded from the local Parquet cache.
-    ///
-    /// **When to use**: When an LLM or user needs raw price data to generate charts
-    ///   (candlestick, line, area) or perform custom analysis
-    /// **Prerequisites**: None — OHLCV data is loaded from cache
-    ///
-    /// **Returns**: Array of `{ date, open, high, low, close, adjclose, volume }` bars.
-    /// Data is evenly sampled down to `limit` points (default 500 if omitted) to avoid
-    /// overwhelming LLM context windows. Pass `limit: null` explicitly for the full dataset.
-    ///
-    /// **Use cases**:
-    ///   - Generate candlestick or OHLC charts
-    ///   - Plot price action with close/adjclose line charts
-    ///   - Overlay backtest equity curves on underlying price data
-    ///   - Feed into code interpreters for custom analysis
-    #[tool(name = "get_raw_prices", annotations(read_only_hint = true))]
-    async fn get_raw_prices(
-        &self,
-        Parameters(params): Parameters<GetRawPricesParams>,
-    ) -> SanitizedResult<RawPricesResponse, String> {
-        SanitizedResult(
-            async {
-                params
-                    .validate()
-                    .map_err(|e| validation_err("get_raw_prices", e))?;
-                tools::raw_prices::load_and_execute(
-                    &self.cache,
-                    &params.symbol,
-                    params.start_date.as_deref(),
-                    params.end_date.as_deref(),
-                    params.limit,
-                    params.interval.unwrap_or_default(),
-                    params.tail,
-                )
-                .await
-                .map_err(tool_err)
-            }
-            .await,
-        )
-    }
-
     /// Aggregate OHLCV price statistics by time dimension (day-of-week, month, quarter, year, hour-of-day).
     /// Returns per-bucket descriptive stats with t-test p-values for significance.
     ///

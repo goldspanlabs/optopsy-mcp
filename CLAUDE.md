@@ -162,12 +162,7 @@ TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, tr
 
 ## MCP Tools: Quick Reference
 
-### Data Tools
-- **`list_symbols`** — Browse/search symbols in Parquet cache. Omit `query` for category summary.
-- **`get_raw_prices`** — Return OHLCV bars for charting. Default limit: 500; pass `null` for unlimited.
-
-### Strategy & Signal Tools
-- **`list_strategies`** — List all 32 built-in strategies with leg definitions. No parameters.
+### Signal Tools
 - **`build_signal`** — Signal discovery and management. Actions: `catalog`, `search`, `create`, `validate`, `list`, `get`, `delete`.
   - Formula columns: `close`, `open`, `high`, `low`, `volume`, `adjclose`
   - Functions: `sma`, `ema`, `std`, `max`, `min`, `abs`, `change`, `pct_change`, `rsi`, `macd_hist`, `macd_signal`, `macd_line`, `rank`, `iv_rank`, `cci`, `ppo`, `cmo`, `atr`, `stochastic`, `keltner_upper`, `keltner_lower`, `obv`, `mfi`, `tr`, `cmf`, `williams_r`, `adx`, `plus_di`, `minus_di`, `psar`, `tsi`, `vpt`, `bbands_mid`, `bbands_upper`, `bbands_lower`, `donchian_upper`, `donchian_mid`, `donchian_lower`, `supertrend`, `consecutive_up`, `consecutive_down`, `roc`, `gap`
