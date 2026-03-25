@@ -9,4 +9,6 @@ pub mod engine;
 pub mod indicators;
 pub mod registration;
 pub mod stdlib;
+#[cfg(test)]
+mod tests;
 pub mod types;
