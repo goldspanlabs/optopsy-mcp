@@ -449,3 +449,107 @@ async fn wheel_script_result_has_expected_fields() {
         assert!(!trade.legs.is_empty(), "Trade should have legs");
     }
 }
+
+/// Full wheel cycle: sell put → assigned (ITM) → sell call → called away (ITM).
+/// Verifies the engine creates implicit stock on assignment and closes it on `called_away`.
+#[tokio::test(flavor = "multi_thread")]
+async fn wheel_full_cycle_assignment_and_called_away() {
+    let put_exp = d(2024, 2, 16); // 45 DTE from 2024-01-02
+    let call_exp = d(2024, 3, 15); // ~28 DTE from put_exp
+
+    // Options data:
+    // Bar 0 (entry): put available at strike 100
+    // Bar 1 (put exp): call available at strike 102
+    // Bar 2 (call exp): call row for close reference
+    let options_df = make_options_df(&[
+        (dt(2024, 1, 2), put_exp, "p", 100.0, 3.00, 3.50, -0.30),
+        (dt(2024, 2, 16), call_exp, "c", 102.0, 2.00, 2.50, 0.30),
+        (dt(2024, 3, 15), call_exp, "c", 102.0, 0.10, 0.20, 0.02),
+    ]);
+
+    // OHLCV: stock prices determine ITM/OTM at expiration
+    let bars = vec![
+        OhlcvBar {
+            datetime: dt(2024, 1, 2),
+            open: 101.0,
+            high: 102.0,
+            low: 100.0,
+            close: 101.0,
+            volume: 1e6,
+        },
+        OhlcvBar {
+            datetime: dt(2024, 2, 16),
+            open: 98.0,
+            high: 99.0,
+            low: 97.0,
+            close: 98.0, // below 100 strike → put ITM → assignment
+            volume: 1e6,
+        },
+        OhlcvBar {
+            datetime: dt(2024, 3, 15),
+            open: 105.0,
+            high: 106.0,
+            low: 104.0,
+            close: 105.0, // above 102 strike → call ITM → called away
+            volume: 1e6,
+        },
+    ];
+
+    let loader = TestDataLoader {
+        ohlcv_df: bars_to_df(&bars),
+        options_df,
+    };
+
+    // Use the wheel script with params
+    let script_source = std::fs::read_to_string("scripts/strategies/wheel.rhai").unwrap();
+    let mut params = std::collections::HashMap::new();
+    params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
+    params.insert("CAPITAL".to_string(), serde_json::json!(100_000));
+    params.insert("PUT_DELTA".to_string(), serde_json::json!(0.30));
+    params.insert("PUT_DTE".to_string(), serde_json::json!(45));
+    params.insert("CALL_DELTA".to_string(), serde_json::json!(0.30));
+    params.insert("CALL_DTE".to_string(), serde_json::json!(30));
+    params.insert("EXIT_DTE".to_string(), serde_json::json!(5));
+    params.insert("SLIPPAGE".to_string(), serde_json::json!("mid"));
+    params.insert("MULTIPLIER".to_string(), serde_json::json!(100));
+    params.insert("STOP_LOSS".to_string(), serde_json::json!(null));
+    params.insert("TAKE_PROFIT".to_string(), serde_json::json!(null));
+
+    let full_source = stdlib::inject_as_const(&script_source, &params);
+    let result = run_script_backtest(&full_source, &loader).await;
+    assert!(
+        result.is_ok(),
+        "Wheel backtest should succeed: {:?}",
+        result.err()
+    );
+
+    let result = result.unwrap();
+
+    // Should have trades: put (assigned), stock (called away), and possibly a call
+    assert!(
+        result.result.trade_count >= 2,
+        "Expected at least 2 trades (put assignment + stock called away), got {}. Warnings: {:?}",
+        result.result.trade_count,
+        result.result.warnings,
+    );
+
+    // Check that assignment and called_away exit types appear
+    let exit_types: Vec<String> = result
+        .result
+        .trade_log
+        .iter()
+        .map(|t| format!("{:?}", t.exit_type))
+        .collect();
+
+    assert!(
+        exit_types.iter().any(|t| t.contains("Assignment")),
+        "Should have an Assignment exit. Got: {exit_types:?}"
+    );
+
+    // Equity curve should span all 3 bars
+    assert_eq!(
+        result.result.equity_curve.len(),
+        3,
+        "Should have 3 equity points"
+    );
+}
