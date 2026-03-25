@@ -250,7 +250,7 @@ fn config() {
 }
 ```
 
-**Optional params:** Use `!= ()` to check. The engine injects `const X = ();` for unset params.
+**Optional params:** Use `!= ()` to check. Callers must pass `null` for unset optional params (injected as `const X = ();`).
 ```rhai
 if STOP_LOSS != () && pos.pnl_pct < -STOP_LOSS {
     return #{ action: "close", reason: "stop_loss" };

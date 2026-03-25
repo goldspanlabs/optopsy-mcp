@@ -437,17 +437,18 @@ fn rolling_bbands(data: &[f64], period: usize, std_mult: f64) -> (Vec<f64>, Vec<
     (upper, mid, lower)
 }
 
-/// Stochastic %K with D-period smoothing.
+/// Stochastic %K with D-period SMA smoothing.
 fn rolling_stochastic_k(
     highs: &[f64],
     lows: &[f64],
     closes: &[f64],
     k_period: usize,
-    _d_smooth: usize,
+    d_smooth: usize,
 ) -> Vec<f64> {
     let n = closes.len();
-    let mut result = vec![f64::NAN; n];
+    let mut raw_k = vec![f64::NAN; n];
 
+    // Raw %K
     for i in (k_period - 1)..n {
         let start = i + 1 - k_period;
         let highest: f64 = highs[start..=i]
@@ -460,14 +461,18 @@ fn rolling_stochastic_k(
             .fold(f64::INFINITY, f64::min);
 
         let range = highest - lowest;
-        if range > f64::EPSILON {
-            result[i] = (closes[i] - lowest) / range * 100.0;
+        raw_k[i] = if range > f64::EPSILON {
+            (closes[i] - lowest) / range * 100.0
         } else {
-            result[i] = 50.0; // midpoint when range is zero
-        }
+            50.0
+        };
     }
 
-    result
+    // Apply D-period SMA smoothing (d_smooth <= 1 means no smoothing)
+    if d_smooth <= 1 {
+        return raw_k;
+    }
+    rolling_sma(&raw_k, d_smooth)
 }
 
 /// CCI: Commodity Channel Index.

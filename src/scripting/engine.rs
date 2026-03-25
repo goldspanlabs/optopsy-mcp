@@ -29,6 +29,8 @@ pub async fn run_script_backtest(
     script_source: &str,
     data_loader: &dyn DataLoader,
 ) -> Result<ScriptBacktestResult> {
+    let backtest_start = std::time::Instant::now();
+
     // 1. Compile
     let engine = build_engine();
     let ast = engine
@@ -596,7 +598,7 @@ pub async fn run_script_backtest(
             warnings,
         },
         metadata,
-        execution_time_ms: 0,
+        execution_time_ms: backtest_start.elapsed().as_millis() as u64,
     })
 }
 
@@ -1099,6 +1101,10 @@ fn compute_options_entry(
 }
 
 /// Compute P&L for closing a position at the current bar's prices.
+/// For options, uses the latest unrealized_pnl which reflects the most recent
+/// PriceTable lookup. Note: Phase A closes happen before Phase C MTM update,
+/// so the P&L is based on the previous bar's prices — this matches the native
+/// engine behavior where exit prices are determined at the close trigger bar.
 fn compute_close_pnl(pos: &ScriptPosition, bar: &OhlcvBar) -> f64 {
     match &pos.inner {
         ScriptPositionInner::Stock {
@@ -1106,10 +1112,7 @@ fn compute_close_pnl(pos: &ScriptPosition, bar: &OhlcvBar) -> f64 {
             qty,
             entry_price,
         } => (bar.close - entry_price) * *qty as f64 * side.multiplier(),
-        ScriptPositionInner::Options { .. } => {
-            // Use the latest MTM (updated each bar in Phase C)
-            pos.unrealized_pnl
-        }
+        ScriptPositionInner::Options { .. } => pos.unrealized_pnl,
     }
 }
 
@@ -1274,8 +1277,31 @@ fn build_script_trade_record(
             ScriptPositionInner::Stock { entry_price, .. } => Some(*entry_price),
             ScriptPositionInner::Options { .. } => None,
         },
-        stock_exit_price: None,
-        stock_pnl: None,
+        stock_exit_price: match &pos.inner {
+            ScriptPositionInner::Stock { .. } => {
+                // Approximate exit price from entry + pnl/qty
+                let ep = match &pos.inner {
+                    ScriptPositionInner::Stock {
+                        entry_price,
+                        qty,
+                        side,
+                    } => {
+                        if *qty != 0 {
+                            entry_price + pnl / (*qty as f64 * side.multiplier())
+                        } else {
+                            0.0
+                        }
+                    }
+                    ScriptPositionInner::Options { .. } => 0.0,
+                };
+                Some(ep)
+            }
+            ScriptPositionInner::Options { .. } => None,
+        },
+        stock_pnl: match &pos.inner {
+            ScriptPositionInner::Stock { .. } => Some(pnl),
+            ScriptPositionInner::Options { .. } => None,
+        },
     }
 }
 
