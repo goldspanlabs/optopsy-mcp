@@ -77,6 +77,16 @@ Discover seasonality and time-based patterns with aggregate statistics, distribu
 "Detect volatility regimes in SPY and show when they shift"
 ```
 
+### Script Custom Strategies with Rhai
+
+Write fully custom backtests using the [Rhai](https://rhai.rs/) scripting language — or let Claude generate them from natural language. Define entry logic, exit rules, position sizing, and stateful multi-phase strategies (like the wheel) in a single script. Use built-in strategy scripts or write your own from scratch.
+
+```
+"Backtest a short put strategy that only enters when VIX > 20 and RSI < 30"
+"Write a custom strategy that buys SPY on 3 consecutive down days and sells after a 2% gain"
+"Run the wheel strategy script on SPY with 30-delta puts and 25-delta calls"
+```
+
 ### Build Custom Signals
 
 Create entry/exit signals with a formula DSL covering 67 functions (momentum, trend, volatility, volume, regime, derived stats). Save, rename, and reuse signals across sessions.
@@ -100,6 +110,7 @@ Create entry/exit signals with a formula DSL covering 67 functions (momentum, tr
 | `compare_strategies` | Side-by-side comparison of multiple strategies |
 | `walk_forward` | Rolling walk-forward analysis with train/test windows |
 | `permutation_test` | Statistical significance testing via date shuffling |
+| `run_script` | Execute a Rhai backtest script (inline or built-in strategy) |
 | `get_raw_prices` | Return OHLCV price data for charting |
 | `aggregate_prices` | Time-based aggregation (day-of-week, month, quarter, year, hour) with significance testing |
 | `distribution` | Return distribution analysis with normality testing |
@@ -169,6 +180,35 @@ Fixed quantity, fixed fractional, risk per trade, Kelly criterion, and volatilit
 ### 67 Built-in Signals
 
 RSI, MACD, Stochastic, Bollinger Bands, Keltner Channels, Supertrend, Aroon, ATR, OBV, MFI, IV Rank/Percentile, HMM regime filter, and more — plus AND/OR/NOT combinators and cross-symbol signals (e.g., VIX as a filter for SPY trades).
+
+### Rhai Scripting Engine
+
+Write backtests as Rhai scripts with a callback-driven API. The engine provides a `BarContext` (`ctx`) object with access to OHLCV data, 40+ pre-computed indicators, options chain lookup, portfolio state, and cross-symbol data.
+
+```rhai
+fn config() {
+    #{ symbol: SYMBOL, capital: CAPITAL,
+       data: #{ ohlcv: true, options: true, indicators: ["rsi:14", "sma:50"] } }
+}
+
+fn on_bar(ctx) {
+    if ctx.position_count() >= 3 { return []; }
+    let put = ctx.find_option("put", 0.30, 45);
+    if put == () { return []; }
+    [#{ action: "open_options", legs: [#{
+        side: "short", option_type: "put",
+        strike: put.strike, expiration: put.expiration,
+        bid: put.bid, ask: put.ask,
+    }]}]
+}
+
+fn on_exit_check(ctx, pos) {
+    if pos.dte <= 7 { return #{ action: "close", reason: "dte_exit" }; }
+    #{ action: "hold" }
+}
+```
+
+Three built-in strategy scripts (`short_put`, `iron_condor`, `wheel`) are included and parameterized via constant injection. Scripts are fully sandboxed with no file or network access.
 
 ### Formula DSL
 
@@ -257,5 +297,6 @@ PORT=8000 cargo run          # Run as HTTP server (optional)
 - [Tokio](https://tokio.rs/) — Async runtime
 - [Axum](https://github.com/tokio-rs/axum) — HTTP server (optional, via `PORT` env var)
 - [rust_ti](https://crates.io/crates/rust_ti) — Technical analysis indicators
+- [Rhai](https://rhai.rs/) — Embedded scripting language for custom strategies
 - [garde](https://crates.io/crates/garde) — Input validation
 - [serde](https://serde.rs/) + [schemars](https://docs.rs/schemars/) — JSON serialization and MCP schema generation
