@@ -57,11 +57,8 @@ Discover seasonality, regime shifts, and price patterns. Gate entries using HMM 
 |------|-------------|
 | **Backtesting** | |
 | `run_script` | Execute a Rhai backtest script (strategy file or inline) |
-| **Data & Signals** | |
-| `list_symbols` | Discover available symbols in the data cache |
-| `list_strategies` | Browse all 31 built-in options strategy definitions |
+| **Signals** | |
 | `build_signal` | Create, validate, save, and manage custom signals (CRUD + catalog) |
-| `get_raw_prices` | Return OHLCV price data for charting |
 | **Optimization** | |
 | `parameter_sweep` | Grid search across delta/DTE/slippage/signal combos with OOS validation |
 | `bayesian_optimize` | GP-based Bayesian optimization for large parameter spaces |
