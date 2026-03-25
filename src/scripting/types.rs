@@ -808,79 +808,171 @@ impl BarContext {
     // --- Strategy builders ---
     // Each resolves to a find_spread call with pre-configured legs.
 
-    pub fn iron_condor(&mut self, body_delta: f64, wing_delta: f64, dte: i64) -> Dynamic {
+    /// Iron condor with explicit per-leg deltas.
+    /// `ctx.iron_condor(#{ long_put: 0.10, short_put: 0.25, short_call: 0.35, long_call: 0.10, dte: 45 })`
+    pub fn iron_condor(&mut self, params: rhai::Map) -> Dynamic {
+        let short_put = params
+            .get("short_put")
+            .and_then(|v| v.as_float().ok())
+            .unwrap_or(0.30);
+        let long_put = params
+            .get("long_put")
+            .and_then(|v| v.as_float().ok())
+            .unwrap_or(0.10);
+        let short_call = params
+            .get("short_call")
+            .and_then(|v| v.as_float().ok())
+            .unwrap_or(0.30);
+        let long_call = params
+            .get("long_call")
+            .and_then(|v| v.as_float().ok())
+            .unwrap_or(0.10);
+        let dte = params
+            .get("dte")
+            .and_then(|v| v.as_int().ok())
+            .unwrap_or(45);
+
         let legs: rhai::Array = vec![
-            leg_map("long", "put", wing_delta, dte),
-            leg_map("short", "put", body_delta, dte),
-            leg_map("short", "call", body_delta, dte),
-            leg_map("long", "call", wing_delta, dte),
+            leg_map("long", "put", long_put, dte),
+            leg_map("short", "put", short_put, dte),
+            leg_map("short", "call", short_call, dte),
+            leg_map("long", "call", long_call, dte),
         ];
         self.find_spread(legs)
     }
 
-    pub fn vertical_spread(
-        &mut self,
-        option_type: String,
-        direction: String,
-        short_delta: f64,
-        long_delta: f64,
-        dte: i64,
-    ) -> Dynamic {
-        let (short_type, long_type) = match (option_type.as_str(), direction.as_str()) {
-            ("put", "bull") | ("put", "credit") => ("put", "put"),
-            ("call", "bear") | ("call", "credit") => ("call", "call"),
-            ("call", "bull") | ("call", "debit") => ("call", "call"),
-            ("put", "bear") | ("put", "debit") => ("put", "put"),
-            _ => return Dynamic::UNIT,
-        };
+    /// Vertical spread (bull put, bear call, etc.)
+    /// `ctx.vertical_spread(#{ type: "put", short: 0.30, long: 0.15, dte: 45 })`
+    pub fn vertical_spread(&mut self, params: rhai::Map) -> Dynamic {
+        let opt_type = params
+            .get("type")
+            .and_then(|v| v.clone().into_immutable_string().ok())
+            .unwrap_or_default();
+        let short_delta = params
+            .get("short")
+            .and_then(|v| v.as_float().ok())
+            .unwrap_or(0.30);
+        let long_delta = params
+            .get("long")
+            .and_then(|v| v.as_float().ok())
+            .unwrap_or(0.15);
+        let dte = params
+            .get("dte")
+            .and_then(|v| v.as_int().ok())
+            .unwrap_or(45);
+
+        let ot = opt_type.as_str();
         let legs: rhai::Array = vec![
-            leg_map("short", short_type, short_delta, dte),
-            leg_map("long", long_type, long_delta, dte),
+            leg_map("short", ot, short_delta, dte),
+            leg_map("long", ot, long_delta, dte),
         ];
         self.find_spread(legs)
     }
 
-    pub fn butterfly(
-        &mut self,
-        option_type: String,
-        body_delta: f64,
-        wing_delta: f64,
-        dte: i64,
-    ) -> Dynamic {
-        let ot = option_type.as_str();
+    /// Butterfly spread.
+    /// `ctx.butterfly(#{ type: "call", short: 0.50, long: 0.25, dte: 45 })`
+    /// Short legs are the body (ATM), long legs are the wings (OTM).
+    pub fn butterfly(&mut self, params: rhai::Map) -> Dynamic {
+        let opt_type = params
+            .get("type")
+            .and_then(|v| v.clone().into_immutable_string().ok())
+            .unwrap_or_default();
+        let short_delta = params
+            .get("short")
+            .and_then(|v| v.as_float().ok())
+            .unwrap_or(0.50);
+        let long_delta = params
+            .get("long")
+            .and_then(|v| v.as_float().ok())
+            .unwrap_or(0.25);
+        let dte = params
+            .get("dte")
+            .and_then(|v| v.as_int().ok())
+            .unwrap_or(45);
+
+        let ot = opt_type.as_str();
         let legs: rhai::Array = vec![
-            leg_map("long", ot, wing_delta, dte),
-            leg_map("short", ot, body_delta, dte),
-            leg_map("short", ot, body_delta, dte),
-            leg_map("long", ot, wing_delta, dte),
+            leg_map("long", ot, long_delta, dte),
+            leg_map("short", ot, short_delta, dte),
+            leg_map("short", ot, short_delta, dte),
+            leg_map("long", ot, long_delta, dte),
         ];
         self.find_spread(legs)
     }
 
-    pub fn straddle(&mut self, delta: f64, dte: i64) -> Dynamic {
+    /// Straddle (short or long).
+    /// `ctx.straddle(#{ side: "short", delta: 0.50, dte: 45 })`
+    pub fn straddle(&mut self, params: rhai::Map) -> Dynamic {
+        let side = params
+            .get("side")
+            .and_then(|v| v.clone().into_immutable_string().ok())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "short".to_string());
+        let delta = params
+            .get("delta")
+            .and_then(|v| v.as_float().ok())
+            .unwrap_or(0.50);
+        let dte = params
+            .get("dte")
+            .and_then(|v| v.as_int().ok())
+            .unwrap_or(45);
+
         let legs: rhai::Array = vec![
-            leg_map("short", "put", delta, dte),
-            leg_map("short", "call", delta, dte),
+            leg_map(&side, "put", delta, dte),
+            leg_map(&side, "call", delta, dte),
         ];
         self.find_spread(legs)
     }
 
-    pub fn strangle(&mut self, put_delta: f64, call_delta: f64, dte: i64) -> Dynamic {
+    /// Strangle (short or long).
+    /// `ctx.strangle(#{ side: "short", put: 0.25, call: 0.25, dte: 45 })`
+    pub fn strangle(&mut self, params: rhai::Map) -> Dynamic {
+        let side = params
+            .get("side")
+            .and_then(|v| v.clone().into_immutable_string().ok())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "short".to_string());
+        let put_delta = params
+            .get("put")
+            .and_then(|v| v.as_float().ok())
+            .unwrap_or(0.25);
+        let call_delta = params
+            .get("call")
+            .and_then(|v| v.as_float().ok())
+            .unwrap_or(0.25);
+        let dte = params
+            .get("dte")
+            .and_then(|v| v.as_int().ok())
+            .unwrap_or(45);
+
         let legs: rhai::Array = vec![
-            leg_map("short", "put", put_delta, dte),
-            leg_map("short", "call", call_delta, dte),
+            leg_map(&side, "put", put_delta, dte),
+            leg_map(&side, "call", call_delta, dte),
         ];
         self.find_spread(legs)
     }
 
-    pub fn calendar(
-        &mut self,
-        option_type: String,
-        delta: f64,
-        near_dte: i64,
-        far_dte: i64,
-    ) -> Dynamic {
-        let ot = option_type.as_str();
+    /// Calendar spread.
+    /// `ctx.calendar(#{ type: "put", delta: 0.30, near_dte: 30, far_dte: 60 })`
+    pub fn calendar(&mut self, params: rhai::Map) -> Dynamic {
+        let opt_type = params
+            .get("type")
+            .and_then(|v| v.clone().into_immutable_string().ok())
+            .unwrap_or_default();
+        let delta = params
+            .get("delta")
+            .and_then(|v| v.as_float().ok())
+            .unwrap_or(0.30);
+        let near_dte = params
+            .get("near_dte")
+            .and_then(|v| v.as_int().ok())
+            .unwrap_or(30);
+        let far_dte = params
+            .get("far_dte")
+            .and_then(|v| v.as_int().ok())
+            .unwrap_or(60);
+
+        let ot = opt_type.as_str();
         let legs: rhai::Array = vec![
             leg_map("short", ot, delta, near_dte),
             leg_map("long", ot, delta, far_dte),
@@ -888,9 +980,19 @@ impl BarContext {
         self.find_spread(legs)
     }
 
-    pub fn covered_call(&mut self, call_delta: f64, dte: i64) -> Dynamic {
-        // Covered call is just the short call leg — stock is opened separately
-        let legs: rhai::Array = vec![leg_map("short", "call", call_delta, dte)];
+    /// Covered call — short call leg only (stock opened separately).
+    /// `ctx.covered_call(#{ delta: 0.30, dte: 30 })`
+    pub fn covered_call(&mut self, params: rhai::Map) -> Dynamic {
+        let delta = params
+            .get("delta")
+            .and_then(|v| v.as_float().ok())
+            .unwrap_or(0.30);
+        let dte = params
+            .get("dte")
+            .and_then(|v| v.as_int().ok())
+            .unwrap_or(30);
+
+        let legs: rhai::Array = vec![leg_map("short", "call", delta, dte)];
         self.find_spread(legs)
     }
 

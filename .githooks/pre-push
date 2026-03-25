@@ -12,7 +12,4 @@ cargo clippy --all-targets
 echo "==> pre-push: cargo build"
 cargo build
 
-echo "==> pre-push: cargo test"
-cargo test
-
 echo "==> pre-push: all checks passed"

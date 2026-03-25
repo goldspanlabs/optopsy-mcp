@@ -1,7 +1,8 @@
 // Iron Condor — sell an OTM put spread + OTM call spread for premium
 //
 // Required params: SYMBOL, CAPITAL
-// Optional params: BODY_DELTA (0.30), WING_DELTA (0.10), DTE_TARGET (45),
+// Optional params: SHORT_PUT_DELTA (0.30), LONG_PUT_DELTA (0.10),
+//   SHORT_CALL_DELTA (0.30), LONG_CALL_DELTA (0.10), DTE_TARGET (45),
 //   EXIT_DTE (21), MAX_POSITIONS (1), SLIPPAGE ("mid"),
 //   STOP_LOSS (2.0), TAKE_PROFIT (0.50)
 
@@ -30,7 +31,13 @@ fn config() {
 fn on_bar(ctx) {
     if ctx.position_count() >= MAX_POSITIONS { return []; }
 
-    let spread = ctx.iron_condor(BODY_DELTA, WING_DELTA, DTE_TARGET);
+    let spread = ctx.iron_condor(#{
+        short_put: SHORT_PUT_DELTA,
+        long_put: LONG_PUT_DELTA,
+        short_call: SHORT_CALL_DELTA,
+        long_call: LONG_CALL_DELTA,
+        dte: DTE_TARGET,
+    });
     if spread == () { return []; }
 
     [#{ action: "open_spread", spread: spread }]
