@@ -4,6 +4,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::common::CorrelationEntry;
 use super::stats::HistogramBin;
 
 // ── Drawdown analysis types ──────────────────────────────────────────────
@@ -315,5 +316,4 @@ pub struct BenchmarkAnalysisResponse {
     pub suggested_next_steps: Vec<String>,
 }
 
-// Re-export CorrelationEntry here since it's used by both portfolio_optimize and portfolio_backtest
-use super::portfolio::CorrelationEntry;
+// CorrelationEntry now lives in common.rs

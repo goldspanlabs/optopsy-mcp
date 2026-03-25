@@ -60,7 +60,7 @@ fn pre_join_cross_dfs<S: std::hash::BuildHasher>(
             );
         };
 
-        let cross_date_col = crate::engine::stock_sim::detect_date_col(cross_df);
+        let cross_date_col = crate::engine::ohlcv::detect_date_col(cross_df);
 
         // Build select expressions that rename OHLCV columns with symbol prefix
         let mut select_exprs = vec![col(cross_date_col).alias("__cross_join_key")];
@@ -540,7 +540,7 @@ pub fn preprocess_hmm_regime(
         };
 
         // Detect date column in the HMM symbol's data
-        let hmm_date_col = crate::engine::stock_sim::detect_date_col(&hmm_df);
+        let hmm_date_col = crate::engine::ohlcv::detect_date_col(&hmm_df);
 
         // Sort by date ascending so adjacent-row returns are chronologically valid
         // and the fit/apply split is determined by real temporal order, not file order.

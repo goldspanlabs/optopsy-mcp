@@ -11,7 +11,7 @@ use crate::engine::types::{
     Commission, CompareResult, DteRange, PerformanceMetrics, Slippage, SweepResult, TargetRange,
 };
 
-use super::backtest::BacktestParamsSummary;
+use super::common::BacktestParamsSummary;
 
 /// Parameters for a single strategy comparison entry
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

@@ -191,11 +191,11 @@ async fn indicators_compute_handler(
 
         let indicator_data = tokio::task::spawn_blocking(
             move || -> Result<Vec<optopsy_mcp::signals::helpers::IndicatorData>, String> {
-                let df = optopsy_mcp::engine::stock_sim::load_ohlcv_df(&ohlcv_path, start, end)
+                let df = optopsy_mcp::engine::ohlcv::load_ohlcv_df(&ohlcv_path, start, end)
                     .map_err(|e| e.to_string())?;
-                let df = optopsy_mcp::engine::stock_sim::resample_ohlcv(&df, interval)
+                let df = optopsy_mcp::engine::ohlcv::resample_ohlcv(&df, interval)
                     .map_err(|e| e.to_string())?;
-                let date_col = optopsy_mcp::engine::stock_sim::detect_date_col(&df);
+                let date_col = optopsy_mcp::engine::ohlcv::detect_date_col(&df);
                 let dates = optopsy_mcp::signals::indicators::extract_epoch_seconds(&df, date_col)
                     .map_err(|e| e.to_string())?;
                 Ok(optopsy_mcp::signals::indicators::dispatch_indicator_call(
@@ -281,25 +281,23 @@ async fn indicators_compute_handler(
     // Load and compute on blocking thread
     let indicator_data = tokio::task::spawn_blocking(
         move || -> Result<Vec<optopsy_mcp::signals::helpers::IndicatorData>, String> {
-            let ohlcv_df = optopsy_mcp::engine::stock_sim::load_ohlcv_df(&ohlcv_path, start, end)
+            let ohlcv_df = optopsy_mcp::engine::ohlcv::load_ohlcv_df(&ohlcv_path, start, end)
                 .map_err(|e| e.to_string())?;
-            let ohlcv_df = optopsy_mcp::engine::stock_sim::resample_ohlcv(&ohlcv_df, interval)
+            let ohlcv_df = optopsy_mcp::engine::ohlcv::resample_ohlcv(&ohlcv_df, interval)
                 .map_err(|e| e.to_string())?;
-            let date_col = optopsy_mcp::engine::stock_sim::detect_date_col(&ohlcv_df);
+            let date_col = optopsy_mcp::engine::ohlcv::detect_date_col(&ohlcv_df);
 
             // Join cross-symbol data (resampled to same interval as primary)
             let mut enriched_df = ohlcv_df;
             for (sym, path) in &cross_paths {
-                if let Ok(cross_df) =
-                    optopsy_mcp::engine::stock_sim::load_ohlcv_df(path, None, None)
-                {
+                if let Ok(cross_df) = optopsy_mcp::engine::ohlcv::load_ohlcv_df(path, None, None) {
                     // Resample cross-symbol to same interval so date columns match
                     let Ok(cross_df) =
-                        optopsy_mcp::engine::stock_sim::resample_ohlcv(&cross_df, interval)
+                        optopsy_mcp::engine::ohlcv::resample_ohlcv(&cross_df, interval)
                     else {
                         continue;
                     };
-                    let cross_date_col = optopsy_mcp::engine::stock_sim::detect_date_col(&cross_df);
+                    let cross_date_col = optopsy_mcp::engine::ohlcv::detect_date_col(&cross_df);
                     if let Ok(joined) = enriched_df
                         .clone()
                         .lazy()

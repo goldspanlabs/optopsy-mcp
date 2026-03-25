@@ -23,26 +23,24 @@ use tokio::sync::RwLock;
 
 use crate::data::cache::{validate_path_segment, CachedStore};
 use crate::data::DataStore;
-use crate::engine::types::{BacktestParams, EPOCH_DAYS_CE_OFFSET};
+use crate::engine::types::BacktestParams;
 use crate::signals::registry::{collect_cross_symbols, extract_formula_cross_symbols, SignalSpec};
 use crate::tools;
 use crate::tools::response_types::{
-    AggregatePricesResponse, BacktestResponse, BayesianOptimizeResponse, BenchmarkAnalysisResponse,
-    BuildSignalResponse, CointegrationResponse, CompareResponse, CorrelateResponse,
-    DistributionResponse, DrawdownAnalysisResponse, FactorAttributionResponse, HypothesisParams,
-    HypothesisResponse, ListSymbolsResponse, MonteCarloResponse, PermutationTestResponse,
-    PortfolioBacktestResponse, PortfolioOptimizeResponse, RawPricesResponse, RegimeDetectResponse,
-    RollingMetricResponse, StockBacktestResponse, StrategiesResponse, SweepResponse,
-    WalkForwardResponse, WheelBacktestResponse,
+    AggregatePricesResponse, BayesianOptimizeResponse, BenchmarkAnalysisResponse,
+    BuildSignalResponse, CointegrationResponse, CorrelateResponse, DistributionResponse,
+    DrawdownAnalysisResponse, FactorAttributionResponse, HypothesisParams, HypothesisResponse,
+    ListSymbolsResponse, MonteCarloResponse, PermutationTestResponse, PortfolioOptimizeResponse,
+    RawPricesResponse, RegimeDetectResponse, RollingMetricResponse, StrategiesResponse,
+    SweepResponse, WalkForwardResponse,
 };
 use params::{
     resolve_leg_deltas, tool_err, validation_err, AggregatePricesParams, BacktestBaseParams,
     BayesianOptimizeParams, BenchmarkAnalysisParams, BuildSignalParams, CointegrationParams,
-    CompareStrategiesParams, CorrelateParams, DistributionParams, DrawdownAnalysisParams,
-    FactorAttributionParams, GetRawPricesParams, ListSymbolsParams, MonteCarloParams,
-    ParameterSweepParams, PermutationTestParams, PortfolioBacktestParams, PortfolioOptimizeParams,
-    RegimeDetectParams, RollingMetricParams, RunBacktestParams, RunStockBacktestParams,
-    RunWheelBacktestParams, WalkForwardParams,
+    CorrelateParams, DistributionParams, DrawdownAnalysisParams, FactorAttributionParams,
+    GetRawPricesParams, ListSymbolsParams, MonteCarloParams, ParameterSweepParams,
+    PermutationTestParams, PortfolioOptimizeParams, RegimeDetectParams, RollingMetricParams,
+    WalkForwardParams,
 };
 use sanitize::{SanitizedJson, SanitizedResult};
 
@@ -426,199 +424,6 @@ impl OptopsyServer {
     }
 }
 
-/// Load OHLCV prices from a cached parquet file for chart overlay.
-///
-/// When `filter_datetimes` is provided, only OHLCV bars whose `datetime` matches
-/// one of the given timestamps are returned. This is used for options backtests
-/// where the options and OHLCV data share aligned timestamps (e.g. 15:59:00).
-///
-/// When `resample_interval` is provided, the data is resampled to that interval
-/// before building the output (e.g. Daily for stock backtests to avoid returning
-/// millions of intraday bars).
-#[allow(clippy::too_many_lines)]
-fn load_underlying_prices(
-    path: &std::path::Path,
-    filter_datetimes: Option<&Column>,
-    resample_interval: Option<crate::engine::types::Interval>,
-    date_range: Option<(Option<chrono::NaiveDate>, Option<chrono::NaiveDate>)>,
-) -> Vec<tools::response_types::UnderlyingPrice> {
-    let args = ScanArgsParquet::default();
-    let path_str = path.to_string_lossy();
-    let Ok(lf) = LazyFrame::scan_parquet(path_str.as_ref().into(), args) else {
-        return vec![];
-    };
-
-    // Detect whether this file uses "datetime" or "date" column, and whether
-    // the date column stores a Datetime type (needs the intraday formatting path).
-    let Ok(schema) = lf.clone().collect_schema() else {
-        return vec![];
-    };
-    let has_datetime_col = schema
-        .get("datetime")
-        .is_some_and(|dt| matches!(dt, polars::prelude::DataType::Datetime(_, _)));
-    let date_col_name = if has_datetime_col { "datetime" } else { "date" };
-
-    let mut lazy = lf.select([
-        col(date_col_name),
-        col("open"),
-        col("high"),
-        col("low"),
-        col("close"),
-        col("volume"),
-    ]);
-
-    // Filter to only timestamps present in the options data
-    if let Some(dt_filter) = filter_datetimes {
-        if let Ok(unique) = dt_filter.unique() {
-            if let Ok(list) = unique.take_materialized_series().implode() {
-                lazy = lazy.filter(col(date_col_name).is_in(lit(list.into_series()), false));
-            }
-        }
-    }
-
-    let Ok(df) = lazy
-        .sort([date_col_name], SortMultipleOptions::default())
-        .collect()
-    else {
-        return vec![];
-    };
-
-    // Resample to the requested interval (e.g. intraday → daily for stock backtests)
-    let df = if let Some(interval) = resample_interval {
-        crate::engine::stock_sim::resample_ohlcv(&df, interval).unwrap_or(df)
-    } else {
-        df
-    };
-
-    // For intraday intervals without an explicit date range, keep only
-    // the last 7 calendar days. The FE paginates backward for older data.
-    // When a date range is provided, all bars in that range are returned.
-    let df = if let Some(interval) = resample_interval {
-        if interval.is_intraday() && df.column("datetime").is_ok() {
-            if let Some((start, end)) = &date_range {
-                let mut filtered = df.clone();
-                if let Some(s) = start {
-                    let start_dt = s.and_hms_opt(0, 0, 0).unwrap();
-                    filtered = filtered
-                        .clone()
-                        .lazy()
-                        .filter(col("datetime").gt_eq(lit(start_dt)))
-                        .collect()
-                        .unwrap_or(filtered);
-                }
-                if let Some(e) = end {
-                    let end_next = e.succ_opt().unwrap_or(*e).and_hms_opt(0, 0, 0).unwrap();
-                    filtered = filtered
-                        .clone()
-                        .lazy()
-                        .filter(col("datetime").lt(lit(end_next)))
-                        .collect()
-                        .unwrap_or(filtered);
-                }
-                filtered
-            } else {
-                let cutoff = (chrono::Utc::now() - chrono::Duration::days(7)).naive_utc();
-                df.clone()
-                    .lazy()
-                    .filter(col("datetime").gt_eq(lit(cutoff)))
-                    .collect()
-                    .unwrap_or(df)
-            }
-        } else {
-            df
-        }
-    } else {
-        df
-    };
-
-    // Re-detect date column after resampling (may change from "datetime" to "date")
-    let date_col_name = if df.column("datetime").is_ok() {
-        "datetime"
-    } else {
-        "date"
-    };
-    let has_datetime = df
-        .column(date_col_name)
-        .ok()
-        .is_some_and(|c| matches!(c.dtype(), polars::prelude::DataType::Datetime(_, _)));
-
-    let Ok(opens) = df.column("open").and_then(|c| Ok(c.f64()?.clone())) else {
-        return vec![];
-    };
-    let Ok(highs) = df.column("high").and_then(|c| Ok(c.f64()?.clone())) else {
-        return vec![];
-    };
-    let Ok(lows) = df.column("low").and_then(|c| Ok(c.f64()?.clone())) else {
-        return vec![];
-    };
-    let Ok(closes) = df.column("close").and_then(|c| Ok(c.f64()?.clone())) else {
-        return vec![];
-    };
-    // Volume may be i64 or u64 depending on the parquet source
-    let volumes = df
-        .column("volume")
-        .and_then(|c| Ok(c.cast(&polars::prelude::DataType::UInt64)?.u64()?.clone()))
-        .ok();
-
-    let mut prices = Vec::with_capacity(df.height());
-
-    // Datetime path: column is Datetime type (either "datetime" or "date" with Datetime dtype)
-    if has_datetime {
-        let Ok(dt_col_ref) = df.column(date_col_name) else {
-            return vec![];
-        };
-        for i in 0..df.height() {
-            let (Some(open), Some(high), Some(low), Some(close)) =
-                (opens.get(i), highs.get(i), lows.get(i), closes.get(i))
-            else {
-                continue;
-            };
-            let Ok(ndt) = crate::engine::price_table::extract_datetime_from_column(dt_col_ref, i)
-            else {
-                continue;
-            };
-            prices.push(tools::response_types::UnderlyingPrice {
-                date: ndt.and_utc().timestamp(),
-                open,
-                high,
-                low,
-                close,
-                volume: volumes.as_ref().and_then(|v| v.get(i)),
-            });
-        }
-        return prices;
-    }
-
-    // Daily path: "date" Date column
-    let Ok(dates) = df.column("date").and_then(|c| Ok(c.date()?.clone())) else {
-        return vec![];
-    };
-    for i in 0..df.height() {
-        let (Some(days), Some(open), Some(high), Some(low), Some(close)) = (
-            dates.phys.get(i),
-            opens.get(i),
-            highs.get(i),
-            lows.get(i),
-            closes.get(i),
-        ) else {
-            continue;
-        };
-        if let Some(date) =
-            chrono::NaiveDate::from_num_days_from_ce_opt(days + EPOCH_DAYS_CE_OFFSET)
-        {
-            prices.push(tools::response_types::UnderlyingPrice {
-                date: date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp(),
-                open,
-                high,
-                low,
-                close,
-                volume: volumes.as_ref().and_then(|v| v.get(i)),
-            });
-        }
-    }
-    prices
-}
-
 use rmcp::handler::server::wrapper::Parameters;
 
 #[tool_router]
@@ -734,191 +539,6 @@ impl OptopsyServer {
             .await,
         )
     }
-
-    /// Full event-driven day-by-day simulation with position management and metrics.
-    ///
-    /// **When to use**: Run a full capital-constrained backtest simulation
-    /// **Prerequisites**: Data is auto-loaded from cache when you pass a symbol.
-    ///   OHLCV data is loaded from cache when signals are used.
-    /// **Next tools**: `compare_strategies()` (to test variations) or iterate on parameters
-    ///
-    /// **IMPORTANT**: `strategy` is REQUIRED — pick one like `short_put`, `iron_condor`, etc.
-    /// Signals (`entry_signal`/`exit_signal`) are optional FILTERS for when to enter, not the strategy itself.
-    ///
-    /// **Example call**:
-    /// ```json
-    /// {
-    ///   "symbol": "SPY", "strategy": "short_put",
-    ///   "leg_deltas": [{"target": 0.30, "min": 0.20, "max": 0.40}],
-    ///   "entry_dte": {"target": 45, "min": 30, "max": 60},
-    ///   "exit_dte": 5, "slippage": {"type": "Mid"},
-    ///   "capital": 100000, "quantity": 1, "multiplier": 100, "max_positions": 5
-    /// }
-    /// ```
-    ///
-    /// **With entry signal filter**:
-    /// ```json
-    /// {
-    ///   "symbol": "SPY", "strategy": "iron_condor",
-    ///   "leg_deltas": [
-    ///     {"target": 0.16, "min": 0.10, "max": 0.20},
-    ///     {"target": 0.30, "min": 0.25, "max": 0.35},
-    ///     {"target": 0.30, "min": 0.25, "max": 0.35},
-    ///     {"target": 0.16, "min": 0.10, "max": 0.20}
-    ///   ],
-    ///   "entry_dte": {"target": 45, "min": 30, "max": 60},
-    ///   "exit_dte": 5, "slippage": {"type": "Mid"},
-    ///   "capital": 100000, "quantity": 1, "multiplier": 100, "max_positions": 5,
-    ///   "entry_signal": "hmm_regime(3, 5) != bearish"
-    /// }
-    /// ```
-    ///
-    /// **What it simulates**:
-    ///   - Day-by-day position opens (respecting `max_positions` constraint)
-    ///   - Position management (stop loss, take profit, max hold days, DTE exit)
-    ///   - Optional signal-based filtering (if `entry_signal`/`exit_signal` provided)
-    ///   - Realistic P&L with bid/ask slippage and commissions
-    /// **Output**:
-    ///   - Trade log (every open/close with P&L and exit reason)
-    ///   - Equity curve (daily capital evolution)
-    ///   - Performance metrics (Sharpe, Sortino, Calmar, `VaR`, max drawdown, win rate, etc.)
-    ///   - AI-enriched assessment and suggested next steps
-    ///
-    /// **Dynamic sizing** (`sizing` param): When using `fixed_fractional`, `risk_per_trade`,
-    /// `kelly`, or `volatility_target` with all-short strategies (naked puts/calls, straddles,
-    /// strangles), you MUST also set `stop_loss` — the engine needs it to compute max loss
-    /// per contract. Without `stop_loss`, the tool will return an error.
-    ///
-    /// **Time to run**: 5-30 seconds depending on data size
-    #[tool(name = "run_options_backtest", annotations(read_only_hint = true))]
-    async fn run_options_backtest(
-        &self,
-        Parameters(params): Parameters<RunBacktestParams>,
-    ) -> SanitizedResult<BacktestResponse, String> {
-        SanitizedResult(
-            async {
-                params
-                    .validate()
-                    .map_err(|e| validation_err("run_options_backtest", e))?;
-
-                tracing::info!(
-                    strategy = params.base.strategy.as_deref().unwrap_or(""),
-                    symbol = params.base.symbol.as_deref().unwrap_or("auto"),
-                    entry_dte_target = params.base.entry_dte.target,
-                    entry_dte_min = params.base.entry_dte.min,
-                    entry_dte_max = params.base.entry_dte.max,
-                    exit_dte = params.base.exit_dte,
-                    max_positions = params.base.max_positions,
-                    capital = params.base.capital,
-                    "Backtest request received"
-                );
-
-                handlers::backtest::execute(self, params.base).await
-            }
-            .await,
-        )
-    }
-
-    /// Signal-driven stock/equity backtest on OHLCV data.
-    ///
-    /// **When to use**: Backtest a stock trading strategy driven by entry/exit signals
-    ///   (e.g. "buy when RSI < 30, sell when RSI > 70")
-    /// **Prerequisites**: None — OHLCV data is loaded from cache
-    ///
-    /// **Key difference from `run_options_backtest`**: This operates on stock prices (OHLCV bars),
-    /// not options chains. No strategy/delta/DTE needed — signals drive everything.
-    ///
-    /// **IMPORTANT: `entry_signal` is REQUIRED** — pass a formula string like `"rsi(close, 14) < 30"`.
-    /// Do NOT pass null. The signal defines when to open positions.
-    ///
-    /// **Example call**:
-    /// ```json
-    /// {
-    ///   "symbol": "SPY", "side": "Long", "capital": 100000, "quantity": 100,
-    ///   "entry_signal": "rsi(close, 14) < 30",
-    ///   "exit_signal": "rsi(close, 14) > 70",
-    ///   "stop_loss": 0.05,
-    ///   "start_date": "2020-01-01", "end_date": "2024-12-31"
-    /// }
-    /// ```
-    ///
-    /// **What it simulates**:
-    ///   - Day-by-day position opens when `entry_signal` fires
-    ///   - Position management (stop loss, take profit, max hold days, exit signal)
-    ///   - Realistic fills with slippage and commissions
-    ///   - Long or short positions
-    ///
-    /// **Defaults**: quantity=100 shares (1 standard lot), capital=$10,000.
-    /// Ensure capital covers (quantity × `share_price`) or trades will be skipped.
-    /// For high-priced stocks like SPY (~$600), use capital ≥ 60000 with quantity=100.
-    ///
-    /// **Dynamic sizing** (`sizing` param): When using `fixed_fractional`, `risk_per_trade`,
-    /// `kelly`, or `volatility_target`, you MUST also set `stop_loss` — the engine needs it
-    /// to compute max loss per trade. Without `stop_loss`, the tool will return an error.
-    ///
-    /// **Output**: Same format as options backtest — trade log, equity curve, performance metrics
-    #[tool(name = "run_stock_backtest", annotations(read_only_hint = true))]
-    async fn run_stock_backtest(
-        &self,
-        Parameters(params): Parameters<RunStockBacktestParams>,
-    ) -> SanitizedResult<StockBacktestResponse, String> {
-        SanitizedResult(
-            async {
-                params
-                    .validate()
-                    .map_err(|e| validation_err("run_stock_backtest", e))?;
-                handlers::stock_backtest::execute(self, params).await
-            }
-            .await,
-        )
-    }
-
-    /// Wheel strategy backtest: sell puts → get assigned → sell covered calls → repeat.
-    ///
-    /// **When to use**: Backtest the wheel (cash-secured put → covered call rotation) on a single symbol.
-    ///
-    /// **Example call**:
-    /// ```json
-    /// {
-    ///   "symbol": "SPY",
-    ///   "put_delta": {"target": 0.30, "min": 0.20, "max": 0.40},
-    ///   "put_dte": {"target": 45, "min": 30, "max": 60},
-    ///   "call_delta": {"target": 0.30, "min": 0.20, "max": 0.40},
-    ///   "call_dte": {"target": 30, "min": 14, "max": 45},
-    ///   "capital": 100000,
-    ///   "entry_signal": "VIX / VIX3M < 1.0"
-    /// }
-    /// ```
-    ///
-    /// **Output**: Trade log, equity curve, performance metrics, plus wheel-specific
-    /// cycle analytics (assignment rate, calls per assignment, premium breakdown).
-    #[tool(name = "run_wheel_backtest", annotations(read_only_hint = true))]
-    async fn run_wheel_backtest(
-        &self,
-        Parameters(params): Parameters<RunWheelBacktestParams>,
-    ) -> SanitizedResult<WheelBacktestResponse, String> {
-        SanitizedResult(
-            async {
-                params
-                    .validate()
-                    .map_err(|e| validation_err("run_wheel_backtest", e))?;
-
-                tracing::info!(
-                    symbol = %params.symbol,
-                    put_delta_target = params.put_delta.target,
-                    call_delta_target = params.call_delta.target,
-                    capital = params.capital,
-                    "Wheel backtest request received"
-                );
-
-                handlers::wheel_backtest::execute(self, params).await
-            }
-            .await,
-        )
-    }
-
-    /// Permutation test for statistical significance of backtest results.
-    ///
     /// Shuffles entry candidates across dates N times, re-runs the backtest, and compares
     /// real results against the random distribution. Produces p-values for key metrics
     /// (Sharpe, `PnL`, win rate, profit factor, CAGR).
@@ -1101,38 +721,6 @@ impl OptopsyServer {
             .await,
         )
     }
-
-    /// Run multiple strategies in parallel and rank by performance metrics.
-    ///
-    /// **When to use**: After validating one strategy via `run_options_backtest()`, to test
-    ///   parameter variations and find the best-performing approach
-    /// **Prerequisites**: None — data is auto-loaded from cache when you pass a symbol
-    /// **Why use this**: Compare different delta targets, DTE parameters, or strategies
-    ///   side-by-side in a single call (faster than running multiple backtests)
-    /// **Next tools**: pick best performer and iterate further, or conclude analysis
-    ///
-    /// **Modes**:
-    ///   - Compare DTE/delta variations of same strategy
-    ///   - Compare different strategies with same parameters
-    ///   - Compare hybrid parameter sets
-    /// **Rankings**: By Sharpe ratio (primary) and total `PnL` (secondary)
-    /// **Output**: Metrics for each strategy + recommended best performer
-    #[tool(name = "compare_strategies", annotations(read_only_hint = true))]
-    async fn compare_strategies(
-        &self,
-        Parameters(params): Parameters<CompareStrategiesParams>,
-    ) -> SanitizedResult<CompareResponse, String> {
-        SanitizedResult(
-            async {
-                params
-                    .validate()
-                    .map_err(|e| validation_err("compare_strategies", e))?;
-                handlers::compare::execute(self, params).await
-            }
-            .await,
-        )
-    }
-
     /// Return raw OHLCV price data for a symbol, ready for chart generation.
     /// Data is loaded from the local Parquet cache.
     ///
@@ -1392,37 +980,6 @@ impl OptopsyServer {
             .await,
         )
     }
-
-    /// Run multiple stock strategies simultaneously and combine them into a portfolio.
-    ///
-    /// Each strategy specifies a symbol, entry signal, allocation weight, and optional exit
-    /// conditions. The tool runs individual stock backtests, then combines equity curves using
-    /// capital-weighted allocation. Returns portfolio-level metrics, per-strategy breakdowns,
-    /// and a pairwise correlation matrix showing diversification benefit.
-    ///
-    /// **When to use**: After finding profitable individual stock signals via `run_stock_backtest`,
-    /// combine them to evaluate portfolio-level risk/return and diversification.
-    ///
-    /// **Prerequisites**: OHLCV data for each symbol must be cached (`list_symbols` to check).
-    /// Each strategy needs an `entry_signal` (use `build_signal` to construct).
-    ///
-    /// **Next tools**: Adjust weights or signals based on results, then re-run.
-    #[tool(name = "portfolio_backtest", annotations(read_only_hint = true))]
-    async fn portfolio_backtest(
-        &self,
-        Parameters(params): Parameters<PortfolioBacktestParams>,
-    ) -> SanitizedResult<PortfolioBacktestResponse, String> {
-        SanitizedResult(
-            async {
-                params
-                    .validate()
-                    .map_err(|e| validation_err("portfolio_backtest", e))?;
-                handlers::portfolio::execute(self, params).await
-            }
-            .await,
-        )
-    }
-
     /// Analyze the full drawdown distribution of a symbol's price history.
     ///
     /// Decomposes the equity curve into individual drawdown episodes and computes
@@ -1700,24 +1257,17 @@ impl ServerHandler for OptopsyServer {
                 \n  - build_signal(action=\"catalog\") — browse all built-in signals by category\
                 \n\
                 \n### 2. Full Simulation\
-                \n  - **Options**: run_options_backtest({ strategy, symbol, ... }) — event-driven options backtest\
-                \n  - **Stocks**: run_stock_backtest — signal-driven stock backtest. Example:\
-                \n    ```json\
-                \n    { \"symbol\": \"SPY\", \"side\": \"Long\", \"capital\": 100000, \"quantity\": 100,\
-                \n      \"entry_signal\": \"rsi(close, 14) < 30\", \"exit_signal\": \"rsi(close, 14) > 70\",\
-                \n      \"stop_loss\": 0.05, \"start_date\": \"2020-01-01\", \"end_date\": \"2024-12-31\" }\
-                \n    ```\
-                \n    entry_signal is a FORMULA STRING like \"rsi(close, 14) < 30\" — NEVER pass null.\
-                \n    exit_signal is optional (omit it entirely if not needed, do NOT pass null).\
-                \n  - OHLCV data is loaded from cache when needed\
+                \n  - **run_script** — Execute Rhai backtest scripts for both options and stock strategies.\
+                \n    Pass `strategy` (filename from scripts/strategies/) or `script` (inline Rhai source).\
+                \n    See scripts/SCRIPTING_REFERENCE.md for the full ctx API.\
+                \n  - OHLCV and options data is loaded from cache automatically\
                 \n\
                 \n### 3. Compare & Optimize (optional, options only)\
                 \n  - parameter_sweep — PREFERRED for optimization. Generates cartesian product of delta/DTE/slippage combos automatically.\
                 \n    Use `direction` to auto-select strategies by market outlook (bullish/bearish/neutral/volatile),\
                 \n    or provide explicit `strategies` list with `leg_delta_targets` grids.\
                 \n    Includes out-of-sample validation (default 30%) and dimension sensitivity analysis.\
-                \n  - compare_strategies — use for manual side-by-side comparison of 2-3 specific configurations\
-                \n    you've already chosen. NOT for grid search (use parameter_sweep instead).\
+                \n  - Or run run_script multiple times with different params to compare strategies manually.\
                 \n\
                 \n### 4. Discover Patterns (optional)\
                 \n  - generate_hypotheses({ symbols: [\"SPY\"] }) — scan for statistically significant patterns\
@@ -1734,8 +1284,7 @@ impl ServerHandler for OptopsyServer {
                 \n  - If conditions are ambiguous, ask the user to clarify before proceeding\
                 \n\
                 \n  **Step 2: Run a baseline backtest**\
-                \n  - For stocks: run_stock_backtest with the constructed entry/exit signals\
-                \n  - For options: run_options_backtest with signals as entry/exit filters\
+                \n  - Write a .rhai script with entry/exit logic and run via run_script\
                 \n  - Use sensible defaults (capital: 10000, quantity: 100 shares or 1 contract)\
                 \n  - After results, reason about: Does it make money? Are there enough trades to be meaningful?\
                 \n    Is the drawdown acceptable? Read the assessment and key_findings carefully.\
@@ -1777,6 +1326,189 @@ impl ServerHandler for OptopsyServer {
 mod tests {
     use super::*;
     use chrono::NaiveDate;
+
+    /// Load OHLCV prices from a cached parquet file for chart overlay.
+    ///
+    /// When `filter_datetimes` is provided, only OHLCV bars whose `datetime` matches
+    /// one of the given timestamps are returned. This is used for options backtests
+    /// where the options and OHLCV data share aligned timestamps (e.g. 15:59:00).
+    ///
+    /// When `resample_interval` is provided, the data is resampled to that interval
+    /// before building the output (e.g. Daily for stock backtests to avoid returning
+    /// millions of intraday bars).
+    #[allow(clippy::too_many_lines)]
+    fn load_underlying_prices(
+        path: &std::path::Path,
+        filter_datetimes: Option<&Column>,
+        resample_interval: Option<crate::engine::types::Interval>,
+        date_range: Option<(Option<chrono::NaiveDate>, Option<chrono::NaiveDate>)>,
+    ) -> Vec<tools::response_types::UnderlyingPrice> {
+        let args = ScanArgsParquet::default();
+        let path_str = path.to_string_lossy();
+        let Ok(lf) = LazyFrame::scan_parquet(path_str.as_ref().into(), args) else {
+            return vec![];
+        };
+
+        let Ok(schema) = lf.clone().collect_schema() else {
+            return vec![];
+        };
+        let has_datetime_col = schema
+            .get("datetime")
+            .is_some_and(|dt| matches!(dt, polars::prelude::DataType::Datetime(_, _)));
+        let date_col_name = if has_datetime_col { "datetime" } else { "date" };
+
+        let mut lazy = lf.select([
+            col(date_col_name),
+            col("open"),
+            col("high"),
+            col("low"),
+            col("close"),
+            col("volume"),
+        ]);
+
+        if let Some(dt_filter) = filter_datetimes {
+            if let Ok(unique) = dt_filter.unique() {
+                if let Ok(list) = unique.take_materialized_series().implode() {
+                    lazy = lazy.filter(col(date_col_name).is_in(lit(list.into_series()), false));
+                }
+            }
+        }
+
+        let Ok(df) = lazy
+            .sort([date_col_name], SortMultipleOptions::default())
+            .collect()
+        else {
+            return vec![];
+        };
+
+        let df = if let Some(interval) = resample_interval {
+            crate::engine::ohlcv::resample_ohlcv(&df, interval).unwrap_or(df)
+        } else {
+            df
+        };
+
+        let df = if let Some(interval) = resample_interval {
+            if interval.is_intraday() && df.column("datetime").is_ok() {
+                if let Some((start, end)) = &date_range {
+                    let mut filtered = df.clone();
+                    if let Some(s) = start {
+                        let start_dt = s.and_hms_opt(0, 0, 0).unwrap();
+                        filtered = filtered
+                            .clone()
+                            .lazy()
+                            .filter(col("datetime").gt_eq(lit(start_dt)))
+                            .collect()
+                            .unwrap_or(filtered);
+                    }
+                    if let Some(e) = end {
+                        let end_next = e.succ_opt().unwrap_or(*e).and_hms_opt(0, 0, 0).unwrap();
+                        filtered = filtered
+                            .clone()
+                            .lazy()
+                            .filter(col("datetime").lt(lit(end_next)))
+                            .collect()
+                            .unwrap_or(filtered);
+                    }
+                    filtered
+                } else {
+                    let cutoff = (chrono::Utc::now() - chrono::Duration::days(7)).naive_utc();
+                    df.clone()
+                        .lazy()
+                        .filter(col("datetime").gt_eq(lit(cutoff)))
+                        .collect()
+                        .unwrap_or(df)
+                }
+            } else {
+                df
+            }
+        } else {
+            df
+        };
+
+        let date_col_name = if df.column("datetime").is_ok() {
+            "datetime"
+        } else {
+            "date"
+        };
+        let has_datetime = df
+            .column(date_col_name)
+            .ok()
+            .is_some_and(|c| matches!(c.dtype(), polars::prelude::DataType::Datetime(_, _)));
+
+        let Ok(opens) = df.column("open").and_then(|c| Ok(c.f64()?.clone())) else {
+            return vec![];
+        };
+        let Ok(highs) = df.column("high").and_then(|c| Ok(c.f64()?.clone())) else {
+            return vec![];
+        };
+        let Ok(lows) = df.column("low").and_then(|c| Ok(c.f64()?.clone())) else {
+            return vec![];
+        };
+        let Ok(closes) = df.column("close").and_then(|c| Ok(c.f64()?.clone())) else {
+            return vec![];
+        };
+        let volumes = df
+            .column("volume")
+            .and_then(|c| Ok(c.cast(&polars::prelude::DataType::UInt64)?.u64()?.clone()))
+            .ok();
+
+        let mut prices = Vec::with_capacity(df.height());
+
+        if has_datetime {
+            let Ok(dt_col_ref) = df.column(date_col_name) else {
+                return vec![];
+            };
+            for i in 0..df.height() {
+                let (Some(open), Some(high), Some(low), Some(close)) =
+                    (opens.get(i), highs.get(i), lows.get(i), closes.get(i))
+                else {
+                    continue;
+                };
+                let Ok(ndt) =
+                    crate::engine::price_table::extract_datetime_from_column(dt_col_ref, i)
+                else {
+                    continue;
+                };
+                prices.push(tools::response_types::UnderlyingPrice {
+                    date: ndt.and_utc().timestamp(),
+                    open,
+                    high,
+                    low,
+                    close,
+                    volume: volumes.as_ref().and_then(|v| v.get(i)),
+                });
+            }
+            return prices;
+        }
+
+        let Ok(dates) = df.column("date").and_then(|c| Ok(c.date()?.clone())) else {
+            return vec![];
+        };
+        for i in 0..df.height() {
+            let (Some(days), Some(open), Some(high), Some(low), Some(close)) = (
+                dates.phys.get(i),
+                opens.get(i),
+                highs.get(i),
+                lows.get(i),
+                closes.get(i),
+            ) else {
+                continue;
+            };
+            if let Some(date) = chrono::NaiveDate::from_num_days_from_ce_opt(
+                days + crate::engine::types::EPOCH_DAYS_CE_OFFSET,
+            ) {
+                prices.push(tools::response_types::UnderlyingPrice {
+                    date: date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp(),
+                    open,
+                    high,
+                    low,
+                    close,
+                    volume: volumes.as_ref().and_then(|v| v.get(i)),
+                });
+            }
+        }
+        prices
+    }
 
     /// Write a synthetic intraday OHLCV `DataFrame` to a temp parquet file.
     /// Returns the path. 12 bars across 2 dates at various times.
