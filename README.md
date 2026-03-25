@@ -55,25 +55,26 @@ Discover seasonality, regime shifts, and price patterns. Gate entries using HMM 
 
 | Tool | Description |
 |------|-------------|
-| `run_script` | Execute a Rhai backtest script (inline or built-in strategy) |
+| **Backtesting** | |
+| `run_script` | Execute a Rhai backtest script (strategy file or inline) |
+| **Data & Signals** | |
 | `list_symbols` | Discover available symbols in the data cache |
-| `list_strategies` | Browse all 32 built-in options strategies with leg definitions |
-| `build_signal` | Create, validate, save, rename, search, and manage custom signals (CRUD + catalog) |
-| `run_options_backtest` | Full event-driven options simulation with trade log and metrics |
-| `run_stock_backtest` | Signal-driven stock/equity backtest on OHLCV data |
-| `run_wheel_backtest` | Wheel strategy: sell puts → assignment → covered calls → repeat |
+| `list_strategies` | Browse all 31 built-in options strategy definitions |
+| `build_signal` | Create, validate, save, and manage custom signals (CRUD + catalog) |
+| `get_raw_prices` | Return OHLCV price data for charting |
+| **Optimization** | |
 | `parameter_sweep` | Grid search across delta/DTE/slippage/signal combos with OOS validation |
-| `compare_strategies` | Side-by-side comparison of multiple strategies |
+| `bayesian_optimize` | GP-based Bayesian optimization for large parameter spaces |
 | `walk_forward` | Rolling walk-forward analysis with train/test windows |
 | `permutation_test` | Statistical significance testing via date shuffling |
-| `get_raw_prices` | Return OHLCV price data for charting |
-| `aggregate_prices` | Time-based aggregation (day-of-week, month, quarter, year, hour) with significance testing |
-| `distribution` | Return distribution analysis with normality testing |
+| **Statistics** | |
+| `aggregate_prices` | Time-based aggregation with significance testing |
+| `distribution` | Distribution analysis with normality testing |
 | `correlate` | Cross-symbol or cross-metric correlation matrices |
 | `rolling_metric` | Rolling window calculations (Sharpe, volatility, returns, etc.) |
-| `regime_detect` | Market regime detection (volatility clustering, trend state, Gaussian HMM) |
+| `regime_detect` | Market regime detection (volatility clustering, trend state, HMM) |
 | `generate_hypotheses` | Auto-scan for statistically significant patterns with FDR correction |
-| `portfolio_backtest` | Run multiple stock strategies as a weighted portfolio |
+| **Risk & Portfolio** | |
 | `drawdown_analysis` | Full drawdown distribution with episode tracking and Ulcer Index |
 | `cointegration_test` | Engle-Granger cointegration test for pairs/stat-arb strategies |
 | `monte_carlo` | Block-bootstrap Monte Carlo simulation with ruin probabilities |
