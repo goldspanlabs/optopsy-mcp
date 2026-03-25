@@ -396,11 +396,11 @@ pub async fn run_script_backtest(
                                 continue; // no valid legs found
                             }
 
+                            let effective_qty = qty.unwrap_or(1);
+
                             // Compute entry cost from resolved legs
                             let (entry_cost, script_legs, expiration) =
-                                compute_options_entry(&resolved, &config);
-
-                            let effective_qty = qty.unwrap_or(1);
+                                compute_options_entry(&resolved, &config, effective_qty);
 
                             let pos = ScriptPosition {
                                 id: next_id,
@@ -1064,6 +1064,7 @@ fn resolve_option_legs(
 fn compute_options_entry(
     resolved: &[ResolvedLeg],
     config: &ScriptConfig,
+    effective_qty: i32,
 ) -> (f64, Vec<ScriptPositionLeg>, NaiveDate) {
     use crate::engine::pricing::fill_price;
 
@@ -1088,7 +1089,7 @@ fn compute_options_entry(
             entry_price,
             current_price: entry_price, // starts at entry
             delta: leg.delta,
-            qty: 1,
+            qty: effective_qty,
         });
     }
 
@@ -1117,9 +1118,10 @@ fn compute_commission(commission: &Option<Commission>, pos: &ScriptPosition) -> 
     let Some(comm) = commission else {
         return 0.0;
     };
+    // Commission is per-contract (options only). Stock positions don't use per-contract fees.
     let contracts = match &pos.inner {
         ScriptPositionInner::Options { legs, .. } => legs.iter().map(|l| l.qty).sum::<i32>(),
-        ScriptPositionInner::Stock { qty, .. } => *qty,
+        ScriptPositionInner::Stock { .. } => return 0.0,
     };
     comm.calculate(contracts)
 }

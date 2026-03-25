@@ -133,34 +133,34 @@ All require declaration in `config().data.indicators`.
 | `ctx.crossed_above("sma:20", "sma:50")` | bool | True if first crossed above second this bar |
 | `ctx.crossed_below("sma:20", "sma:50")` | bool | True if first crossed below second this bar |
 
-### Options Chain
+### Options Strategy
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `ctx.find_option(type, delta, dte)` | Map or () | Find single option (simple form) |
-| `ctx.find_option_with(type, delta_range, dte_range)` | Map or () | Full TargetRange control |
-| `ctx.find_spread(legs_array)` | Map or () | Find multi-leg spread |
-| `ctx.find_spread_with(legs_array, filters)` | Map or () | With net premium/delta filters |
+| `ctx.build_strategy(legs)` | Map or () | Build any options strategy from a legs array |
 
-**find_option return shape:** `#{ strike, bid, ask, delta, expiration, dte }`
-
-**find_option_with ranges:**
+Each leg is a map with `side`, `option_type`, `delta`, and `dte`:
 ```rhai
-ctx.find_option_with("put",
-    #{ target: 0.30, min: 0.20, max: 0.40 },           // delta range
-    #{ target: 45, min: 30, max: 60 }                    // DTE range
-)
+// Single short put
+let strat = ctx.build_strategy([
+    #{ side: "short", option_type: "put", delta: 0.30, dte: 45 },
+]);
+
+// Iron condor (4 legs)
+let strat = ctx.build_strategy([
+    #{ side: "short", option_type: "put", delta: 0.30, dte: 45 },
+    #{ side: "long", option_type: "put", delta: 0.10, dte: 45 },
+    #{ side: "short", option_type: "call", delta: 0.30, dte: 45 },
+    #{ side: "long", option_type: "call", delta: 0.10, dte: 45 },
+]);
+
+// Vertical spread
+let strat = ctx.build_strategy([
+    #{ side: "short", option_type: "put", delta: 0.30, dte: 45 },
+    #{ side: "long", option_type: "put", delta: 0.15, dte: 45 },
+]);
 ```
 
-### Strategy Builders (convenience wrappers around find_spread)
-| Method | Description |
-|--------|-------------|
-| `ctx.iron_condor(body_delta, wing_delta, dte)` | 4-leg iron condor |
-| `ctx.vertical_spread(type, direction, short_delta, long_delta, dte)` | Bull/bear spread |
-| `ctx.butterfly(type, body_delta, wing_delta, dte)` | 3-strike butterfly |
-| `ctx.straddle(delta, dte)` | Short straddle |
-| `ctx.strangle(put_delta, call_delta, dte)` | Short strangle |
-| `ctx.calendar(type, delta, near_dte, far_dte)` | Calendar spread |
-| `ctx.covered_call(call_delta, dte)` | Short call (stock opened separately) |
+**Return shape:** Map with resolved legs including `strike`, `bid`, `ask`, `delta`, `expiration`, `dte` for each leg, or `()` if no matching contracts found.
 
 ### Cross-Symbol
 | Method | Returns | Description |
@@ -176,17 +176,13 @@ ctx.find_option_with("put",
     #{ side: "short", option_type: "put", delta: 0.30, dte: 45 },
 ]}]
 
-// Open options (resolved — from find_option)
-let put = ctx.find_option("put", 0.30, 45);
-[#{ action: "open_options", legs: [#{
-    side: "short", option_type: "put",
-    strike: put.strike, expiration: put.expiration,
-    bid: put.bid, ask: put.ask,
-}]}]
-
-// Open options (from strategy builder)
-let spread = ctx.iron_condor(0.30, 0.10, 45);
-[#{ action: "open_spread", spread: spread }]
+// Open options (resolved — from build_strategy)
+let strat = ctx.build_strategy([
+    #{ side: "short", option_type: "put", delta: 0.30, dte: 45 },
+]);
+if strat != () {
+    [#{ action: "open_options", legs: strat.legs }]
+}
 
 // Open stock
 [#{ action: "open_stock", side: "long", qty: 100 }]
@@ -283,6 +279,4 @@ Undeclared indicators return () at runtime.
 ## Examples
 
 See `scripts/strategies/` for complete examples:
-- `short_put.rhai` — Simple options selling
-- `iron_condor.rhai` — Multi-leg spread with strategy builder
-- `wheel.rhai` — Stateful strategy with state machine
+- `wheel.rhai` — Stateful wheel strategy with state machine

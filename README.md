@@ -13,7 +13,7 @@ A high-performance options and stock backtesting engine exposed as an [MCP](http
 
 ### Write Custom Strategies
 
-Describe a strategy in plain English and Claude generates a [Rhai](https://rhai.rs/) script that runs against historical data. Define entry logic, exit rules, position sizing, and stateful multi-phase strategies in a single script — or use one of the built-in strategy scripts (`short_put`, `iron_condor`, `wheel`) with parameter injection.
+Describe a strategy in plain English and Claude generates a [Rhai](https://rhai.rs/) script that runs against historical data. Define entry logic, exit rules, position sizing, and stateful multi-phase strategies in a single script — or use the built-in wheel strategy script with parameter injection.
 
 ```
 "Write a strategy that sells puts on SPY when VIX > 20 and RSI < 30, with a 50% stop loss"
@@ -144,13 +144,11 @@ fn config() {
 
 fn on_bar(ctx) {
     if ctx.position_count() >= 3 { return []; }
-    let put = ctx.find_option("put", 0.30, 45);
-    if put == () { return []; }
-    [#{ action: "open_options", legs: [#{
-        side: "short", option_type: "put",
-        strike: put.strike, expiration: put.expiration,
-        bid: put.bid, ask: put.ask,
-    }]}]
+    let strat = ctx.build_strategy([
+        #{ side: "short", option_type: "put", delta: 0.30, dte: 45 },
+    ]);
+    if strat == () { return []; }
+    [#{ action: "open_options", legs: strat.legs }]
 }
 
 fn on_exit_check(ctx, pos) {
@@ -159,7 +157,7 @@ fn on_exit_check(ctx, pos) {
 }
 ```
 
-Three built-in strategy scripts (`short_put`, `iron_condor`, `wheel`) are included and parameterized via constant injection.
+A built-in wheel strategy script is included and parameterized via constant injection.
 
 ### 67 Indicators and Signal DSL
 

@@ -13,10 +13,23 @@ use std::fmt::Write;
 pub fn inject_as_const(source: &str, params: &HashMap<String, serde_json::Value>) -> String {
     let mut preamble = String::new();
     for (key, value) in params {
+        // Validate key is a valid Rhai identifier (prevents code injection)
+        if !is_valid_identifier(key) {
+            continue;
+        }
         let rhai_val = json_to_rhai_literal(value);
         let _ = writeln!(preamble, "const {key} = {rhai_val};");
     }
     format!("{preamble}\n{source}")
+}
+
+/// Check if a string is a valid Rhai identifier (ASCII alphanumeric + underscore, not starting with digit).
+fn is_valid_identifier(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// Inject parameters into an existing Rhai `Scope` as variables.
@@ -62,7 +75,16 @@ fn json_to_rhai_literal(value: &serde_json::Value) -> String {
                 format!("{s}.0")
             }
         }
-        serde_json::Value::String(s) => format!("\"{s}\""),
+        serde_json::Value::String(s) => {
+            // Escape special characters for Rhai string literals
+            let escaped = s
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n")
+                .replace('\r', "\\r")
+                .replace('\t', "\\t");
+            format!("\"{escaped}\"")
+        }
         serde_json::Value::Array(arr) => {
             let items: Vec<String> = arr.iter().map(json_to_rhai_literal).collect();
             format!("[{}]", items.join(", "))
