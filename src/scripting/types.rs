@@ -584,7 +584,12 @@ impl BarContext {
                 if let Ok(i) = val.as_int() {
                     param_vec.push(IndicatorParam::Int(i));
                 } else if let Ok(f) = val.as_float() {
-                    param_vec.push(IndicatorParam::Int((f * 10.0) as i64));
+                    // Scale to integer: accel params use *100 (0.02→2), others use *10 (2.0→20)
+                    let scaled = match *key {
+                        "accel" | "max_accel" => (f * 100.0) as i64,
+                        _ => (f * 10.0) as i64,
+                    };
+                    param_vec.push(IndicatorParam::Int(scaled));
                 }
             }
         }

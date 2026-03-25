@@ -238,20 +238,72 @@ fn compute_indicator(
 
         // ── MACD: params = [fast, slow, signal] or defaults [12, 26, 9] ─
         "macd_line" | "macd_signal" | "macd_hist" => {
-            // rust_ti::standard_indicators::bulk::macd uses fixed 12/26/9 params
-            if n < 34 {
+            let fast = period;
+            let slow = param2.unwrap_or(26);
+            let signal = param3.unwrap_or(9);
+
+            // rust_ti::macd only supports fixed 12/26/9. Use it when defaults match.
+            if fast == 12 && slow == 26 && signal == 9 && n >= 34 {
+                let macd_values = sti::macd(closes);
+                let extracted: Vec<f64> = macd_values
+                    .iter()
+                    .map(|t| match name {
+                        "macd_line" => t.0,
+                        "macd_signal" => t.1,
+                        _ => t.2,
+                    })
+                    .collect();
+                return Ok(pad_front(&extracted, n));
+            }
+
+            // Custom params: compute via EMA difference
+            let warmup = slow.max(fast);
+            if warmup == 0 || n < warmup {
                 return Ok(vec![f64::NAN; n]);
             }
-            let macd_values = sti::macd(closes);
-            let extracted: Vec<f64> = macd_values
-                .iter()
-                .map(|t| match name {
-                    "macd_line" => t.0,
-                    "macd_signal" => t.1,
-                    _ => t.2, // macd_hist
-                })
-                .collect();
-            Ok(pad_front(&extracted, n))
+            let fast_ema = pad_front(&sti::exponential_moving_average(closes, fast), n);
+            let slow_ema = pad_front(&sti::exponential_moving_average(closes, slow), n);
+
+            let mut line = vec![f64::NAN; n];
+            for i in 0..n {
+                if !fast_ema[i].is_nan() && !slow_ema[i].is_nan() {
+                    line[i] = fast_ema[i] - slow_ema[i];
+                }
+            }
+
+            if name == "macd_line" {
+                return Ok(line);
+            }
+
+            // Signal = EMA of MACD line
+            let valid_line: Vec<f64> = line.iter().copied().filter(|v| !v.is_nan()).collect();
+            if valid_line.len() < signal {
+                return Ok(vec![f64::NAN; n]);
+            }
+            let sig_ema = sti::exponential_moving_average(&valid_line, signal);
+            let mut sig = vec![f64::NAN; n];
+            // Align signal EMA to the end of the line
+            let first_valid = line.iter().position(|v| !v.is_nan()).unwrap_or(0);
+            let offset = first_valid + signal - 1;
+            for (i, &v) in sig_ema.iter().enumerate() {
+                let idx = offset + i;
+                if idx < n {
+                    sig[idx] = v;
+                }
+            }
+
+            if name == "macd_signal" {
+                return Ok(sig);
+            }
+
+            // Histogram = line - signal
+            let mut hist = vec![f64::NAN; n];
+            for i in 0..n {
+                if !line[i].is_nan() && !sig[i].is_nan() {
+                    hist[i] = line[i] - sig[i];
+                }
+            }
+            Ok(hist)
         }
 
         // ── Bollinger Bands: params = [period, std_mult*10] ──────────────
@@ -300,26 +352,15 @@ fn compute_indicator(
                 return Ok(padded_raw);
             }
             let smoothed_vals = sti::simple_moving_average(tail, d_smooth);
+            let smoothed_start = start + d_smooth - 1;
             let mut result = vec![f64::NAN; n];
-            let offset = n - smoothed_vals.len() - (n - start - tail.len());
             for (i, &v) in smoothed_vals.iter().enumerate() {
-                let idx = start + (tail.len() - smoothed_vals.len()) + i;
+                let idx = smoothed_start + i;
                 if idx < n {
                     result[idx] = v;
                 }
             }
-            // Simpler: just pad the smoothed values relative to start
-            let smoothed_start = start + d_smooth - 1;
-            let mut result2 = vec![f64::NAN; n];
-            for (i, &v) in smoothed_vals.iter().enumerate() {
-                let idx = smoothed_start + i;
-                if idx < n {
-                    result2[idx] = v;
-                }
-            }
-            let _ = result;
-            let _ = offset;
-            Ok(result2)
+            Ok(result)
         }
 
         // ── CCI: Commodity Channel Index ─────────────────────────────────
