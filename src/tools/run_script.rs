@@ -65,12 +65,8 @@ pub fn resolve_script_source(params: &RunScriptParams) -> Result<String> {
         }
     };
 
-    // Inject params as const declarations
-    if params.params.is_empty() {
-        Ok(base_source)
-    } else {
-        Ok(stdlib::inject_as_const(&base_source, &params.params))
-    }
+    // Inject params as const declarations (always called — even empty maps are safe)
+    Ok(stdlib::inject_as_const(&base_source, &params.params))
 }
 
 /// Load a strategy script from `scripts/strategies/{name}.rhai`.

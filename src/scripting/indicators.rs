@@ -2,7 +2,7 @@
 //!
 //! Indicators are declared in `config().data.indicators` and/or auto-scanned
 //! from the compiled AST. All values are batch-computed before the simulation
-//! loop starts. No lazy fallback — undeclared indicators produce a runtime error.
+//! loop starts. Undeclared indicators return `()` at runtime.
 
 use std::collections::HashMap;
 

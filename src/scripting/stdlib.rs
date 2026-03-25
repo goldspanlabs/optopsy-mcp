@@ -8,8 +8,8 @@ use std::fmt::Write;
 /// Used for one-shot `run_script` calls. For sweep iterations, use
 /// `inject_into_scope` instead (avoids recompilation).
 ///
-/// Optional parameters not provided by the caller are injected as `const X = ();`
-/// so scripts can use `if X != () { ... }` without runtime errors.
+/// Callers must pass `null` for optional parameters they want to leave unset —
+/// this injects `const X = ();` so scripts can use `if X != () { ... }`.
 pub fn inject_as_const(source: &str, params: &HashMap<String, serde_json::Value>) -> String {
     let mut preamble = String::new();
     for (key, value) in params {
