@@ -152,7 +152,11 @@ async fn wheel_script_compiles_and_configures() {
             .as_str(),
         "SPY"
     );
-    let capital = config_map.get("capital").unwrap().as_float().unwrap();
+    let capital_val = config_map.get("capital").unwrap();
+    let capital = capital_val
+        .as_float()
+        .or_else(|_| capital_val.as_int().map(|i| i as f64))
+        .unwrap();
     assert!(
         (capital - 100_000.0).abs() < f64::EPSILON,
         "Expected 100000.0, got {capital}"

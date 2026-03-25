@@ -67,13 +67,8 @@ fn json_to_rhai_literal(value: &serde_json::Value) -> String {
         serde_json::Value::Null => "()".to_string(),
         serde_json::Value::Bool(b) => b.to_string(),
         serde_json::Value::Number(n) => {
-            let s = n.to_string();
-            // Ensure floats have a decimal point for Rhai
-            if s.contains('.') {
-                s
-            } else {
-                format!("{s}.0")
-            }
+            // Preserve int vs float distinction for Rhai type system
+            n.to_string()
         }
         serde_json::Value::String(s) => {
             // Escape special characters for Rhai string literals
