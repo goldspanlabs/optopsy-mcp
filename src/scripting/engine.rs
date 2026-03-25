@@ -990,6 +990,80 @@ pub trait DataLoader: Send + Sync {
     ) -> Result<Vec<OhlcvBar>>;
 }
 
+/// `DataLoader` backed by `CachedStore` — the production implementation.
+///
+/// Resolves symbol → Parquet path via `CachedStore::find_ohlcv`, loads the
+/// DataFrame via `stock_sim::load_ohlcv_df`, and converts to `Vec<OhlcvBar>`.
+pub struct CachedDataLoader {
+    pub cache: Arc<crate::data::cache::CachedStore>,
+}
+
+#[async_trait::async_trait]
+impl DataLoader for CachedDataLoader {
+    async fn load_ohlcv(
+        &self,
+        symbol: &str,
+        start: Option<NaiveDate>,
+        end: Option<NaiveDate>,
+        _interval: Interval,
+    ) -> Result<Vec<OhlcvBar>> {
+        let cache = Arc::clone(&self.cache);
+        let symbol = symbol.to_uppercase();
+        let start = start;
+        let end = end;
+
+        // Parquet I/O is blocking — run on a blocking thread
+        tokio::task::spawn_blocking(move || {
+            let path = cache.find_ohlcv(&symbol).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No OHLCV data found for '{symbol}'. \
+                         Searched: etf/, stocks/, futures/, indices/ in {}",
+                    cache.cache_dir().display()
+                )
+            })?;
+
+            let path_str = path.to_string_lossy().to_string();
+            let df = crate::engine::stock_sim::load_ohlcv_df(&path_str, start, end)?;
+
+            ohlcv_bars_from_df(&df)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Task join error: {e}"))?
+    }
+}
+
+/// Convert a Polars DataFrame (with OHLCV columns) to `Vec<OhlcvBar>`.
+///
+/// Reuses `stock_sim::bars_from_df` for datetime handling, then converts
+/// `Bar` → `OhlcvBar` with volume (which the stock sim Bar struct lacks).
+fn ohlcv_bars_from_df(df: &polars::prelude::DataFrame) -> Result<Vec<OhlcvBar>> {
+    // Use the existing bars_from_df for datetime parsing (handles date vs datetime columns)
+    let stock_bars = crate::engine::stock_sim::bars_from_df(df)?;
+
+    // Extract volume column if present
+    let volumes: Option<Vec<f64>> = df
+        .column("volume")
+        .ok()
+        .and_then(|c| c.f64().ok())
+        .map(|ca| ca.into_no_null_iter().collect());
+
+    Ok(stock_bars
+        .into_iter()
+        .enumerate()
+        .map(|(i, bar)| OhlcvBar {
+            datetime: bar.datetime,
+            open: bar.open,
+            high: bar.high,
+            low: bar.low,
+            close: bar.close,
+            volume: volumes
+                .as_ref()
+                .and_then(|v| v.get(i).copied())
+                .unwrap_or(0.0),
+        })
+        .collect())
+}
+
 // ---------------------------------------------------------------------------
 // Result type
 // ---------------------------------------------------------------------------

@@ -24,7 +24,7 @@ use tokio::sync::RwLock;
 use crate::data::cache::{validate_path_segment, CachedStore};
 use crate::data::DataStore;
 use crate::engine::types::{BacktestParams, EPOCH_DAYS_CE_OFFSET};
-use crate::signals::registry::{collect_cross_symbols, SignalSpec};
+use crate::signals::registry::{collect_cross_symbols, extract_formula_cross_symbols, SignalSpec};
 use crate::tools;
 use crate::tools::response_types::{
     AggregatePricesResponse, BacktestResponse, BayesianOptimizeResponse, BenchmarkAnalysisResponse,
@@ -149,6 +149,7 @@ impl OptopsyServer {
         exit_signal: Option<&SignalSpec>,
         entry_signals: &[SignalSpec],
         exit_signals: &[SignalSpec],
+        extra_formulas: &[String],
     ) -> Result<HashMap<String, String>, String> {
         let mut all_symbols = std::collections::HashSet::new();
         if let Some(sig) = entry_signal {
@@ -162,6 +163,9 @@ impl OptopsyServer {
         }
         for sig in exit_signals {
             all_symbols.extend(collect_cross_symbols(sig));
+        }
+        for formula in extra_formulas {
+            all_symbols.extend(extract_formula_cross_symbols(formula));
         }
 
         let mut paths = HashMap::new();
@@ -239,8 +243,13 @@ impl OptopsyServer {
             None
         };
 
-        let cross_ohlcv_paths =
-            self.resolve_cross_ohlcv_paths(entry_signal.as_ref(), exit_signal.as_ref(), &[], &[])?;
+        let cross_ohlcv_paths = self.resolve_cross_ohlcv_paths(
+            entry_signal.as_ref(),
+            exit_signal.as_ref(),
+            &[],
+            &[],
+            &[],
+        )?;
 
         let leg_deltas = resolve_leg_deltas(leg_deltas, &strategy)?;
 
@@ -308,6 +317,7 @@ impl OptopsyServer {
         let cross_ohlcv_paths = self.resolve_cross_ohlcv_paths(
             base.entry_signal.as_ref(),
             base.exit_signal.as_ref(),
+            &[],
             &[],
             &[],
         )?;
@@ -1614,6 +1624,43 @@ impl OptopsyServer {
                 )
                 .await
                 .map_err(tool_err)
+            }
+            .await,
+        )
+    }
+
+    /// Run a Rhai backtest script — unified scripting interface for backtesting.
+    ///
+    /// **When to use**: Execute custom backtest strategies defined as Rhai scripts.
+    /// Scripts define `config()`, `on_bar(ctx)`, and optional callbacks
+    /// (`on_exit_check`, `on_position_opened`, `on_position_closed`).
+    ///
+    /// **Two modes**:
+    /// - **Inline script**: Pass `script` with the full Rhai source code
+    /// - **Stdlib script**: Pass `stdlib` (e.g., `"short_put"`) with `params` for customization
+    ///
+    /// **Example call** (inline stock backtest):
+    /// ```json
+    /// {
+    ///   "script": "fn config() { #{ symbol: \"SPY\", capital: 50000.0 } }\nfn on_bar(ctx) { if ctx.rsi(14) < 30 { [#{ action: \"open_stock\", side: \"long\", qty: 100 }] } else { [] } }",
+    ///   "params": {}
+    /// }
+    /// ```
+    ///
+    /// **Output**: Trade log, equity curve, performance metrics (same format as other backtest tools)
+    #[tool(name = "run_script", annotations(read_only_hint = true))]
+    async fn run_script(
+        &self,
+        Parameters(params): Parameters<tools::run_script::RunScriptParams>,
+    ) -> SanitizedResult<tools::run_script::RunScriptResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("run_script", e))?;
+                handlers::run_script::execute(self, params)
+                    .await
+                    .map_err(tool_err)
             }
             .await,
         )
