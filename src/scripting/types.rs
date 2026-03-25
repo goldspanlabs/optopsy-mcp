@@ -554,27 +554,41 @@ impl BarContext {
     }
 
     // --- Multi-param indicator overloads ---
-    pub fn macd_line_custom(&mut self, _fast: i64, _slow: i64, _signal: i64) -> Dynamic {
-        // TODO: implement with multi-param IndicatorKey
-        Dynamic::UNIT
+
+    fn indicator_value_multi(&self, name: &str, params: &[i64]) -> Dynamic {
+        use super::indicators::{IndicatorKey, IndicatorParam};
+        let key = IndicatorKey {
+            name: name.to_string(),
+            params: params.iter().map(|&p| IndicatorParam::Int(p)).collect(),
+        };
+        match self.indicator_store.get(&key, self.bar_idx) {
+            Some(v) if v.is_nan() => Dynamic::UNIT,
+            Some(v) => Dynamic::from(v),
+            None => Dynamic::UNIT,
+        }
     }
-    pub fn macd_signal_custom(&mut self, _fast: i64, _slow: i64, _signal: i64) -> Dynamic {
-        Dynamic::UNIT
+
+    pub fn macd_line_custom(&mut self, fast: i64, slow: i64, signal: i64) -> Dynamic {
+        self.indicator_value_multi("macd_line", &[fast, slow, signal])
     }
-    pub fn macd_hist_custom(&mut self, _fast: i64, _slow: i64, _signal: i64) -> Dynamic {
-        Dynamic::UNIT
+    pub fn macd_signal_custom(&mut self, fast: i64, slow: i64, signal: i64) -> Dynamic {
+        self.indicator_value_multi("macd_signal", &[fast, slow, signal])
     }
-    pub fn bbands_upper_custom(&mut self, _period: i64, _std_dev: f64) -> Dynamic {
-        Dynamic::UNIT
+    pub fn macd_hist_custom(&mut self, fast: i64, slow: i64, signal: i64) -> Dynamic {
+        self.indicator_value_multi("macd_hist", &[fast, slow, signal])
     }
-    pub fn bbands_mid_custom(&mut self, _period: i64, _std_dev: f64) -> Dynamic {
-        Dynamic::UNIT
+    pub fn bbands_upper_custom(&mut self, period: i64, std_dev: f64) -> Dynamic {
+        // Store std_dev * 10 as integer for hashing
+        self.indicator_value_multi("bbands_upper", &[period, (std_dev * 10.0) as i64])
     }
-    pub fn bbands_lower_custom(&mut self, _period: i64, _std_dev: f64) -> Dynamic {
-        Dynamic::UNIT
+    pub fn bbands_mid_custom(&mut self, period: i64, _std_dev: f64) -> Dynamic {
+        self.indicator_value_multi("bbands_mid", &[period])
     }
-    pub fn stochastic_custom(&mut self, _k_period: i64, _d_smoothing: i64) -> Dynamic {
-        Dynamic::UNIT
+    pub fn bbands_lower_custom(&mut self, period: i64, std_dev: f64) -> Dynamic {
+        self.indicator_value_multi("bbands_lower", &[period, (std_dev * 10.0) as i64])
+    }
+    pub fn stochastic_custom(&mut self, k_period: i64, d_smoothing: i64) -> Dynamic {
+        self.indicator_value_multi("stochastic", &[k_period, d_smoothing])
     }
 
     // --- Options chain ---

@@ -270,6 +270,70 @@ mod tests {
     }
 
     #[test]
+    fn test_indicator_store_macd() {
+        // MACD needs enough data for the slow EMA warmup (26 bars default)
+        let prices: Vec<f64> = (0..50).map(|i| 100.0 + (i as f64) * 0.3).collect();
+        let bars = make_bars(&prices);
+        let store = IndicatorStore::build(&["macd_line".to_string()], &bars).unwrap();
+
+        let key = IndicatorKey {
+            name: "macd_line".to_string(),
+            params: vec![
+                IndicatorParam::Int(12),
+                IndicatorParam::Int(26),
+                IndicatorParam::Int(9),
+            ],
+        };
+
+        // First 25 bars should be NaN (slow EMA warmup)
+        assert!(store.get(&key, 0).unwrap().is_nan());
+        // Bar 25+ should have values
+        let val = store.get(&key, 30).unwrap();
+        assert!(!val.is_nan(), "MACD at bar 30 should not be NaN");
+    }
+
+    #[test]
+    fn test_indicator_store_bbands() {
+        let prices: Vec<f64> = (0..30).map(|i| 100.0 + (i as f64).sin() * 5.0).collect();
+        let bars = make_bars(&prices);
+        let store = IndicatorStore::build(
+            &["bbands_upper:20".to_string(), "bbands_lower:20".to_string()],
+            &bars,
+        )
+        .unwrap();
+
+        let key_upper = IndicatorKey {
+            name: "bbands_upper".to_string(),
+            params: vec![IndicatorParam::Int(20), IndicatorParam::Int(20)],
+        };
+        let key_lower = IndicatorKey {
+            name: "bbands_lower".to_string(),
+            params: vec![IndicatorParam::Int(20), IndicatorParam::Int(20)],
+        };
+
+        let upper = store.get(&key_upper, 25).unwrap();
+        let lower = store.get(&key_lower, 25).unwrap();
+        assert!(!upper.is_nan());
+        assert!(!lower.is_nan());
+        assert!(upper > lower, "Upper band should be above lower band");
+    }
+
+    #[test]
+    fn test_indicator_store_obv() {
+        let bars = make_bars(&[10.0, 11.0, 10.5, 12.0, 11.5]);
+        let store = IndicatorStore::build(&["obv".to_string()], &bars).unwrap();
+
+        let key = IndicatorKey {
+            name: "obv".to_string(),
+            params: vec![],
+        };
+
+        // OBV has no warmup — all bars should have values
+        let val = store.get(&key, 0).unwrap();
+        assert!(!val.is_nan(), "OBV at bar 0 should not be NaN");
+    }
+
+    #[test]
     fn test_indicator_store_lookback() {
         let bars = make_bars(&[10.0, 11.0, 12.0, 13.0, 14.0]);
         let store = IndicatorStore::build(&["sma:3".to_string()], &bars).unwrap();
