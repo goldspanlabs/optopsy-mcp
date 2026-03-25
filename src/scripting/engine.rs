@@ -65,7 +65,40 @@ pub async fn run_script_backtest(
 
     // 6. Run main simulation loop
     let price_history = Arc::new(bars);
-    let cross_symbol_data = Arc::new(HashMap::new()); // TODO: load cross-symbol data
+    // Load cross-symbol data (forward-filled to primary timeline)
+    let cross_symbol_data = if config.cross_symbols.is_empty() {
+        Arc::new(HashMap::new())
+    } else {
+        let mut cross_map: HashMap<String, Vec<CrossSymbolBar>> = HashMap::new();
+        let primary_dates: Vec<NaiveDate> =
+            price_history.iter().map(|b| b.datetime.date()).collect();
+
+        for cross_sym in &config.cross_symbols {
+            match data_loader
+                .load_ohlcv(
+                    cross_sym,
+                    config.start_date,
+                    config.end_date,
+                    config.interval,
+                )
+                .await
+            {
+                Ok(cross_bars) => {
+                    let filled = forward_fill_cross_symbol(&primary_dates, &cross_bars);
+                    cross_map.insert(cross_sym.to_uppercase(), filled);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        symbol = cross_sym,
+                        error = %e,
+                        "Failed to load cross-symbol data — ctx.price_of() will return ()"
+                    );
+                }
+            }
+        }
+
+        Arc::new(cross_map)
+    };
 
     // Load options data if needed + build PriceTable for MTM
     let options_df: Option<Arc<polars::prelude::DataFrame>>;
@@ -1431,6 +1464,72 @@ impl DataLoader for CachedDataLoader {
 ///
 /// Reuses `stock_sim::bars_from_df` for datetime handling, then converts
 /// `Bar` → `OhlcvBar` with volume (which the stock sim Bar struct lacks).
+/// Forward-fill cross-symbol data to align with primary timeline dates.
+///
+/// For each primary date, uses the last available cross-symbol bar on or before that date.
+/// If no data exists before the first primary date, backfills with the first available bar.
+fn forward_fill_cross_symbol(
+    primary_dates: &[NaiveDate],
+    cross_bars: &[OhlcvBar],
+) -> Vec<CrossSymbolBar> {
+    if cross_bars.is_empty() || primary_dates.is_empty() {
+        return vec![
+            CrossSymbolBar {
+                open: 0.0,
+                high: 0.0,
+                low: 0.0,
+                close: 0.0,
+                volume: 0.0,
+            };
+            primary_dates.len()
+        ];
+    }
+
+    // Build date → bar index map for cross data
+    let mut cross_by_date: std::collections::BTreeMap<NaiveDate, usize> =
+        std::collections::BTreeMap::new();
+    for (i, bar) in cross_bars.iter().enumerate() {
+        cross_by_date.insert(bar.datetime.date(), i);
+    }
+
+    let mut result = Vec::with_capacity(primary_dates.len());
+    let mut last_bar_idx: Option<usize> = None;
+
+    for &date in primary_dates {
+        // Find the last cross bar on or before this date
+        if let Some((&_d, &idx)) = cross_by_date.range(..=date).next_back() {
+            last_bar_idx = Some(idx);
+        }
+
+        let bar = last_bar_idx
+            .map(|idx| {
+                let b = &cross_bars[idx];
+                CrossSymbolBar {
+                    open: b.open,
+                    high: b.high,
+                    low: b.low,
+                    close: b.close,
+                    volume: b.volume,
+                }
+            })
+            .unwrap_or_else(|| {
+                // Backfill with first available bar
+                let b = &cross_bars[0];
+                CrossSymbolBar {
+                    open: b.open,
+                    high: b.high,
+                    low: b.low,
+                    close: b.close,
+                    volume: b.volume,
+                }
+            });
+
+        result.push(bar);
+    }
+
+    result
+}
+
 fn ohlcv_bars_from_df(df: &polars::prelude::DataFrame) -> Result<Vec<OhlcvBar>> {
     // Use the existing bars_from_df for datetime parsing (handles date vs datetime columns)
     let stock_bars = crate::engine::stock_sim::bars_from_df(df)?;
