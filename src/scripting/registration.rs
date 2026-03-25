@@ -147,4 +147,12 @@ fn register_global_helpers(engine: &mut Engine) {
     });
     engine.register_fn("floor", |x: f64| x.floor());
     engine.register_fn("ceil", |x: f64| x.ceil());
+
+    // as_leg(side) helper for find_option result maps
+    // Converts #{ strike, bid, ask, delta, expiration, dte } → adds "side" and "option_type" keys
+    engine.register_fn("as_leg", |map: rhai::Map, side: String| -> rhai::Map {
+        let mut result = map;
+        result.insert("side".into(), rhai::Dynamic::from(side));
+        result
+    });
 }

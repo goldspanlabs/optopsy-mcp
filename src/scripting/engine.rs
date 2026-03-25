@@ -67,15 +67,27 @@ pub async fn run_script_backtest(
     let price_history = Arc::new(bars);
     let cross_symbol_data = Arc::new(HashMap::new()); // TODO: load cross-symbol data
 
-    // Load options data if needed
-    let options_df: Option<Arc<polars::prelude::DataFrame>> = if config.needs_options {
+    // Load options data if needed + build PriceTable for MTM
+    let options_df: Option<Arc<polars::prelude::DataFrame>>;
+    let price_table: Option<Arc<crate::engine::sim_types::PriceTable>>;
+    let date_index: Option<Arc<crate::engine::sim_types::DateIndex>>;
+
+    if config.needs_options {
         let df = data_loader
             .load_options(&config.symbol, config.start_date, config.end_date)
             .await?;
-        Some(Arc::new(df))
+        let (pt, _trading_days, di) = crate::engine::price_table::build_price_table(&df)?;
+        price_table = Some(Arc::new(pt));
+        date_index = Some(Arc::new(di));
+        options_df = Some(Arc::new(df));
     } else {
-        None
-    };
+        options_df = None;
+        price_table = None;
+        date_index = None;
+    }
+
+    // Last-known prices for data-gap fill pricing (options MTM)
+    let mut last_known = crate::engine::sim_types::LastKnown::new();
 
     let has_on_exit_check = has_fn(&ast, "on_exit_check", 2);
     let has_on_position_opened = has_fn(&ast, "on_position_opened", 2);
@@ -324,7 +336,64 @@ pub async fn run_script_backtest(
                                 }
                             }
                         }
-                        // OpenOptions handled later (needs options data integration)
+                        ScriptAction::OpenOptions { legs, qty } => {
+                            // Resolve unresolved legs via find_option pipeline
+                            let resolved = resolve_option_legs(&legs, &options_df, today, &config);
+
+                            if resolved.is_empty() {
+                                continue; // no valid legs found
+                            }
+
+                            // Compute entry cost from resolved legs
+                            let (entry_cost, script_legs, expiration) =
+                                compute_options_entry(&resolved, &config);
+
+                            let effective_qty = qty.unwrap_or(1);
+
+                            let pos = ScriptPosition {
+                                id: next_id,
+                                entry_date: today,
+                                inner: ScriptPositionInner::Options {
+                                    legs: script_legs,
+                                    expiration,
+                                    secondary_expiration: None,
+                                    multiplier: config.multiplier,
+                                },
+                                entry_cost: entry_cost
+                                    * effective_qty as f64
+                                    * config.multiplier as f64,
+                                unrealized_pnl: 0.0,
+                                days_held: 0,
+                                source: "script".to_string(),
+                                implicit: false,
+                            };
+                            next_id += 1;
+                            last_entry_date = Some(today);
+
+                            if has_on_position_opened {
+                                let ctx = build_bar_context(
+                                    bar,
+                                    bar_idx,
+                                    &positions,
+                                    realized_equity,
+                                    &indicator_store,
+                                    &price_history,
+                                    &cross_symbol_data,
+                                    &config,
+                                    &options_df,
+                                );
+                                let pos_dyn = Dynamic::from(pos.clone());
+                                let _ = call_fn_persistent(
+                                    &engine,
+                                    &mut scope,
+                                    &ast,
+                                    "on_position_opened",
+                                    (ctx, pos_dyn),
+                                );
+                            }
+
+                            positions.push(pos);
+                        }
                         _ => {}
                     }
                 }
@@ -341,22 +410,51 @@ pub async fn run_script_backtest(
             pos.days_held = (today - pos.entry_date).num_days();
         }
 
-        // Mark-to-market: compute unrealized P&L for stock positions
+        // Update last_known prices for data-gap fill pricing
+        if let (Some(pt), Some(di)) = (&price_table, &date_index) {
+            crate::engine::positions::update_last_known(pt, di, today, &mut last_known);
+        }
+
+        // Mark-to-market all open positions
         let mut unrealized = 0.0;
         for pos in &mut positions {
-            match &pos.inner {
+            match &mut pos.inner {
                 ScriptPositionInner::Stock {
                     side,
                     qty,
                     entry_price,
                 } => {
-                    let pnl = (bar.close - entry_price) * *qty as f64 * side.multiplier();
+                    let pnl = (bar.close - *entry_price) * *qty as f64 * side.multiplier();
                     pos.unrealized_pnl = pnl;
                     unrealized += pnl;
                 }
-                ScriptPositionInner::Options { .. } => {
-                    // TODO: Options MTM requires PriceTable lookup
-                    unrealized += pos.unrealized_pnl;
+                ScriptPositionInner::Options {
+                    legs, multiplier, ..
+                } => {
+                    // MTM each leg using PriceTable / last_known
+                    let mut pos_pnl = 0.0;
+                    for leg in legs.iter_mut() {
+                        let current = lookup_option_price(
+                            &price_table,
+                            &last_known,
+                            today,
+                            leg.expiration,
+                            leg.strike,
+                            leg.option_type,
+                            leg.side,
+                            &config.slippage,
+                        );
+                        if let Some(price) = current {
+                            leg.current_price = price;
+                            let leg_pnl = (price - leg.entry_price)
+                                * leg.side.multiplier()
+                                * leg.qty as f64
+                                * *multiplier as f64;
+                            pos_pnl += leg_pnl;
+                        }
+                    }
+                    pos.unrealized_pnl = pos_pnl;
+                    unrealized += pos_pnl;
                 }
             }
         }
@@ -800,6 +898,147 @@ fn build_bar_context(
     }
 }
 
+/// A resolved option leg — result of resolving unresolved legs via filter pipeline.
+struct ResolvedLeg {
+    side: Side,
+    option_type: crate::engine::types::OptionType,
+    strike: f64,
+    expiration: NaiveDate,
+    bid: f64,
+    ask: f64,
+    delta: f64,
+}
+
+/// Resolve unresolved option legs via the filter pipeline.
+/// Returns a Vec of resolved legs. Unresolved legs are queried via find_option.
+fn resolve_option_legs(
+    legs: &[LegSpec],
+    options_df: &Option<Arc<polars::prelude::DataFrame>>,
+    today: NaiveDate,
+    config: &ScriptConfig,
+) -> Vec<ResolvedLeg> {
+    use crate::engine::filters;
+
+    let df = match options_df {
+        Some(df) => df.as_ref(),
+        None => return vec![],
+    };
+
+    legs.iter()
+        .filter_map(|leg| match leg {
+            LegSpec::Resolved {
+                side,
+                option_type,
+                strike,
+                expiration,
+                bid,
+                ask,
+            } => Some(ResolvedLeg {
+                side: *side,
+                option_type: *option_type,
+                strike: *strike,
+                expiration: *expiration,
+                bid: *bid,
+                ask: *ask,
+                delta: 0.0, // not available for pre-resolved legs
+            }),
+            LegSpec::Unresolved {
+                side,
+                option_type,
+                delta,
+                dte,
+            } => {
+                let opt_code = match option_type {
+                    crate::engine::types::OptionType::Call => "c",
+                    crate::engine::types::OptionType::Put => "p",
+                };
+                let target = crate::engine::types::TargetRange {
+                    target: *delta,
+                    min: (*delta - 0.10).max(0.01),
+                    max: (*delta + 0.10).min(1.0),
+                };
+                let dte_min = (*dte - 15).max(1);
+                let dte_max = *dte + 15;
+
+                let filtered =
+                    filters::filter_leg_candidates(df, opt_code, dte_max, dte_min, 0.05).ok()?;
+                let today_filtered = super::types::filter_to_date(&filtered, today)?;
+                if today_filtered.height() == 0 {
+                    return None;
+                }
+                let selected = filters::select_closest_delta(today_filtered, &target).ok()?;
+                if selected.height() == 0 {
+                    return None;
+                }
+
+                // Extract first row
+                let get_f64 = |col: &str| -> f64 {
+                    selected
+                        .column(col)
+                        .ok()
+                        .and_then(|c| c.f64().ok())
+                        .and_then(|ca| ca.get(0))
+                        .unwrap_or(0.0)
+                };
+
+                let strike = get_f64("strike");
+                let bid = get_f64("bid");
+                let ask = get_f64("ask");
+                let found_delta = get_f64("delta");
+
+                // Get expiration
+                let expiration = super::types::row_to_expiration_date(&selected, 0)?;
+
+                Some(ResolvedLeg {
+                    side: *side,
+                    option_type: *option_type,
+                    strike,
+                    expiration,
+                    bid,
+                    ask,
+                    delta: found_delta,
+                })
+            }
+        })
+        .collect()
+}
+
+/// Compute entry cost and build ScriptPositionLeg vec from resolved legs.
+/// Returns (net_entry_cost_per_contract, legs, primary_expiration).
+fn compute_options_entry(
+    resolved: &[ResolvedLeg],
+    config: &ScriptConfig,
+) -> (f64, Vec<ScriptPositionLeg>, NaiveDate) {
+    use crate::engine::pricing::fill_price;
+
+    let mut net_cost = 0.0;
+    let mut legs = Vec::new();
+    let mut primary_exp = NaiveDate::from_ymd_opt(2099, 1, 1).unwrap();
+
+    for leg in resolved {
+        let entry_price = fill_price(leg.bid, leg.ask, leg.side, &config.slippage);
+        // Long side pays (debit), short side receives (credit)
+        net_cost += entry_price * leg.side.multiplier();
+
+        if leg.expiration < primary_exp {
+            primary_exp = leg.expiration;
+        }
+
+        legs.push(ScriptPositionLeg {
+            strike: leg.strike,
+            option_type: leg.option_type,
+            side: leg.side,
+            expiration: leg.expiration,
+            entry_price,
+            current_price: entry_price, // starts at entry
+            delta: leg.delta,
+            qty: 1,
+        });
+    }
+
+    (net_cost, legs, primary_exp)
+}
+
 /// Compute P&L for closing a position at the current bar's prices.
 fn compute_close_pnl(pos: &ScriptPosition, bar: &OhlcvBar) -> f64 {
     match &pos.inner {
@@ -809,11 +1048,46 @@ fn compute_close_pnl(pos: &ScriptPosition, bar: &OhlcvBar) -> f64 {
             entry_price,
         } => (bar.close - entry_price) * *qty as f64 * side.multiplier(),
         ScriptPositionInner::Options { .. } => {
-            // TODO: options close P&L requires PriceTable lookup
-            // For now use unrealized_pnl as approximation
+            // Use the latest MTM (updated each bar in Phase C)
             pos.unrealized_pnl
         }
     }
+}
+
+/// Look up current option price from PriceTable or LastKnown fallback.
+/// Returns the fill price under the configured slippage model, or None.
+fn lookup_option_price(
+    price_table: &Option<Arc<crate::engine::sim_types::PriceTable>>,
+    last_known: &crate::engine::sim_types::LastKnown,
+    today: NaiveDate,
+    expiration: NaiveDate,
+    strike: f64,
+    option_type: crate::engine::types::OptionType,
+    side: Side,
+    slippage: &Slippage,
+) -> Option<f64> {
+    use crate::engine::pricing::fill_price;
+    use ordered_float::OrderedFloat;
+
+    let key = (today, expiration, OrderedFloat(strike), option_type);
+
+    // Try PriceTable first
+    if let Some(pt) = price_table {
+        if let Some(quote) = pt.get(&key) {
+            // For MTM, use the exit side (flipped from entry side)
+            let exit_side = side.flip();
+            return Some(fill_price(quote.bid, quote.ask, exit_side, slippage));
+        }
+    }
+
+    // Fallback: last known price
+    let lk_key = (expiration, OrderedFloat(strike), option_type);
+    if let Some(quote) = last_known.get(&lk_key) {
+        let exit_side = side.flip();
+        return Some(fill_price(quote.bid, quote.ask, exit_side, slippage));
+    }
+
+    None
 }
 
 /// Build a `TradeRecord` from a script position close.
@@ -984,7 +1258,82 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ScriptAction> {
                         .unwrap_or_else(|| "stop".to_string());
                     Some(ScriptAction::Stop { reason })
                 }
-                // "open_options" and "open_spread" — TODO: requires options data integration
+                "open_options" | "open_spread" => {
+                    let legs_arr = map.get("legs")?.clone().try_cast::<rhai::Array>()?;
+                    let qty = map
+                        .get("qty")
+                        .and_then(|v| v.as_int().ok())
+                        .map(|v| v as i32);
+
+                    let legs: Vec<LegSpec> = legs_arr
+                        .into_iter()
+                        .filter_map(|leg_dyn| {
+                            let leg = leg_dyn.try_cast::<rhai::Map>()?;
+                            let side_str = leg.get("side")?.clone().into_immutable_string().ok()?;
+                            let side = match side_str.as_str() {
+                                "long" => Side::Long,
+                                "short" => Side::Short,
+                                _ => return None,
+                            };
+                            let opt_type_str = leg
+                                .get("option_type")
+                                .and_then(|v| v.clone().into_immutable_string().ok())?;
+                            let option_type = match opt_type_str.as_str() {
+                                "call" | "c" => crate::engine::types::OptionType::Call,
+                                "put" | "p" => crate::engine::types::OptionType::Put,
+                                _ => return None,
+                            };
+
+                            // Check if resolved (has strike/expiration) or unresolved (has delta/dte)
+                            if let Some(strike_val) = leg.get("strike") {
+                                // Resolved leg
+                                let strike = strike_val.as_float().ok()?;
+                                let exp_str = leg
+                                    .get("expiration")?
+                                    .clone()
+                                    .into_immutable_string()
+                                    .ok()?;
+                                let expiration =
+                                    NaiveDate::parse_from_str(&exp_str, "%Y-%m-%d").ok()?;
+                                let bid = leg
+                                    .get("bid")
+                                    .and_then(|v| v.as_float().ok())
+                                    .unwrap_or(0.0);
+                                let ask = leg
+                                    .get("ask")
+                                    .and_then(|v| v.as_float().ok())
+                                    .unwrap_or(0.0);
+                                Some(LegSpec::Resolved {
+                                    side,
+                                    option_type,
+                                    strike,
+                                    expiration,
+                                    bid,
+                                    ask,
+                                })
+                            } else {
+                                // Unresolved leg — needs delta/dte
+                                let delta = leg
+                                    .get("delta")
+                                    .and_then(|v| v.as_float().ok())
+                                    .unwrap_or(0.30);
+                                let dte = leg.get("dte").and_then(|v| v.as_int().ok()).unwrap_or(45)
+                                    as i32;
+                                Some(LegSpec::Unresolved {
+                                    side,
+                                    option_type,
+                                    delta,
+                                    dte,
+                                })
+                            }
+                        })
+                        .collect();
+
+                    if legs.is_empty() {
+                        return None;
+                    }
+                    Some(ScriptAction::OpenOptions { legs, qty })
+                }
                 _ => None,
             }
         })

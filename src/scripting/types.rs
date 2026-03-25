@@ -784,7 +784,7 @@ fn parse_indicator_ref(s: &str) -> (String, i64) {
 // ---------------------------------------------------------------------------
 
 /// Filter a DataFrame to rows matching a specific quote date.
-fn filter_to_date(
+pub(super) fn filter_to_date(
     df: &polars::prelude::DataFrame,
     date: NaiveDate,
 ) -> Option<polars::prelude::DataFrame> {
@@ -867,6 +867,36 @@ fn row_to_option_map(df: &polars::prelude::DataFrame, row: usize, today: NaiveDa
     map.insert("expiration".into(), Dynamic::from(expiration.to_string()));
     map.insert("dte".into(), Dynamic::from(dte));
     Dynamic::from(map)
+}
+
+/// Extract the expiration date from a DataFrame row.
+pub(super) fn row_to_expiration_date(
+    df: &polars::prelude::DataFrame,
+    row: usize,
+) -> Option<NaiveDate> {
+    use polars::prelude::*;
+
+    let col = df.column("expiration").ok()?;
+    // Try Date (physical i32)
+    if let Ok(date_ca) = col.date() {
+        let series = date_ca.clone().into_series();
+        let physical = series.i32().ok()?;
+        let epoch_days = physical.get(row)?;
+        return NaiveDate::from_num_days_from_ce_opt(
+            epoch_days + crate::engine::types::EPOCH_DAYS_CE_OFFSET,
+        );
+    }
+    // Try Datetime (physical i64)
+    if let Ok(dt_ca) = col.datetime() {
+        let series = dt_ca.clone().into_series();
+        let physical = series.i64().ok()?;
+        let us = physical.get(row)?;
+        let secs = us / 1_000_000;
+        let nsecs = ((us % 1_000_000) * 1000) as u32;
+        let dt = chrono::DateTime::from_timestamp(secs, nsecs)?;
+        return Some(dt.date_naive());
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
