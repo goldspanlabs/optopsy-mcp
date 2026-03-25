@@ -96,20 +96,8 @@ fn register_bar_context(engine: &mut Engine) {
     engine.register_fn("bbands_lower_custom", BarContext::bbands_lower_custom);
     engine.register_fn("stochastic_custom", BarContext::stochastic_custom);
 
-    // Options chain
-    engine.register_fn("find_option", BarContext::find_option);
-    engine.register_fn("find_option_with", BarContext::find_option_with);
-    engine.register_fn("find_spread", BarContext::find_spread);
-    engine.register_fn("find_spread_with", BarContext::find_spread_with);
-
-    // Strategy convenience builders
-    engine.register_fn("iron_condor", BarContext::iron_condor);
-    engine.register_fn("vertical_spread", BarContext::vertical_spread);
-    engine.register_fn("butterfly", BarContext::butterfly);
-    engine.register_fn("straddle", BarContext::straddle);
-    engine.register_fn("strangle", BarContext::strangle);
-    engine.register_fn("calendar", BarContext::calendar);
-    engine.register_fn("covered_call", BarContext::covered_call);
+    // Options strategy building
+    engine.register_fn("build_strategy", BarContext::build_strategy);
 
     // Cross-symbol data
     engine.register_fn("price_of", BarContext::price_of);
@@ -147,12 +135,4 @@ fn register_global_helpers(engine: &mut Engine) {
     });
     engine.register_fn("floor", |x: f64| x.floor());
     engine.register_fn("ceil", |x: f64| x.ceil());
-
-    // as_leg(side) helper for find_option result maps
-    // Converts #{ strike, bid, ask, delta, expiration, dte } → adds "side" and "option_type" keys
-    engine.register_fn("as_leg", |map: rhai::Map, side: String| -> rhai::Map {
-        let mut result = map;
-        result.insert("side".into(), rhai::Dynamic::from(side));
-        result
-    });
 }

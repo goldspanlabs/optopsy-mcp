@@ -596,66 +596,87 @@ impl BarContext {
 
     // --- Options chain ---
 
-    /// Find a single option contract matching the given criteria.
-    /// Simple form: scalar delta target with sensible defaults (±0.10 delta range, ±15 DTE range).
-    /// Returns a Map with { strike, bid, ask, delta, expiration, dte } or () if not found.
-    pub fn find_option(&mut self, option_type: String, delta: f64, dte: i64) -> Dynamic {
-        use crate::engine::types::TargetRange;
-        let target = TargetRange {
-            target: delta,
-            min: (delta - 0.10).max(0.01),
-            max: (delta + 0.10).min(1.0),
-        };
-        self.find_option_internal(
-            &option_type,
-            &target,
-            dte as i32,
-            (dte - 15).max(1) as i32,
-            (dte + 15) as i32,
-        )
+    /// Build an options strategy from an array of leg specifications.
+    /// Each leg: `#{ side: "short", option_type: "put", delta: 0.30, dte: 45 }`
+    /// Returns `#{ legs: [...], net_premium }` or `()` if any leg can't be filled.
+    ///
+    /// Works for any structure — single legs, spreads, condors, butterflies, etc.
+    pub fn build_strategy(&mut self, legs: rhai::Array) -> Dynamic {
+        let mut resolved_legs = Vec::new();
+        let mut net_premium = 0.0;
+
+        for leg_dyn in legs {
+            let Some(leg) = leg_dyn.try_cast::<rhai::Map>() else {
+                return Dynamic::UNIT;
+            };
+
+            let opt_type = leg
+                .get("option_type")
+                .and_then(|v| v.clone().into_immutable_string().ok())
+                .unwrap_or_default()
+                .to_string();
+            let delta = leg
+                .get("delta")
+                .and_then(|v| v.as_float().ok())
+                .unwrap_or(0.30);
+            let dte = leg.get("dte").and_then(|v| v.as_int().ok()).unwrap_or(45);
+            let side = leg
+                .get("side")
+                .and_then(|v| v.clone().into_immutable_string().ok())
+                .unwrap_or_default()
+                .to_string();
+
+            // Resolve this leg to a specific contract
+            let target = crate::engine::types::TargetRange {
+                target: delta,
+                min: (delta - 0.10).max(0.01),
+                max: (delta + 0.10).min(1.0),
+            };
+            let found = self.resolve_leg(
+                &opt_type,
+                &target,
+                dte as i32,
+                (dte - 15).max(1) as i32,
+                (dte + 15) as i32,
+            );
+            if found.is_unit() {
+                return Dynamic::UNIT; // any failed leg → entire strategy fails
+            }
+
+            let found_map = found.clone().cast::<rhai::Map>();
+
+            // Compute premium contribution
+            let bid = found_map
+                .get("bid")
+                .and_then(|v| v.as_float().ok())
+                .unwrap_or(0.0);
+            let ask = found_map
+                .get("ask")
+                .and_then(|v| v.as_float().ok())
+                .unwrap_or(0.0);
+            let mid = f64::midpoint(bid, ask);
+
+            match side.as_str() {
+                "short" => net_premium -= mid,
+                "long" => net_premium += mid,
+                _ => {}
+            }
+
+            // Build resolved leg with side and type
+            let mut leg_map = found_map;
+            leg_map.insert("side".into(), Dynamic::from(side));
+            leg_map.insert("option_type".into(), Dynamic::from(opt_type));
+            resolved_legs.push(Dynamic::from(leg_map));
+        }
+
+        let mut result = rhai::Map::new();
+        result.insert("legs".into(), Dynamic::from(resolved_legs));
+        result.insert("net_premium".into(), Dynamic::from(net_premium));
+        Dynamic::from(result)
     }
 
-    /// Find a single option contract with full TargetRange/DteRange control.
-    /// delta_range: #{ target: 0.30, min: 0.20, max: 0.40 }
-    /// dte_range: #{ target: 45, min: 30, max: 60 }
-    pub fn find_option_with(
-        &mut self,
-        option_type: String,
-        delta_range: rhai::Map,
-        dte_range: rhai::Map,
-    ) -> Dynamic {
-        use crate::engine::types::TargetRange;
-        let target = TargetRange {
-            target: delta_range
-                .get("target")
-                .and_then(|v| v.as_float().ok())
-                .unwrap_or(0.30),
-            min: delta_range
-                .get("min")
-                .and_then(|v| v.as_float().ok())
-                .unwrap_or(0.20),
-            max: delta_range
-                .get("max")
-                .and_then(|v| v.as_float().ok())
-                .unwrap_or(0.40),
-        };
-        let dte_target = dte_range
-            .get("target")
-            .and_then(|v| v.as_int().ok())
-            .unwrap_or(45) as i32;
-        let dte_min = dte_range
-            .get("min")
-            .and_then(|v| v.as_int().ok())
-            .unwrap_or(30) as i32;
-        let dte_max = dte_range
-            .get("max")
-            .and_then(|v| v.as_int().ok())
-            .unwrap_or(60) as i32;
-        self.find_option_internal(&option_type, &target, dte_target, dte_min, dte_max)
-    }
-
-    /// Internal: run the filter pipeline and return the best match for the current date.
-    fn find_option_internal(
+    /// Resolve a single leg to a specific contract via the filter pipeline.
+    fn resolve_leg(
         &self,
         option_type: &str,
         target: &crate::engine::types::TargetRange,
@@ -707,295 +728,6 @@ impl BarContext {
         // 4. Pick the first (closest) match
         row_to_option_map(&selected, 0, today)
     }
-    /// Find a multi-leg spread by resolving each leg independently.
-    /// Input: array of leg maps with { side, option_type, delta, dte }.
-    /// Returns a Map with { legs: [...], net_premium, expiration } or () if any leg fails.
-    pub fn find_spread(&mut self, legs: rhai::Array) -> Dynamic {
-        self.find_spread_internal(legs, None)
-    }
-
-    /// Find a multi-leg spread with additional filters (min/max net premium/delta).
-    pub fn find_spread_with(&mut self, legs: rhai::Array, filters: rhai::Map) -> Dynamic {
-        self.find_spread_internal(legs, Some(filters))
-    }
-
-    fn find_spread_internal(&mut self, legs: rhai::Array, filters: Option<rhai::Map>) -> Dynamic {
-        let _today = self.datetime.date();
-        let mut resolved_legs = Vec::new();
-        let mut net_premium = 0.0;
-
-        for leg_dyn in legs {
-            let Some(leg) = leg_dyn.try_cast::<rhai::Map>() else {
-                return Dynamic::UNIT;
-            };
-
-            let opt_type = leg
-                .get("option_type")
-                .and_then(|v| v.clone().into_immutable_string().ok())
-                .unwrap_or_default()
-                .to_string();
-            let delta = leg
-                .get("delta")
-                .and_then(|v| v.as_float().ok())
-                .unwrap_or(0.30);
-            let dte = leg.get("dte").and_then(|v| v.as_int().ok()).unwrap_or(45);
-
-            // Find this leg
-            let found = self.find_option(opt_type.clone(), delta, dte);
-            if found.is_unit() {
-                return Dynamic::UNIT; // any failed leg → entire spread fails
-            }
-
-            let found_map = found.clone().cast::<rhai::Map>();
-
-            // Get side from the leg spec
-            let side = leg
-                .get("side")
-                .and_then(|v| v.clone().into_immutable_string().ok())
-                .unwrap_or_default()
-                .to_string();
-
-            // Compute premium contribution
-            let bid = found_map
-                .get("bid")
-                .and_then(|v| v.as_float().ok())
-                .unwrap_or(0.0);
-            let ask = found_map
-                .get("ask")
-                .and_then(|v| v.as_float().ok())
-                .unwrap_or(0.0);
-            let mid = (bid + ask) / 2.0;
-
-            match side.as_str() {
-                "short" => net_premium -= mid, // credit received
-                "long" => net_premium += mid,  // debit paid
-                _ => {}
-            }
-
-            // Build leg with side added
-            let mut leg_map = found_map;
-            leg_map.insert("side".into(), Dynamic::from(side));
-            leg_map.insert("option_type".into(), Dynamic::from(opt_type));
-            resolved_legs.push(Dynamic::from(leg_map));
-        }
-
-        // Apply filters
-        if let Some(filters) = filters {
-            if let Some(min) = filters
-                .get("min_net_premium")
-                .and_then(|v| v.as_float().ok())
-            {
-                if net_premium.abs() < min {
-                    return Dynamic::UNIT;
-                }
-            }
-            if let Some(max) = filters
-                .get("max_net_premium")
-                .and_then(|v| v.as_float().ok())
-            {
-                if net_premium.abs() > max {
-                    return Dynamic::UNIT;
-                }
-            }
-        }
-
-        let mut result = rhai::Map::new();
-        result.insert("legs".into(), Dynamic::from(resolved_legs));
-        result.insert("net_premium".into(), Dynamic::from(net_premium));
-        Dynamic::from(result)
-    }
-
-    // --- Strategy builders ---
-    // Each resolves to a find_spread call with pre-configured legs.
-
-    /// Iron condor with explicit per-leg deltas.
-    /// `ctx.iron_condor(#{ long_put: 0.10, short_put: 0.25, short_call: 0.35, long_call: 0.10, dte: 45 })`
-    pub fn iron_condor(&mut self, params: rhai::Map) -> Dynamic {
-        let short_put = params
-            .get("short_put")
-            .and_then(|v| v.as_float().ok())
-            .unwrap_or(0.30);
-        let long_put = params
-            .get("long_put")
-            .and_then(|v| v.as_float().ok())
-            .unwrap_or(0.10);
-        let short_call = params
-            .get("short_call")
-            .and_then(|v| v.as_float().ok())
-            .unwrap_or(0.30);
-        let long_call = params
-            .get("long_call")
-            .and_then(|v| v.as_float().ok())
-            .unwrap_or(0.10);
-        let dte = params
-            .get("dte")
-            .and_then(|v| v.as_int().ok())
-            .unwrap_or(45);
-
-        let legs: rhai::Array = vec![
-            leg_map("long", "put", long_put, dte),
-            leg_map("short", "put", short_put, dte),
-            leg_map("short", "call", short_call, dte),
-            leg_map("long", "call", long_call, dte),
-        ];
-        self.find_spread(legs)
-    }
-
-    /// Vertical spread (bull put, bear call, etc.)
-    /// `ctx.vertical_spread(#{ type: "put", short: 0.30, long: 0.15, dte: 45 })`
-    pub fn vertical_spread(&mut self, params: rhai::Map) -> Dynamic {
-        let opt_type = params
-            .get("type")
-            .and_then(|v| v.clone().into_immutable_string().ok())
-            .unwrap_or_default();
-        let short_delta = params
-            .get("short")
-            .and_then(|v| v.as_float().ok())
-            .unwrap_or(0.30);
-        let long_delta = params
-            .get("long")
-            .and_then(|v| v.as_float().ok())
-            .unwrap_or(0.15);
-        let dte = params
-            .get("dte")
-            .and_then(|v| v.as_int().ok())
-            .unwrap_or(45);
-
-        let ot = opt_type.as_str();
-        let legs: rhai::Array = vec![
-            leg_map("short", ot, short_delta, dte),
-            leg_map("long", ot, long_delta, dte),
-        ];
-        self.find_spread(legs)
-    }
-
-    /// Butterfly spread.
-    /// `ctx.butterfly(#{ type: "call", short: 0.50, long: 0.25, dte: 45 })`
-    /// Short legs are the body (ATM), long legs are the wings (OTM).
-    pub fn butterfly(&mut self, params: rhai::Map) -> Dynamic {
-        let opt_type = params
-            .get("type")
-            .and_then(|v| v.clone().into_immutable_string().ok())
-            .unwrap_or_default();
-        let short_delta = params
-            .get("short")
-            .and_then(|v| v.as_float().ok())
-            .unwrap_or(0.50);
-        let long_delta = params
-            .get("long")
-            .and_then(|v| v.as_float().ok())
-            .unwrap_or(0.25);
-        let dte = params
-            .get("dte")
-            .and_then(|v| v.as_int().ok())
-            .unwrap_or(45);
-
-        let ot = opt_type.as_str();
-        let legs: rhai::Array = vec![
-            leg_map("long", ot, long_delta, dte),
-            leg_map("short", ot, short_delta, dte),
-            leg_map("short", ot, short_delta, dte),
-            leg_map("long", ot, long_delta, dte),
-        ];
-        self.find_spread(legs)
-    }
-
-    /// Straddle (short or long).
-    /// `ctx.straddle(#{ side: "short", delta: 0.50, dte: 45 })`
-    pub fn straddle(&mut self, params: rhai::Map) -> Dynamic {
-        let side = params
-            .get("side")
-            .and_then(|v| v.clone().into_immutable_string().ok())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "short".to_string());
-        let delta = params
-            .get("delta")
-            .and_then(|v| v.as_float().ok())
-            .unwrap_or(0.50);
-        let dte = params
-            .get("dte")
-            .and_then(|v| v.as_int().ok())
-            .unwrap_or(45);
-
-        let legs: rhai::Array = vec![
-            leg_map(&side, "put", delta, dte),
-            leg_map(&side, "call", delta, dte),
-        ];
-        self.find_spread(legs)
-    }
-
-    /// Strangle (short or long).
-    /// `ctx.strangle(#{ side: "short", put: 0.25, call: 0.25, dte: 45 })`
-    pub fn strangle(&mut self, params: rhai::Map) -> Dynamic {
-        let side = params
-            .get("side")
-            .and_then(|v| v.clone().into_immutable_string().ok())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "short".to_string());
-        let put_delta = params
-            .get("put")
-            .and_then(|v| v.as_float().ok())
-            .unwrap_or(0.25);
-        let call_delta = params
-            .get("call")
-            .and_then(|v| v.as_float().ok())
-            .unwrap_or(0.25);
-        let dte = params
-            .get("dte")
-            .and_then(|v| v.as_int().ok())
-            .unwrap_or(45);
-
-        let legs: rhai::Array = vec![
-            leg_map(&side, "put", put_delta, dte),
-            leg_map(&side, "call", call_delta, dte),
-        ];
-        self.find_spread(legs)
-    }
-
-    /// Calendar spread.
-    /// `ctx.calendar(#{ type: "put", delta: 0.30, near_dte: 30, far_dte: 60 })`
-    pub fn calendar(&mut self, params: rhai::Map) -> Dynamic {
-        let opt_type = params
-            .get("type")
-            .and_then(|v| v.clone().into_immutable_string().ok())
-            .unwrap_or_default();
-        let delta = params
-            .get("delta")
-            .and_then(|v| v.as_float().ok())
-            .unwrap_or(0.30);
-        let near_dte = params
-            .get("near_dte")
-            .and_then(|v| v.as_int().ok())
-            .unwrap_or(30);
-        let far_dte = params
-            .get("far_dte")
-            .and_then(|v| v.as_int().ok())
-            .unwrap_or(60);
-
-        let ot = opt_type.as_str();
-        let legs: rhai::Array = vec![
-            leg_map("short", ot, delta, near_dte),
-            leg_map("long", ot, delta, far_dte),
-        ];
-        self.find_spread(legs)
-    }
-
-    /// Covered call — short call leg only (stock opened separately).
-    /// `ctx.covered_call(#{ delta: 0.30, dte: 30 })`
-    pub fn covered_call(&mut self, params: rhai::Map) -> Dynamic {
-        let delta = params
-            .get("delta")
-            .and_then(|v| v.as_float().ok())
-            .unwrap_or(0.30);
-        let dte = params
-            .get("dte")
-            .and_then(|v| v.as_int().ok())
-            .unwrap_or(30);
-
-        let legs: rhai::Array = vec![leg_map("short", "call", delta, dte)];
-        self.find_spread(legs)
-    }
-
     // --- Cross-symbol ---
     pub fn price_of(&mut self, symbol: String) -> Dynamic {
         self.cross_symbol_data
@@ -1033,16 +765,6 @@ fn parse_indicator_ref(s: &str) -> (String, i64) {
     let name = parts[0].to_string();
     let period = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(0);
     (name, period)
-}
-
-/// Build a leg map for strategy builder calls.
-fn leg_map(side: &str, option_type: &str, delta: f64, dte: i64) -> Dynamic {
-    let mut map = rhai::Map::new();
-    map.insert("side".into(), Dynamic::from(side.to_string()));
-    map.insert("option_type".into(), Dynamic::from(option_type.to_string()));
-    map.insert("delta".into(), Dynamic::from(delta));
-    map.insert("dte".into(), Dynamic::from(dte));
-    Dynamic::from(map)
 }
 
 // ---------------------------------------------------------------------------

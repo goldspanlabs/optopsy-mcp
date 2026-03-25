@@ -31,13 +31,12 @@ fn config() {
 fn on_bar(ctx) {
     if ctx.position_count() >= MAX_POSITIONS { return []; }
 
-    let spread = ctx.iron_condor(#{
-        short_put: SHORT_PUT_DELTA,
-        long_put: LONG_PUT_DELTA,
-        short_call: SHORT_CALL_DELTA,
-        long_call: LONG_CALL_DELTA,
-        dte: DTE_TARGET,
-    });
+    let spread = ctx.build_strategy([
+        #{ side: "long",  option_type: "put",  delta: LONG_PUT_DELTA,   dte: DTE_TARGET },
+        #{ side: "short", option_type: "put",  delta: SHORT_PUT_DELTA,  dte: DTE_TARGET },
+        #{ side: "short", option_type: "call", delta: SHORT_CALL_DELTA, dte: DTE_TARGET },
+        #{ side: "long",  option_type: "call", delta: LONG_CALL_DELTA,  dte: DTE_TARGET },
+    ]);
     if spread == () { return []; }
 
     [#{ action: "open_spread", spread: spread }]

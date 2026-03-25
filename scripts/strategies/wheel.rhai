@@ -40,44 +40,28 @@ fn on_bar(ctx) {
     if state == "selling_puts" {
         if ctx.has_positions() { return []; }
 
-        let put = ctx.find_option("put", PUT_DELTA, PUT_DTE);
-        if put == () { return []; }
+        let spread = ctx.build_strategy([
+            #{ side: "short", option_type: "put", delta: PUT_DELTA, dte: PUT_DTE },
+        ]);
+        if spread == () { return []; }
 
-        return [#{
-            action: "open_options",
-            legs: [#{
-                side: "short",
-                option_type: "put",
-                strike: put.strike,
-                expiration: put.expiration,
-                bid: put.bid,
-                ask: put.ask,
-            }],
-        }];
+        return [#{ action: "open_spread", spread: spread }];
     }
 
     if state == "holding_stock" {
         // Don't sell a call if we already have one open
         if ctx.has_positions() { return []; }
 
-        let call = ctx.find_option("call", CALL_DELTA, CALL_DTE);
-        if call == () { return []; }
+        let spread = ctx.build_strategy([
+            #{ side: "short", option_type: "call", delta: CALL_DELTA, dte: CALL_DTE },
+        ]);
+        if spread == () { return []; }
 
         // Only sell calls above adjusted cost basis
-        if call.strike < stock.adjusted_basis { return []; }
+        if spread.legs[0].strike < stock.adjusted_basis { return []; }
 
         state = "selling_calls";
-        return [#{
-            action: "open_options",
-            legs: [#{
-                side: "short",
-                option_type: "call",
-                strike: call.strike,
-                expiration: call.expiration,
-                bid: call.bid,
-                ask: call.ask,
-            }],
-        }];
+        return [#{ action: "open_spread", spread: spread }];
     }
 
     // selling_calls — wait for expiration/assignment

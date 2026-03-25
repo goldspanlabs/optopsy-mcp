@@ -29,19 +29,14 @@ fn config() {
 fn on_bar(ctx) {
     if ctx.position_count() >= MAX_POSITIONS { return []; }
 
-    let put = ctx.find_option("put", DELTA_TARGET, DTE_TARGET);
-    if put == () { return []; }
+    let spread = ctx.build_strategy([
+        #{ side: "short", option_type: "put", delta: DELTA_TARGET, dte: DTE_TARGET },
+    ]);
+    if spread == () { return []; }
 
     [#{
-        action: "open_options",
-        legs: [#{
-            side: "short",
-            option_type: "put",
-            strike: put.strike,
-            expiration: put.expiration,
-            bid: put.bid,
-            ask: put.ask,
-        }],
+        action: "open_spread",
+        spread: spread,
     }]
 }
 
