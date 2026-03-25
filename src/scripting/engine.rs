@@ -289,8 +289,9 @@ pub async fn run_script_backtest(
                 // "called_away": short call expired ITM → close any implicit long stock at the strike.
                 match exit_reason.as_str() {
                     "assignment" => {
-                        if let ScriptPositionInner::Options { legs, multiplier, .. } =
-                            &closed_pos.inner
+                        if let ScriptPositionInner::Options {
+                            legs, multiplier, ..
+                        } = &closed_pos.inner
                         {
                             for leg in legs {
                                 if leg.side == Side::Short
@@ -352,8 +353,10 @@ pub async fn run_script_backtest(
                                                 &positions[j],
                                                 call_strike,
                                             );
-                                            let stock_exit_comm =
-                                                compute_commission(&config.commission, &positions[j]);
+                                            let stock_exit_comm = compute_commission(
+                                                &config.commission,
+                                                &positions[j],
+                                            );
                                             realized_equity += stock_pnl - stock_exit_comm;
                                             trade_log.push(build_script_trade_record(
                                                 &positions[j],
