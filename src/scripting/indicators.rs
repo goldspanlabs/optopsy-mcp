@@ -165,7 +165,7 @@ fn compute_indicator(
     lows: &[f64],
     volumes: &[f64],
 ) -> Result<Vec<f64>> {
-    let n = closes.len();
+    let _n = closes.len();
     let period = params.first().copied().unwrap_or(14);
 
     // Multi-param indicators: extract additional params

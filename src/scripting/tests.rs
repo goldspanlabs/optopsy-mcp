@@ -77,7 +77,7 @@ mod tests {
             .unwrap();
 
         let mut scope = Scope::new();
-        engine
+        let _ = engine
             .eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
             .unwrap();
 
@@ -86,7 +86,7 @@ mod tests {
         // Call function with rewind
         let checkpoint = scope.len();
         let options = CallFnOptions::new().eval_ast(false).rewind_scope(false);
-        engine
+        let _ = engine
             .call_fn_with_options::<Dynamic>(options, &mut scope, &ast, "update_state", ())
             .unwrap();
 
@@ -126,7 +126,7 @@ mod tests {
             .unwrap();
 
         let mut scope = Scope::new();
-        engine
+        let _ = engine
             .eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
             .unwrap();
 
@@ -175,7 +175,7 @@ mod tests {
             .unwrap();
 
         let mut scope = Scope::new();
-        engine
+        let _ = engine
             .eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
             .unwrap();
 
@@ -379,16 +379,16 @@ mod tests {
         params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
         params.insert("CAPITAL".to_string(), serde_json::json!(50000));
 
-        let source = r#"
+        let source = r"
             fn config() {
                 #{ symbol: SYMBOL, capital: CAPITAL }
             }
-        "#;
+        ";
         let full_source = stdlib::inject_as_const(source, &params);
 
         let ast = engine.compile(&full_source).unwrap();
         let mut scope = Scope::new();
-        engine
+        let _ = engine
             .eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
             .unwrap();
 
@@ -427,7 +427,7 @@ mod tests {
             .unwrap();
 
         let mut scope = Scope::new();
-        engine
+        let _ = engine
             .eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
             .unwrap();
 
@@ -502,7 +502,7 @@ mod tests {
 
         // Test state transitions via scope
         let mut scope = Scope::new();
-        engine
+        let _ = engine
             .eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
             .unwrap();
 

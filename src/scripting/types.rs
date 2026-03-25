@@ -10,7 +10,7 @@ use std::sync::Arc;
 use chrono::{NaiveDate, NaiveDateTime};
 
 use crate::engine::types::{
-    Commission, ExitType, ExpirationFilter, OptionType, Side, Slippage, TradeSelector,
+    Commission, ExpirationFilter, OptionType, Side, Slippage, TradeSelector,
 };
 
 use super::indicators::IndicatorStore;
@@ -661,7 +661,6 @@ impl BarContext {
         dte_max: i32,
     ) -> Dynamic {
         use crate::engine::filters;
-        use polars::prelude::*;
 
         let df = match &self.options_df {
             Some(df) => df.as_ref(),
@@ -718,14 +717,13 @@ impl BarContext {
     }
 
     fn find_spread_internal(&mut self, legs: rhai::Array, filters: Option<rhai::Map>) -> Dynamic {
-        let today = self.datetime.date();
+        let _today = self.datetime.date();
         let mut resolved_legs = Vec::new();
         let mut net_premium = 0.0;
 
         for leg_dyn in legs {
-            let leg = match leg_dyn.try_cast::<rhai::Map>() {
-                Some(m) => m,
-                None => return Dynamic::UNIT,
+            let Some(leg) = leg_dyn.try_cast::<rhai::Map>() else {
+                return Dynamic::UNIT;
             };
 
             let opt_type = leg
@@ -954,7 +952,7 @@ pub(super) fn filter_to_date(
     use polars::prelude::*;
 
     // The datetime column may be NaiveDateTime — we need to compare just the date part
-    let datetime_col = df.column("datetime").ok()?;
+    let _datetime_col = df.column("datetime").ok()?;
 
     // Build a boolean mask: date part of datetime == target date
     let target_start = date.and_hms_opt(0, 0, 0)?;
@@ -982,9 +980,8 @@ fn row_to_option_map(df: &polars::prelude::DataFrame, row: usize, today: NaiveDa
     let get_f64 =
         |col_name: &str| -> Option<f64> { df.column(col_name).ok()?.f64().ok()?.get(row) };
 
-    let strike = match get_f64("strike") {
-        Some(v) => v,
-        None => return Dynamic::UNIT,
+    let Some(strike) = get_f64("strike") else {
+        return Dynamic::UNIT;
     };
     let bid = get_f64("bid").unwrap_or(0.0);
     let ask = get_f64("ask").unwrap_or(0.0);
@@ -992,7 +989,6 @@ fn row_to_option_map(df: &polars::prelude::DataFrame, row: usize, today: NaiveDa
 
     // Get expiration date — handle both Date and Datetime column types
     let expiration: Option<NaiveDate> = df.column("expiration").ok().and_then(|c| {
-        use polars::prelude::*;
         // Try as Date first (physical i32 = days since epoch)
         if let Ok(date_ca) = c.date() {
             let series = date_ca.clone().into_series();
@@ -1015,9 +1011,8 @@ fn row_to_option_map(df: &polars::prelude::DataFrame, row: usize, today: NaiveDa
         None
     });
 
-    let expiration = match expiration {
-        Some(e) => e,
-        None => return Dynamic::UNIT,
+    let Some(expiration) = expiration else {
+        return Dynamic::UNIT;
     };
 
     let dte = (expiration - today).num_days();
@@ -1112,9 +1107,6 @@ pub enum LegSpec {
 // ---------------------------------------------------------------------------
 // ScriptSimContext — internal engine state (not exposed to scripts)
 // ---------------------------------------------------------------------------
-
-use ordered_float::OrderedFloat;
-use rustc_hash::FxBuildHasher;
 
 use crate::engine::sim_types::{DateIndex, LastKnown, PriceTable};
 

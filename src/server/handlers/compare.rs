@@ -126,6 +126,7 @@ async fn compare_options(
         params.exit_signal.as_ref(),
         &[],
         &[],
+        &[],
     )?;
 
     let mut sim_params = params.sim_params;

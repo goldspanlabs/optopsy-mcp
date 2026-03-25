@@ -1,6 +1,6 @@
 //! Rhai engine configuration, sandboxing, and type/function registration.
 
-use rhai::{Engine, FuncRegistration, Module};
+use rhai::Engine;
 
 use super::types::{BarContext, ScriptPosition};
 

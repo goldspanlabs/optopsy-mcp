@@ -61,6 +61,7 @@ pub async fn execute(
             config.exit_signal.as_ref(),
             &[],
             &[],
+            &[],
         )?;
 
         resolved.push(tools::portfolio::ResolvedStrategy {

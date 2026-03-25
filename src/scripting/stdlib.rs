@@ -1,6 +1,7 @@
 //! Standard library of built-in strategy scripts and parameter injection.
 
 use std::collections::HashMap;
+use std::fmt::Write;
 
 use anyhow::{bail, Result};
 
@@ -15,7 +16,7 @@ pub fn inject_as_const(source: &str, params: &HashMap<String, serde_json::Value>
     let mut preamble = String::new();
     for (key, value) in params {
         let rhai_val = json_to_rhai_literal(value);
-        preamble.push_str(&format!("const {key} = {rhai_val};\n"));
+        let _ = writeln!(preamble, "const {key} = {rhai_val};");
     }
     format!("{preamble}\n{source}")
 }

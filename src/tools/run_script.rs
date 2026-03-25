@@ -14,7 +14,7 @@ pub struct RunScriptParams {
     #[garde(skip)]
     pub script: Option<String>,
 
-    /// Use a built-in strategy script by name (e.g., "short_put", "iron_condor", "wheel").
+    /// Use a built-in strategy script by name (e.g., `short_put`, `iron_condor`, `wheel`).
     #[garde(skip)]
     pub strategy: Option<String>,
 

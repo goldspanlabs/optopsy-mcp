@@ -13,8 +13,8 @@ use rhai::{CallFnOptions, Dynamic, Engine, Scope, AST};
 
 use crate::engine::metrics::calculate_metrics;
 use crate::engine::types::{
-    BacktestResult, CashflowLabel, Commission, EquityPoint, ExitType, ExpirationFilter, LegDetail,
-    PerformanceMetrics, Side, Slippage, TradeRecord, TradeSelector,
+    BacktestResult, Commission, EquityPoint, ExpirationFilter, Side, Slippage, TradeRecord,
+    TradeSelector,
 };
 
 use super::indicators::IndicatorStore;
@@ -37,7 +37,7 @@ pub async fn run_script_backtest(
 
     // 2. Initialize scope (evaluate top-level let/const statements)
     let mut scope = Scope::new();
-    engine
+    let _ = engine
         .eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
         .map_err(|e| anyhow::anyhow!("Script initialization error: {e}"))?;
 
@@ -427,7 +427,7 @@ pub async fn run_script_backtest(
 
                             positions.push(pos);
                         }
-                        _ => {}
+                        ScriptAction::Hold => {}
                     }
                 }
             }
@@ -948,7 +948,7 @@ fn resolve_option_legs(
     legs: &[LegSpec],
     options_df: &Option<Arc<polars::prelude::DataFrame>>,
     today: NaiveDate,
-    config: &ScriptConfig,
+    _config: &ScriptConfig,
 ) -> Vec<ResolvedLeg> {
     use crate::engine::filters;
 
@@ -1183,7 +1183,7 @@ fn build_script_trade_record(
             expiration: String::new(),
             entry_price: match &pos.inner {
                 ScriptPositionInner::Stock { entry_price, .. } => *entry_price,
-                _ => 0.0,
+                ScriptPositionInner::Options { .. } => 0.0,
             },
             exit_price: None,
             qty: *qty,
@@ -1208,7 +1208,7 @@ fn build_script_trade_record(
         entry_equity: None,
         stock_entry_price: match &pos.inner {
             ScriptPositionInner::Stock { entry_price, .. } => Some(*entry_price),
-            _ => None,
+            ScriptPositionInner::Options { .. } => None,
         },
         stock_exit_price: None,
         stock_pnl: None,
@@ -1247,9 +1247,8 @@ fn parse_exit_action(result: &Dynamic) -> Option<ScriptAction> {
 
 /// Parse the result of `on_bar` into a list of `ScriptAction`s.
 fn parse_bar_actions(result: &Dynamic) -> Vec<ScriptAction> {
-    let arr = match result.clone().try_cast::<rhai::Array>() {
-        Some(a) => a,
-        None => return vec![],
+    let Some(arr) = result.clone().try_cast::<rhai::Array>() else {
+        return vec![];
     };
 
     arr.into_iter()
@@ -1416,8 +1415,6 @@ impl DataLoader for CachedDataLoader {
     ) -> Result<Vec<OhlcvBar>> {
         let cache = Arc::clone(&self.cache);
         let symbol = symbol.to_uppercase();
-        let start = start;
-        let end = end;
 
         // Parquet I/O is blocking — run on a blocking thread
         tokio::task::spawn_blocking(move || {
