@@ -24,7 +24,7 @@ use super::types::{
     Slippage, TargetRange, TradeRecord,
 };
 use crate::data::parquet::DATETIME_COL;
-use crate::tools::response_types::wheel::WheelCycle;
+use crate::tools::response_types::WheelCycle;
 
 /// A single-leg option candidate for wheel entry.
 #[derive(Debug, Clone)]
