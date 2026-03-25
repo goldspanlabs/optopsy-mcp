@@ -5,15 +5,12 @@
 //! what the frontend expects.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use anyhow::Result;
 use chrono::NaiveDate;
 use polars::prelude::*;
 
 use optopsy_mcp::data::parquet::DATETIME_COL;
-use optopsy_mcp::engine::types::{DteRange, ExitType, Slippage, TargetRange};
-use optopsy_mcp::engine::wheel_sim::{run_wheel_backtest, WheelParams};
 use optopsy_mcp::scripting::engine::{run_script_backtest, DataLoader, ScriptBacktestResult};
 use optopsy_mcp::scripting::stdlib;
 use optopsy_mcp::scripting::types::{Interval, OhlcvBar};
@@ -30,7 +27,7 @@ fn dt(y: i32, m: u32, day: u32) -> chrono::NaiveDateTime {
     d(y, m, day).and_hms_opt(0, 0, 0).unwrap()
 }
 
-/// Build a synthetic options DataFrame.
+/// Build a synthetic options `DataFrame`.
 fn make_options_df(
     rows: &[(chrono::NaiveDateTime, NaiveDate, &str, f64, f64, f64, f64)],
 ) -> DataFrame {
@@ -58,7 +55,7 @@ fn make_options_df(
     df
 }
 
-/// Test DataLoader that returns pre-built OHLCV bars and an options DataFrame.
+/// Test `DataLoader` that returns pre-built OHLCV bars and an options `DataFrame`.
 struct TestDataLoader {
     bars: Vec<OhlcvBar>,
     options_df: DataFrame,
@@ -100,44 +97,11 @@ fn make_bars_from_closes(closes: &BTreeMap<NaiveDate, f64>) -> Vec<OhlcvBar> {
         .collect()
 }
 
-fn default_wheel_params() -> WheelParams {
-    WheelParams {
-        put_delta: TargetRange {
-            target: 0.30,
-            min: 0.10,
-            max: 0.50,
-        },
-        put_dte: DteRange {
-            target: 45,
-            min: 20,
-            max: 60,
-        },
-        call_delta: TargetRange {
-            target: 0.30,
-            min: 0.10,
-            max: 0.50,
-        },
-        call_dte: DteRange {
-            target: 30,
-            min: 15,
-            max: 60,
-        },
-        min_call_strike_at_cost: false,
-        capital: 100_000.0,
-        quantity: 1,
-        multiplier: 100,
-        slippage: Slippage::Mid,
-        commission: None,
-        stop_loss: None,
-        min_bid_ask: 0.0,
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-/// Verify wheel.rhai compiles and config() returns valid settings.
+/// Verify `wheel.rhai` compiles and `config()` returns valid settings.
 #[tokio::test]
 async fn wheel_script_compiles_and_configures() {
     let script_source =
@@ -145,7 +109,7 @@ async fn wheel_script_compiles_and_configures() {
 
     let mut params = std::collections::HashMap::new();
     params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
-    params.insert("CAPITAL".to_string(), serde_json::json!(100000));
+    params.insert("CAPITAL".to_string(), serde_json::json!(100_000));
     params.insert("PUT_DELTA".to_string(), serde_json::json!(0.30));
     params.insert("PUT_DTE".to_string(), serde_json::json!(45));
     params.insert("CALL_DELTA".to_string(), serde_json::json!(0.30));
@@ -188,9 +152,10 @@ async fn wheel_script_compiles_and_configures() {
             .as_str(),
         "SPY"
     );
-    assert_eq!(
-        config_map.get("capital").unwrap().as_float().unwrap(),
-        100_000.0
+    let capital = config_map.get("capital").unwrap().as_float().unwrap();
+    assert!(
+        (capital - 100_000.0).abs() < f64::EPSILON,
+        "Expected 100000.0, got {capital}"
     );
 }
 
@@ -215,7 +180,7 @@ async fn wheel_script_put_expires_otm() {
     let script_source = std::fs::read_to_string("scripts/strategies/wheel.rhai").unwrap();
     let mut params = std::collections::HashMap::new();
     params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
-    params.insert("CAPITAL".to_string(), serde_json::json!(100000));
+    params.insert("CAPITAL".to_string(), serde_json::json!(100_000));
     params.insert("PUT_DELTA".to_string(), serde_json::json!(0.30));
     params.insert("PUT_DTE".to_string(), serde_json::json!(45));
     params.insert("CALL_DELTA".to_string(), serde_json::json!(0.30));
@@ -393,7 +358,7 @@ async fn script_opens_options_position() {
     );
 }
 
-/// Verify BacktestResult has all fields the frontend expects.
+/// Verify `BacktestResult` has all fields the frontend expects.
 #[tokio::test(flavor = "multi_thread")]
 async fn wheel_script_result_has_expected_fields() {
     let entry_date = d(2024, 1, 2);
@@ -411,7 +376,7 @@ async fn wheel_script_result_has_expected_fields() {
     let script_source = std::fs::read_to_string("scripts/strategies/wheel.rhai").unwrap();
     let mut params = std::collections::HashMap::new();
     params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
-    params.insert("CAPITAL".to_string(), serde_json::json!(100000));
+    params.insert("CAPITAL".to_string(), serde_json::json!(100_000));
     params.insert("PUT_DELTA".to_string(), serde_json::json!(0.30));
     params.insert("PUT_DTE".to_string(), serde_json::json!(45));
     params.insert("CALL_DELTA".to_string(), serde_json::json!(0.30));

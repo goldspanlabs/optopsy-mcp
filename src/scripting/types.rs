@@ -712,23 +712,13 @@ impl BarContext {
             min_bid_ask,
         ) {
             Ok(f) if f.height() > 0 => f,
-            Ok(f) => {
-                return Dynamic::UNIT;
-            }
-            Err(e) => {
-                return Dynamic::UNIT;
-            }
+            _ => return Dynamic::UNIT,
         };
 
         // 2. Filter to current date only
         let today_filtered = match filter_to_date(&filtered, today) {
             Some(f) if f.height() > 0 => f,
-            Some(f) => {
-                return Dynamic::UNIT;
-            }
-            _ => {
-                return Dynamic::UNIT;
-            }
+            _ => return Dynamic::UNIT,
         };
 
         // 3. Select closest delta
