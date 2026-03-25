@@ -464,13 +464,13 @@ impl BarContext {
         self.indicator_value("atr", period)
     }
     pub fn macd_line(&mut self) -> Dynamic {
-        self.indicator_value("macd_line", 0)
+        self.indicator_value_multi("macd_line", &[12, 26, 9])
     }
     pub fn macd_signal(&mut self) -> Dynamic {
-        self.indicator_value("macd_signal", 0)
+        self.indicator_value_multi("macd_signal", &[12, 26, 9])
     }
     pub fn macd_hist(&mut self) -> Dynamic {
-        self.indicator_value("macd_hist", 0)
+        self.indicator_value_multi("macd_hist", &[12, 26, 9])
     }
     pub fn bbands_upper(&mut self, period: i64) -> Dynamic {
         self.indicator_value("bbands_upper", period)
@@ -491,7 +491,7 @@ impl BarContext {
         self.indicator_value("cci", period)
     }
     pub fn obv(&mut self) -> Dynamic {
-        self.indicator_value("obv", 0)
+        self.indicator_value_multi("obv", &[])
     }
 
     // --- Generic indicator accessor ---

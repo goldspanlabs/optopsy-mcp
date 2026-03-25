@@ -73,7 +73,7 @@ fn register_bar_context(engine: &mut Engine) {
     engine.register_fn("bbands_mid", BarContext::bbands_mid);
     engine.register_fn("bbands_lower", BarContext::bbands_lower);
     engine.register_fn("stochastic", BarContext::stochastic);
-    engine.register_fn("adx", BarContext::adx);
+    // ADX omitted — requires +DI/-DI implementation not yet in IndicatorStore
     engine.register_fn("cci", BarContext::cci);
     engine.register_fn("obv", BarContext::obv);
     engine.register_fn("indicator", BarContext::indicator);

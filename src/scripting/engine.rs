@@ -350,7 +350,9 @@ pub async fn run_script_backtest(
                             if let Some(pid) = position_id {
                                 if let Some(idx) = positions.iter().position(|p| p.id == pid) {
                                     let pnl = compute_close_pnl(&positions[idx], bar);
-                                    realized_equity += pnl;
+                                    let exit_comm =
+                                        compute_commission(&config.commission, &positions[idx]);
+                                    realized_equity += pnl - exit_comm;
 
                                     if has_on_position_closed {
                                         let ctx = build_bar_context(
@@ -1208,7 +1210,8 @@ fn build_script_trade_record(
         "assignment" => ExitType::Assignment,
         "called_away" => ExitType::CalledAway,
         "delta_exit" => ExitType::DeltaExit,
-        _ => ExitType::Signal, // generic fallback
+        "end_of_data" => ExitType::Expiration, // no dedicated variant; closest match
+        _ => ExitType::Signal,                 // script-defined exit reasons
     };
 
     let entry_cost = pos.entry_cost;

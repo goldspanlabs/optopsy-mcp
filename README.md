@@ -134,7 +134,7 @@ Fixed quantity, fixed fractional, risk per trade, Kelly criterion, and volatilit
 
 ### Rhai Scripting Engine
 
-Write backtests as [Rhai](https://rhai.rs/) scripts with a callback-driven API. The engine provides a `BarContext` (`ctx`) object with access to OHLCV data, 40+ pre-computed indicators, options chain lookup, portfolio state, and cross-symbol data. Scripts are fully sandboxed with no file or network access.
+Write backtests as [Rhai](https://rhai.rs/) scripts with a callback-driven API. The engine provides a `BarContext` (`ctx`) object with access to OHLCV data, pre-computed indicators (SMA, EMA, RSI, ATR, MACD, Bollinger Bands, Stochastic, CCI, OBV), options chain lookup, portfolio state, and cross-symbol data. Scripts are fully sandboxed with no file or network access.
 
 ```rhai
 fn config() {
