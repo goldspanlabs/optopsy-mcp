@@ -357,22 +357,32 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn test_const_injection() {
+    fn test_params_map_injection() {
         let mut params = HashMap::new();
         params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
         params.insert("CAPITAL".to_string(), serde_json::json!(50000.0));
         params.insert("STOP_LOSS".to_string(), serde_json::json!(null));
 
-        let source = "fn config() { #{ symbol: SYMBOL, capital: CAPITAL } }";
-        let result = stdlib::inject_as_const(source, &params);
+        let mut scope = Scope::new();
+        stdlib::inject_params_map(&mut scope, &params);
 
-        assert!(result.contains("const SYMBOL = \"SPY\""));
-        assert!(result.contains("const CAPITAL = 50000.0"));
-        assert!(result.contains("const STOP_LOSS = ()"));
+        let map = scope.get_value::<rhai::Map>("params").unwrap();
+        assert_eq!(
+            map.get("SYMBOL")
+                .unwrap()
+                .clone()
+                .into_immutable_string()
+                .unwrap()
+                .as_str(),
+            "SPY"
+        );
+        assert_eq!(map.get("CAPITAL").unwrap().as_float().unwrap(), 50000.0);
+        // null → ()
+        assert!(map.get("STOP_LOSS").unwrap().is_unit());
     }
 
     #[test]
-    fn test_injected_const_accessible_in_fn() {
+    fn test_params_accessible_in_fn() {
         let engine = build_engine();
 
         let mut params = HashMap::new();
@@ -381,16 +391,18 @@ mod tests {
 
         let source = r"
             fn config() {
-                #{ symbol: SYMBOL, capital: CAPITAL }
+                #{ symbol: params.SYMBOL, capital: params.CAPITAL }
             }
         ";
-        let full_source = stdlib::inject_as_const(source, &params);
 
-        let ast = engine.compile(&full_source).unwrap();
+        let ast = engine.compile(source).unwrap();
         let mut scope = Scope::new();
         let _ = engine
             .eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
             .unwrap();
+
+        // Inject params map after scope init (mirrors engine.rs flow)
+        stdlib::inject_params_map(&mut scope, &params);
 
         let options = CallFnOptions::new().eval_ast(false).rewind_scope(false);
         let result: Dynamic = engine
@@ -406,6 +418,60 @@ mod tests {
                 .unwrap()
                 .as_str(),
             "SPY"
+        );
+        assert_eq!(map.get("capital").unwrap().as_int().unwrap(), 50000);
+    }
+
+    #[test]
+    fn test_params_null_becomes_unit() {
+        let engine = build_engine();
+
+        let mut params = HashMap::new();
+        params.insert("STOP_LOSS".to_string(), serde_json::json!(null));
+        params.insert("TAKE_PROFIT".to_string(), serde_json::json!(0.5));
+
+        let source = r#"
+            fn check() {
+                if params.STOP_LOSS == () { "unset" } else { "set" }
+            }
+        "#;
+
+        let ast = engine.compile(source).unwrap();
+        let mut scope = Scope::new();
+        let _ = engine
+            .eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
+            .unwrap();
+        stdlib::inject_params_map(&mut scope, &params);
+
+        let options = CallFnOptions::new().eval_ast(false).rewind_scope(false);
+        let result: Dynamic = engine
+            .call_fn_with_options(options, &mut scope, &ast, "check", ())
+            .unwrap();
+        assert_eq!(result.into_immutable_string().unwrap().as_str(), "unset");
+    }
+
+    #[test]
+    fn test_params_scope_rebuild() {
+        let mut params = HashMap::new();
+        params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
+
+        let mut scope = Scope::new();
+        stdlib::inject_params_map(&mut scope, &params);
+
+        // Update via inject_into_scope (sweep path)
+        let mut new_params = HashMap::new();
+        new_params.insert("SYMBOL".to_string(), serde_json::json!("QQQ"));
+        stdlib::inject_into_scope(&mut scope, &new_params);
+
+        let map = scope.get_value::<rhai::Map>("params").unwrap();
+        assert_eq!(
+            map.get("SYMBOL")
+                .unwrap()
+                .clone()
+                .into_immutable_string()
+                .unwrap()
+                .as_str(),
+            "QQQ"
         );
     }
 

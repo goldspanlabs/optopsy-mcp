@@ -12,7 +12,7 @@ use crate::tools::run_script::{RunScriptParams, RunScriptResponse};
 pub async fn execute(server: &OptopsyServer, params: RunScriptParams) -> Result<RunScriptResponse> {
     let start = std::time::Instant::now();
 
-    // 1. Resolve script source (inline or stdlib, with param injection)
+    // 1. Resolve script source (inline or file)
     let source = crate::tools::run_script::resolve_script_source(&params)?;
 
     // 2. Create data loader backed by server's CachedStore
@@ -20,12 +20,12 @@ pub async fn execute(server: &OptopsyServer, params: RunScriptParams) -> Result<
         cache: Arc::clone(&server.cache),
     };
 
-    // 3. Run the script backtest
+    // 3. Run the script backtest (params injected into scope as `params` map)
     let ScriptBacktestResult {
         result,
         metadata: _,
         ..
-    } = crate::scripting::engine::run_script_backtest(&source, &loader).await?;
+    } = crate::scripting::engine::run_script_backtest(&source, &params.params, &loader).await?;
 
     let elapsed = start.elapsed().as_millis() as u64;
 

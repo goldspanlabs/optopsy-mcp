@@ -27,6 +27,7 @@ use super::types::*;
 /// loads data, pre-computes indicators, and runs the unified simulation loop.
 pub async fn run_script_backtest(
     script_source: &str,
+    params: &HashMap<String, serde_json::Value>,
     data_loader: &dyn DataLoader,
 ) -> Result<ScriptBacktestResult> {
     let backtest_start = std::time::Instant::now();
@@ -42,6 +43,9 @@ pub async fn run_script_backtest(
     let _ = engine
         .eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
         .map_err(|e| anyhow::anyhow!("Script initialization error: {e}"))?;
+
+    // 2a. Inject params map into scope (immutable, accessible as `params.X`)
+    super::stdlib::inject_params_map(&mut scope, params);
 
     // 3. Call config()
     let config_map: Dynamic = call_fn_persistent(&engine, &mut scope, &ast, "config", ())?;
