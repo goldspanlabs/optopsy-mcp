@@ -368,6 +368,10 @@ fn rolling_macd(
     let mut signal = vec![f64::NAN; n];
     let mut hist = vec![f64::NAN; n];
 
+    if fast == 0 || slow == 0 || signal_period == 0 {
+        return (line, signal, hist);
+    }
+
     let fast_ema = rolling_ema(data, fast);
     let slow_ema = rolling_ema(data, slow);
 
@@ -417,6 +421,10 @@ fn rolling_bbands(data: &[f64], period: usize, std_mult: f64) -> (Vec<f64>, Vec<
     let mut mid = vec![f64::NAN; n];
     let mut lower = vec![f64::NAN; n];
 
+    if period == 0 || data.len() < period {
+        return (upper, mid, lower);
+    }
+
     let sma = rolling_sma(data, period);
 
     for i in (period - 1)..n {
@@ -448,6 +456,10 @@ fn rolling_stochastic_k(
     let n = closes.len();
     let mut raw_k = vec![f64::NAN; n];
 
+    if k_period == 0 || n < k_period {
+        return raw_k;
+    }
+
     // Raw %K
     for i in (k_period - 1)..n {
         let start = i + 1 - k_period;
@@ -472,13 +484,29 @@ fn rolling_stochastic_k(
     if d_smooth <= 1 {
         return raw_k;
     }
-    rolling_sma(&raw_k, d_smooth)
+    // Only start smoothing once raw_k has produced finite values.
+    // Passing leading NaNs into rolling_sma would poison its running sum
+    // and yield an all-NaN series.
+    let first_valid = raw_k.iter().position(|v| !v.is_nan());
+    let Some(start) = first_valid else {
+        return raw_k;
+    };
+    let smoothed_tail = rolling_sma(&raw_k[start..], d_smooth);
+    let mut result = vec![f64::NAN; n];
+    for (offset, value) in smoothed_tail.into_iter().enumerate() {
+        result[start + offset] = value;
+    }
+    result
 }
 
 /// CCI: Commodity Channel Index.
 fn rolling_cci(highs: &[f64], lows: &[f64], closes: &[f64], period: usize) -> Vec<f64> {
     let n = closes.len();
     let mut result = vec![f64::NAN; n];
+
+    if period == 0 || n < period {
+        return result;
+    }
 
     // Typical price = (H + L + C) / 3
     let tp: Vec<f64> = (0..n)

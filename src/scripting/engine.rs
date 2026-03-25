@@ -242,9 +242,12 @@ pub async fn run_script_backtest(
             }
 
             if should_close {
+                // Clone before removal to reference position data after it's removed
+                let closed_pos = positions[i].clone();
+
                 // Close position immediately (deduct exit commission)
-                let pnl = compute_close_pnl(&positions[i], bar);
-                let exit_comm = compute_commission(&config.commission, &positions[i]);
+                let pnl = compute_close_pnl(&closed_pos, bar);
+                let exit_comm = compute_commission(&config.commission, &closed_pos);
                 realized_equity += pnl - exit_comm;
 
                 // Fire on_position_closed synchronously
@@ -260,7 +263,7 @@ pub async fn run_script_backtest(
                         &config,
                         &options_df,
                     );
-                    let pos_dyn = Dynamic::from(positions[i].clone());
+                    let pos_dyn = Dynamic::from(closed_pos.clone());
                     let exit_type_dyn = Dynamic::from(exit_reason.clone());
                     let _ = call_fn_persistent(
                         &engine,
@@ -273,14 +276,104 @@ pub async fn run_script_backtest(
 
                 // Add to trade log
                 trade_log.push(build_script_trade_record(
-                    &positions[i],
+                    &closed_pos,
                     bar.datetime,
                     pnl,
                     &exit_reason,
                 ));
 
                 positions.remove(i);
-                // Don't increment i — next position is now at index i
+
+                // Handle implicit stock transitions for wheel-like strategies.
+                // "assignment": short put expired ITM → open an implicit long stock at the strike.
+                // "called_away": short call expired ITM → close any implicit long stock at the strike.
+                match exit_reason.as_str() {
+                    "assignment" => {
+                        if let ScriptPositionInner::Options { legs, multiplier, .. } =
+                            &closed_pos.inner
+                        {
+                            for leg in legs {
+                                if leg.side == Side::Short
+                                    && leg.option_type == crate::engine::types::OptionType::Put
+                                {
+                                    // Use saturating_mul to avoid silent i32 overflow for
+                                    // unusually large position sizes (e.g. qty=1, multiplier=100
+                                    // is the typical case — always safely within i32 range).
+                                    let shares = leg.qty.saturating_mul(*multiplier);
+                                    let implicit = ScriptPosition {
+                                        id: next_id,
+                                        entry_date: today,
+                                        inner: ScriptPositionInner::Stock {
+                                            side: Side::Long,
+                                            qty: shares,
+                                            entry_price: leg.strike,
+                                        },
+                                        // Cost basis is strike × shares. The put premium already
+                                        // received offsets this in realized_equity; we intentionally
+                                        // do not re-deduct it here to avoid double-counting.
+                                        entry_cost: leg.strike * f64::from(shares),
+                                        unrealized_pnl: (bar.close - leg.strike)
+                                            * f64::from(shares),
+                                        days_held: 0,
+                                        current_date: today,
+                                        source: "assignment".to_string(),
+                                        implicit: true,
+                                    };
+                                    next_id += 1;
+                                    positions.push(implicit);
+                                }
+                            }
+                        }
+                    }
+                    "called_away" => {
+                        if let ScriptPositionInner::Options { legs, .. } = &closed_pos.inner {
+                            for leg in legs {
+                                if leg.side == Side::Short
+                                    && leg.option_type == crate::engine::types::OptionType::Call
+                                {
+                                    let call_strike = leg.strike;
+                                    // Close all implicit long stock positions (source="assignment").
+                                    // In a typical single-contract wheel each short call corresponds
+                                    // to exactly one prior assignment, so this is best-effort
+                                    // matching by source tag rather than by exact quantity.
+                                    let mut j = 0;
+                                    while j < positions.len() {
+                                        let is_target = positions[j].implicit
+                                            && positions[j].source == "assignment"
+                                            && matches!(
+                                                &positions[j].inner,
+                                                ScriptPositionInner::Stock {
+                                                    side: Side::Long,
+                                                    ..
+                                                }
+                                            );
+                                        if is_target {
+                                            let stock_pnl = compute_stock_pnl_at_price(
+                                                &positions[j],
+                                                call_strike,
+                                            );
+                                            let stock_exit_comm =
+                                                compute_commission(&config.commission, &positions[j]);
+                                            realized_equity += stock_pnl - stock_exit_comm;
+                                            trade_log.push(build_script_trade_record(
+                                                &positions[j],
+                                                bar.datetime,
+                                                stock_pnl,
+                                                "called_away",
+                                            ));
+                                            positions.remove(j);
+                                            // Don't increment j
+                                        } else {
+                                            j += 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                // Don't increment i — the next position is now at index i
             } else {
                 i += 1;
             }
@@ -1126,10 +1219,16 @@ fn compute_options_entry(
 }
 
 /// Compute P&L for closing a position at the current bar's prices.
-/// For options, uses the latest unrealized_pnl which reflects the most recent
-/// PriceTable lookup. Note: Phase A closes happen before Phase C MTM update,
-/// so the P&L is based on the previous bar's prices — this matches the native
-/// engine behavior where exit prices are determined at the close trigger bar.
+///
+/// For stocks, uses the current bar's close price.
+/// For options, recomputes P&L from each leg's cached `current_price`
+/// (updated in Phase C) and `entry_price`, including the contract multiplier.
+/// Both `leg.current_price` and `leg.entry_price` are per-contract premiums
+/// (e.g., $2.50 for a $2.50 premium option); the contract multiplier (typically
+/// 100) converts them to per-position dollar P&L.
+/// Note: Phase A closes happen before Phase C MTM update, so `current_price`
+/// reflects the previous bar — this matches the native engine behavior where
+/// exit prices are determined at the close trigger bar.
 fn compute_close_pnl(pos: &ScriptPosition, bar: &OhlcvBar) -> f64 {
     match &pos.inner {
         ScriptPositionInner::Stock {
@@ -1137,7 +1236,32 @@ fn compute_close_pnl(pos: &ScriptPosition, bar: &OhlcvBar) -> f64 {
             qty,
             entry_price,
         } => (bar.close - entry_price) * *qty as f64 * side.multiplier(),
-        ScriptPositionInner::Options { .. } => pos.unrealized_pnl,
+        ScriptPositionInner::Options {
+            legs, multiplier, ..
+        } => legs
+            .iter()
+            .map(|leg| {
+                (leg.current_price - leg.entry_price)
+                    * leg.side.multiplier()
+                    * f64::from(leg.qty)
+                    * f64::from(*multiplier)
+            })
+            .sum(),
+    }
+}
+
+/// Compute P&L for closing a stock position at an explicit price.
+///
+/// Used for "called_away" exits where the stock must be priced at the
+/// short call's strike rather than the bar's close.
+fn compute_stock_pnl_at_price(pos: &ScriptPosition, exit_price: f64) -> f64 {
+    match &pos.inner {
+        ScriptPositionInner::Stock {
+            side,
+            qty,
+            entry_price,
+        } => (exit_price - entry_price) * f64::from(*qty) * side.multiplier(),
+        ScriptPositionInner::Options { .. } => 0.0,
     }
 }
 
