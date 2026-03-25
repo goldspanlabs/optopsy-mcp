@@ -11,95 +11,51 @@ A high-performance options and stock backtesting engine exposed as an [MCP](http
 
 ## What You Can Do
 
-### Backtest Options Strategies
+### Write Custom Strategies
 
-Run event-driven simulations across 32 built-in options strategies — from simple singles to multi-leg iron condors, butterflies, calendars, diagonals, and stock-leg strategies (covered calls, protective puts). Full position management with stop-loss, take-profit, max-hold exits, and 5 dynamic position sizing methods.
+Describe a strategy in plain English and Claude generates a [Rhai](https://rhai.rs/) script that runs against historical data. Define entry logic, exit rules, position sizing, and stateful multi-phase strategies in a single script — or use one of the built-in strategy scripts (`short_put`, `iron_condor`, `wheel`) with parameter injection.
+
+```
+"Write a strategy that sells puts on SPY when VIX > 20 and RSI < 30, with a 50% stop loss"
+"Build a custom mean-reversion strategy that buys QQQ on 3 consecutive down days and exits after a 2% gain or 5-day hold"
+"Run the wheel script on SPY with 30-delta puts at 45 DTE and 25-delta calls at 30 DTE"
+```
+
+### Backtest Options and Stocks
+
+Run event-driven simulations across 32 built-in options strategies — singles, spreads, iron condors, butterflies, calendars, diagonals, and stock-leg combos. Signal-driven stock backtesting on OHLCV data. Full position management with stop-loss, take-profit, max-hold exits, and 5 dynamic sizing methods.
 
 ```
 "Backtest an iron condor on SPY with $100k capital, 30-delta wings, and a 50% stop loss"
-"Run a covered call strategy on AAPL with a 30-delta short call"
-"Run a short put selling strategy with RSI < 30 as the entry filter"
-```
-
-### Run the Wheel
-
-Simulate the full wheel strategy — sell puts, get assigned, sell covered calls, get called away, repeat. Separate put/call DTE and delta configuration with cycle-level analytics.
-
-```
-"Run the wheel on SPY with 30-delta puts at 45 DTE and 30-delta calls at 30 DTE"
-"Wheel strategy on SPY with VIX/VIX3M < 1.0 as entry filter"
-```
-
-### Backtest Stock Strategies
-
-Signal-driven stock backtesting on OHLCV data. Define entry/exit conditions using the formula DSL and simulate long or short equity positions.
-
-```
 "Backtest buying SPY when RSI drops below 30 and selling when it crosses above 70"
-"Test a mean-reversion strategy on QQQ with a 3% stop loss"
+"Run the wheel on SPY with 30-delta puts at 45 DTE and 30-delta calls at 30 DTE"
 ```
 
-### Optimize Parameters
+### Optimize and Validate
 
-Grid-search across delta, DTE, slippage, and signal combinations with out-of-sample validation, stability scoring, and sensitivity analysis.
+Grid-search across delta, DTE, slippage, and signal combinations with out-of-sample validation. Walk-forward analysis with rolling train/test windows. Permutation testing for statistical significance.
 
 ```
 "Sweep DTE and delta for short puts on SPY — find the best risk-adjusted setup"
-"Compare iron condors vs iron butterflies with different entry signals"
-```
-
-### Validate Robustness
-
-Walk-forward analysis with rolling train/test windows and permutation testing for statistical significance.
-
-```
 "Run walk-forward on this strategy with 4 windows to check if it holds up over time"
 "Is this backtest result statistically significant or just luck?"
 ```
 
-### Filter by Market Regime
+### Analyze Markets
 
-Gate entries using Hidden Markov Model regime detection. Fit on historical data, classify forward in real-time (no look-ahead bias), and only trade in favorable regimes.
-
-```
-"Only enter covered calls when SPY is in a bullish HMM regime"
-"Skip trades during bearish regimes: hmm_regime(3, 5) != bearish"
-"Combine regime with technicals: hmm_regime(2, 5) == bullish and rsi(close, 14) < 30"
-```
-
-### Analyze Price Patterns
-
-Discover seasonality and time-based patterns with aggregate statistics, distribution analysis, correlation matrices, rolling metrics, and regime detection.
+Discover seasonality, regime shifts, and price patterns. Gate entries using HMM regime detection. Cross-symbol correlation, rolling metrics, and distribution analysis.
 
 ```
 "Show me SPY's average return by day of week — are any statistically significant?"
-"What's the return distribution for QQQ over the last 5 years?"
+"Only enter covered calls when SPY is in a bullish HMM regime"
 "Detect volatility regimes in SPY and show when they shift"
-```
-
-### Script Custom Strategies with Rhai
-
-Write fully custom backtests using the [Rhai](https://rhai.rs/) scripting language — or let Claude generate them from natural language. Define entry logic, exit rules, position sizing, and stateful multi-phase strategies (like the wheel) in a single script. Use built-in strategy scripts or write your own from scratch.
-
-```
-"Backtest a short put strategy that only enters when VIX > 20 and RSI < 30"
-"Write a custom strategy that buys SPY on 3 consecutive down days and sells after a 2% gain"
-"Run the wheel strategy script on SPY with 30-delta puts and 25-delta calls"
-```
-
-### Build Custom Signals
-
-Create entry/exit signals with a formula DSL covering 67 functions (momentum, trend, volatility, volume, regime, derived stats). Save, rename, and reuse signals across sessions.
-
-```
-"Create a signal that fires when RSI < 30 and price is below the lower Bollinger Band"
-"Build an exit signal for when the 3-day price change exceeds 3%"
 ```
 
 ## MCP Tools
 
 | Tool | Description |
 |------|-------------|
+| `run_script` | Execute a Rhai backtest script (inline or built-in strategy) |
 | `list_symbols` | Discover available symbols in the data cache |
 | `list_strategies` | Browse all 32 built-in options strategies with leg definitions |
 | `build_signal` | Create, validate, save, rename, search, and manage custom signals (CRUD + catalog) |
@@ -110,7 +66,6 @@ Create entry/exit signals with a formula DSL covering 67 functions (momentum, tr
 | `compare_strategies` | Side-by-side comparison of multiple strategies |
 | `walk_forward` | Rolling walk-forward analysis with train/test windows |
 | `permutation_test` | Statistical significance testing via date shuffling |
-| `run_script` | Execute a Rhai backtest script (inline or built-in strategy) |
 | `get_raw_prices` | Return OHLCV price data for charting |
 | `aggregate_prices` | Time-based aggregation (day-of-week, month, quarter, year, hour) with significance testing |
 | `distribution` | Return distribution analysis with normality testing |
@@ -177,13 +132,9 @@ Mid, spread (bid/ask worst-case), liquidity-based (volume-scaled), and per-leg f
 
 Fixed quantity, fixed fractional, risk per trade, Kelly criterion, and volatility targeting.
 
-### 67 Built-in Signals
-
-RSI, MACD, Stochastic, Bollinger Bands, Keltner Channels, Supertrend, Aroon, ATR, OBV, MFI, IV Rank/Percentile, HMM regime filter, and more — plus AND/OR/NOT combinators and cross-symbol signals (e.g., VIX as a filter for SPY trades).
-
 ### Rhai Scripting Engine
 
-Write backtests as Rhai scripts with a callback-driven API. The engine provides a `BarContext` (`ctx`) object with access to OHLCV data, 40+ pre-computed indicators, options chain lookup, portfolio state, and cross-symbol data.
+Write backtests as [Rhai](https://rhai.rs/) scripts with a callback-driven API. The engine provides a `BarContext` (`ctx`) object with access to OHLCV data, 40+ pre-computed indicators, options chain lookup, portfolio state, and cross-symbol data. Scripts are fully sandboxed with no file or network access.
 
 ```rhai
 fn config() {
@@ -208,22 +159,11 @@ fn on_exit_check(ctx, pos) {
 }
 ```
 
-Three built-in strategy scripts (`short_put`, `iron_condor`, `wheel`) are included and parameterized via constant injection. Scripts are fully sandboxed with no file or network access.
+Three built-in strategy scripts (`short_put`, `iron_condor`, `wheel`) are included and parameterized via constant injection.
 
-### Formula DSL
+### 67 Indicators and Signal DSL
 
-Build custom signals with a compact expression language:
-
-```
-close > sma(close, 50) and rsi(close, 14) < 30
-macd_hist(close) > 0 and rel_volume(volume, 20) > 2.0
-consecutive_down(close) >= 3 and volume > sma(volume, 20) * 1.5
-iv_rank(iv, 252) > 50 and bbands_lower(close, 20) > close
-hmm_regime(3, 5) == bullish and rsi(close, 14) < 30
-day_of_week() == 1 and pct_change(close, 1) < -0.005
-```
-
-Supports lookback (`close[1]`), date/time functions (`day_of_week()`, `month()`, `hour()`), conditionals (`if(cond, then, else)`), HMM regime gating (`hmm_regime()`), cross-symbol references (`VIX > 20`), and 67 rolling/statistical functions.
+RSI, MACD, Stochastic, Bollinger Bands, Keltner Channels, Supertrend, ATR, OBV, MFI, IV Rank, HMM regime filter, and more. Available as pre-computed O(1) lookups in Rhai scripts (`ctx.rsi(14)`, `ctx.sma(50)`) and as a formula DSL for the built-in backtest tools (`rsi(close, 14) < 30 and VIX > 20`).
 
 ## Data
 
