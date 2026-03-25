@@ -13,7 +13,7 @@ use polars::prelude::*;
 use optopsy_mcp::data::parquet::DATETIME_COL;
 use optopsy_mcp::scripting::engine::{run_script_backtest, DataLoader, ScriptBacktestResult};
 use optopsy_mcp::scripting::stdlib;
-use optopsy_mcp::scripting::types::{Interval, OhlcvBar};
+use optopsy_mcp::scripting::types::OhlcvBar;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -55,9 +55,9 @@ fn make_options_df(
     df
 }
 
-/// Test `DataLoader` that returns pre-built OHLCV bars and an options `DataFrame`.
+/// Test `DataLoader` that returns pre-built OHLCV and options `DataFrame`s.
 struct TestDataLoader {
-    bars: Vec<OhlcvBar>,
+    ohlcv_df: DataFrame,
     options_df: DataFrame,
 }
 
@@ -68,9 +68,8 @@ impl DataLoader for TestDataLoader {
         _symbol: &str,
         _start: Option<NaiveDate>,
         _end: Option<NaiveDate>,
-        _interval: Interval,
-    ) -> Result<Vec<OhlcvBar>> {
-        Ok(self.bars.clone())
+    ) -> Result<DataFrame> {
+        Ok(self.ohlcv_df.clone())
     }
 
     async fn load_options(
@@ -81,6 +80,30 @@ impl DataLoader for TestDataLoader {
     ) -> Result<DataFrame> {
         Ok(self.options_df.clone())
     }
+}
+
+/// Convert `Vec<OhlcvBar>` to a Polars `DataFrame` for test data loaders.
+fn bars_to_df(bars: &[OhlcvBar]) -> DataFrame {
+    let datetimes: Vec<chrono::NaiveDateTime> = bars.iter().map(|b| b.datetime).collect();
+    let opens: Vec<f64> = bars.iter().map(|b| b.open).collect();
+    let highs: Vec<f64> = bars.iter().map(|b| b.high).collect();
+    let lows: Vec<f64> = bars.iter().map(|b| b.low).collect();
+    let closes: Vec<f64> = bars.iter().map(|b| b.close).collect();
+    let volumes: Vec<f64> = bars.iter().map(|b| b.volume).collect();
+
+    df! {
+        "datetime" => DatetimeChunked::from_naive_datetime(
+            PlSmallStr::from("datetime"),
+            datetimes,
+            TimeUnit::Microseconds,
+        ).into_column().take_materialized_series(),
+        "open" => &opens,
+        "high" => &highs,
+        "low" => &lows,
+        "close" => &closes,
+        "volume" => &volumes,
+    }
+    .unwrap()
 }
 
 fn make_bars_from_closes(closes: &BTreeMap<NaiveDate, f64>) -> Vec<OhlcvBar> {
@@ -177,7 +200,7 @@ async fn wheel_script_put_expires_otm() {
 
     let bars = make_bars_from_closes(&closes);
     let loader = TestDataLoader {
-        bars,
+        ohlcv_df: bars_to_df(&bars),
         options_df: options_df.clone(),
     };
 
@@ -252,7 +275,7 @@ async fn wheel_script_stock_only_smoke_test() {
     ];
 
     let loader = TestDataLoader {
-        bars,
+        ohlcv_df: bars_to_df(&bars),
         options_df: DataFrame::empty(),
     };
 
@@ -326,7 +349,10 @@ async fn script_opens_options_position() {
         },
     ];
 
-    let loader = TestDataLoader { bars, options_df };
+    let loader = TestDataLoader {
+        ohlcv_df: bars_to_df(&bars),
+        options_df,
+    };
 
     // Minimal script that opens a short put on first bar
     let script = r#"
@@ -375,7 +401,10 @@ async fn wheel_script_result_has_expected_fields() {
     closes.insert(put_exp, 105.0);
 
     let bars = make_bars_from_closes(&closes);
-    let loader = TestDataLoader { bars, options_df };
+    let loader = TestDataLoader {
+        ohlcv_df: bars_to_df(&bars),
+        options_df,
+    };
 
     let script_source = std::fs::read_to_string("scripts/strategies/wheel.rhai").unwrap();
     let mut params = std::collections::HashMap::new();

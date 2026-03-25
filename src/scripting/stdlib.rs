@@ -38,6 +38,9 @@ fn is_valid_identifier(s: &str) -> bool {
 /// and only scope values change per iteration.
 pub fn inject_into_scope(scope: &mut rhai::Scope, params: &HashMap<String, serde_json::Value>) {
     for (key, value) in params {
+        if !is_valid_identifier(key) {
+            continue;
+        }
         match value {
             serde_json::Value::Number(n) => {
                 if let Some(f) = n.as_f64() {

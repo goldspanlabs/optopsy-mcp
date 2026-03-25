@@ -45,22 +45,42 @@ pub async fn run_script_backtest(
 
     // 3. Call config()
     let config_map: Dynamic = call_fn_persistent(&engine, &mut scope, &ast, "config", ())?;
-    let config = parse_config(config_map).context("Failed to parse config() return value")?;
-    let config = Arc::new(config);
+    let mut config = parse_config(config_map).context("Failed to parse config() return value")?;
 
     // 4. Load data
-    let bars = data_loader
-        .load_ohlcv(
-            &config.symbol,
-            config.start_date,
-            config.end_date,
-            config.interval,
-        )
+    let mut early_warnings: Vec<String> = Vec::new();
+
+    let ohlcv_df = data_loader
+        .load_ohlcv(&config.symbol, config.start_date, config.end_date)
         .await?;
 
-    if bars.is_empty() {
+    if ohlcv_df.height() == 0 {
         bail!("No OHLCV data found for symbol '{}'", config.symbol);
     }
+
+    // 4a. Resample to daily when options are involved (options data is daily-only)
+    let ohlcv_df = if config.needs_options && config.interval != Interval::Daily {
+        let original_rows = ohlcv_df.height();
+        let resampled = crate::engine::stock_sim::resample_ohlcv(
+            &ohlcv_df,
+            crate::engine::types::Interval::Daily,
+        )?;
+        early_warnings.push(format!(
+            "Options require daily data; resampled {} intraday ({:?}) bars to {} daily bars",
+            original_rows,
+            config.interval,
+            resampled.height()
+        ));
+        config.interval = Interval::Daily;
+        resampled
+    } else {
+        ohlcv_df
+    };
+
+    // 4b. Convert DataFrame → Vec<OhlcvBar> for the simulation loop
+    let bars = ohlcv_bars_from_df(&ohlcv_df)?;
+
+    let config = Arc::new(config);
 
     // 5. Pre-compute indicators
     let indicator_store = Arc::new(IndicatorStore::build(&config.declared_indicators, &bars)?);
@@ -76,15 +96,22 @@ pub async fn run_script_backtest(
             price_history.iter().map(|b| b.datetime.date()).collect();
 
         for cross_sym in &config.cross_symbols {
-            match data_loader
-                .load_ohlcv(
-                    cross_sym,
-                    config.start_date,
-                    config.end_date,
-                    config.interval,
-                )
+            let cross_df = match data_loader
+                .load_ohlcv(cross_sym, config.start_date, config.end_date)
                 .await
             {
+                Ok(df) => df,
+                Err(e) => {
+                    tracing::warn!(
+                        symbol = cross_sym,
+                        error = %e,
+                        "Failed to load cross-symbol data — ctx.price_of() will return ()"
+                    );
+                    continue;
+                }
+            };
+
+            match ohlcv_bars_from_df(&cross_df) {
                 Ok(cross_bars) => {
                     let filled = forward_fill_cross_symbol(&primary_dates, &cross_bars);
                     cross_map.insert(cross_sym.to_uppercase(), filled);
@@ -93,7 +120,7 @@ pub async fn run_script_backtest(
                     tracing::warn!(
                         symbol = cross_sym,
                         error = %e,
-                        "Failed to load cross-symbol data — ctx.price_of() will return ()"
+                        "Failed to parse cross-symbol data — ctx.price_of() will return ()"
                     );
                 }
             }
@@ -132,7 +159,7 @@ pub async fn run_script_backtest(
     let mut positions: Vec<ScriptPosition> = Vec::new();
     let mut trade_log: Vec<TradeRecord> = Vec::new();
     let mut equity_curve: Vec<EquityPoint> = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = early_warnings;
     let mut realized_equity = config.capital;
     let mut next_id = 1usize;
     let mut last_entry_date: Option<NaiveDate> = None;
@@ -1485,8 +1512,7 @@ pub trait DataLoader: Send + Sync {
         symbol: &str,
         start: Option<NaiveDate>,
         end: Option<NaiveDate>,
-        interval: Interval,
-    ) -> Result<Vec<OhlcvBar>>;
+    ) -> Result<polars::prelude::DataFrame>;
 
     async fn load_options(
         &self,
@@ -1499,7 +1525,7 @@ pub trait DataLoader: Send + Sync {
 /// `DataLoader` backed by `CachedStore` — the production implementation.
 ///
 /// Resolves symbol → Parquet path via `CachedStore::find_ohlcv`, loads the
-/// DataFrame via `stock_sim::load_ohlcv_df`, and converts to `Vec<OhlcvBar>`.
+/// DataFrame via `stock_sim::load_ohlcv_df`.
 pub struct CachedDataLoader {
     pub cache: Arc<crate::data::cache::CachedStore>,
 }
@@ -1511,12 +1537,10 @@ impl DataLoader for CachedDataLoader {
         symbol: &str,
         start: Option<NaiveDate>,
         end: Option<NaiveDate>,
-        _interval: Interval,
-    ) -> Result<Vec<OhlcvBar>> {
+    ) -> Result<polars::prelude::DataFrame> {
         let cache = Arc::clone(&self.cache);
         let symbol = symbol.to_uppercase();
 
-        // Parquet I/O is blocking — run on a blocking thread
         tokio::task::spawn_blocking(move || {
             let path = cache.find_ohlcv(&symbol).ok_or_else(|| {
                 anyhow::anyhow!(
@@ -1527,9 +1551,7 @@ impl DataLoader for CachedDataLoader {
             })?;
 
             let path_str = path.to_string_lossy().to_string();
-            let df = crate::engine::stock_sim::load_ohlcv_df(&path_str, start, end)?;
-
-            ohlcv_bars_from_df(&df)
+            crate::engine::stock_sim::load_ohlcv_df(&path_str, start, end)
         })
         .await
         .map_err(|e| anyhow::anyhow!("Task join error: {e}"))?
@@ -1542,18 +1564,12 @@ impl DataLoader for CachedDataLoader {
         end: Option<NaiveDate>,
     ) -> Result<polars::prelude::DataFrame> {
         use crate::data::DataStore;
-        // Await directly — DataStore::load_options is async and internally uses
-        // spawn_blocking for Parquet I/O. No need to nest spawn_blocking + block_on.
         self.cache
             .load_options(&symbol.to_uppercase(), start, end)
             .await
     }
 }
 
-/// Convert a Polars DataFrame (with OHLCV columns) to `Vec<OhlcvBar>`.
-///
-/// Reuses `stock_sim::bars_from_df` for datetime handling, then converts
-/// `Bar` → `OhlcvBar` with volume (which the stock sim Bar struct lacks).
 /// Forward-fill cross-symbol data to align with primary timeline dates.
 ///
 /// For each primary date, uses the last available cross-symbol bar on or before that date.
@@ -1620,6 +1636,10 @@ fn forward_fill_cross_symbol(
     result
 }
 
+/// Convert a Polars DataFrame (with OHLCV columns) to `Vec<OhlcvBar>`.
+///
+/// Reuses `stock_sim::bars_from_df` for datetime handling, then converts
+/// `Bar` → `OhlcvBar` with volume (which the stock sim `Bar` struct lacks).
 fn ohlcv_bars_from_df(df: &polars::prelude::DataFrame) -> Result<Vec<OhlcvBar>> {
     // Use the existing bars_from_df for datetime parsing (handles date vs datetime columns)
     let stock_bars = crate::engine::stock_sim::bars_from_df(df)?;
