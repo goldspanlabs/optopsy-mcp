@@ -236,21 +236,13 @@ async fn wheel_script_put_expires_otm() {
 
     let result = result.unwrap();
 
-    // Print warnings for debugging
-    if !result.result.warnings.is_empty() {
-        eprintln!("Warnings: {:?}", result.result.warnings);
-    }
-
-    // TODO: build_strategy's date filtering needs fixing for synthetic NaiveDateTime
-    // data in Polars — the datetime comparison in filter_to_date doesn't match midnight
-    // timestamps in the test DataFrame. For now, verify the engine runs without errors
-    // and produces an equity curve.
-    assert!(
-        result.result.equity_curve.len() >= 2,
-        "Should have equity curve entries, got {}. Warnings: {:?}",
-        result.result.equity_curve.len(),
+    // Should have opened a short put on bar 0 and it expired on bar 1
+    assert_eq!(
+        result.result.trade_count, 1,
+        "Should have 1 trade (put expiration). Warnings: {:?}",
         result.result.warnings,
     );
+    assert_eq!(result.result.equity_curve.len(), 2);
 
     // Equity curve should have entries for each bar
     assert_eq!(
@@ -326,10 +318,6 @@ async fn wheel_script_stock_only_smoke_test() {
 
     let result = run_script_backtest(script, &loader).await.unwrap();
 
-    eprintln!("Trade count: {}", result.result.trade_count);
-    eprintln!("Equity curve: {:?}", result.result.equity_curve);
-    eprintln!("Warnings: {:?}", result.result.warnings);
-    eprintln!("Trade log: {:?}", result.result.trade_log);
     assert_eq!(result.result.trade_count, 1, "Should have 1 closed trade");
     assert_eq!(
         result.result.equity_curve.len(),
@@ -342,6 +330,67 @@ async fn wheel_script_stock_only_smoke_test() {
     // P&L = (102 - 100) * 100 = 200
     let pnl = result.result.trade_log[0].pnl;
     assert!((pnl - 200.0).abs() < 1.0, "Expected ~200 PnL, got {pnl}");
+}
+
+/// Open an options position via inline script with synthetic data.
+#[tokio::test(flavor = "multi_thread")]
+async fn script_opens_options_position() {
+    let put_exp = d(2024, 2, 16);
+    let options_df = make_options_df(&[(dt(2024, 1, 2), put_exp, "p", 100.0, 3.00, 3.50, -0.30)]);
+
+    let bars = vec![
+        OhlcvBar {
+            datetime: dt(2024, 1, 2),
+            open: 105.0,
+            high: 106.0,
+            low: 104.0,
+            close: 105.0,
+            volume: 1e6,
+        },
+        OhlcvBar {
+            datetime: dt(2024, 2, 16),
+            open: 105.0,
+            high: 106.0,
+            low: 104.0,
+            close: 105.0,
+            volume: 1e6,
+        },
+    ];
+
+    let loader = TestDataLoader { bars, options_df };
+
+    // Minimal script that opens a short put on first bar
+    let script = r#"
+        const SYMBOL = "SPY";
+        const CAPITAL = 100000.0;
+
+        fn config() {
+            #{
+                symbol: SYMBOL,
+                capital: CAPITAL,
+                interval: "daily",
+                data: #{ ohlcv: true, options: true },
+                engine: #{ slippage: "mid" },
+            }
+        }
+
+        fn on_bar(ctx) {
+            if ctx.has_positions() { return []; }
+            let spread = ctx.build_strategy([
+                #{ side: "short", option_type: "put", delta: 0.30, dte: 45 },
+            ]);
+            if spread == () { return []; }
+            [#{ action: "open_spread", spread: spread }]
+        }
+    "#;
+
+    let result = run_script_backtest(script, &loader).await.unwrap();
+
+    // Should have opened a position on bar 0
+    assert!(
+        result.result.equity_curve.len() == 2,
+        "Should have 2 equity points"
+    );
 }
 
 /// Verify BacktestResult has all fields the frontend expects.

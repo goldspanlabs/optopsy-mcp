@@ -688,7 +688,9 @@ impl BarContext {
 
         let df = match &self.options_df {
             Some(df) => df.as_ref(),
-            None => return Dynamic::UNIT, // no options data loaded
+            None => {
+                return Dynamic::UNIT;
+            }
         };
 
         let today = self.datetime.date();
@@ -710,13 +712,23 @@ impl BarContext {
             min_bid_ask,
         ) {
             Ok(f) if f.height() > 0 => f,
-            _ => return Dynamic::UNIT,
+            Ok(f) => {
+                return Dynamic::UNIT;
+            }
+            Err(e) => {
+                return Dynamic::UNIT;
+            }
         };
 
         // 2. Filter to current date only
         let today_filtered = match filter_to_date(&filtered, today) {
             Some(f) if f.height() > 0 => f,
-            _ => return Dynamic::UNIT,
+            Some(f) => {
+                return Dynamic::UNIT;
+            }
+            _ => {
+                return Dynamic::UNIT;
+            }
         };
 
         // 3. Select closest delta
@@ -772,7 +784,7 @@ fn parse_indicator_ref(s: &str) -> (String, i64) {
 // ---------------------------------------------------------------------------
 
 /// Filter a DataFrame to rows matching a specific quote date.
-pub(super) fn filter_to_date(
+pub fn filter_to_date(
     df: &polars::prelude::DataFrame,
     date: NaiveDate,
 ) -> Option<polars::prelude::DataFrame> {
@@ -818,8 +830,12 @@ fn row_to_option_map(df: &polars::prelude::DataFrame, row: usize, today: NaiveDa
     let expiration: Option<NaiveDate> = df.column("expiration").ok().and_then(|c| {
         // Try as Date first (physical i32 = days since epoch)
         if let Ok(date_ca) = c.date() {
-            let series = date_ca.clone().into_series();
-            let physical = series.i32().ok()?;
+            let phys = date_ca
+                .clone()
+                .into_series()
+                .to_physical_repr()
+                .into_owned();
+            let physical = phys.i32().ok()?;
             let epoch_days = physical.get(row)?;
             return NaiveDate::from_num_days_from_ce_opt(
                 epoch_days + crate::engine::types::EPOCH_DAYS_CE_OFFSET,
@@ -827,8 +843,8 @@ fn row_to_option_map(df: &polars::prelude::DataFrame, row: usize, today: NaiveDa
         }
         // Try as Datetime (physical i64 = microseconds since epoch)
         if let Ok(dt_ca) = c.datetime() {
-            let series = dt_ca.clone().into_series();
-            let physical = series.i64().ok()?;
+            let phys = dt_ca.clone().into_series().to_physical_repr().into_owned();
+            let physical = phys.i64().ok()?;
             let us = physical.get(row)?;
             let secs = us / 1_000_000;
             let nsecs = ((us % 1_000_000) * 1000) as u32;
@@ -864,8 +880,12 @@ pub(super) fn row_to_expiration_date(
     let col = df.column("expiration").ok()?;
     // Try Date (physical i32)
     if let Ok(date_ca) = col.date() {
-        let series = date_ca.clone().into_series();
-        let physical = series.i32().ok()?;
+        let phys = date_ca
+            .clone()
+            .into_series()
+            .to_physical_repr()
+            .into_owned();
+        let physical = phys.i32().ok()?;
         let epoch_days = physical.get(row)?;
         return NaiveDate::from_num_days_from_ce_opt(
             epoch_days + crate::engine::types::EPOCH_DAYS_CE_OFFSET,
