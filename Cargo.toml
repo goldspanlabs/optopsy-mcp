@@ -26,6 +26,7 @@ shellexpand = "3"
 async-trait = "0.1"
 statrs = "0.18"
 nalgebra = { version = "0.33", default-features = false, features = ["std"] }
+rhai = { version = "1", features = ["sync"] }
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
