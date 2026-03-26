@@ -26,6 +26,9 @@ pub struct ScriptPosition {
     /// Whether this is an implicit position (from assignment) that does NOT
     /// count toward `max_positions`.
     pub implicit: bool,
+    /// Optional group label from the `_group` scope variable.
+    /// Used by the FE to group related trades (e.g., wheel cycles).
+    pub group: Option<String>,
 }
 
 /// The inner variant: options (multi-leg) or stock (single holding).

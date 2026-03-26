@@ -139,6 +139,9 @@ pub struct TradeRecord {
     /// Stock leg P&L (set when strategy has a stock leg).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stock_pnl: Option<f64>,
+    /// Group label from script `_group` variable for FE trade grouping.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
 
 impl TradeRecord {
@@ -182,6 +185,7 @@ impl TradeRecord {
             stock_entry_price: None,
             stock_exit_price: None,
             stock_pnl: None,
+            group: None,
         }
     }
 }

@@ -367,6 +367,7 @@ pub async fn run_script_backtest(
                                         current_date: today,
                                         source: "assignment".to_string(),
                                         implicit: true,
+                                        group: closed_pos.group.clone(),
                                     };
                                     next_id += 1;
                                     positions.push(implicit);
@@ -488,6 +489,7 @@ pub async fn run_script_backtest(
                                 current_date: today,
                                 source: "script".to_string(),
                                 implicit: false,
+                                group: read_group(&scope),
                             };
                             // Deduct entry commission for stock
                             realized_equity -= compute_commission(&config.commission, &pos);
@@ -603,6 +605,7 @@ pub async fn run_script_backtest(
                                 current_date: today,
                                 source: "script".to_string(),
                                 implicit: false,
+                                group: read_group(&scope),
                             };
                             // Deduct entry commission for options
                             realized_equity -= compute_commission(&config.commission, &pos);
@@ -807,6 +810,22 @@ fn call_fn_persistent<A: rhai::FuncArgs>(
         .map_err(|e| anyhow::anyhow!("Error calling {fn_name}(): {e}"))?;
     scope.rewind(checkpoint);
     Ok(result)
+}
+
+/// Read the `_group` scope variable if it exists and is a non-empty string.
+fn read_group(scope: &Scope) -> Option<String> {
+    scope
+        .get_value::<rhai::ImmutableString>("_group")
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            // Also try Dynamic in case it's set as a regular variable
+            scope
+                .get_value::<Dynamic>("_group")
+                .and_then(|d| d.into_immutable_string().ok())
+                .map(|s| s.to_string())
+                .filter(|s| !s.is_empty())
+        })
 }
 
 /// Check if a function exists in the AST.
@@ -1533,6 +1552,7 @@ fn build_script_trade_record(
             ScriptPositionInner::Stock { .. } => Some(pnl),
             ScriptPositionInner::Options { .. } => None,
         },
+        group: pos.group.clone(),
     }
 }
 

@@ -94,6 +94,30 @@ fn on_bar(ctx) {
 }
 ```
 
+### Engine-Read Variables (`_` prefix)
+
+Variables starting with `_` are read by the engine to attach metadata to positions.
+They persist across bars like regular top-level variables.
+
+| Variable | Type | Description |
+|----------|------|-------------|
+| `_group` | String | Group label attached to all positions opened while set. Used by the FE to group related trades (e.g., wheel cycles). Implicit positions (from assignment) inherit the parent's group. |
+
+```rhai
+let _group = "Cycle 1";
+
+fn on_bar(ctx) {
+    // All positions opened here get group = "Cycle 1"
+    [ctx.short_put(0.30, 45)]
+}
+
+fn on_position_closed(ctx, pos, exit_type) {
+    if exit_type == "called_away" {
+        _group = "Cycle 2";  // next positions get the new group
+    }
+}
+```
+
 ## config() Return Shape
 
 ```rhai

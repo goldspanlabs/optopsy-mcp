@@ -25,6 +25,7 @@ let stock = #{
     total_premium: 0.0,
 };
 let cycles_completed = 0;
+let _group = "Cycle 1";
 
 // ---------------------------------------------------------------------------
 // config() — Called once before the simulation starts.
@@ -157,6 +158,7 @@ fn on_position_closed(ctx, pos, exit_type) {
             // Short call expired ITM — stock is sold at the strike price.
             // The engine auto-closes the implicit stock position.
             cycles_completed += 1;
+            _group = "Cycle " + (cycles_completed + 1).to_string();
             state = "selling_puts";
         } else {
             // Call expired OTM — reduce basis by premium collected, sell another

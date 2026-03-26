@@ -807,6 +807,7 @@ mod tests {
                 current_date: bars[0].datetime.date(),
                 source: String::new(),
                 implicit: false,
+                group: None,
             },
             ScriptPosition {
                 id: 2,
@@ -822,6 +823,7 @@ mod tests {
                 current_date: bars[0].datetime.date(),
                 source: String::new(),
                 implicit: false,
+                group: None,
             },
         ];
         let mut ctx = make_ctx_with_positions(&bars, 0, positions);
@@ -1406,6 +1408,7 @@ mod tests {
                 current_date: bars[0].datetime.date(),
                 source: String::new(),
                 implicit: false,
+                group: None,
             },
             ScriptPosition {
                 id: 2,
@@ -1421,6 +1424,7 @@ mod tests {
                 current_date: bars[0].datetime.date(),
                 source: String::new(),
                 implicit: false,
+                group: None,
             },
         ];
         let mut ctx = make_ctx_with_positions(&bars, 0, positions);
