@@ -1,120 +1,15 @@
-//! Types for the Rhai scripting engine.
-//!
-//! Defines `BarContext` (exposed to scripts as `ctx`), `ScriptPosition` (exposed as `pos`),
-//! `ScriptConfig` (parsed from `config()` return), and action enums for processing
-//! script commands.
+//! BarContext — the `ctx` object exposed to Rhai scripts.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike};
+use rhai::Dynamic;
 
-use crate::constants::TRADING_DAYS_PER_YEAR;
+use super::config::{CrossSymbolBar, OhlcvBar, ScriptConfig};
+use super::position::ScriptPosition;
 
-use crate::engine::types::{
-    Commission, ExpirationFilter, OptionType, Side, Slippage, TradeSelector,
-};
-
-use super::indicators::IndicatorStore;
-
-// ---------------------------------------------------------------------------
-// ScriptConfig — parsed from the Rhai config() callback return value
-// ---------------------------------------------------------------------------
-
-/// Configuration extracted from a script's `config()` callback.
-#[derive(Debug, Clone)]
-pub struct ScriptConfig {
-    pub symbol: String,
-    pub capital: f64,
-    pub start_date: Option<NaiveDate>,
-    pub end_date: Option<NaiveDate>,
-    pub interval: Interval,
-    pub multiplier: i32,
-    pub timeout_secs: u64,
-    pub auto_close_on_end: bool,
-
-    // Data requirements
-    pub needs_ohlcv: bool,
-    pub needs_options: bool,
-    pub cross_symbols: Vec<String>,
-    pub declared_indicators: Vec<String>,
-
-    // Engine-enforced settings
-    pub slippage: Slippage,
-    pub commission: Option<Commission>,
-    pub min_days_between_entries: Option<i32>,
-    pub expiration_filter: ExpirationFilter,
-    pub trade_selector: TradeSelector,
-
-    // Script-readable defaults (NOT engine-enforced)
-    pub defaults: HashMap<String, ScriptValue>,
-}
-
-/// Interval for bar iteration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Interval {
-    Daily,
-    Intraday(IntradayInterval),
-}
-
-/// Intraday bar sizes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IntradayInterval {
-    Min1,
-    Min5,
-    Min10,
-    Min15,
-    Min30,
-    Hour1,
-    Hour2,
-    Hour4,
-}
-
-impl Interval {
-    /// Trading bars per year, used for annualized metrics (Sharpe, CAGR, etc.).
-    #[must_use]
-    pub fn bars_per_year(self) -> f64 {
-        match self {
-            Self::Daily => TRADING_DAYS_PER_YEAR,
-            Self::Intraday(intra) => match intra {
-                IntradayInterval::Min1 => TRADING_DAYS_PER_YEAR * 390.0,
-                IntradayInterval::Min5 => TRADING_DAYS_PER_YEAR * 78.0,
-                IntradayInterval::Min10 => TRADING_DAYS_PER_YEAR * 39.0,
-                IntradayInterval::Min15 => TRADING_DAYS_PER_YEAR * 26.0,
-                IntradayInterval::Min30 => TRADING_DAYS_PER_YEAR * 13.0,
-                IntradayInterval::Hour1 => TRADING_DAYS_PER_YEAR * 6.5,
-                IntradayInterval::Hour2 => TRADING_DAYS_PER_YEAR * 3.25,
-                IntradayInterval::Hour4 => TRADING_DAYS_PER_YEAR * 1.625,
-            },
-        }
-    }
-
-    /// Parse from a string like "daily", "1m", "5m", "1h", etc.
-    pub fn parse(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "daily" | "1d" => Some(Self::Daily),
-            "1m" | "1min" => Some(Self::Intraday(IntradayInterval::Min1)),
-            "5m" | "5min" => Some(Self::Intraday(IntradayInterval::Min5)),
-            "10m" | "10min" => Some(Self::Intraday(IntradayInterval::Min10)),
-            "15m" | "15min" => Some(Self::Intraday(IntradayInterval::Min15)),
-            "30m" | "30min" => Some(Self::Intraday(IntradayInterval::Min30)),
-            "1h" | "60m" => Some(Self::Intraday(IntradayInterval::Hour1)),
-            "2h" => Some(Self::Intraday(IntradayInterval::Hour2)),
-            "4h" => Some(Self::Intraday(IntradayInterval::Hour4)),
-            _ => None,
-        }
-    }
-}
-
-/// A loosely-typed value for script-readable defaults.
-#[derive(Debug, Clone)]
-pub enum ScriptValue {
-    Float(f64),
-    Int(i64),
-    String(String),
-    Bool(bool),
-    None,
-}
+use crate::scripting::indicators::IndicatorStore;
 
 // ---------------------------------------------------------------------------
 // BarContext — the `ctx` object exposed to Rhai scripts
@@ -148,7 +43,7 @@ pub struct BarContext {
     pub cross_symbol_data: Arc<HashMap<String, Vec<CrossSymbolBar>>>,
 
     // Options data, pre-partitioned by date (None for pure stock backtests)
-    pub options_by_date: Option<Arc<super::options_cache::DatePartitionedOptions>>,
+    pub options_by_date: Option<Arc<crate::scripting::options_cache::DatePartitionedOptions>>,
 
     // Config reference for ctx.config.defaults access
     pub config: Arc<ScriptConfig>,
@@ -157,210 +52,9 @@ pub struct BarContext {
     pub pnl_history: Arc<Vec<f64>>,
 }
 
-/// A single OHLCV bar.
-#[derive(Debug, Clone)]
-pub struct OhlcvBar {
-    pub datetime: NaiveDateTime,
-    pub open: f64,
-    pub high: f64,
-    pub low: f64,
-    pub close: f64,
-    pub volume: f64,
-}
-
-/// Cross-symbol bar data (forward-filled to primary timeline).
-#[derive(Debug, Clone)]
-pub struct CrossSymbolBar {
-    pub open: f64,
-    pub high: f64,
-    pub low: f64,
-    pub close: f64,
-    pub volume: f64,
-}
-
-// ---------------------------------------------------------------------------
-// ScriptPosition — exposed to Rhai scripts as `pos`
-// ---------------------------------------------------------------------------
-
-/// Position object exposed to Rhai scripts.
-#[derive(Debug, Clone)]
-pub struct ScriptPosition {
-    pub id: usize,
-    pub entry_date: NaiveDate,
-    pub inner: ScriptPositionInner,
-    pub entry_cost: f64,
-    pub unrealized_pnl: f64,
-    pub days_held: i64,
-    /// Current simulation date — used by `get_dte()` to compute days to expiration.
-    pub current_date: NaiveDate,
-    /// `"script"` for positions opened by the script, `"assignment"` for
-    /// positions auto-created by the engine on ITM put expiration.
-    pub source: String,
-    /// Whether this is an implicit position (from assignment) that does NOT
-    /// count toward `max_positions`.
-    pub implicit: bool,
-}
-
-/// The inner variant: options (multi-leg) or stock (single holding).
-#[derive(Debug, Clone)]
-pub enum ScriptPositionInner {
-    Options {
-        legs: Vec<ScriptPositionLeg>,
-        expiration: NaiveDate,
-        secondary_expiration: Option<NaiveDate>,
-        multiplier: i32,
-    },
-    Stock {
-        side: Side,
-        qty: i32,
-        entry_price: f64,
-    },
-}
-
-/// A single leg of an options position, exposed to scripts.
-#[derive(Debug, Clone)]
-pub struct ScriptPositionLeg {
-    pub strike: f64,
-    pub option_type: OptionType,
-    pub side: Side,
-    pub expiration: NaiveDate,
-    pub entry_price: f64,
-    pub current_price: f64,
-    pub delta: f64,
-    pub qty: i32,
-}
-
-impl ScriptPosition {
-    /// Days to expiration for options positions; `None` for stock.
-    #[must_use]
-    pub fn dte(&self, today: NaiveDate) -> Option<i64> {
-        match &self.inner {
-            ScriptPositionInner::Options { expiration, .. } => {
-                Some((*expiration - today).num_days())
-            }
-            ScriptPositionInner::Stock { .. } => None,
-        }
-    }
-
-    /// P&L as a fraction of absolute entry cost.
-    #[must_use]
-    pub fn pnl_pct(&self) -> f64 {
-        let abs_cost = self.entry_cost.abs();
-        if abs_cost < f64::EPSILON {
-            0.0
-        } else {
-            self.unrealized_pnl / abs_cost
-        }
-    }
-
-    #[must_use]
-    pub fn is_options(&self) -> bool {
-        matches!(self.inner, ScriptPositionInner::Options { .. })
-    }
-
-    #[must_use]
-    pub fn is_stock(&self) -> bool {
-        matches!(self.inner, ScriptPositionInner::Stock { .. })
-    }
-}
-
-// ---------------------------------------------------------------------------
-// ScriptPosition — Rhai getter methods
-// ---------------------------------------------------------------------------
-
-impl ScriptPosition {
-    pub fn get_id(&mut self) -> i64 {
-        self.id as i64
-    }
-    pub fn get_entry_date(&mut self) -> String {
-        self.entry_date.to_string()
-    }
-    pub fn get_expiration(&mut self) -> Dynamic {
-        match &self.inner {
-            ScriptPositionInner::Options { expiration, .. } => {
-                Dynamic::from(expiration.to_string())
-            }
-            ScriptPositionInner::Stock { .. } => Dynamic::UNIT,
-        }
-    }
-    pub fn get_dte(&mut self) -> Dynamic {
-        match self.dte(self.current_date) {
-            Some(days) => Dynamic::from(days),
-            None => Dynamic::UNIT,
-        }
-    }
-    pub fn get_entry_cost(&mut self) -> f64 {
-        self.entry_cost
-    }
-    pub fn get_unrealized_pnl(&mut self) -> f64 {
-        self.unrealized_pnl
-    }
-    pub fn get_pnl_pct(&mut self) -> f64 {
-        self.pnl_pct()
-    }
-    pub fn get_days_held(&mut self) -> i64 {
-        self.days_held
-    }
-    pub fn get_legs(&mut self) -> Dynamic {
-        match &self.inner {
-            ScriptPositionInner::Options { legs, .. } => {
-                let arr: rhai::Array = legs
-                    .iter()
-                    .map(|leg| {
-                        let mut map = rhai::Map::new();
-                        map.insert("strike".into(), Dynamic::from(leg.strike));
-                        map.insert(
-                            "option_type".into(),
-                            Dynamic::from(format!("{:?}", leg.option_type).to_lowercase()),
-                        );
-                        map.insert(
-                            "side".into(),
-                            Dynamic::from(match leg.side {
-                                Side::Long => "long",
-                                Side::Short => "short",
-                            }),
-                        );
-                        map.insert(
-                            "expiration".into(),
-                            Dynamic::from(leg.expiration.to_string()),
-                        );
-                        map.insert("entry_price".into(), Dynamic::from(leg.entry_price));
-                        map.insert("current_price".into(), Dynamic::from(leg.current_price));
-                        map.insert("delta".into(), Dynamic::from(leg.delta));
-                        map.insert("qty".into(), Dynamic::from(leg.qty as i64));
-                        Dynamic::from(map)
-                    })
-                    .collect();
-                Dynamic::from(arr)
-            }
-            ScriptPositionInner::Stock { .. } => Dynamic::UNIT,
-        }
-    }
-    pub fn get_side(&mut self) -> Dynamic {
-        match &self.inner {
-            ScriptPositionInner::Stock { side, .. } => Dynamic::from(match side {
-                Side::Long => "long",
-                Side::Short => "short",
-            }),
-            ScriptPositionInner::Options { .. } => Dynamic::UNIT,
-        }
-    }
-    pub fn get_is_options(&mut self) -> bool {
-        self.is_options()
-    }
-    pub fn get_is_stock(&mut self) -> bool {
-        self.is_stock()
-    }
-    pub fn get_source(&mut self) -> String {
-        self.source.clone()
-    }
-}
-
 // ---------------------------------------------------------------------------
 // BarContext — Rhai getter and method implementations
 // ---------------------------------------------------------------------------
-
-use rhai::Dynamic;
 
 impl BarContext {
     // --- Data getters ---
@@ -426,8 +120,8 @@ impl BarContext {
     }
 
     // --- Indicators (current bar) ---
-    pub(super) fn indicator_value(&self, name: &str, period: i64) -> Dynamic {
-        use super::indicators::{IndicatorKey, IndicatorParam};
+    pub(in crate::scripting) fn indicator_value(&self, name: &str, period: i64) -> Dynamic {
+        use crate::scripting::indicators::{IndicatorKey, IndicatorParam};
         let key = IndicatorKey {
             name: name.to_string(),
             params: vec![IndicatorParam::Int(period)],
@@ -440,7 +134,7 @@ impl BarContext {
     }
 
     fn indicator_value_at(&self, name: &str, period: i64, bars_ago: i64) -> Dynamic {
-        use super::indicators::{IndicatorKey, IndicatorParam};
+        use crate::scripting::indicators::{IndicatorKey, IndicatorParam};
         if bars_ago < 0 {
             return Dynamic::UNIT;
         }
@@ -573,7 +267,7 @@ impl BarContext {
     /// Example: `ctx.indicator_with("keltner_upper", #{ period: 20, mult: 15 })`
     /// Params are converted to the IndicatorKey param vector.
     pub fn indicator_with(&mut self, name: String, params: rhai::Map) -> Dynamic {
-        use super::indicators::{IndicatorKey, IndicatorParam};
+        use crate::scripting::indicators::{IndicatorKey, IndicatorParam};
 
         // Extract params as integers (matching IndicatorStore convention)
         let mut param_vec: Vec<IndicatorParam> = Vec::new();
@@ -591,7 +285,7 @@ impl BarContext {
                 if let Ok(i) = val.as_int() {
                     param_vec.push(IndicatorParam::Int(i));
                 } else if let Ok(f) = val.as_float() {
-                    // Scale to integer: accel params use *100 (0.02→2), others use *10 (2.0→20)
+                    // Scale to integer: accel params use *100 (0.02->2), others use *10 (2.0->20)
                     let scaled = match *key {
                         "accel" | "max_accel" => (f * 100.0) as i64,
                         _ => (f * 10.0) as i64,
@@ -668,7 +362,7 @@ impl BarContext {
     // --- Multi-param indicator overloads ---
 
     fn indicator_value_multi(&self, name: &str, params: &[i64]) -> Dynamic {
-        use super::indicators::{IndicatorKey, IndicatorParam};
+        use crate::scripting::indicators::{IndicatorKey, IndicatorParam};
         let key = IndicatorKey {
             name: name.to_string(),
             params: params.iter().map(|&p| IndicatorParam::Int(p)).collect(),
@@ -749,7 +443,7 @@ impl BarContext {
                 (dte + 15) as i32,
             );
             if found.is_unit() {
-                return Dynamic::UNIT; // any failed leg → entire strategy fails
+                return Dynamic::UNIT; // any failed leg -> entire strategy fails
             }
 
             let found_map = found.clone().cast::<rhai::Map>();
@@ -1082,7 +776,7 @@ fn row_to_option_map(df: &polars::prelude::DataFrame, row: usize, today: NaiveDa
 }
 
 /// Extract the expiration date from a DataFrame row.
-pub(super) fn row_to_expiration_date(
+pub(in crate::scripting) fn row_to_expiration_date(
     df: &polars::prelude::DataFrame,
     row: usize,
 ) -> Option<NaiveDate> {
@@ -1113,75 +807,4 @@ pub(super) fn row_to_expiration_date(
         return Some(dt.date_naive());
     }
     None
-}
-
-// ---------------------------------------------------------------------------
-// Action types — returned by script callbacks, processed by the engine
-// ---------------------------------------------------------------------------
-
-/// An action returned by `on_bar` or `on_exit_check` callbacks.
-#[derive(Debug, Clone)]
-pub enum ScriptAction {
-    /// Open an options position with the given legs.
-    OpenOptions {
-        legs: Vec<LegSpec>,
-        qty: Option<i32>,
-    },
-    /// Open a stock position.
-    OpenStock { side: Side, qty: i32 },
-    /// Close a specific position.
-    Close {
-        position_id: Option<usize>,
-        reason: String,
-    },
-    /// Do nothing (from `on_exit_check`).
-    Hold,
-    /// Stop the backtest loop early.
-    Stop { reason: String },
-}
-
-/// A leg specification in an `open_options` action.
-/// Can be "unresolved" (delta/DTE targets) or "resolved" (specific contract).
-#[derive(Debug, Clone)]
-pub enum LegSpec {
-    /// Engine resolves to a specific contract via `filters.rs`.
-    Unresolved {
-        side: Side,
-        option_type: OptionType,
-        delta: f64,
-        dte: i32,
-    },
-    /// Pre-resolved contract from `find_option`.
-    Resolved {
-        side: Side,
-        option_type: OptionType,
-        strike: f64,
-        expiration: NaiveDate,
-        bid: f64,
-        ask: f64,
-    },
-}
-
-// ---------------------------------------------------------------------------
-// ScriptSimContext — internal engine state (not exposed to scripts)
-// ---------------------------------------------------------------------------
-
-use crate::engine::sim_types::{DateIndex, LastKnown, PriceTable};
-
-/// Internal state maintained by the unified scripting engine.
-/// Scripts never see this — it bridges the clean Rhai API to the native engine's
-/// `SimContext` / `BacktestParams` dependency chain.
-pub struct ScriptSimContext {
-    pub price_table: PriceTable,
-    pub date_index: DateIndex,
-    pub last_known: LastKnown,
-    pub slippage: Slippage,
-    pub commission: Option<Commission>,
-    pub multiplier: i32,
-    pub bars_per_year: f64,
-    pub min_days_between_entries: Option<i32>,
-    pub expiration_filter: ExpirationFilter,
-    pub trade_selector: TradeSelector,
-    pub next_position_id: usize,
-    pub last_entry_date: Option<NaiveDate>,
 }
