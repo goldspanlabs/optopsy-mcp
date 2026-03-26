@@ -17,11 +17,11 @@ use super::types::BarContext;
 
 fn leg(side: &str, option_type: &str, delta: f64, dte: i64) -> Dynamic {
     let mut map = rhai::Map::new();
-    map.insert("side".into(), Dynamic::from(side.to_string()));
-    map.insert("option_type".into(), Dynamic::from(option_type.to_string()));
-    map.insert("delta".into(), Dynamic::from(delta));
-    map.insert("dte".into(), Dynamic::from(dte));
-    Dynamic::from(map)
+    map.insert("side".into(), side.into());
+    map.insert("option_type".into(), option_type.into());
+    map.insert("delta".into(), delta.into());
+    map.insert("dte".into(), dte.into());
+    map.into()
 }
 
 /// Wrap a resolved spread (from `build_strategy`) into a ready action map.
@@ -30,9 +30,9 @@ fn wrap_spread_action(spread: Dynamic) -> Dynamic {
         return Dynamic::UNIT;
     }
     let mut action = rhai::Map::new();
-    action.insert("action".into(), Dynamic::from("open_spread".to_string()));
+    action.insert("action".into(), "open_spread".into());
     action.insert("spread".into(), spread);
-    Dynamic::from(action)
+    action.into()
 }
 
 // ---------------------------------------------------------------------------
@@ -42,51 +42,51 @@ fn wrap_spread_action(spread: Dynamic) -> Dynamic {
 /// `hold_position()` → `#{ action: "hold" }`
 pub fn hold_position() -> Dynamic {
     let mut map = rhai::Map::new();
-    map.insert("action".into(), Dynamic::from("hold".to_string()));
-    Dynamic::from(map)
+    map.insert("action".into(), "hold".into());
+    map.into()
 }
 
 /// `close_position(reason)` → `#{ action: "close", reason }`
 pub fn close_position(reason: String) -> Dynamic {
     let mut map = rhai::Map::new();
-    map.insert("action".into(), Dynamic::from("close".to_string()));
-    map.insert("reason".into(), Dynamic::from(reason));
-    Dynamic::from(map)
+    map.insert("action".into(), "close".into());
+    map.insert("reason".into(), reason.into());
+    map.into()
 }
 
 /// `close_position_id(position_id, reason)` → `#{ action: "close", position_id, reason }`
 pub fn close_position_id(position_id: i64, reason: String) -> Dynamic {
     let mut map = rhai::Map::new();
-    map.insert("action".into(), Dynamic::from("close".to_string()));
-    map.insert("position_id".into(), Dynamic::from(position_id));
-    map.insert("reason".into(), Dynamic::from(reason));
-    Dynamic::from(map)
+    map.insert("action".into(), "close".into());
+    map.insert("position_id".into(), position_id.into());
+    map.insert("reason".into(), reason.into());
+    map.into()
 }
 
 /// `stop_backtest(reason)` → `#{ action: "stop", reason }`
 pub fn stop_backtest(reason: String) -> Dynamic {
     let mut map = rhai::Map::new();
-    map.insert("action".into(), Dynamic::from("stop".to_string()));
-    map.insert("reason".into(), Dynamic::from(reason));
-    Dynamic::from(map)
+    map.insert("action".into(), "stop".into());
+    map.insert("reason".into(), reason.into());
+    map.into()
 }
 
 /// `buy_stock(qty)` → `#{ action: "open_stock", side: "long", qty }`
 pub fn buy_stock(qty: i64) -> Dynamic {
     let mut map = rhai::Map::new();
-    map.insert("action".into(), Dynamic::from("open_stock".to_string()));
-    map.insert("side".into(), Dynamic::from("long".to_string()));
-    map.insert("qty".into(), Dynamic::from(qty));
-    Dynamic::from(map)
+    map.insert("action".into(), "open_stock".into());
+    map.insert("side".into(), "long".into());
+    map.insert("qty".into(), qty.into());
+    map.into()
 }
 
 /// `sell_stock(qty)` → `#{ action: "open_stock", side: "short", qty }`
 pub fn sell_stock(qty: i64) -> Dynamic {
     let mut map = rhai::Map::new();
-    map.insert("action".into(), Dynamic::from("open_stock".to_string()));
-    map.insert("side".into(), Dynamic::from("short".to_string()));
-    map.insert("qty".into(), Dynamic::from(qty));
-    Dynamic::from(map)
+    map.insert("action".into(), "open_stock".into());
+    map.insert("side".into(), "short".into());
+    map.insert("qty".into(), qty.into());
+    map.into()
 }
 
 // ---------------------------------------------------------------------------
