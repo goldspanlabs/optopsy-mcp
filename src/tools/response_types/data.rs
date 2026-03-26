@@ -34,18 +34,8 @@ pub struct DateRange {
     pub end: Option<i64>,
 }
 
-/// A single OHLCV price bar for `get_raw_prices`
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct PriceBar {
-    pub date: i64,
-    pub open: f64,
-    pub high: f64,
-    pub low: f64,
-    pub close: f64,
-    /// Adjusted close price (if available)
-    pub adjclose: Option<f64>,
-    pub volume: u64,
-}
+// PriceBar lives in engine::types (shared across engine + tools layers)
+pub use crate::engine::types::PriceBar;
 
 /// Response for `get_raw_prices` — returns actual price data points for charting
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

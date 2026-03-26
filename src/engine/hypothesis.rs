@@ -10,9 +10,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::engine::multiple_comparisons::benjamini_hochberg;
 use crate::engine::types::SignalSpec;
-use crate::engine::types::{HypothesisDimension, StructuralBasis};
+use crate::engine::types::{HypothesisDimension, PriceBar, StructuralBasis};
 use crate::stats;
-use crate::tools::response_types::PriceBar;
 
 /// Internal representation of a pattern discovered by a scanner before scoring.
 #[derive(Debug, Clone)]
