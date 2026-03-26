@@ -151,6 +151,23 @@ fn parse_indicator_declaration(decl: &str) -> Result<(String, Vec<usize>)> {
                 params.push(3); // default d_smooth=3
             }
         }
+        "psar" if params.is_empty() => {
+            params = vec![2, 20]; // accel*100=2 (0.02), max_accel*100=20 (0.20)
+        }
+        "supertrend" => {
+            if params.is_empty() {
+                params = vec![10, 30]; // period=10, mult*10=30 (3.0)
+            } else if params.len() == 1 {
+                params.push(30); // default mult*10=30
+            }
+        }
+        "keltner_upper" | "keltner_lower" => {
+            if params.is_empty() {
+                params = vec![20, 20]; // period=20, mult*10=20 (2.0)
+            } else if params.len() == 1 {
+                params.push(20); // default mult*10=20
+            }
+        }
         _ => {}
     }
 
@@ -416,8 +433,9 @@ fn compute_indicator(
 
         // ── PSAR: Parabolic SAR ─────────────────────────────────────────
         "psar" => {
-            let accel = param2.map(|v| v as f64 / 100.0).unwrap_or(0.02);
-            let max_accel = param3.map(|v| v as f64 / 100.0).unwrap_or(0.20);
+            // params = [accel*100, max_accel*100] e.g. [2, 20] for 0.02/0.20
+            let accel = period as f64 / 100.0; // period is first param
+            let max_accel = param2.map(|v| v as f64 / 100.0).unwrap_or(0.20);
             if n < 2 {
                 return Ok(vec![f64::NAN; n]);
             }
