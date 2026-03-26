@@ -23,16 +23,15 @@ use tokio::sync::RwLock;
 use crate::data::cache::{validate_path_segment, CachedStore};
 use crate::tools;
 use crate::tools::response_types::{
-    AggregatePricesResponse, BenchmarkAnalysisResponse, BuildSignalResponse, CointegrationResponse,
-    CorrelateResponse, DistributionResponse, DrawdownAnalysisResponse, FactorAttributionResponse,
-    HypothesisParams, HypothesisResponse, MonteCarloResponse, PortfolioOptimizeResponse,
-    RegimeDetectResponse, RollingMetricResponse,
+    AggregatePricesResponse, BenchmarkAnalysisResponse, CointegrationResponse, CorrelateResponse,
+    DistributionResponse, DrawdownAnalysisResponse, FactorAttributionResponse, HypothesisParams,
+    HypothesisResponse, MonteCarloResponse, PortfolioOptimizeResponse, RegimeDetectResponse,
+    RollingMetricResponse,
 };
 use params::{
-    tool_err, validation_err, AggregatePricesParams, BenchmarkAnalysisParams, BuildSignalParams,
-    CointegrationParams, CorrelateParams, DistributionParams, DrawdownAnalysisParams,
-    FactorAttributionParams, MonteCarloParams, PortfolioOptimizeParams, RegimeDetectParams,
-    RollingMetricParams,
+    tool_err, validation_err, AggregatePricesParams, BenchmarkAnalysisParams, CointegrationParams,
+    CorrelateParams, DistributionParams, DrawdownAnalysisParams, FactorAttributionParams,
+    MonteCarloParams, PortfolioOptimizeParams, RegimeDetectParams, RollingMetricParams,
 };
 use sanitize::SanitizedResult;
 
@@ -77,80 +76,6 @@ use rmcp::handler::server::wrapper::Parameters;
 
 #[tool_router]
 impl OptopsyServer {
-    ///
-    /// **When to use**: When you want to discover and work with trading signals—both
-    ///   searching the built-in signal catalog and defining custom entry/exit conditions
-    ///   using price column formulas
-    /// **Prerequisites**: None (formulas are validated at parse time, data needed only at backtest)
-    ///
-    /// **Actions**:
-    ///   - `catalog` — Browse the full built-in signal catalog grouped by category (40+ signals)
-    ///   - `search` — Search saved custom signals by name/description/formula (requires `prompt`).
-    ///     Only searches user-saved signals, NOT built-ins (use the quick reference above for those)
-    ///   - `create` — Build a signal from a formula, optionally save for later use
-    ///   - `validate` — Check formula syntax without saving
-    ///   - `list` — Show all saved custom signals
-    ///   - `get` — Load a saved signal's spec
-    ///   - `update` — Update a saved signal: rename (`new_name`), set display name (`display_name`),
-    ///     and/or change formula (`formula`). Requires `name` and `new_name` (can be same as `name`
-    ///     to update in-place without renaming)
-    ///   - `delete` — Remove a saved signal
-    ///
-    /// **Common built-in signals** (use directly as `entry_signal`/`exit_signal` JSON — no search needed):
-    ///   - Momentum: `RsiBelow` (RSI < threshold), `RsiAbove` (RSI > threshold),
-    ///     `MacdBullish`, `MacdBearish`, `MacdCrossover`,
-    ///     `StochasticBelow`, `StochasticAbove`
-    ///   - Overlap: `PriceAboveSma`, `PriceBelowSma`, `PriceAboveEma`, `PriceBelowEma`,
-    ///     `SmaCrossover`, `SmaCrossunder`, `EmaCrossover`, `EmaCrossunder`
-    ///   - Trend: `SupertrendBullish`, `SupertrendBearish`, `AroonUptrend`, `AroonDowntrend`
-    ///   - Volatility: `AtrAbove`, `AtrBelow`, `BollingerLowerTouch`, `BollingerUpperTouch`,
-    ///     `IvRankAbove`, `IvRankBelow`
-    ///   - Volume: `MfiBelow`, `MfiAbove`, `ObvRising`, `ObvFalling`
-    ///   - Combinators: `And { left, right }`, `Or { left, right }`, `Not { signal }`
-    ///
-    /// **Quick examples** (no search required for these):
-    ///   - RSI < 30: `{ "type": "RsiBelow", "column": "adjclose", "threshold": 30.0 }`
-    ///   - RSI > 70: `{ "type": "RsiAbove", "column": "adjclose", "threshold": 70.0 }`
-    ///   - Price above SMA(50): `{ "type": "PriceAboveSma", "column": "adjclose", "period": 50 }`
-    ///   - Combine two: `{ "type": "And", "left": <signal1>, "right": <signal2> }`
-    ///   - Saved signal: `{ "type": "Saved", "name": "my_signal" }`
-    ///
-    /// **Formula syntax** (for action='create'):
-    ///   - Columns: `close`, `open`, `high`, `low`, `volume`, `adjclose`
-    ///   - Lookback: `close[1]` (previous bar), `close[5]` (5 bars ago)
-    ///   - Functions: `sma(col, N)`, `ema(col, N)`, `std(col, N)`, `max(col, N)`,
-    ///     `min(col, N)`, `abs(expr)`, `change(col, N)`, `pct_change(col, N)`
-    ///   - Date/time (zero-arg): `day_of_week()` (1=Mon..7=Sun), `month()` (1-12),
-    ///     `day_of_month()` (1-31), `hour()` (0-23), `minute()` (0-59), `week_of_year()` (1-53).
-    ///     Use these to encode seasonal/day-of-week patterns found by `aggregate_prices`.
-    ///   - Operators: `+`, `-`, `*`, `/`, `>`, `<`, `>=`, `<=`, `==`, `!=`
-    ///   - Logical: `and`, `or`, `not`
-    ///
-    /// **Next tool**: `run_options_backtest()` with `entry_signal`/`exit_signal` set to the returned spec,
-    ///   or use `{ "type": "Saved", "name": "signal_name" }` to reference saved signals
-    #[tool(
-        name = "build_signal",
-        annotations(
-            destructive_hint = true,
-            idempotent_hint = false,
-            read_only_hint = false
-        )
-    )]
-    async fn build_signal(
-        &self,
-        Parameters(params): Parameters<BuildSignalParams>,
-    ) -> SanitizedResult<BuildSignalResponse, String> {
-        SanitizedResult(
-            async {
-                params
-                    .validate()
-                    .map_err(|e| validation_err("build_signal", e))?;
-                handlers::signals::execute(params)
-            }
-            .await,
-        )
-    }
-
     /// Aggregate OHLCV price statistics by time dimension (day-of-week, month, quarter, year, hour-of-day).
     /// Returns per-bucket descriptive stats with t-test p-values for significance.
     ///

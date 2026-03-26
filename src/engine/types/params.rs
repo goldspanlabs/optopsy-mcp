@@ -9,7 +9,7 @@ use super::enums::{ConflictResolution, ExpirationFilter, TradeSelector};
 use super::pricing::{
     validate_exit_dte_lt_entry_min, Commission, DteRange, SizingConfig, Slippage, TargetRange,
 };
-use crate::signals::registry::SignalSpec;
+use super::signal_spec::SignalSpec;
 
 use crate::engine::sim_types::AdjustmentRule;
 

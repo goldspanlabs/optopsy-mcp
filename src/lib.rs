@@ -46,6 +46,5 @@ pub mod engine;
 )]
 pub mod scripting;
 pub mod server;
-pub mod signals;
 pub mod stats;
 pub mod tools;

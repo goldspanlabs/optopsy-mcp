@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::enums::{CashflowLabel, ExitType, OptionType, Side};
 use super::pricing::{DteRange, Slippage, TargetRange};
-use crate::signals::registry::SignalSpec;
+use super::signal_spec::SignalSpec;
 
 /// Internal quality stats collected during backtest simulation for data coverage reporting.
 #[derive(Debug, Clone, Default)]

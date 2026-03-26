@@ -8,7 +8,7 @@ use polars::prelude::*;
 
 use super::types::{DteRange, Slippage, SweepResult, TargetRange};
 use crate::data::parquet::DATETIME_COL;
-use crate::signals::registry::SignalSpec;
+use crate::engine::types::SignalSpec;
 use crate::strategies;
 
 // ---------------------------------------------------------------------------

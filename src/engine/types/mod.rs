@@ -10,6 +10,7 @@ mod interval;
 mod params;
 mod pricing;
 mod results;
+mod signal_spec;
 mod strategy;
 
 pub use enums::*;
@@ -18,6 +19,7 @@ pub use interval::*;
 pub use params::*;
 pub use pricing::*;
 pub use results::*;
+pub use signal_spec::*;
 pub use strategy::*;
 
 // Re-export sim_types for backwards compatibility.

@@ -42,6 +42,10 @@ pub struct RunScriptResponse {
     pub equity_curve_length: usize,
     pub warnings: Vec<String>,
     pub execution_time_ms: u64,
+    /// Pre-computed indicator series used by the script (e.g., {"sma:20": [...], "rsi:14": [...]}).
+    /// FE can plot these on the chart to visualize what the script used for decisions.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub indicator_data: HashMap<String, Vec<f64>>,
     pub summary: String,
     pub key_findings: Vec<String>,
     pub suggested_next_steps: Vec<String>,

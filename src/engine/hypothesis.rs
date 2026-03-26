@@ -7,8 +7,8 @@ use statrs::distribution::{ContinuousCDF, Normal};
 use std::collections::{HashMap, HashSet};
 
 use crate::engine::multiple_comparisons::benjamini_hochberg;
+use crate::engine::types::SignalSpec;
 use crate::engine::types::{HypothesisDimension, StructuralBasis};
-use crate::signals::registry::SignalSpec;
 use crate::stats;
 use crate::tools::response_types::PriceBar;
 

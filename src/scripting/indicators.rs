@@ -76,6 +76,30 @@ impl IndicatorStore {
         self.cache.contains_key(key)
     }
 
+    /// Export all indicator series as a map of declaration strings → values.
+    /// Used to include indicator data in the backtest result for FE chart overlays.
+    pub fn to_series_map(&self) -> HashMap<String, Vec<f64>> {
+        self.cache
+            .iter()
+            .map(|(key, values)| {
+                let decl = if key.params.is_empty() {
+                    key.name.clone()
+                } else {
+                    let params_str: Vec<String> = key
+                        .params
+                        .iter()
+                        .map(|p| match p {
+                            IndicatorParam::Int(i) => i.to_string(),
+                            IndicatorParam::Str(s) => s.clone(),
+                        })
+                        .collect();
+                    format!("{}:{}", key.name, params_str.join(":"))
+                };
+                (decl, values.clone())
+            })
+            .collect()
+    }
+
     /// Build the indicator store from declared indicators and OHLCV bars.
     ///
     /// Parses indicator declarations like `"sma:20"`, `"rsi:14"`, `"macd_line"`,
