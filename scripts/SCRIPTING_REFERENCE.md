@@ -7,7 +7,7 @@ Guide for writing `.rhai` backtest scripts. The AI agent should reference this w
 Every script must define `config()` and `on_bar(ctx)`. Other callbacks are optional.
 
 ```rhai
-// Top-level state variables (persisted across bars)
+// Top-level state variables (persisted across bars via Rhai scope)
 let state = "initial";
 let counter = 0;
 
@@ -16,7 +16,7 @@ fn config() {
 }
 
 fn on_bar(ctx) {
-    // Entry logic — return array of actions
+    // Entry logic — return array of actions or []
     []
 }
 
@@ -26,15 +26,51 @@ fn on_exit_check(ctx, pos) {
 }
 
 fn on_position_closed(ctx, pos, exit_type) {
-    // State transitions (e.g., wheel)
+    // Fires after any position close — state transitions, tracking
 }
 
 fn on_position_opened(ctx, pos) {
-    // Post-entry hooks
+    // Fires after a new position opens — logging, adjustments
 }
 
 fn on_end(ctx) {
-    // Return custom metadata map (optional)
+    // Fires once after the last bar — return custom metadata map (optional)
+}
+```
+
+### Callback Execution Order Per Bar
+
+```
+Phase A: Exits
+  1. Auto-check: options at/past expiration → classify as expiration/assignment/called_away
+  2. on_exit_check(ctx, pos) called for each open position (oldest first)
+  3. Closed positions → on_position_closed(ctx, pos, exit_type)
+
+Phase B: Entries
+  4. on_bar(ctx) called with fresh context (positions updated from Phase A)
+  5. Actions processed: open_spread, open_stock, open_options, close, stop
+  6. Opened positions → on_position_opened(ctx, pos)
+
+Phase C: Bookkeeping
+  7. Mark-to-market all open positions (options via PriceTable, stocks via close)
+  8. Update days_held, current_date for each position
+  9. Record equity curve point
+```
+
+### Top-Level Variables
+
+Variables declared with `let` at the top level persist across all bars and callbacks.
+The Rhai scope is checkpointed before each callback and rewound after — local variables
+inside callbacks are cleaned up, but mutations to top-level variables persist.
+
+```rhai
+let counter = 0;        // persists across bars
+let state = "initial";  // can be mutated in any callback
+
+fn on_bar(ctx) {
+    counter += 1;        // mutation persists
+    let temp = 42;       // cleaned up after this call returns
+    []
 }
 ```
 
@@ -117,7 +153,7 @@ Note: `ctx.high` (no args) returns current bar's high via getter. `ctx.high(0)` 
 | `ctx.realized_pnl` | f64 | Realized P&L (equity - starting capital) |
 | `ctx.total_exposure` | f64 | Sum of abs(entry_cost) across all open positions |
 | `ctx.positions()` | Array | All open positions |
-| `ctx.position_count()` | i64 | Count of script-opened positions (excludes implicit) |
+| `ctx.position_count` | i64 | Count of script-opened positions (excludes implicit) |
 | `ctx.has_positions()` | bool | True if any script-opened positions exist |
 
 ### Indicators (current bar)
@@ -195,29 +231,29 @@ let strat = ctx.build_strategy([
 ## Action Maps (returned by on_bar)
 
 ```rhai
-// Open options (unresolved — engine finds contracts)
+// Open options spread (preferred — uses build_strategy for resolved legs)
+let spread = ctx.build_strategy([
+    #{ side: "short", option_type: "put", delta: 0.30, dte: 45 },
+]);
+if spread != () {
+    [#{ action: "open_spread", spread: spread }]
+}
+
+// Open options (unresolved — engine resolves contracts at execution)
 [#{ action: "open_options", legs: [
     #{ side: "short", option_type: "put", delta: 0.30, dte: 45 },
 ]}]
 
-// Open options (resolved — from build_strategy)
-let strat = ctx.build_strategy([
-    #{ side: "short", option_type: "put", delta: 0.30, dte: 45 },
-]);
-if strat != () {
-    [#{ action: "open_options", legs: strat.legs }]
-}
-
-// Open stock
+// Open stock position
 [#{ action: "open_stock", side: "long", qty: 100 }]
 
-// Close a specific position (from on_bar — position_id required)
+// Close a specific position by ID (from on_bar)
 [#{ action: "close", position_id: pos.id, reason: "take_profit" }]
 
 // Stop the backtest early
 [#{ action: "stop", reason: "capital_depleted" }]
 
-// No action
+// No action this bar
 []
 ```
 
@@ -257,7 +293,18 @@ if strat != () {
 
 ## exit_type Values (in on_position_closed)
 
-`"expiration"`, `"stop_loss"`, `"take_profit"`, `"dte_exit"`, `"max_hold"`, `"signal"`, `"assignment"`, `"called_away"`, `"delta_exit"`, `"end_of_data"`
+| Value | Trigger |
+|-------|---------|
+| `"expiration"` | Options expired OTM (all legs out-of-the-money) |
+| `"assignment"` | Short put expired ITM — stock assigned at strike (engine auto-creates implicit stock) |
+| `"called_away"` | Short call expired ITM — stock sold at strike (engine auto-closes implicit stock) |
+| `"take_profit"` | Script returned `reason: "take_profit"` in on_exit_check |
+| `"stop_loss"` | Script returned `reason: "stop_loss"` in on_exit_check |
+| `"dte_exit"` | Script returned `reason: "dte_exit"` in on_exit_check |
+| `"signal"` | Script returned a custom reason string (or `reason: "signal"`) |
+| `"max_hold"` | Script returned `reason: "max_hold"` in on_exit_check |
+| `"delta_exit"` | Script returned `reason: "delta_exit"` in on_exit_check |
+| `"end_of_data"` | Backtest ended with positions still open (auto_close_on_end or final bar) |
 
 ## Parameter Injection
 
@@ -297,7 +344,24 @@ data: #{
 
 Undeclared indicators return () at runtime.
 
+## config() Defaults
+
+When optional config fields are omitted or set to `()`, the engine uses these defaults:
+
+| Field | Default |
+|-------|---------|
+| `interval` | `"daily"` |
+| `multiplier` | `100` |
+| `timeout_secs` | `60` |
+| `auto_close_on_end` | `false` |
+| `data.ohlcv` | `true` |
+| `data.options` | `false` |
+| `engine.slippage` | `"mid"` |
+| `engine.expiration_filter` | `"any"` |
+| `engine.trade_selector` | `"nearest"` |
+
 ## Examples
 
 See `scripts/strategies/` for complete examples:
-- `wheel.rhai` — Stateful wheel strategy with state machine
+- `wheel.rhai` — Stateful wheel strategy (put selling → assignment → covered calls)
+- `mean_reversion_spread.rhai` — Bull put spreads on RSI dips with volatility-adaptive delta, multiple indicators, and dynamic exits
