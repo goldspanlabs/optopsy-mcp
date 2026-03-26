@@ -98,23 +98,21 @@ impl BarContext {
     ///
     /// Usage: `ctx.indicators_ready(["sma:50", "rsi:14", "atr:14", "obv"])`
     pub fn indicators_ready(&mut self, indicators: rhai::Array) -> bool {
-        use super::indicators::{IndicatorKey, IndicatorParam};
+        use super::indicators::{parse_indicator_declaration, IndicatorKey, IndicatorParam};
 
         for item in indicators {
             let Ok(s) = item.into_immutable_string() else {
                 return false;
             };
-            let parts: Vec<&str> = s.split(':').collect();
-            let name = parts[0];
-            let params: Vec<IndicatorParam> = parts[1..]
-                .iter()
-                .filter_map(|p| p.parse::<i64>().ok())
-                .map(IndicatorParam::Int)
-                .collect();
-
+            let Ok((name, params)) = parse_indicator_declaration(&s) else {
+                return false;
+            };
             let key = IndicatorKey {
-                name: name.to_string(),
-                params,
+                name,
+                params: params
+                    .iter()
+                    .map(|&p| IndicatorParam::Int(p as i64))
+                    .collect(),
             };
             match self.indicator_store.get(&key, self.bar_idx) {
                 Some(v) if !v.is_nan() => {}

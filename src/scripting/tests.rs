@@ -1060,6 +1060,39 @@ mod tests {
     }
 
     #[test]
+    fn test_indicators_ready_default_params_macd() {
+        // macd_line declared without params → store uses default [12, 26, 9]
+        let bars: Vec<f64> = (0..50).map(|i| 100.0 + (i as f64) * 0.3).collect();
+        let bars = make_bars(&bars);
+        let store = IndicatorStore::build(&["macd_line".to_string()], &bars).unwrap();
+        let mut ctx = make_ctx(&bars, 40);
+        ctx.indicator_store = Arc::new(store);
+
+        // indicators_ready must use parse_indicator_declaration to match the stored key
+        let arr: rhai::Array = vec![Dynamic::from("macd_line")];
+        assert!(
+            ctx.indicators_ready(arr),
+            "indicators_ready should find macd_line with default params"
+        );
+    }
+
+    #[test]
+    fn test_indicators_ready_default_params_bbands() {
+        // bbands_upper:20 → store uses key [20, 20] (period + default std_mult)
+        let bars: Vec<f64> = (0..30).map(|i| 100.0 + (i as f64).sin() * 5.0).collect();
+        let bars = make_bars(&bars);
+        let store = IndicatorStore::build(&["bbands_upper:20".to_string()], &bars).unwrap();
+        let mut ctx = make_ctx(&bars, 25);
+        ctx.indicator_store = Arc::new(store);
+
+        let arr: rhai::Array = vec![Dynamic::from("bbands_upper:20")];
+        assert!(
+            ctx.indicators_ready(arr),
+            "indicators_ready should find bbands_upper:20 with default std_mult param"
+        );
+    }
+
+    #[test]
     fn test_total_exposure() {
         use crate::engine::types::Side;
         let bars = make_bars(&[100.0]);
