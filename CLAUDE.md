@@ -122,13 +122,13 @@ Each tool has its own module. `ai_format/` (directory module with `data.rs`, `ad
 Rhai-based scripting engine for user-defined backtesting strategies. Scripts define callback functions (`config`, `on_bar`, `on_exit_check`, etc.) and the engine drives a unified simulation loop for both options and stock backtests.
 
 - **`engine.rs`** — Unified simulation loop with immediate exit processing, scope rewind, PriceTable MTM, and assignment detection
-- **`types.rs`** — `BarContext` (exposed to scripts as `account`), `ScriptPosition`, `ScriptConfig`, action enums
+- **`types.rs`** — `BarContext` (exposed to scripts as `ctx`), `ScriptPosition`, `ScriptConfig`, action enums
 - **`helpers.rs`** — 39 high-level Rhai helpers: named strategy constructors (`bull_put_spread`, `iron_condor`, etc.) and action builders (`hold_position`, `close_position`, etc.)
 - **`indicators.rs`** — Pre-computed indicator store (SMA, EMA, RSI, ATR, MACD, BBands, Stochastic, CCI, OBV) with O(1) per-bar lookups
 - **`registration.rs`** — Sandboxed Rhai engine builder (ops limit, print interception, type registration, helper registration)
 - **`stdlib.rs`** — Parameter injection (`const` and scope modes), strategy script listing
 
-Strategy scripts live in `scripts/strategies/`. See `scripts/SCRIPTING_REFERENCE.md` for the full `account` API.
+Strategy scripts live in `scripts/strategies/`. See `scripts/SCRIPTING_REFERENCE.md` for the full `ctx` API.
 
 ### Engine (`src/engine/`)
 Internal backtest engines used by the scripting layer and optimization tools:
@@ -166,7 +166,7 @@ TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, tr
 ### Backtest Tool
 - **`run_script`** — Execute Rhai backtest scripts for options, stock, and wheel strategies.
   Pass `strategy` (filename from `scripts/strategies/`) or `script` (inline Rhai source).
-  See `scripts/SCRIPTING_REFERENCE.md` for the full `account` API (strategy helpers, indicators, cross-symbol data, etc.).
+  See `scripts/SCRIPTING_REFERENCE.md` for the full `ctx` API (strategy helpers, indicators, cross-symbol data, etc.).
 
 ### Statistics Tools
 - **`aggregate_prices`** — Group returns by `day_of_week`, `month`, `quarter`, `year`, `hour_of_day`.

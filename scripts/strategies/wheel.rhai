@@ -33,20 +33,20 @@ fn config() {
     }
 }
 
-fn on_bar(account) {
+fn on_bar(ctx) {
     if state == "selling_puts" {
-        if account.has_positions() { return []; }
+        if ctx.has_positions() { return []; }
 
-        let spread = account.short_put(params.PUT_DELTA, params.PUT_DTE);
+        let spread = ctx.short_put(params.PUT_DELTA, params.PUT_DTE);
         if spread == () { return []; }
 
         return [spread];
     }
 
     if state == "holding_stock" {
-        if account.has_positions() { return []; }
+        if ctx.has_positions() { return []; }
 
-        let spread = account.covered_call(params.CALL_DELTA, params.CALL_DTE);
+        let spread = ctx.covered_call(params.CALL_DELTA, params.CALL_DTE);
         if spread == () { return []; }
 
         // Only sell calls above adjusted cost basis
@@ -62,12 +62,12 @@ fn on_bar(account) {
     []
 }
 
-fn on_exit_check(account, pos) {
+fn on_exit_check(ctx, pos) {
     // Hold till expiration — no early exits
     hold_position()
 }
 
-fn on_position_closed(account, pos, exit_type) {
+fn on_position_closed(ctx, pos, exit_type) {
     if state == "selling_puts" {
         if exit_type == "assignment" {
             // Short put expired ITM — we're assigned stock at the strike price.
@@ -75,7 +75,7 @@ fn on_position_closed(account, pos, exit_type) {
             stock.entry_price = pos.legs[0].strike;
             stock.adjusted_basis = pos.legs[0].strike - pos.legs[0].entry_price;
             stock.quantity = params.MULTIPLIER;
-            stock.entry_date = account.date;
+            stock.entry_date = ctx.date;
             stock.total_premium += pos.legs[0].entry_price;
             state = "holding_stock";
         }
