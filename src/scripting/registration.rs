@@ -165,9 +165,6 @@ fn register_bar_context(engine: &mut Engine) {
     // Cross-symbol data
     engine.register_fn("price_of", BarContext::price_of);
     engine.register_fn("price_of_col", BarContext::price_of_col);
-
-    // Position sizing
-    engine.register_fn("compute_quantity", BarContext::compute_quantity);
 }
 
 /// Register `ScriptPosition` as a Rhai custom type with getters.
@@ -214,6 +211,12 @@ fn register_action_helpers(engine: &mut Engine) {
 fn register_strategy_helpers(engine: &mut Engine) {
     // Indicator utility
     engine.register_fn("indicators_ready", BarContext::indicators_ready);
+
+    // Position sizing
+    engine.register_fn("size_by_equity", BarContext::size_by_equity);
+    engine.register_fn("size_by_risk", BarContext::size_by_risk);
+    engine.register_fn("size_by_volatility", BarContext::size_by_volatility);
+    engine.register_fn("size_by_kelly", BarContext::size_by_kelly);
 
     // Singles
     engine.register_fn("long_call", BarContext::long_call);

@@ -150,6 +150,9 @@ pub struct BarContext {
 
     // Config reference for ctx.config.defaults access
     pub config: Arc<ScriptConfig>,
+
+    // Closed trade P&L history (for Kelly sizing)
+    pub pnl_history: Arc<Vec<f64>>,
 }
 
 /// A single OHLCV bar.
@@ -853,11 +856,7 @@ impl BarContext {
             .unwrap_or(Dynamic::UNIT)
     }
 
-    // --- Position sizing ---
-    pub fn compute_quantity(&mut self, _method: String, _params: rhai::Map) -> i64 {
-        // TODO: wrap sizing.rs::compute_quantity()
-        1
-    }
+    // --- Position sizing (see helpers.rs for implementations) ---
 
     // --- Historical bar lookback (MQL4-inspired) ---
 

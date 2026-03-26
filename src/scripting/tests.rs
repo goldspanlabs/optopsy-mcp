@@ -653,6 +653,7 @@ mod tests {
             cross_symbol_data: Arc::new(HashMap::new()),
             options_by_date: None,
             config,
+            pnl_history: Arc::new(vec![]),
         }
     }
 
@@ -1089,6 +1090,178 @@ mod tests {
         assert!(
             ctx.indicators_ready(arr),
             "indicators_ready should find bbands_upper:20 with default std_mult param"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Position sizing helper tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_size_by_equity_full() {
+        let bars = make_bars(&[100.0]);
+        let mut ctx = make_ctx(&bars, 0);
+        // equity=50000, close=100 → 500 shares
+        assert_eq!(ctx.size_by_equity(1.0), 500);
+    }
+
+    #[test]
+    fn test_size_by_equity_half() {
+        let bars = make_bars(&[100.0]);
+        let mut ctx = make_ctx(&bars, 0);
+        // 50% of 50000 / 100 = 250
+        assert_eq!(ctx.size_by_equity(0.5), 250);
+    }
+
+    #[test]
+    fn test_size_by_equity_clamps_fraction() {
+        let bars = make_bars(&[100.0]);
+        let mut ctx = make_ctx(&bars, 0);
+        // fraction > 1.0 clamped to 1.0
+        assert_eq!(ctx.size_by_equity(2.0), 500);
+    }
+
+    #[test]
+    fn test_size_by_equity_zero_price() {
+        let bars = make_bars(&[100.0]);
+        let mut ctx = make_ctx(&bars, 0);
+        ctx.close = 0.0;
+        assert_eq!(ctx.size_by_equity(1.0), 0);
+    }
+
+    #[test]
+    fn test_size_by_risk() {
+        let bars = make_bars(&[100.0]);
+        let mut ctx = make_ctx(&bars, 0);
+        // Risk 2% of 50000 = $1000, stop at $95, risk/share = $5
+        // qty = 1000 / 5 = 200
+        assert_eq!(ctx.size_by_risk(0.02, 95.0), 200);
+    }
+
+    #[test]
+    fn test_size_by_risk_stop_equals_price() {
+        let bars = make_bars(&[100.0]);
+        let mut ctx = make_ctx(&bars, 0);
+        // stop = price → risk/share = 0 → returns 0
+        assert_eq!(ctx.size_by_risk(0.02, 100.0), 0);
+    }
+
+    #[test]
+    fn test_size_by_volatility() {
+        let bars: Vec<f64> = (0..30).map(|i| 100.0 + (i as f64) * 0.5).collect();
+        let bars = make_bars(&bars);
+        let store = IndicatorStore::build(&["atr:14".to_string()], &bars).unwrap();
+        let mut ctx = make_ctx(&bars, 20);
+        ctx.indicator_store = Arc::new(store);
+        // ATR should be a small positive value for trending data
+        let qty = ctx.size_by_volatility(1000.0, 14);
+        assert!(qty > 0, "Should compute positive qty from ATR");
+        // Should not exceed full equity worth of shares
+        let max = (ctx.equity / ctx.close).floor() as i64;
+        assert!(qty <= max);
+    }
+
+    #[test]
+    fn test_size_by_volatility_no_indicator() {
+        let bars = make_bars(&[100.0, 110.0, 120.0]);
+        let mut ctx = make_ctx(&bars, 2);
+        // No ATR indicator declared → returns 0
+        assert_eq!(ctx.size_by_volatility(1000.0, 14), 0);
+    }
+
+    #[test]
+    fn test_size_by_kelly_cold_start() {
+        let bars = make_bars(&[100.0]);
+        let mut ctx = make_ctx(&bars, 0);
+        // No trade history → returns 0
+        assert_eq!(ctx.size_by_kelly(0.5, 0), 0);
+    }
+
+    #[test]
+    fn test_size_by_kelly_insufficient_trades() {
+        let bars = make_bars(&[100.0]);
+        let mut ctx = make_ctx(&bars, 0);
+        // Only 10 trades (need 20 minimum)
+        ctx.pnl_history = Arc::new(vec![100.0; 10]);
+        assert_eq!(ctx.size_by_kelly(0.5, 0), 0);
+    }
+
+    #[test]
+    fn test_size_by_kelly_winning_system() {
+        let bars = make_bars(&[100.0]);
+        let mut ctx = make_ctx(&bars, 0);
+        // 70% win rate, avg win $500, avg loss $300
+        let mut pnls = vec![500.0; 14]; // 14 wins
+        pnls.extend(vec![-300.0; 6]); // 6 losses
+        ctx.pnl_history = Arc::new(pnls);
+
+        let qty = ctx.size_by_kelly(0.5, 0);
+        assert!(qty > 0, "Winning system should produce positive Kelly qty");
+        // Full Kelly = 0.7 - 0.3 / (500/300) = 0.7 - 0.18 = 0.52
+        // Half Kelly = 0.26 of equity = 13000 / 100 = 130 shares
+        assert!(qty > 100 && qty < 200, "Expected ~130 shares, got {qty}");
+    }
+
+    #[test]
+    fn test_size_by_kelly_losing_system() {
+        let bars = make_bars(&[100.0]);
+        let mut ctx = make_ctx(&bars, 0);
+        // 30% win rate, avg win $200, avg loss $400
+        let mut pnls = vec![200.0; 6]; // 6 wins
+        pnls.extend(vec![-400.0; 14]); // 14 losses
+        ctx.pnl_history = Arc::new(pnls);
+
+        // Kelly = 0.3 - 0.7 / (200/400) = 0.3 - 1.4 = -1.1 → 0
+        assert_eq!(ctx.size_by_kelly(0.5, 0), 0);
+    }
+
+    #[test]
+    fn test_size_by_kelly_with_lookback() {
+        let bars = make_bars(&[100.0]);
+        let mut ctx = make_ctx(&bars, 0);
+        // 30 losing trades followed by 25 winning trades
+        let mut pnls = vec![-300.0; 30];
+        pnls.extend(vec![500.0; 18]);
+        pnls.extend(vec![-200.0; 7]);
+        ctx.pnl_history = Arc::new(pnls);
+
+        // lookback=25: only recent 25 trades (18 wins + 7 losses)
+        let qty_recent = ctx.size_by_kelly(0.5, 25);
+        assert!(qty_recent > 0, "Recent window is profitable");
+
+        // lookback=0: all trades (worse overall)
+        let qty_all = ctx.size_by_kelly(0.5, 0);
+        // Recent window should size larger than the full history
+        assert!(
+            qty_recent > qty_all,
+            "Recent trades are better: {qty_recent} > {qty_all}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Position sizing helpers via Rhai engine
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_sizing_helpers_registered_in_engine() {
+        let engine = build_engine();
+        // Verify the function names are registered (they need a BarContext to call,
+        // but we can check they compile in a script)
+        let result = engine.compile(
+            r"
+            fn on_bar(ctx) {
+                let q1 = ctx.size_by_equity(0.5);
+                let q2 = ctx.size_by_risk(0.02, 95.0);
+                let q3 = ctx.size_by_volatility(1000.0, 14);
+                let q4 = ctx.size_by_kelly(0.5, 0);
+                [buy_stock(q1)]
+            }
+            ",
+        );
+        assert!(
+            result.is_ok(),
+            "Sizing helpers should be registered: {:?}",
+            result.err()
         );
     }
 

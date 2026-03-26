@@ -208,6 +208,33 @@ if sma50 == () || rsi == () { return []; }
 if !ctx.indicators_ready(["sma:50", "rsi:14"]) { return []; }
 ```
 
+### Position Sizing Helpers
+
+Compute share quantities dynamically based on equity, risk, volatility, or trade history. All return an `i64` share count (0 if inputs are invalid or insufficient history).
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `ctx.size_by_equity(fraction)` | i64 | Invest `fraction` of equity (1.0 = full, 0.5 = half) |
+| `ctx.size_by_risk(risk_pct, stop_price)` | i64 | Risk `risk_pct` of equity per trade with a defined stop price |
+| `ctx.size_by_volatility(target_risk, atr_period)` | i64 | Size so 1 ATR move = `target_risk` dollars. Requires `atr:{period}` in indicators |
+| `ctx.size_by_kelly(fraction, lookback)` | i64 | Kelly criterion sizing. `fraction` = Kelly fraction (0.5 = half-Kelly). Returns 0 until 20+ closed trades |
+
+```rhai
+// Full equity investment
+let qty = ctx.size_by_equity(1.0);
+
+// Risk 2% of equity per trade, stop at 2 ATR below close
+let stop = ctx.close - 2.0 * ctx.atr(14);
+let qty = ctx.size_by_risk(0.02, stop);
+
+// Volatility-based: $1000 risk per ATR move
+let qty = ctx.size_by_volatility(1000.0, 14);
+
+// Half-Kelly using all trade history (returns 0 until 20+ trades)
+let qty = ctx.size_by_kelly(0.5, 0);
+if qty == 0 { qty = ctx.size_by_equity(0.1); }  // fallback for cold start
+```
+
 ### Options Strategy Helpers
 
 Named helpers that build and wrap strategies into ready-to-use action maps. All return an action map or `()` if leg resolution fails. Use directly in the array returned from `on_bar()`.
