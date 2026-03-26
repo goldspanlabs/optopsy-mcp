@@ -146,7 +146,7 @@ fn on_exit_check(ctx, pos) {
 }
 ```
 
-39 named strategy helpers are available (`bull_put_spread`, `iron_condor`, `short_strangle`, etc.) along with action builders (`hold_position()`, `close_position()`, `buy_stock()`). See `scripts/SCRIPTING_REFERENCE.md` for the full API.
+32 named helpers are available (`bull_put_spread`, `iron_condor`, `short_strangle`, etc.) along with action builders (`hold_position()`, `close_position()`, `buy_stock()`). See `scripts/SCRIPTING_REFERENCE.md` for the full API.
 
 A built-in wheel strategy script is included and parameterized via constant injection.
 
