@@ -187,6 +187,8 @@ pub async fn run_script_backtest(
     let mut stop_requested = false;
     let loop_start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(config.timeout_secs);
+    let mut pnl_history_arc = Arc::new(Vec::<f64>::new());
+    let mut pnl_dirty = false;
 
     for (bar_idx, bar) in price_history.iter().enumerate() {
         if stop_requested {
@@ -202,7 +204,10 @@ pub async fn run_script_backtest(
             break;
         }
 
-        let pnl_history_arc = Arc::new(pnl_history.clone());
+        if pnl_dirty {
+            pnl_history_arc = Arc::new(pnl_history.clone());
+            pnl_dirty = false;
+        }
 
         let today = bar.datetime.date();
 
@@ -322,6 +327,7 @@ pub async fn run_script_backtest(
                     &exit_reason,
                 ));
                 pnl_history.push(pnl);
+                pnl_dirty = true;
 
                 positions.remove(i);
                 positions_dirty = true; // positions changed, Arc needs rebuild
@@ -407,6 +413,7 @@ pub async fn run_script_backtest(
                                                 "called_away",
                                             ));
                                             pnl_history.push(stock_pnl);
+                                            pnl_dirty = true;
                                             positions.remove(j);
                                             // Don't increment j
                                         } else {
@@ -556,6 +563,7 @@ pub async fn run_script_backtest(
                                         &reason,
                                     ));
                                     pnl_history.push(pnl);
+                                    pnl_dirty = true;
                                     positions.remove(idx);
                                 } else {
                                     warnings

@@ -15,7 +15,7 @@ use super::types::BarContext;
 // Internal: build a leg map for passing to build_strategy()
 // ---------------------------------------------------------------------------
 
-fn leg(side: &str, option_type: &str, delta: f64, dte: i64) -> Dynamic {
+pub(super) fn leg(side: &str, option_type: &str, delta: f64, dte: i64) -> Dynamic {
     let mut map = rhai::Map::new();
     map.insert("side".into(), side.into());
     map.insert("option_type".into(), option_type.into());
@@ -128,22 +128,27 @@ impl BarContext {
 
     /// Size by equity fraction: invest `fraction` of equity at current price.
     ///
+    /// `fraction` > 1.0 allows leveraged sizing (e.g., 1.5 = 150% exposure).
+    ///
     /// Usage: `ctx.size_by_equity(1.0)` → full equity, `ctx.size_by_equity(0.5)` → half
     pub fn size_by_equity(&mut self, fraction: f64) -> i64 {
         if self.close <= 0.0 || fraction <= 0.0 {
             return 0;
         }
-        ((self.equity * fraction.min(1.0)) / self.close).floor() as i64
+        ((self.equity * fraction) / self.close).floor() as i64
     }
 
     /// Size by risk percentage: risk `risk_pct` of equity per trade with a defined stop.
     ///
     /// `risk_pct`: fraction of equity to risk (e.g., 0.02 = 2%)
-    /// `stop_price`: price at which you'd exit (must be below current price for longs)
+    /// `stop_price`: price at which you'd exit. Must differ from current price.
+    ///   For longs: stop below close (e.g., `ctx.close - 2.0 * ctx.atr(14)`)
+    ///   For shorts: stop above close (e.g., `ctx.close + 2.0 * ctx.atr(14)`)
+    ///   Returns 0 if stop is on the wrong side (stop >= close for longs).
     ///
     /// Usage: `ctx.size_by_risk(0.02, stop_price)` → shares where loss at stop = 2% of equity
     pub fn size_by_risk(&mut self, risk_pct: f64, stop_price: f64) -> i64 {
-        let risk_per_share = (self.close - stop_price).abs();
+        let risk_per_share = self.close - stop_price;
         if risk_per_share <= 0.0 || risk_pct <= 0.0 {
             return 0;
         }

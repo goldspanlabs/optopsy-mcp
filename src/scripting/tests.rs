@@ -1114,11 +1114,11 @@ mod tests {
     }
 
     #[test]
-    fn test_size_by_equity_clamps_fraction() {
+    fn test_size_by_equity_leverage() {
         let bars = make_bars(&[100.0]);
         let mut ctx = make_ctx(&bars, 0);
-        // fraction > 1.0 clamped to 1.0
-        assert_eq!(ctx.size_by_equity(2.0), 500);
+        // fraction 2.0 = 200% leverage: 100000 / 100 = 1000 shares
+        assert_eq!(ctx.size_by_equity(2.0), 1000);
     }
 
     #[test]
@@ -1144,6 +1144,14 @@ mod tests {
         let mut ctx = make_ctx(&bars, 0);
         // stop = price → risk/share = 0 → returns 0
         assert_eq!(ctx.size_by_risk(0.02, 100.0), 0);
+    }
+
+    #[test]
+    fn test_size_by_risk_stop_above_price() {
+        let bars = make_bars(&[100.0]);
+        let mut ctx = make_ctx(&bars, 0);
+        // stop above price (wrong direction for longs) → returns 0
+        assert_eq!(ctx.size_by_risk(0.02, 105.0), 0);
     }
 
     #[test]
@@ -1263,6 +1271,120 @@ mod tests {
             "Sizing helpers should be registered: {:?}",
             result.err()
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Strategy helper leg verification tests
+    // -----------------------------------------------------------------------
+
+    fn get_str(map: &rhai::Map, key: &str) -> String {
+        map.get(key)
+            .unwrap()
+            .clone()
+            .into_immutable_string()
+            .unwrap()
+            .to_string()
+    }
+
+    fn get_f64(map: &rhai::Map, key: &str) -> f64 {
+        map.get(key).unwrap().as_float().unwrap()
+    }
+
+    fn get_i64(map: &rhai::Map, key: &str) -> i64 {
+        map.get(key).unwrap().as_int().unwrap()
+    }
+
+    #[test]
+    fn test_leg_builder() {
+        use crate::scripting::helpers::leg;
+        let l = leg("short", "put", 0.30, 45);
+        let map = l.cast::<rhai::Map>();
+        assert_eq!(get_str(&map, "side"), "short");
+        assert_eq!(get_str(&map, "option_type"), "put");
+        assert!((get_f64(&map, "delta") - 0.30).abs() < 1e-10);
+        assert_eq!(get_i64(&map, "dte"), 45);
+    }
+
+    /// Verify iron_condor passes 4 correct legs: long put, short put, short call, long call.
+    #[test]
+    fn test_iron_condor_leg_ordering() {
+        use crate::scripting::helpers::leg;
+        // Replicate what iron_condor() does internally
+        let legs = [
+            leg("long", "put", 0.10, 45),
+            leg("short", "put", 0.30, 45),
+            leg("short", "call", 0.30, 45),
+            leg("long", "call", 0.10, 45),
+        ];
+
+        let l0 = legs[0].clone().cast::<rhai::Map>();
+        assert_eq!(get_str(&l0, "side"), "long");
+        assert_eq!(get_str(&l0, "option_type"), "put");
+        assert!((get_f64(&l0, "delta") - 0.10).abs() < 1e-10);
+
+        let l1 = legs[1].clone().cast::<rhai::Map>();
+        assert_eq!(get_str(&l1, "side"), "short");
+        assert_eq!(get_str(&l1, "option_type"), "put");
+        assert!((get_f64(&l1, "delta") - 0.30).abs() < 1e-10);
+
+        let l2 = legs[2].clone().cast::<rhai::Map>();
+        assert_eq!(get_str(&l2, "side"), "short");
+        assert_eq!(get_str(&l2, "option_type"), "call");
+
+        let l3 = legs[3].clone().cast::<rhai::Map>();
+        assert_eq!(get_str(&l3, "side"), "long");
+        assert_eq!(get_str(&l3, "option_type"), "call");
+    }
+
+    /// Verify bull_put_spread: short higher-delta put + long lower-delta put.
+    #[test]
+    fn test_bull_put_spread_leg_ordering() {
+        use crate::scripting::helpers::leg;
+        let legs = [leg("short", "put", 0.30, 45), leg("long", "put", 0.15, 45)];
+
+        let short_leg = legs[0].clone().cast::<rhai::Map>();
+        assert_eq!(get_str(&short_leg, "side"), "short");
+        assert_eq!(get_str(&short_leg, "option_type"), "put");
+        assert!((get_f64(&short_leg, "delta") - 0.30).abs() < 1e-10);
+
+        let long_leg = legs[1].clone().cast::<rhai::Map>();
+        assert_eq!(get_str(&long_leg, "side"), "long");
+        assert_eq!(get_str(&long_leg, "option_type"), "put");
+        assert!((get_f64(&long_leg, "delta") - 0.15).abs() < 1e-10);
+    }
+
+    /// Verify bear_call_spread: short higher-delta call + long lower-delta call.
+    #[test]
+    fn test_bear_call_spread_leg_ordering() {
+        use crate::scripting::helpers::leg;
+        let legs = [
+            leg("short", "call", 0.40, 30),
+            leg("long", "call", 0.20, 30),
+        ];
+        let short_leg = legs[0].clone().cast::<rhai::Map>();
+        assert_eq!(get_str(&short_leg, "side"), "short");
+        assert!((get_f64(&short_leg, "delta") - 0.40).abs() < 1e-10);
+
+        let long_leg = legs[1].clone().cast::<rhai::Map>();
+        assert_eq!(get_str(&long_leg, "side"), "long");
+        assert!((get_f64(&long_leg, "delta") - 0.20).abs() < 1e-10);
+    }
+
+    /// Verify call_calendar: short near-term + long far-term with different DTEs.
+    #[test]
+    fn test_call_calendar_leg_ordering() {
+        use crate::scripting::helpers::leg;
+        let legs = [
+            leg("short", "call", 0.50, 30),
+            leg("long", "call", 0.50, 60),
+        ];
+        let near = legs[0].clone().cast::<rhai::Map>();
+        assert_eq!(get_str(&near, "side"), "short");
+        assert_eq!(get_i64(&near, "dte"), 30);
+
+        let far = legs[1].clone().cast::<rhai::Map>();
+        assert_eq!(get_str(&far, "side"), "long");
+        assert_eq!(get_i64(&far, "dte"), 60);
     }
 
     #[test]

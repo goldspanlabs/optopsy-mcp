@@ -234,8 +234,8 @@ Compute share quantities dynamically based on equity, risk, volatility, or trade
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `ctx.size_by_equity(fraction)` | i64 | Invest `fraction` of equity (1.0 = full, 0.5 = half) |
-| `ctx.size_by_risk(risk_pct, stop_price)` | i64 | Risk `risk_pct` of equity per trade with a defined stop price |
+| `ctx.size_by_equity(fraction)` | i64 | Invest `fraction` of equity (1.0 = full, 0.5 = half, 1.5 = leveraged) |
+| `ctx.size_by_risk(risk_pct, stop_price)` | i64 | Risk `risk_pct` of equity per trade. Stop must be below close for longs (returns 0 otherwise) |
 | `ctx.size_by_volatility(target_risk, atr_period)` | i64 | Size so 1 ATR move = `target_risk` dollars. Requires `atr:{period}` in indicators |
 | `ctx.size_by_kelly(fraction, lookback)` | i64 | Kelly criterion sizing. `fraction` = Kelly fraction (0.5 = half-Kelly). Returns 0 until 20+ closed trades |
 
