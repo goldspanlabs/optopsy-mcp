@@ -6,8 +6,23 @@
 // Required params: SYMBOL, CAPITAL
 // Optional params: SLIPPAGE ("mid")
 
+// Top-level variables persist across bars. Use for tracking state between callbacks.
 let consecutive_losses = 0;
 
+// ---------------------------------------------------------------------------
+// config() — Called once before the simulation starts.
+//
+// Returns a map with:
+//   symbol (required)    — ticker to backtest
+//   capital (required)   — starting cash
+//   interval             — "daily", "1m", "5m", etc. (default: "daily")
+//   data.ohlcv           — load price bars (default: true)
+//   data.options         — load options chain (required for build_strategy)
+//   data.indicators      — array of "name:period" strings to pre-compute
+//   engine.slippage      — "mid", "spread", or #{ type: "per_leg", per_leg: 0.05 }
+//   engine.expiration_filter — "any", "monthly", "weekly"
+//   defaults             — arbitrary map readable via ctx.config.defaults
+// ---------------------------------------------------------------------------
 fn config() {
     #{
         symbol: params.SYMBOL,
@@ -131,6 +146,16 @@ fn on_exit_check(ctx, pos) {
     hold_position()
 }
 
+// ---------------------------------------------------------------------------
+// on_position_closed(ctx, pos, exit_type) — Called after a position closes.
+//
+// Fires for ALL close reasons. The position is already removed from
+// ctx.positions. Use this for bookkeeping, state transitions, or risk
+// adjustments — not for opening new positions (use on_bar for that).
+//
+// exit_type values: "expiration", "assignment", "called_away", "take_profit",
+//   "stop_loss", "dte_exit", "signal", "end_of_data"
+// ---------------------------------------------------------------------------
 fn on_position_closed(ctx, pos, exit_type) {
     if pos.pnl < 0.0 {
         consecutive_losses += 1;
