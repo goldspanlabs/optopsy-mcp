@@ -143,8 +143,8 @@ pub struct BarContext {
     pub price_history: Arc<Vec<OhlcvBar>>,
     pub cross_symbol_data: Arc<HashMap<String, Vec<CrossSymbolBar>>>,
 
-    // Options data (None for pure stock backtests)
-    pub options_df: Option<Arc<polars::prelude::DataFrame>>,
+    // Options data, pre-partitioned by date (None for pure stock backtests)
+    pub options_by_date: Option<Arc<super::engine::DatePartitionedOptions>>,
 
     // Config reference for ctx.config.defaults access
     pub config: Arc<ScriptConfig>,
@@ -788,26 +788,28 @@ impl BarContext {
     ) -> Dynamic {
         use crate::engine::filters;
 
-        let df = match &self.options_df {
-            Some(df) => df.as_ref(),
-            None => {
-                return Dynamic::UNIT;
-            }
+        let today = self.datetime.date();
+
+        // O(1) lookup: get today's options slice (~5K-10K rows)
+        let today_df = match &self.options_by_date {
+            Some(opts) => match opts.get(today) {
+                Some(df) => df,
+                None => return Dynamic::UNIT,
+            },
+            None => return Dynamic::UNIT,
         };
 
-        let today = self.datetime.date();
         let min_bid_ask = 0.05;
 
-        // Map option_type string to the code used in data ("c" or "p")
         let opt_type_code = match option_type.to_lowercase().as_str() {
             "call" | "c" => "c",
             "put" | "p" => "p",
             _ => return Dynamic::UNIT,
         };
 
-        // 1. Filter by option type, DTE range, valid quotes
+        // Filter the small daily slice by type, DTE, quotes
         let filtered = match filters::filter_leg_candidates(
-            df,
+            today_df,
             opt_type_code,
             dte_max,
             dte_min,
@@ -817,19 +819,12 @@ impl BarContext {
             _ => return Dynamic::UNIT,
         };
 
-        // 2. Filter to current date only
-        let today_filtered = match filter_to_date(&filtered, today) {
-            Some(f) if f.height() > 0 => f,
-            _ => return Dynamic::UNIT,
-        };
-
-        // 3. Select closest delta
-        let selected = match filters::select_closest_delta(today_filtered, target) {
+        // Select closest delta
+        let selected = match filters::select_closest_delta(filtered, target) {
             Ok(s) if s.height() > 0 => s,
             _ => return Dynamic::UNIT,
         };
 
-        // 4. Pick the first (closest) match
         row_to_option_map(&selected, 0, today)
     }
     // --- Cross-symbol ---

@@ -18,6 +18,64 @@ use crate::engine::types::{
 };
 
 use super::indicators::IndicatorStore;
+
+// ---------------------------------------------------------------------------
+// Date-partitioned options: pre-split the full DataFrame by date at load time
+// so each bar does O(1) lookup + small-DF filter instead of scanning 20M rows.
+// ---------------------------------------------------------------------------
+
+/// Options data pre-partitioned by quote date for O(1) per-bar access.
+pub struct DatePartitionedOptions {
+    pub by_date: HashMap<NaiveDate, polars::prelude::DataFrame>,
+}
+
+impl DatePartitionedOptions {
+    /// Build from a full options DataFrame by grouping on the date portion of `datetime`.
+    pub fn from_df(df: &polars::prelude::DataFrame) -> Result<Self> {
+        use polars::prelude::*;
+
+        let col = df.column("datetime")?;
+        let dt_ca = col.datetime()?;
+        let tu = dt_ca.time_unit();
+        let n = df.height();
+        let mut date_indices: HashMap<NaiveDate, Vec<u32>> = HashMap::new();
+
+        for i in 0..n {
+            if let Some(raw) = dt_ca.phys.get(i) {
+                let ndt = match tu {
+                    TimeUnit::Milliseconds => {
+                        chrono::DateTime::from_timestamp_millis(raw).map(|dt| dt.naive_utc())
+                    }
+                    TimeUnit::Microseconds => {
+                        chrono::DateTime::from_timestamp_micros(raw).map(|dt| dt.naive_utc())
+                    }
+                    TimeUnit::Nanoseconds => {
+                        let secs = raw.div_euclid(1_000_000_000);
+                        let nsecs = raw.rem_euclid(1_000_000_000) as u32;
+                        chrono::DateTime::from_timestamp(secs, nsecs).map(|dt| dt.naive_utc())
+                    }
+                };
+                if let Some(ndt) = ndt {
+                    date_indices.entry(ndt.date()).or_default().push(i as u32);
+                }
+            }
+        }
+
+        let mut by_date = HashMap::with_capacity(date_indices.len());
+        for (date, indices) in date_indices {
+            let idx = IdxCa::new("idx".into(), &indices);
+            let slice = df.take(&idx)?;
+            by_date.insert(date, slice);
+        }
+
+        Ok(Self { by_date })
+    }
+
+    /// Get the options slice for a given date (typically ~5K-10K rows).
+    pub fn get(&self, date: NaiveDate) -> Option<&polars::prelude::DataFrame> {
+        self.by_date.get(&date)
+    }
+}
 use super::registration::build_engine;
 use super::types::*;
 
@@ -62,8 +120,22 @@ pub async fn run_script_backtest(
         bail!("No OHLCV data found for symbol '{}'", config.symbol);
     }
 
-    // 4a. Resample to daily when options are involved (options data is daily-only)
-    let ohlcv_df = if config.needs_options && config.interval != Interval::Daily {
+    // 4a. Resample to the configured interval.
+    // Detect if the raw data is higher-frequency than requested (e.g. minute data
+    // when daily is requested) by checking if there are many more bars than expected
+    // for daily granularity.
+    let ohlcv_df = if config.interval == Interval::Daily && ohlcv_df.height() > 10_000 {
+        // Data is likely intraday — resample to daily
+        let original_rows = ohlcv_df.height();
+        let resampled =
+            crate::engine::ohlcv::resample_ohlcv(&ohlcv_df, crate::engine::types::Interval::Daily)?;
+        early_warnings.push(format!(
+            "Resampled {} intraday bars to {} daily bars",
+            original_rows,
+            resampled.height()
+        ));
+        resampled
+    } else if config.needs_options && config.interval != Interval::Daily {
         let original_rows = ohlcv_df.height();
         let resampled =
             crate::engine::ohlcv::resample_ohlcv(&ohlcv_df, crate::engine::types::Interval::Daily)?;
@@ -132,7 +204,7 @@ pub async fn run_script_backtest(
     };
 
     // Load options data if needed + build PriceTable for MTM
-    let options_df: Option<Arc<polars::prelude::DataFrame>>;
+    let options_by_date: Option<Arc<DatePartitionedOptions>>;
     let price_table: Option<Arc<crate::engine::sim_types::PriceTable>>;
     let date_index: Option<Arc<crate::engine::sim_types::DateIndex>>;
 
@@ -143,9 +215,9 @@ pub async fn run_script_backtest(
         let (pt, _trading_days, di) = crate::engine::price_table::build_price_table(&df)?;
         price_table = Some(Arc::new(pt));
         date_index = Some(Arc::new(di));
-        options_df = Some(Arc::new(df));
+        options_by_date = Some(Arc::new(DatePartitionedOptions::from_df(&df)?));
     } else {
-        options_df = None;
+        options_by_date = None;
         price_table = None;
         date_index = None;
     }
@@ -217,7 +289,7 @@ pub async fn run_script_backtest(
                     &price_history,
                     &cross_symbol_data,
                     &config,
-                    &options_df,
+                    &options_by_date,
                 );
                 let pos_dyn = Dynamic::from(positions[i].clone());
 
@@ -265,7 +337,7 @@ pub async fn run_script_backtest(
                         &price_history,
                         &cross_symbol_data,
                         &config,
-                        &options_df,
+                        &options_by_date,
                     );
                     let pos_dyn = Dynamic::from(closed_pos.clone());
                     let exit_type_dyn = Dynamic::from(exit_reason.clone());
@@ -402,7 +474,7 @@ pub async fn run_script_backtest(
             &price_history,
             &cross_symbol_data,
             &config,
-            &options_df,
+            &options_by_date,
         );
 
         // Call on_bar(ctx)
@@ -456,7 +528,7 @@ pub async fn run_script_backtest(
                                     &price_history,
                                     &cross_symbol_data,
                                     &config,
-                                    &options_df,
+                                    &options_by_date,
                                 );
                                 let pos_dyn = Dynamic::from(pos.clone());
                                 let _ = call_fn_persistent(
@@ -491,7 +563,7 @@ pub async fn run_script_backtest(
                                             &price_history,
                                             &cross_symbol_data,
                                             &config,
-                                            &options_df,
+                                            &options_by_date,
                                         );
                                         let pos_dyn = Dynamic::from(positions[idx].clone());
                                         let exit_dyn = Dynamic::from(reason.clone());
@@ -519,7 +591,8 @@ pub async fn run_script_backtest(
                         }
                         ScriptAction::OpenOptions { legs, qty } => {
                             // Resolve unresolved legs via find_option pipeline
-                            let resolved = resolve_option_legs(&legs, &options_df, today, &config);
+                            let resolved =
+                                resolve_option_legs(&legs, &options_by_date, today, &config);
 
                             if resolved.is_empty() {
                                 continue; // no valid legs found
@@ -564,7 +637,7 @@ pub async fn run_script_backtest(
                                     &price_history,
                                     &cross_symbol_data,
                                     &config,
-                                    &options_df,
+                                    &options_by_date,
                                 );
                                 let pos_dyn = Dynamic::from(pos.clone());
                                 let _ = call_fn_persistent(
@@ -678,7 +751,7 @@ pub async fn run_script_backtest(
                 &price_history,
                 &cross_symbol_data,
                 &config,
-                &options_df,
+                &options_by_date,
             )
         } else {
             // Empty bars — shouldn't reach here due to early bail
@@ -1062,7 +1135,7 @@ fn build_bar_context(
     price_history: &Arc<Vec<OhlcvBar>>,
     cross_symbol_data: &Arc<HashMap<String, Vec<CrossSymbolBar>>>,
     config: &Arc<ScriptConfig>,
-    options_df: &Option<Arc<polars::prelude::DataFrame>>,
+    options_by_date: &Option<Arc<DatePartitionedOptions>>,
 ) -> BarContext {
     let cash = equity - positions.iter().map(|p| p.unrealized_pnl).sum::<f64>();
     BarContext {
@@ -1079,7 +1152,7 @@ fn build_bar_context(
         indicator_store: Arc::clone(indicator_store),
         price_history: Arc::clone(price_history),
         cross_symbol_data: Arc::clone(cross_symbol_data),
-        options_df: options_df.clone(),
+        options_by_date: options_by_date.clone(),
         config: Arc::clone(config),
     }
 }
@@ -1099,14 +1172,17 @@ struct ResolvedLeg {
 /// Returns a Vec of resolved legs. Unresolved legs are queried via find_option.
 fn resolve_option_legs(
     legs: &[LegSpec],
-    options_df: &Option<Arc<polars::prelude::DataFrame>>,
+    options_by_date: &Option<Arc<DatePartitionedOptions>>,
     today: NaiveDate,
     _config: &ScriptConfig,
 ) -> Vec<ResolvedLeg> {
     use crate::engine::filters;
 
-    let df = match options_df {
-        Some(df) => df.as_ref(),
+    let today_df = match options_by_date {
+        Some(opts) => match opts.get(today) {
+            Some(df) => df,
+            None => return vec![],
+        },
         None => return vec![],
     };
 
@@ -1126,7 +1202,7 @@ fn resolve_option_legs(
                 expiration: *expiration,
                 bid: *bid,
                 ask: *ask,
-                delta: 0.0, // not available for pre-resolved legs
+                delta: 0.0,
             }),
             LegSpec::Unresolved {
                 side,
@@ -1146,18 +1222,18 @@ fn resolve_option_legs(
                 let dte_min = (*dte - 15).max(1);
                 let dte_max = *dte + 15;
 
+                // Already date-filtered — just filter by type/DTE/quotes
                 let filtered =
-                    filters::filter_leg_candidates(df, opt_code, dte_max, dte_min, 0.05).ok()?;
-                let today_filtered = super::types::filter_to_date(&filtered, today)?;
-                if today_filtered.height() == 0 {
+                    filters::filter_leg_candidates(today_df, opt_code, dte_max, dte_min, 0.05)
+                        .ok()?;
+                if filtered.height() == 0 {
                     return None;
                 }
-                let selected = filters::select_closest_delta(today_filtered, &target).ok()?;
+                let selected = filters::select_closest_delta(filtered, &target).ok()?;
                 if selected.height() == 0 {
                     return None;
                 }
 
-                // Extract first row
                 let get_f64 = |col: &str| -> f64 {
                     selected
                         .column(col)
@@ -1171,8 +1247,6 @@ fn resolve_option_legs(
                 let bid = get_f64("bid");
                 let ask = get_f64("ask");
                 let found_delta = get_f64("delta");
-
-                // Get expiration
                 let expiration = super::types::row_to_expiration_date(&selected, 0)?;
 
                 Some(ResolvedLeg {
