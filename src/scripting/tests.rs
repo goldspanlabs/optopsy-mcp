@@ -839,6 +839,259 @@ mod tests {
         assert!((ctx.get_realized_pnl() - 2000.0).abs() < 1e-10);
     }
 
+    // -----------------------------------------------------------------------
+    // Action helper tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_hold_position_helper() {
+        use crate::scripting::helpers;
+        let result = helpers::hold_position();
+        let map = result.cast::<rhai::Map>();
+        assert_eq!(
+            map.get("action")
+                .unwrap()
+                .clone()
+                .into_immutable_string()
+                .unwrap()
+                .as_str(),
+            "hold"
+        );
+    }
+
+    #[test]
+    fn test_close_position_helper() {
+        use crate::scripting::helpers;
+        let result = helpers::close_position("take_profit".to_string());
+        let map = result.cast::<rhai::Map>();
+        assert_eq!(
+            map.get("action")
+                .unwrap()
+                .clone()
+                .into_immutable_string()
+                .unwrap()
+                .as_str(),
+            "close"
+        );
+        assert_eq!(
+            map.get("reason")
+                .unwrap()
+                .clone()
+                .into_immutable_string()
+                .unwrap()
+                .as_str(),
+            "take_profit"
+        );
+    }
+
+    #[test]
+    fn test_close_position_id_helper() {
+        use crate::scripting::helpers;
+        let result = helpers::close_position_id(42, "stop_loss".to_string());
+        let map = result.cast::<rhai::Map>();
+        assert_eq!(
+            map.get("action")
+                .unwrap()
+                .clone()
+                .into_immutable_string()
+                .unwrap()
+                .as_str(),
+            "close"
+        );
+        assert_eq!(map.get("position_id").unwrap().as_int().unwrap(), 42);
+    }
+
+    #[test]
+    fn test_buy_stock_helper() {
+        use crate::scripting::helpers;
+        let result = helpers::buy_stock(100);
+        let map = result.cast::<rhai::Map>();
+        assert_eq!(
+            map.get("action")
+                .unwrap()
+                .clone()
+                .into_immutable_string()
+                .unwrap()
+                .as_str(),
+            "open_stock"
+        );
+        assert_eq!(
+            map.get("side")
+                .unwrap()
+                .clone()
+                .into_immutable_string()
+                .unwrap()
+                .as_str(),
+            "long"
+        );
+        assert_eq!(map.get("qty").unwrap().as_int().unwrap(), 100);
+    }
+
+    #[test]
+    fn test_sell_stock_helper() {
+        use crate::scripting::helpers;
+        let result = helpers::sell_stock(50);
+        let map = result.cast::<rhai::Map>();
+        assert_eq!(
+            map.get("side")
+                .unwrap()
+                .clone()
+                .into_immutable_string()
+                .unwrap()
+                .as_str(),
+            "short"
+        );
+    }
+
+    #[test]
+    fn test_stop_backtest_helper() {
+        use crate::scripting::helpers;
+        let result = helpers::stop_backtest("capital_depleted".to_string());
+        let map = result.cast::<rhai::Map>();
+        assert_eq!(
+            map.get("action")
+                .unwrap()
+                .clone()
+                .into_immutable_string()
+                .unwrap()
+                .as_str(),
+            "stop"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Action helpers via Rhai engine (integration test)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_action_helpers_registered_in_engine() {
+        let engine = build_engine();
+
+        // hold_position() returns #{ action: "hold" }
+        let result: Dynamic = engine.eval("hold_position()").unwrap();
+        let map = result.cast::<rhai::Map>();
+        assert_eq!(
+            map.get("action")
+                .unwrap()
+                .clone()
+                .into_immutable_string()
+                .unwrap()
+                .as_str(),
+            "hold"
+        );
+
+        // close_position(reason) returns #{ action: "close", reason }
+        let result: Dynamic = engine.eval(r#"close_position("take_profit")"#).unwrap();
+        let map = result.cast::<rhai::Map>();
+        assert_eq!(
+            map.get("action")
+                .unwrap()
+                .clone()
+                .into_immutable_string()
+                .unwrap()
+                .as_str(),
+            "close"
+        );
+
+        // buy_stock(qty) returns #{ action: "open_stock", side: "long", qty }
+        let result: Dynamic = engine.eval("buy_stock(100)").unwrap();
+        let map = result.cast::<rhai::Map>();
+        assert_eq!(map.get("qty").unwrap().as_int().unwrap(), 100);
+
+        // sell_stock(qty) returns #{ action: "open_stock", side: "short", qty }
+        let result: Dynamic = engine.eval("sell_stock(50)").unwrap();
+        let map = result.cast::<rhai::Map>();
+        assert_eq!(
+            map.get("side")
+                .unwrap()
+                .clone()
+                .into_immutable_string()
+                .unwrap()
+                .as_str(),
+            "short"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // indicators_ready tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_indicators_ready_with_period_indicators() {
+        let bars = make_bars(&[10.0, 11.0, 12.0, 13.0, 14.0]);
+        let store = IndicatorStore::build(&["sma:3".to_string()], &bars).unwrap();
+        let mut ctx = make_ctx(&bars, 4);
+        ctx.indicator_store = Arc::new(store);
+
+        // SMA:3 should be ready at bar 4
+        let arr: rhai::Array = vec![Dynamic::from("sma:3")];
+        assert!(ctx.indicators_ready(arr));
+
+        // SMA:3 not ready at bar 0 (warmup)
+        let mut ctx0 = make_ctx(&bars, 0);
+        ctx0.indicator_store = ctx.indicator_store.clone();
+        let arr: rhai::Array = vec![Dynamic::from("sma:3")];
+        assert!(!ctx0.indicators_ready(arr));
+    }
+
+    #[test]
+    fn test_indicators_ready_with_obv() {
+        let bars = make_bars(&[10.0, 11.0, 12.0, 13.0, 14.0]);
+        let store = IndicatorStore::build(&["obv".to_string()], &bars).unwrap();
+        let mut ctx = make_ctx(&bars, 4);
+        ctx.indicator_store = Arc::new(store);
+
+        // OBV (no period) should be ready at bar 4
+        let arr: rhai::Array = vec![Dynamic::from("obv")];
+        assert!(ctx.indicators_ready(arr));
+    }
+
+    #[test]
+    fn test_indicators_ready_mixed() {
+        let bars: Vec<f64> = (0..30).map(|i| 100.0 + (i as f64) * 0.5).collect();
+        let bars = make_bars(&bars);
+        let store =
+            IndicatorStore::build(&["sma:3".to_string(), "obv".to_string()], &bars).unwrap();
+        let mut ctx = make_ctx(&bars, 20);
+        ctx.indicator_store = Arc::new(store);
+
+        let arr: rhai::Array = vec![Dynamic::from("sma:3"), Dynamic::from("obv")];
+        assert!(ctx.indicators_ready(arr));
+    }
+
+    #[test]
+    fn test_indicators_ready_default_params_macd() {
+        // macd_line declared without params → store uses default [12, 26, 9]
+        let bars: Vec<f64> = (0..50).map(|i| 100.0 + (i as f64) * 0.3).collect();
+        let bars = make_bars(&bars);
+        let store = IndicatorStore::build(&["macd_line".to_string()], &bars).unwrap();
+        let mut ctx = make_ctx(&bars, 40);
+        ctx.indicator_store = Arc::new(store);
+
+        // indicators_ready must use parse_indicator_declaration to match the stored key
+        let arr: rhai::Array = vec![Dynamic::from("macd_line")];
+        assert!(
+            ctx.indicators_ready(arr),
+            "indicators_ready should find macd_line with default params"
+        );
+    }
+
+    #[test]
+    fn test_indicators_ready_default_params_bbands() {
+        // bbands_upper:20 → store uses key [20, 20] (period + default std_mult)
+        let bars: Vec<f64> = (0..30).map(|i| 100.0 + (i as f64).sin() * 5.0).collect();
+        let bars = make_bars(&bars);
+        let store = IndicatorStore::build(&["bbands_upper:20".to_string()], &bars).unwrap();
+        let mut ctx = make_ctx(&bars, 25);
+        ctx.indicator_store = Arc::new(store);
+
+        let arr: rhai::Array = vec![Dynamic::from("bbands_upper:20")];
+        assert!(
+            ctx.indicators_ready(arr),
+            "indicators_ready should find bbands_upper:20 with default std_mult param"
+        );
+    }
+
     #[test]
     fn test_total_exposure() {
         use crate::engine::types::Side;

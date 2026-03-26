@@ -148,7 +148,7 @@ impl Default for IndicatorStore {
 
 /// Parse a declaration like "sma:20" into ("sma", [20]).
 /// Applies default params for indicators with known defaults.
-fn parse_indicator_declaration(decl: &str) -> Result<(String, Vec<usize>)> {
+pub(super) fn parse_indicator_declaration(decl: &str) -> Result<(String, Vec<usize>)> {
     let parts: Vec<&str> = decl.split(':').collect();
     let name = parts[0].to_lowercase();
     let mut params: Vec<usize> = parts[1..].iter().filter_map(|s| s.parse().ok()).collect();

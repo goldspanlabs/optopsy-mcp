@@ -47,8 +47,9 @@ fn config() {
 // on_bar(ctx) — Called once per bar (or twice if exits happen: Phase A then B).
 //
 // This is where entry logic lives. Return an array of action maps:
-//   [#{ action: "open_spread", spread: ctx.build_strategy([...]) }]
-//   [#{ action: "open_stock", side: "long", qty: 100 }]
+//   [ctx.short_put(0.30, 45)]       — open a short put
+//   [ctx.bull_put_spread(0.30, 0.15, 45)] — open a spread
+//   [buy_stock(100)]                — open a stock position
 //   [] — do nothing this bar
 //
 // ctx provides: .close, .high, .low, .open, .volume, .date, .bar_idx,
@@ -59,27 +60,25 @@ fn on_bar(ctx) {
     if state == "selling_puts" {
         if ctx.has_positions() { return []; }
 
-        let spread = ctx.build_strategy([
-            #{ side: "short", option_type: "put", delta: params.PUT_DELTA, dte: params.PUT_DTE },
-        ]);
+        let spread = ctx.short_put(params.PUT_DELTA, params.PUT_DTE);
         if spread == () { return []; }
 
-        return [#{ action: "open_spread", spread: spread }];
+        return [spread];
     }
 
     if state == "holding_stock" {
         if ctx.has_positions() { return []; }
 
-        let spread = ctx.build_strategy([
-            #{ side: "short", option_type: "call", delta: params.CALL_DELTA, dte: params.CALL_DTE },
-        ]);
+        let spread = ctx.covered_call(params.CALL_DELTA, params.CALL_DTE);
         if spread == () { return []; }
 
         // Only sell calls above adjusted cost basis
-        if spread.legs[0].strike < stock.adjusted_basis { return []; }
+        let spread_map = spread;
+        let spread_inner = spread_map["spread"];
+        if spread_inner.legs[0].strike < stock.adjusted_basis { return []; }
 
         state = "selling_calls";
-        return [#{ action: "open_spread", spread: spread }];
+        return [spread_map];
     }
 
     // selling_calls — wait for expiration/assignment
@@ -90,9 +89,9 @@ fn on_bar(ctx) {
 // on_exit_check(ctx, pos) — Called once per open position per bar (Phase A).
 //
 // Decides whether to close a position early. Return one of:
-//   #{ action: "hold" }                          — keep the position open
-//   #{ action: "close", reason: "take_profit" }  — close it (reason becomes exit_type)
-//   #{ action: "close", reason: "stop_loss" }
+//   hold_position()                  — keep the position open
+//   close_position("take_profit")    — close it (reason becomes exit_type)
+//   close_position("stop_loss")
 //
 // Built-in reasons mapped to ExitType: "take_profit", "stop_loss", "dte_exit",
 //   "signal", "max_hold". Custom strings map to ExitType::Signal.
@@ -106,7 +105,7 @@ fn on_bar(ctx) {
 // ---------------------------------------------------------------------------
 fn on_exit_check(ctx, pos) {
     // Hold till expiration — no early exits
-    #{ action: "hold" }
+    hold_position()
 }
 
 // ---------------------------------------------------------------------------

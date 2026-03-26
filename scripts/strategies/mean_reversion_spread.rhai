@@ -54,28 +54,23 @@ fn config() {
 //   Range:       ctx.highest_high(20), ctx.lowest_low(20), ctx.highest_close(10)
 //   Portfolio:   ctx.equity, ctx.cash, ctx.position_count, ctx.has_positions()
 //                ctx.unrealized_pnl, ctx.realized_pnl, ctx.total_exposure
-//   Options:     ctx.build_strategy([...]) — resolve legs from the options chain
+//   Strategy:    ctx.bull_put_spread(sd, ld, dte), ctx.iron_condor(...), etc.
 //   Price:       ctx.open, ctx.high, ctx.low, ctx.close, ctx.volume
 //   Date/Time:   ctx.date, ctx.day_of_week, ctx.month, ctx.hour
 //
-// Indicator values return () during warmup — always null-check before using.
+// Indicator values return () during warmup — use ctx.indicators_ready([...]).
 // ---------------------------------------------------------------------------
 fn on_bar(ctx) {
-    if ctx.bar_idx < 200 { return []; }
-    if ctx.has_positions() { return []; }
+    if ctx.bar_idx < 200 || ctx.has_positions() { return []; }
 
-    // --- Indicators ---
-    let sma50 = ctx.sma(50);
-    let sma200 = ctx.sma(200);
-    let rsi = ctx.rsi(14);
-    let atr = ctx.atr(14);
-    if sma50 == () || sma200 == () || rsi == () || atr == () { return []; }
+    // --- Check all indicators are warmed up ---
+    if !ctx.indicators_ready(["sma:50", "sma:200", "rsi:14", "atr:14"]) { return []; }
 
     // --- Trend filter: uptrend ---
-    if sma50 <= sma200 { return []; }
+    if ctx.sma(50) <= ctx.sma(200) { return []; }
 
     // --- RSI dip ---
-    if rsi >= 40.0 { return []; }
+    if ctx.rsi(14) >= 40.0 { return []; }
 
     // --- Pause after 3 consecutive losses ---
     if consecutive_losses >= 3 { return []; }
@@ -91,27 +86,24 @@ fn on_bar(ctx) {
         false
     };
 
-    let short_delta = if high_vol { 0.20 } else { 0.30 };
-    let long_delta = if high_vol { 0.10 } else { 0.15 };
+    let short_put_delta = if high_vol { 0.20 } else { 0.30 };
+    let long_put_delta = if high_vol { 0.10 } else { 0.15 };
 
     // --- ATR-adaptive DTE ---
-    let atr_pct = atr / ctx.close;
+    let atr_pct = ctx.atr(14) / ctx.close;
     let target_dte = if atr_pct > 0.02 { 45 } else { 30 };
 
     // --- Build bull put spread ---
-    let spread = ctx.build_strategy([
-        #{ side: "short", option_type: "put", delta: short_delta, dte: target_dte },
-        #{ side: "long", option_type: "put", delta: long_delta, dte: target_dte },
-    ]);
+    let spread = ctx.bull_put_spread(short_put_delta, long_put_delta, target_dte);
     if spread == () { return []; }
 
-    [#{ action: "open_spread", spread: spread }]
+    [spread]
 }
 
 // ---------------------------------------------------------------------------
 // on_exit_check(ctx, pos) — Called per open position per bar.
 //
-// Return #{ action: "hold" } or #{ action: "close", reason: "..." }.
+// Return hold_position() or close_position("reason").
 //
 // reason strings that map to built-in ExitTypes:
 //   "take_profit" → TakeProfit    "stop_loss"  → StopLoss
@@ -124,34 +116,34 @@ fn on_bar(ctx) {
 fn on_exit_check(ctx, pos) {
     // --- Take profit at 50% ---
     if pos.pnl_pct > 0.50 {
-        return #{ action: "close", reason: "take_profit" };
+        return close_position("take_profit");
     }
 
     // --- RSI overbought + partial profit → take it ---
     let rsi = ctx.rsi(14);
     if rsi != () && rsi > 70.0 && pos.pnl_pct > 0.20 {
-        return #{ action: "close", reason: "take_profit" };
+        return close_position("take_profit");
     }
 
     // --- Stop loss at 200% ---
     if pos.pnl_pct < -2.0 {
-        return #{ action: "close", reason: "stop_loss" };
+        return close_position("stop_loss");
     }
 
     // --- Trend reversal: death cross ---
     let sma50 = ctx.sma(50);
     let sma200 = ctx.sma(200);
     if sma50 != () && sma200 != () && sma50 < sma200 {
-        return #{ action: "close", reason: "stop_loss" };
+        return close_position("stop_loss");
     }
 
     // --- Channel breakdown: close below 20-bar low ---
     let channel_low = ctx.lowest_low(20);
     if ctx.close < channel_low * 0.98 {
-        return #{ action: "close", reason: "stop_loss" };
+        return close_position("stop_loss");
     }
 
-    #{ action: "hold" }
+    hold_position()
 }
 
 // ---------------------------------------------------------------------------

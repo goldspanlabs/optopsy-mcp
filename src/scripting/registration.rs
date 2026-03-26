@@ -2,6 +2,7 @@
 
 use rhai::{Dynamic, Engine};
 
+use super::helpers;
 use super::types::{BarContext, ScriptPosition};
 
 /// Build a sandboxed Rhai engine with all custom types and functions registered.
@@ -35,6 +36,10 @@ pub fn build_engine() -> Engine {
 
     // Register global helper functions
     register_global_helpers(&mut engine);
+
+    // Register high-level action helpers and strategy constructors
+    register_action_helpers(&mut engine);
+    register_strategy_helpers(&mut engine);
 
     engine
 }
@@ -193,4 +198,65 @@ fn register_global_helpers(engine: &mut Engine) {
     });
     engine.register_fn("floor", |x: f64| x.floor());
     engine.register_fn("ceil", |x: f64| x.ceil());
+}
+
+/// Register global action helper functions (hold_position, close_position, etc.).
+fn register_action_helpers(engine: &mut Engine) {
+    engine.register_fn("hold_position", helpers::hold_position);
+    engine.register_fn("close_position", helpers::close_position);
+    engine.register_fn("close_position_id", helpers::close_position_id);
+    engine.register_fn("stop_backtest", helpers::stop_backtest);
+    engine.register_fn("buy_stock", helpers::buy_stock);
+    engine.register_fn("sell_stock", helpers::sell_stock);
+}
+
+/// Register strategy helper methods on `BarContext`.
+fn register_strategy_helpers(engine: &mut Engine) {
+    // Indicator utility
+    engine.register_fn("indicators_ready", BarContext::indicators_ready);
+
+    // Singles
+    engine.register_fn("long_call", BarContext::long_call);
+    engine.register_fn("short_call", BarContext::short_call);
+    engine.register_fn("long_put", BarContext::long_put);
+    engine.register_fn("short_put", BarContext::short_put);
+    engine.register_fn("covered_call", BarContext::covered_call);
+
+    // Vertical spreads
+    engine.register_fn("bull_call_spread", BarContext::bull_call_spread);
+    engine.register_fn("bear_call_spread", BarContext::bear_call_spread);
+    engine.register_fn("bull_put_spread", BarContext::bull_put_spread);
+    engine.register_fn("bear_put_spread", BarContext::bear_put_spread);
+
+    // Straddles & strangles
+    engine.register_fn("long_straddle", BarContext::long_straddle);
+    engine.register_fn("short_straddle", BarContext::short_straddle);
+    engine.register_fn("long_strangle", BarContext::long_strangle);
+    engine.register_fn("short_strangle", BarContext::short_strangle);
+
+    // Butterflies
+    engine.register_fn("long_call_butterfly", BarContext::long_call_butterfly);
+    engine.register_fn("short_call_butterfly", BarContext::short_call_butterfly);
+    engine.register_fn("long_put_butterfly", BarContext::long_put_butterfly);
+    engine.register_fn("short_put_butterfly", BarContext::short_put_butterfly);
+
+    // Condors
+    engine.register_fn("long_call_condor", BarContext::long_call_condor);
+    engine.register_fn("short_call_condor", BarContext::short_call_condor);
+    engine.register_fn("long_put_condor", BarContext::long_put_condor);
+    engine.register_fn("short_put_condor", BarContext::short_put_condor);
+
+    // Iron strategies
+    engine.register_fn("iron_condor", BarContext::iron_condor);
+    engine.register_fn("reverse_iron_condor", BarContext::reverse_iron_condor);
+    engine.register_fn("iron_butterfly", BarContext::iron_butterfly);
+    engine.register_fn("reverse_iron_butterfly", BarContext::reverse_iron_butterfly);
+
+    // Calendar & diagonal
+    engine.register_fn("call_calendar", BarContext::call_calendar);
+    engine.register_fn("put_calendar", BarContext::put_calendar);
+    engine.register_fn("call_diagonal", BarContext::call_diagonal);
+    engine.register_fn("put_diagonal", BarContext::put_diagonal);
+    engine.register_fn("double_calendar", BarContext::double_calendar);
+    engine.register_fn("double_diagonal", BarContext::double_diagonal);
 }

@@ -6,6 +6,7 @@
 //! while scripts define trading logic.
 
 pub mod engine;
+pub mod helpers;
 pub mod indicators;
 pub mod options_cache;
 pub mod registration;

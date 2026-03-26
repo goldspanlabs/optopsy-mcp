@@ -106,7 +106,7 @@ Control runtime behavior and data sources:
 
 ## Architecture
 
-**optopsy-mcp** is an options and stock backtesting engine exposed as an MCP (Model Context Protocol) server via `rmcp 0.17`. It provides 25 tools for running event-driven backtests (options and equities), comparing strategies, parameter optimization (grid search and Bayesian), walk-forward analysis, statistical testing, risk analysis, factor attribution, portfolio optimization, and returning raw price data for charting.
+**optopsy-mcp** is an options and stock backtesting engine exposed as an MCP (Model Context Protocol) server via `rmcp 0.17`. It provides 13 tools for running event-driven backtests (options and equities), statistical testing, risk analysis, factor attribution, and portfolio optimization.
 
 ### Transport (`src/main.rs`)
 - **stdio** (default): for local Claude Desktop integration
@@ -123,8 +123,9 @@ Rhai-based scripting engine for user-defined backtesting strategies. Scripts def
 
 - **`engine.rs`** — Unified simulation loop with immediate exit processing, scope rewind, PriceTable MTM, and assignment detection
 - **`types.rs`** — `BarContext` (exposed to scripts as `ctx`), `ScriptPosition`, `ScriptConfig`, action enums
+- **`helpers.rs`** — 31 named strategy constructors (`bull_put_spread`, `iron_condor`, etc.), the `indicators_ready` utility, and 6 action builders (`hold_position`, `close_position`, `buy_stock`, etc.)
 - **`indicators.rs`** — Pre-computed indicator store (SMA, EMA, RSI, ATR, MACD, BBands, Stochastic, CCI, OBV) with O(1) per-bar lookups
-- **`registration.rs`** — Sandboxed Rhai engine builder (ops limit, print interception, type registration)
+- **`registration.rs`** — Sandboxed Rhai engine builder (ops limit, print interception, type registration, helper registration)
 - **`stdlib.rs`** — Parameter injection (`const` and scope modes), strategy script listing
 
 Strategy scripts live in `scripts/strategies/`. See `scripts/SCRIPTING_REFERENCE.md` for the full `ctx` API.
@@ -162,30 +163,10 @@ TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, tr
 
 ## MCP Tools: Quick Reference
 
-### Signal Tools
-- **`build_signal`** — Signal discovery and management. Actions: `catalog`, `search`, `create`, `validate`, `list`, `get`, `delete`.
-  - Formula columns: `close`, `open`, `high`, `low`, `volume`, `adjclose`
-  - Functions: `sma`, `ema`, `std`, `max`, `min`, `abs`, `change`, `pct_change`, `rsi`, `macd_hist`, `macd_signal`, `macd_line`, `rank`, `iv_rank`, `cci`, `ppo`, `cmo`, `atr`, `stochastic`, `keltner_upper`, `keltner_lower`, `obv`, `mfi`, `tr`, `cmf`, `williams_r`, `adx`, `plus_di`, `minus_di`, `psar`, `tsi`, `vpt`, `bbands_mid`, `bbands_upper`, `bbands_lower`, `donchian_upper`, `donchian_mid`, `donchian_lower`, `supertrend`, `consecutive_up`, `consecutive_down`, `roc`, `gap`
-  - Date functions: `day_of_week()` (1=Mon..7=Sun), `month()`, `day_of_month()`, `hour()`, `minute()`, `week_of_year()`
-  - Cross-symbol references in formulas: Use other symbols' data directly in formulas. Unknown identifiers (not columns or functions) are treated as cross-symbol references defaulting to `.close`. Use dot syntax for specific columns.
-    - `VIX / VIX3M < 0.9` — VIX.close / VIX3M.close ratio
-    - `VIX.high / VIX3M.low > 1.1` — explicit columns
-    - `sma(VIX / VIX3M, 20) < 0.85` — cross-symbol in function args
-    - `VIX > 30 and rsi(close, 14) < 30` — mixed: cross-symbol + primary
-    - Cross-symbol data is auto-loaded from cache and pre-joined into the primary DataFrame
-
 ### Backtest Tool
 - **`run_script`** — Execute Rhai backtest scripts for options, stock, and wheel strategies.
   Pass `strategy` (filename from `scripts/strategies/`) or `script` (inline Rhai source).
-  See `scripts/SCRIPTING_REFERENCE.md` for the full `ctx` API (`build_strategy`, indicators, cross-symbol data, etc.).
-
-### Optimization & Validation Tools
-- **`parameter_sweep`** — Grid search across delta/DTE/slippage/signal combos with OOS validation.
-  - `entry_signals` (plural) goes inside `sim_params`, NOT at the top level.
-  - Use `direction` for auto strategy selection, or explicit `strategies` list.
-- **`bayesian_optimize`** — GP-based Bayesian optimization for large parameter spaces (50-100 evaluations).
-- **`walk_forward`** — Rolling train/test windows. Default: 252d train, 63d test, 63d step.
-- **`permutation_test`** — Sharpe significance via shuffled entry dates. Min 10 permutations.
+  See `scripts/SCRIPTING_REFERENCE.md` for the full `ctx` API (strategy helpers, indicators, cross-symbol data, etc.).
 
 ### Statistics Tools
 - **`aggregate_prices`** — Group returns by `day_of_week`, `month`, `quarter`, `year`, `hour_of_day`.

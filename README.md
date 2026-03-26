@@ -57,13 +57,6 @@ Discover seasonality, regime shifts, and price patterns. Gate entries using HMM 
 |------|-------------|
 | **Backtesting** | |
 | `run_script` | Execute a Rhai backtest script (strategy file or inline) |
-| **Signals** | |
-| `build_signal` | Create, validate, save, and manage custom signals (CRUD + catalog) |
-| **Optimization** | |
-| `parameter_sweep` | Grid search across delta/DTE/slippage/signal combos with OOS validation |
-| `bayesian_optimize` | GP-based Bayesian optimization for large parameter spaces |
-| `walk_forward` | Rolling walk-forward analysis with train/test windows |
-| `permutation_test` | Statistical significance testing via date shuffling |
 | **Statistics** | |
 | `aggregate_prices` | Time-based aggregation with significance testing |
 | `distribution` | Distribution analysis with normality testing |
@@ -136,24 +129,24 @@ Write backtests as [Rhai](https://rhai.rs/) scripts with a callback-driven API. 
 
 ```rhai
 fn config() {
-    #{ symbol: SYMBOL, capital: CAPITAL,
+    #{ symbol: params.SYMBOL, capital: params.CAPITAL,
        data: #{ ohlcv: true, options: true, indicators: ["rsi:14", "sma:50"] } }
 }
 
 fn on_bar(ctx) {
-    if ctx.position_count() >= 3 { return []; }
-    let strat = ctx.build_strategy([
-        #{ side: "short", option_type: "put", delta: 0.30, dte: 45 },
-    ]);
-    if strat == () { return []; }
-    [#{ action: "open_options", legs: strat.legs }]
+    if ctx.position_count >= 3 { return []; }
+    let spread = ctx.short_put(0.30, 45);
+    if spread == () { return []; }
+    [spread]
 }
 
 fn on_exit_check(ctx, pos) {
-    if pos.dte <= 7 { return #{ action: "close", reason: "dte_exit" }; }
-    #{ action: "hold" }
+    if pos.dte <= 7 { return close_position("dte_exit"); }
+    hold_position()
 }
 ```
+
+32 named helpers are available (`bull_put_spread`, `iron_condor`, `short_strangle`, etc.) along with action builders (`hold_position()`, `close_position()`, `buy_stock()`). See `scripts/SCRIPTING_REFERENCE.md` for the full API.
 
 A built-in wheel strategy script is included and parameterized via constant injection.
 
