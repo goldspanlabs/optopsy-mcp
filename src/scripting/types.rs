@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike};
 
 use crate::engine::types::{
     Commission, ExpirationFilter, OptionType, Side, Slippage, TradeSelector,
@@ -494,13 +494,115 @@ impl BarContext {
         self.indicator_value_multi("obv", &[])
     }
 
+    // --- New Tier 1 named accessors ---
+    pub fn plus_di(&mut self, period: i64) -> Dynamic {
+        self.indicator_value("plus_di", period)
+    }
+    pub fn minus_di(&mut self, period: i64) -> Dynamic {
+        self.indicator_value("minus_di", period)
+    }
+    pub fn keltner_upper(&mut self, period: i64) -> Dynamic {
+        self.indicator_value("keltner_upper", period)
+    }
+    pub fn keltner_lower(&mut self, period: i64) -> Dynamic {
+        self.indicator_value("keltner_lower", period)
+    }
+    pub fn psar(&mut self) -> Dynamic {
+        self.indicator_value_multi("psar", &[2, 20]) // 0.02 accel, 0.20 max
+    }
+    pub fn supertrend(&mut self, period: i64) -> Dynamic {
+        self.indicator_value("supertrend", period)
+    }
+    pub fn donchian_upper(&mut self, period: i64) -> Dynamic {
+        self.indicator_value("donchian_upper", period)
+    }
+    pub fn donchian_mid(&mut self, period: i64) -> Dynamic {
+        self.indicator_value("donchian_mid", period)
+    }
+    pub fn donchian_lower(&mut self, period: i64) -> Dynamic {
+        self.indicator_value("donchian_lower", period)
+    }
+    pub fn williams_r(&mut self, period: i64) -> Dynamic {
+        self.indicator_value("williams_r", period)
+    }
+    pub fn mfi(&mut self, period: i64) -> Dynamic {
+        self.indicator_value("mfi", period)
+    }
+    pub fn rank(&mut self, period: i64) -> Dynamic {
+        self.indicator_value("rank", period)
+    }
+    pub fn iv_rank(&mut self, period: i64) -> Dynamic {
+        self.indicator_value("iv_rank", period)
+    }
+    pub fn tr(&mut self) -> Dynamic {
+        self.indicator_value_multi("tr", &[])
+    }
+
+    // --- Date/time methods (computed from bar datetime, no IndicatorStore) ---
+    pub fn day_of_week(&mut self) -> i64 {
+        self.datetime.date().weekday().num_days_from_monday() as i64 + 1 // 1=Mon..7=Sun
+    }
+    pub fn month(&mut self) -> i64 {
+        self.datetime.date().month() as i64
+    }
+    pub fn day_of_month(&mut self) -> i64 {
+        self.datetime.date().day() as i64
+    }
+    pub fn hour(&mut self) -> i64 {
+        self.datetime.time().hour() as i64
+    }
+    pub fn minute(&mut self) -> i64 {
+        self.datetime.time().minute() as i64
+    }
+    pub fn week_of_year(&mut self) -> i64 {
+        self.datetime.date().iso_week().week() as i64
+    }
+
     // --- Generic indicator accessor ---
     pub fn indicator(&mut self, name: String, period: i64) -> Dynamic {
         self.indicator_value(&name, period)
     }
-    pub fn indicator_with(&mut self, _name: String, _params: rhai::Map) -> Dynamic {
-        // TODO: multi-param indicator lookup
-        Dynamic::UNIT
+    /// Multi-param indicator lookup via Rhai Map.
+    /// Example: `ctx.indicator_with("keltner_upper", #{ period: 20, mult: 15 })`
+    /// Params are converted to the IndicatorKey param vector.
+    pub fn indicator_with(&mut self, name: String, params: rhai::Map) -> Dynamic {
+        use super::indicators::{IndicatorKey, IndicatorParam};
+
+        // Extract params as integers (matching IndicatorStore convention)
+        let mut param_vec: Vec<IndicatorParam> = Vec::new();
+        // Try known param names in order
+        for key in &[
+            "period",
+            "fast",
+            "slow",
+            "signal",
+            "mult",
+            "accel",
+            "max_accel",
+        ] {
+            if let Some(val) = params.get(*key) {
+                if let Ok(i) = val.as_int() {
+                    param_vec.push(IndicatorParam::Int(i));
+                } else if let Ok(f) = val.as_float() {
+                    // Scale to integer: accel params use *100 (0.02→2), others use *10 (2.0→20)
+                    let scaled = match *key {
+                        "accel" | "max_accel" => (f * 100.0) as i64,
+                        _ => (f * 10.0) as i64,
+                    };
+                    param_vec.push(IndicatorParam::Int(scaled));
+                }
+            }
+        }
+
+        let key = IndicatorKey {
+            name,
+            params: param_vec,
+        };
+        match self.indicator_store.get(&key, self.bar_idx) {
+            Some(v) if v.is_nan() => Dynamic::UNIT,
+            Some(v) => Dynamic::from(v),
+            None => Dynamic::UNIT,
+        }
     }
 
     // --- Indicator lookback ---

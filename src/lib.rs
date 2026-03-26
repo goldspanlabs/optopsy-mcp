@@ -41,7 +41,8 @@ pub mod engine;
     clippy::ref_option,
     clippy::module_inception,
     clippy::let_and_return,
-    clippy::manual_midpoint
+    clippy::manual_midpoint,
+    clippy::needless_range_loop
 )]
 pub mod scripting;
 pub mod server;
