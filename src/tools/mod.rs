@@ -20,4 +20,3 @@ pub mod regime_detect;
 pub mod response_types;
 pub mod rolling_metric;
 pub mod run_script;
-pub mod strategies;

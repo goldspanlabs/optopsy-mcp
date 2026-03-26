@@ -70,12 +70,6 @@ async fn main() -> Result<()> {
 
         let app = axum::Router::new()
             .route(
-                "/strategies",
-                axum::routing::get(|| async {
-                    axum::Json(optopsy_mcp::tools::strategies::execute())
-                }),
-            )
-            .route(
                 "/scripts",
                 axum::routing::get(|| async {
                     let scripts =

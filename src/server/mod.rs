@@ -559,75 +559,34 @@ impl ServerHandler for OptopsyServer {
                 just pass the symbol parameter.\
                 \n\n## WORKFLOW\
                 \n\
-                \n### 0. Discover Available Data\
-                \n  - list_symbols() — see category counts (options, etf, stocks, futures, indices)\
-                \n  - list_symbols({ query: \"SPY\" }) — search for a specific symbol across all categories\
-                \n\
-                \n### 1. Explore Strategies & Signals\
-                \n  - list_strategies() — browse all 32 option strategies by category\
-                \n  - For built-in signals (RsiBelow, MacdBullish, etc.): construct JSON directly — see build_signal tool description\
-                \n  - build_signal(action=\"search\") — find saved custom signals by name\
-                \n  - build_signal(action=\"catalog\") — browse all built-in signals by category\
-                \n\
-                \n### 2. Full Simulation\
-                \n  - **run_script** — Execute Rhai backtest scripts for both options and stock strategies.\
+                \n### 1. Run a Backtest\
+                \n  - **run_script** — Execute Rhai backtest scripts for options, stock, and wheel strategies.\
                 \n    Pass `strategy` (filename from scripts/strategies/) or `script` (inline Rhai source).\
                 \n    See scripts/SCRIPTING_REFERENCE.md for the full ctx API.\
-                \n  - OHLCV and options data is loaded from cache automatically\
+                \n  - OHLCV and options data is loaded from cache automatically.\
+                \n  - To compare parameters, run run_script multiple times with different params.\
                 \n\
-                \n### 3. Compare & Optimize (optional, options only)\
-                \n  - parameter_sweep — PREFERRED for optimization. Generates cartesian product of delta/DTE/slippage combos automatically.\
-                \n    Use `direction` to auto-select strategies by market outlook (bullish/bearish/neutral/volatile),\
-                \n    or provide explicit `strategies` list with `leg_delta_targets` grids.\
-                \n    Includes out-of-sample validation (default 30%) and dimension sensitivity analysis.\
-                \n  - Or run run_script multiple times with different params to compare strategies manually.\
-                \n\
-                \n### 4. Discover Patterns (optional)\
+                \n### 2. Discover Patterns (optional)\
                 \n  - generate_hypotheses({ symbols: [\"SPY\"] }) — scan for statistically significant patterns\
-                \n  - Results are HYPOTHESES — validate with backtest + walk_forward before trusting\
+                \n  - Results are HYPOTHESES — validate with a backtest before trusting\
                 \n\
-                \n### 5. Evaluate Strategy Viability\
-                \n  When a user asks you to test/evaluate if a strategy is viable, follow this reasoning loop:\
+                \n### 3. Analyze Results\
+                \n  After a backtest, use analytical tools to evaluate:\
+                \n  - drawdown_analysis — drawdown distribution and episode tracking\
+                \n  - monte_carlo — forward-looking risk simulation\
+                \n  - factor_attribution — decompose returns into factor exposures\
+                \n  - benchmark_analysis — compare vs. benchmark (alpha, beta, capture ratios)\
+                \n  - distribution — P&L or return distribution + normality tests\
                 \n\
-                \n  **Step 1: Build the signals**\
-                \n  - Translate the user's entry/exit conditions into formula strings (e.g. \"rsi(close, 14) < 30\")\
-                \n  - For formula-based conditions: use build_signal(action=\"validate\") to verify syntax\
-                \n  - For built-in indicators (RSI, MACD, etc.): write the formula directly (e.g. \"macd_hist(close) > 0\")\
-                \n  - If a saved signal name is referenced: use build_signal(action=\"get\") to load it\
-                \n  - If conditions are ambiguous, ask the user to clarify before proceeding\
-                \n\
-                \n  **Step 2: Run a baseline backtest**\
-                \n  - Write a .rhai script with entry/exit logic and run via run_script\
-                \n  - Use sensible defaults (capital: 10000, quantity: 100 shares or 1 contract)\
-                \n  - After results, reason about: Does it make money? Are there enough trades to be meaningful?\
-                \n    Is the drawdown acceptable? Read the assessment and key_findings carefully.\
-                \n  - If results are clearly negative or trade count is very low, explain why and stop —\
-                \n    no need to validate a strategy that doesn't work at the basic level.\
-                \n\
-                \n  **Step 3: Validate significance and robustness**\
-                \n  Based on the baseline results, decide which validations are worth running:\
-                \n  - permutation_test — answers \"is this skill or luck?\" Run when results look good but\
-                \n    you want to rule out chance. Look at p-values.\
-                \n  - walk_forward — answers \"does this hold across time periods?\" Run when you want to\
-                \n    check for overfitting. Look at Sharpe decay and % profitable windows.\
-                \n  - parameter_sweep — answers \"is this fragile?\" Run when you suspect results depend on\
-                \n    exact parameter choices. Look at dimension_sensitivity and OOS validation.\
-                \n  You don't need to run all of these. Use your judgment based on what the baseline revealed.\
-                \n\
-                \n  **Step 4: Deliver a verdict**\
-                \n  Synthesize all results into a clear assessment:\
-                \n  - Summarize what passed, what raised concerns, and what failed\
-                \n  - Give an overall viability judgment with reasoning\
-                \n  - Suggest concrete next steps (adjust parameters, try different signals, trade with caution, etc.)\
+                \n### 4. Market Analysis Tools\
+                \n  - aggregate_prices — seasonal/time-bucket return patterns\
+                \n  - correlate — cross-asset correlation + Granger causality\
+                \n  - rolling_metric — rolling Sharpe, volatility, beta, etc.\
+                \n  - regime_detect — market regime identification (HMM, volatility, trend)\
+                \n  - cointegration_test — pairs trading validation\
+                \n  - portfolio_optimize — optimal weight allocation (risk parity, min variance, max Sharpe)\
                 \n\
                 \n## RULES\
-                \n- For OPTIONS: strategy is ALWAYS REQUIRED — signals only filter WHEN to trade\
-                \n- For STOCKS: entry_signal is ALWAYS REQUIRED — pass a formula STRING like \"rsi(close, 14) < 30\"\
-                \n- NEVER pass null for entry_signal, exit_signal, strategy, or side. Either pass a value or OMIT the field entirely.\
-                \n- NEVER pass strategy: null for options — pick one like short_put, iron_condor, etc.\
-                \n- For STOCKS: quantity means NUMBER OF SHARES (default: 100 = 1 standard lot). Do NOT pass large values like 10000.\
-                \n  Ensure capital ≥ quantity × share_price, or all entries will be skipped. If `warnings` are returned, address them.\
-                \n- For optimization, prefer parameter_sweep. Or run run_script multiple times with different params to compare manually.\
                 \n- Each tool response includes suggested_next_steps — follow them"
                     .into(),
             ),

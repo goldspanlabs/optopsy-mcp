@@ -1,10 +1,7 @@
-//! Response types for data tools: `list_symbols`, `raw_prices`, strategies.
+//! Response types for data tools: `list_symbols`, `raw_prices`.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-
-use crate::engine::types::TargetRange;
 
 /// A group of symbols belonging to a single data category.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -35,28 +32,6 @@ pub struct ListSymbolsResponse {
 pub struct DateRange {
     pub start: Option<i64>,
     pub end: Option<i64>,
-}
-
-/// AI-enriched response for `list_strategies`
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct StrategiesResponse {
-    pub summary: String,
-    pub total: usize,
-    pub categories: HashMap<String, usize>,
-    pub strategies: Vec<StrategyInfo>,
-    pub suggested_next_steps: Vec<String>,
-}
-
-/// Metadata for a single strategy, including leg count and default deltas.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct StrategyInfo {
-    pub name: String,
-    pub display_name: String,
-    pub category: String,
-    pub legs: usize,
-    pub description: String,
-    /// Default per-leg delta targets for this strategy (used when `leg_deltas` is omitted)
-    pub default_deltas: Vec<TargetRange>,
 }
 
 /// A single OHLCV price bar for `get_raw_prices`

@@ -1,55 +1,12 @@
-//! Format strategy-listing and raw-price results into AI-enriched responses.
+//! Format raw-price and symbol-listing results into AI-enriched responses.
 //!
-//! Builds structured responses for `get_raw_prices` and `list_strategies`
+//! Builds structured responses for `get_raw_prices` and `list_symbols`
 //! with row counts, date ranges, column lists, and suggested next steps
 //! tailored to each tool's output.
 
-use std::collections::HashMap;
-
 use crate::tools::response_types::{
-    DateRange, ListSymbolsResponse, PriceBar, RawPricesResponse, StrategiesResponse, StrategyInfo,
-    SymbolCategory,
+    DateRange, ListSymbolsResponse, PriceBar, RawPricesResponse, SymbolCategory,
 };
-
-/// Format the full strategy list into a categorized summary response.
-pub fn format_strategies(strategies: Vec<StrategyInfo>) -> StrategiesResponse {
-    let total = strategies.len();
-    let mut categories: HashMap<String, usize> = HashMap::new();
-    for s in &strategies {
-        *categories.entry(s.category.clone()).or_default() += 1;
-    }
-
-    let cat_parts: Vec<String> = {
-        let mut sorted: Vec<_> = categories.iter().collect();
-        sorted.sort_by(|a, b| b.1.cmp(a.1));
-        sorted
-            .iter()
-            .map(|(cat, count)| format!("{cat} ({count})"))
-            .collect()
-    };
-
-    let summary = if total == 0 {
-        "No strategies are currently available.".to_string()
-    } else {
-        format!(
-            "{} strategies available across {} categories: {}.",
-            total,
-            categories.len(),
-            cat_parts.join(", "),
-        )
-    };
-
-    StrategiesResponse {
-        summary,
-        total,
-        categories,
-        strategies,
-        suggested_next_steps: vec![
-            "[NEXT] Call run_options_backtest({ strategy: \"<chosen_strategy>\", symbol }) for full simulation".to_string(),
-            "[THEN] Call parameter_sweep to optimize across deltas and DTEs".to_string(),
-        ],
-    }
-}
 
 /// Format raw OHLCV price bars into a response suitable for chart generation.
 pub fn format_raw_prices(
@@ -126,7 +83,7 @@ pub fn format_list_symbols(
         vec![
             "[NEXT] Call list_symbols({ query: \"SPY\" }) to search for a specific symbol"
                 .to_string(),
-            "[NEXT] Call list_strategies() to browse available options strategies".to_string(),
+            "[NEXT] Call run_script with a strategy name to run a backtest".to_string(),
         ]
     };
 
@@ -142,41 +99,6 @@ pub fn format_list_symbols(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn format_strategies_category_counts() {
-        let strategies = vec![
-            StrategyInfo {
-                name: "long_call".to_string(),
-                display_name: "Long Call".to_string(),
-                category: "Singles".to_string(),
-                legs: 1,
-                description: "Buy a call".to_string(),
-                default_deltas: vec![],
-            },
-            StrategyInfo {
-                name: "short_put".to_string(),
-                display_name: "Short Put".to_string(),
-                category: "Singles".to_string(),
-                legs: 1,
-                description: "Sell a put".to_string(),
-                default_deltas: vec![],
-            },
-            StrategyInfo {
-                name: "bull_call_spread".to_string(),
-                display_name: "Bull Call Spread".to_string(),
-                category: "Spreads".to_string(),
-                legs: 2,
-                description: "Bullish spread".to_string(),
-                default_deltas: vec![],
-            },
-        ];
-        let response = format_strategies(strategies);
-        assert_eq!(response.total, 3);
-        assert_eq!(response.categories["Singles"], 2);
-        assert_eq!(response.categories["Spreads"], 1);
-        assert!(response.summary.contains('3'));
-    }
 
     #[test]
     fn format_list_symbols_empty() {

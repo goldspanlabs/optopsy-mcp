@@ -149,9 +149,3 @@ pub fn list_scripts() -> Vec<ScriptMeta> {
     scripts.sort_by(|a, b| a.name.cmp(&b.name));
     scripts
 }
-
-/// List `.rhai` strategy file stems (legacy — use `list_scripts()` for metadata).
-#[must_use]
-pub fn list_strategies() -> Vec<String> {
-    list_scripts().into_iter().map(|s| s.id).collect()
-}
