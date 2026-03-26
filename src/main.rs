@@ -70,7 +70,7 @@ async fn main() -> Result<()> {
 
         let app = axum::Router::new()
             .route(
-                "/scripts",
+                "/strategies",
                 axum::routing::get(|| async {
                     let scripts =
                         tokio::task::spawn_blocking(optopsy_mcp::scripting::stdlib::list_scripts)

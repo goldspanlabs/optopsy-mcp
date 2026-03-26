@@ -499,6 +499,18 @@ impl OptopsyServer {
         )
     }
 
+    /// Returns the Rhai scripting API reference documentation.
+    ///
+    /// **When to use**: Before writing a Rhai backtest script, fetch this reference
+    /// to learn the available `ctx` methods, callbacks, helpers, and indicators.
+    ///
+    /// **No parameters needed** — returns the full scripting reference as text.
+    #[tool(name = "get_scripting_reference", annotations(read_only_hint = true))]
+    async fn get_scripting_reference(&self) -> Result<String, String> {
+        std::fs::read_to_string("scripts/SCRIPTING_REFERENCE.md")
+            .map_err(|e| format!("Failed to read scripting reference: {e}"))
+    }
+
     /// Run a Rhai backtest script — unified scripting interface for backtesting.
     ///
     /// **When to use**: Execute custom backtest strategies defined as Rhai scripts.
