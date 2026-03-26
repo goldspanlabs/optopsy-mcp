@@ -906,8 +906,8 @@ fn parse_engine_section(
 
     // Slippage
     let slippage = match engine_map.get("slippage") {
-        Some(v) => parse_slippage(v)?,
-        None => Slippage::Mid,
+        Some(v) if !v.is_unit() => parse_slippage(v)?,
+        _ => Slippage::Mid,
     };
 
     // Commission

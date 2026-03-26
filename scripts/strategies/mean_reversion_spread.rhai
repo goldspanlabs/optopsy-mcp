@@ -27,7 +27,7 @@ fn config() {
             ],
         },
         engine: #{
-            slippage: if params.SLIPPAGE != () { params.SLIPPAGE } else { "mid" },
+            slippage: params.SLIPPAGE,
             expiration_filter: "monthly",
         },
     }
