@@ -158,7 +158,10 @@ pub async fn run_script_backtest(
         let (pt, _trading_days, di) = crate::engine::price_table::build_price_table(&df)?;
         price_table = Some(Arc::new(pt));
         date_index = Some(Arc::new(di));
-        options_by_date = Some(Arc::new(DatePartitionedOptions::from_df(&df)?));
+        options_by_date = Some(Arc::new(DatePartitionedOptions::from_df(
+            &df,
+            &config.expiration_filter,
+        )?));
     } else {
         options_by_date = None;
         price_table = None;
@@ -202,6 +205,12 @@ pub async fn run_script_backtest(
 
         // --- Phase A: Exits (immediate processing) ---
 
+        // Build an Arc snapshot of positions for exit checks.
+        // This is cheap (one Arc::new) and shared across all on_exit_check calls
+        // until positions are actually modified (close/assignment).
+        let mut positions_arc = Arc::new(positions.clone());
+        let mut positions_dirty = false; // track if positions_arc needs rebuild
+
         // Check built-in exits + script exit checks
         let mut i = 0;
         while i < positions.len() {
@@ -223,10 +232,15 @@ pub async fn run_script_backtest(
 
             // Script exit check (only for positions NOT opened this bar)
             if !should_close && has_on_exit_check && pos.days_held > 0 {
+                // Rebuild Arc snapshot only if positions were modified since last snapshot
+                if positions_dirty {
+                    positions_arc = Arc::new(positions.clone());
+                    positions_dirty = false;
+                }
                 let ctx = build_bar_context(
                     bar,
                     bar_idx,
-                    &positions,
+                    &positions_arc,
                     realized_equity,
                     &indicator_store,
                     &price_history,
@@ -271,10 +285,12 @@ pub async fn run_script_backtest(
 
                 // Fire on_position_closed synchronously
                 if has_on_position_closed {
+                    // Rebuild Arc snapshot for the callback (positions changed)
+                    positions_arc = Arc::new(positions.clone());
                     let ctx = build_bar_context(
                         bar,
                         bar_idx,
-                        &positions,
+                        &positions_arc,
                         realized_equity,
                         &indicator_store,
                         &price_history,
@@ -302,6 +318,7 @@ pub async fn run_script_backtest(
                 ));
 
                 positions.remove(i);
+                positions_dirty = true; // positions changed, Arc needs rebuild
 
                 // Handle implicit stock transitions for wheel-like strategies.
                 // "assignment": short put expired ITM → open an implicit long stock at the strike.
@@ -407,11 +424,12 @@ pub async fn run_script_backtest(
 
         // --- Phase B: Entries (sees post-exit state) ---
 
-        // Rebuild ctx with updated position state
+        // Build ONE context for Phase B (reused by on_bar and callbacks)
+        let phase_b_positions = Arc::new(positions.clone());
         let ctx = build_bar_context(
             bar,
             bar_idx,
-            &positions,
+            &phase_b_positions,
             realized_equity,
             &indicator_store,
             &price_history,
@@ -462,10 +480,11 @@ pub async fn run_script_backtest(
                             last_entry_date = Some(today);
 
                             if has_on_position_opened {
+                                // Reuse Phase B positions Arc for callback
                                 let ctx = build_bar_context(
                                     bar,
                                     bar_idx,
-                                    &positions,
+                                    &phase_b_positions,
                                     realized_equity,
                                     &indicator_store,
                                     &price_history,
@@ -497,10 +516,11 @@ pub async fn run_script_backtest(
                                     realized_equity += pnl - exit_comm;
 
                                     if has_on_position_closed {
+                                        // Reuse Phase B positions Arc for callback
                                         let ctx = build_bar_context(
                                             bar,
                                             bar_idx,
-                                            &positions,
+                                            &phase_b_positions,
                                             realized_equity,
                                             &indicator_store,
                                             &price_history,
@@ -571,10 +591,11 @@ pub async fn run_script_backtest(
                             last_entry_date = Some(today);
 
                             if has_on_position_opened {
+                                // Reuse Phase B positions Arc for callback
                                 let ctx = build_bar_context(
                                     bar,
                                     bar_idx,
-                                    &positions,
+                                    &phase_b_positions,
                                     realized_equity,
                                     &indicator_store,
                                     &price_history,
@@ -684,11 +705,12 @@ pub async fn run_script_backtest(
 
     // Call on_end(ctx) — may return metadata
     let metadata = if has_on_end {
+        let end_positions_arc = Arc::new(positions.clone());
         let ctx = if let Some(last_bar) = price_history.last() {
             build_bar_context(
                 last_bar,
                 price_history.len() - 1,
-                &positions,
+                &end_positions_arc,
                 realized_equity,
                 &indicator_store,
                 &price_history,
@@ -1072,7 +1094,7 @@ fn get_date_opt(map: &rhai::Map, key: &str) -> Option<NaiveDate> {
 fn build_bar_context(
     bar: &OhlcvBar,
     bar_idx: usize,
-    positions: &[ScriptPosition],
+    positions_arc: &Arc<Vec<ScriptPosition>>,
     equity: f64,
     indicator_store: &Arc<IndicatorStore>,
     price_history: &Arc<Vec<OhlcvBar>>,
@@ -1080,7 +1102,7 @@ fn build_bar_context(
     config: &Arc<ScriptConfig>,
     options_by_date: &Option<Arc<DatePartitionedOptions>>,
 ) -> BarContext {
-    let cash = equity - positions.iter().map(|p| p.unrealized_pnl).sum::<f64>();
+    let cash = equity - positions_arc.iter().map(|p| p.unrealized_pnl).sum::<f64>();
     BarContext {
         datetime: bar.datetime,
         open: bar.open,
@@ -1091,7 +1113,7 @@ fn build_bar_context(
         bar_idx,
         cash,
         equity,
-        positions: positions.to_vec(),
+        positions: Arc::clone(positions_arc),
         indicator_store: Arc::clone(indicator_store),
         price_history: Arc::clone(price_history),
         cross_symbol_data: Arc::clone(cross_symbol_data),
@@ -1165,10 +1187,15 @@ fn resolve_option_legs(
                 let dte_min = (*dte - 15).max(1);
                 let dte_max = *dte + 15;
 
-                // Already date-filtered — just filter by type/DTE/quotes
-                let filtered =
-                    filters::filter_leg_candidates(today_df, opt_code, dte_max, dte_min, 0.05)
-                        .ok()?;
+                // Already date-filtered — clone the daily slice and filter by type/DTE/quotes
+                let filtered = filters::filter_leg_candidates(
+                    today_df.clone(),
+                    opt_code,
+                    dte_max,
+                    dte_min,
+                    0.05,
+                )
+                .ok()?;
                 if filtered.height() == 0 {
                     return None;
                 }

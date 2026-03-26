@@ -67,7 +67,7 @@ pub fn select_closest_delta(df: DataFrame, target: &TargetRange) -> Result<DataF
                 .alias("delta_dist"),
         )
         .sort(
-            ["delta_dist"],
+            ["delta_dist", "strike"],
             SortMultipleOptions::default().with_order_descending(false),
         )
         .unique_generic(
@@ -259,31 +259,39 @@ pub fn filter_valid_quotes(df: DataFrame, min_bid_ask: f64) -> Result<DataFrame>
     Ok(result)
 }
 
-/// Combined filter: option type + DTE computation + DTE range + valid quotes in a single lazy pass.
+/// Combined filter: option type + DTE range + valid quotes in a single lazy pass.
 /// Eliminates intermediate `DataFrame` materializations from chaining individual filters.
+///
+/// If the `dte` column already exists (pre-computed at partition time), the DTE
+/// computation step is skipped. Takes ownership to avoid a clone — callers that
+/// share the source `DataFrame` should `.clone()` at the call site.
 pub fn filter_leg_candidates(
-    df: &DataFrame,
+    df: DataFrame,
     option_type: &str,
     max_dte: i32,
     min_dte: i32,
     min_bid_ask: f64,
 ) -> Result<DataFrame> {
-    let ms_per_day = 86_400_000i64;
-    let result = df
-        .clone() // clone required: called per-leg on shared options DataFrame
+    let has_dte = df.get_column_names().iter().any(|n| n.as_str() == "dte");
+    let mut lf = df
         .lazy()
         // filter_option_type
-        .filter(col("option_type").eq(lit(option_type)))
-        // compute_dte
-        .with_column(
-            ((col("expiration").cast(DataType::Date)
-                - col(DATETIME_COL).cast(DataType::Date))
-            .dt()
-            .total_milliseconds(false)
+        .filter(col("option_type").eq(lit(option_type)));
+
+    // compute_dte only when not pre-computed
+    if !has_dte {
+        let ms_per_day = 86_400_000i64;
+        lf = lf.with_column(
+            ((col("expiration").cast(DataType::Date) - col(DATETIME_COL).cast(DataType::Date))
+                .dt()
+                .total_milliseconds(false)
                 / lit(ms_per_day))
             .cast(DataType::Int32)
             .alias("dte"),
-        )
+        );
+    }
+
+    let result = lf
         // filter_dte_range
         .filter(
             col("dte")

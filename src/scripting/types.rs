@@ -122,6 +122,8 @@ pub enum ScriptValue {
 ///
 /// Rebuilt each bar (or between Phase A and Phase B within a bar).
 /// Contains immutable data references and a snapshot of portfolio state.
+/// Positions are wrapped in `Arc` so context construction is just an Arc
+/// increment rather than a full `Vec<ScriptPosition>` clone.
 #[derive(Clone)]
 pub struct BarContext {
     // Current bar data
@@ -136,7 +138,7 @@ pub struct BarContext {
     // Portfolio snapshot
     pub cash: f64,
     pub equity: f64,
-    pub positions: Vec<ScriptPosition>,
+    pub positions: Arc<Vec<ScriptPosition>>,
 
     // Shared data (Arc for cheap cloning into Rhai)
     pub indicator_store: Arc<IndicatorStore>,
@@ -807,9 +809,9 @@ impl BarContext {
             _ => return Dynamic::UNIT,
         };
 
-        // Filter the small daily slice by type, DTE, quotes
+        // Filter the small daily slice by type, DTE, quotes (clone since we borrow from cache)
         let filtered = match filters::filter_leg_candidates(
-            today_df,
+            today_df.clone(),
             opt_type_code,
             dte_max,
             dte_min,
