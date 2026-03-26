@@ -2,8 +2,7 @@
 //
 // Required params: SYMBOL, CAPITAL
 // Optional params: PUT_DELTA (0.30), PUT_DTE (45), CALL_DELTA (0.30),
-//   CALL_DTE (30), EXIT_DTE (21), SLIPPAGE ("mid"), MULTIPLIER (100),
-//   STOP_LOSS (()), TAKE_PROFIT (0.50)
+//   CALL_DTE (30), SLIPPAGE ("mid"), MULTIPLIER (100)
 //
 // Parameters are accessed via the `params` map (e.g., params.SYMBOL).
 
@@ -26,7 +25,6 @@ fn config() {
         data: #{
             ohlcv: true,
             options: true,
-            indicators: ["rsi:14"],
         },
         engine: #{
             slippage: params.SLIPPAGE,
@@ -51,7 +49,6 @@ fn on_bar(ctx) {
     }
 
     if state == "holding_stock" {
-        // Don't sell a call if we already have one open
         if ctx.has_positions() { return []; }
 
         let spread = ctx.build_strategy([
@@ -71,21 +68,7 @@ fn on_bar(ctx) {
 }
 
 fn on_exit_check(ctx, pos) {
-    // Early profit take on puts or calls
-    if params.TAKE_PROFIT != () && pos.pnl_pct > params.TAKE_PROFIT {
-        return #{ action: "close", reason: "early_profit_take" };
-    }
-
-    // Stop loss on puts
-    if state == "selling_puts" && params.STOP_LOSS != () && pos.pnl_pct < -params.STOP_LOSS {
-        return #{ action: "close", reason: "stop_loss" };
-    }
-
-    // DTE exit
-    if pos.dte != () && pos.dte <= params.EXIT_DTE {
-        return #{ action: "close", reason: "dte_exit" };
-    }
-
+    // Hold till expiration — no early exits
     #{ action: "hold" }
 }
 
@@ -99,13 +82,13 @@ fn on_position_closed(ctx, pos, exit_type) {
             stock.total_premium += pos.legs[0].entry_price;
             state = "holding_stock";
         }
-        // OTM expiration or early close — stay in selling_puts
+        // OTM expiration — stay in selling_puts
     } else if state == "selling_calls" {
         if exit_type == "called_away" {
             cycles_completed += 1;
             state = "selling_puts";
         } else {
-            // Call expired OTM or closed early — reduce basis, sell another
+            // Call expired OTM — reduce basis, sell another
             stock.adjusted_basis -= pos.legs[0].entry_price;
             stock.total_premium += pos.legs[0].entry_price;
             state = "holding_stock";

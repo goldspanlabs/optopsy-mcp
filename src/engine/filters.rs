@@ -68,7 +68,9 @@ pub fn select_closest_delta(df: DataFrame, target: &TargetRange) -> Result<DataF
         )
         .sort(
             ["delta_dist", "strike"],
-            SortMultipleOptions::default().with_order_descending(false),
+            SortMultipleOptions::default()
+                .with_order_descending(false)
+                .with_maintain_order(true),
         )
         .unique_generic(
             Some(vec![col(DATETIME_COL), col("expiration")]),
