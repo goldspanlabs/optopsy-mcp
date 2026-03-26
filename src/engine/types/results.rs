@@ -85,6 +85,9 @@ pub struct PerformanceMetrics {
 pub struct EquityPoint {
     pub datetime: NaiveDateTime,
     pub equity: f64,
+    /// Unrealized P&L from open positions at this bar.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unrealized: Option<f64>,
 }
 
 /// Snapshot of a single leg within a completed trade record.

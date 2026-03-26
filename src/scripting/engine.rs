@@ -704,6 +704,7 @@ pub async fn run_script_backtest(
         equity_curve.push(EquityPoint {
             datetime: bar.datetime,
             equity: realized_equity + unrealized,
+            unrealized: Some(unrealized),
         });
     }
 
@@ -766,6 +767,7 @@ pub async fn run_script_backtest(
             &[EquityPoint {
                 datetime: chrono::NaiveDateTime::default(),
                 equity: config.capital,
+                unrealized: None,
             }],
             &[],
             config.capital,

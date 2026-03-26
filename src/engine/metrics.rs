@@ -512,6 +512,7 @@ mod tests {
                     .unwrap()
                     + chrono::Duration::days(i as i64),
                 equity: eq,
+                unrealized: None,
             })
             .collect()
     }
