@@ -421,7 +421,7 @@ impl BarContext {
     }
 
     // --- Indicators (current bar) ---
-    fn indicator_value(&self, name: &str, period: i64) -> Dynamic {
+    pub(super) fn indicator_value(&self, name: &str, period: i64) -> Dynamic {
         use super::indicators::{IndicatorKey, IndicatorParam};
         let key = IndicatorKey {
             name: name.to_string(),

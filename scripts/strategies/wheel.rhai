@@ -4,8 +4,6 @@
 // Optional params: PUT_DELTA (0.30), PUT_DTE (45), CALL_DELTA (0.30),
 //   CALL_DTE (30), SLIPPAGE ("mid"), MULTIPLIER (100)
 
-// Top-level variables persist across bars (Rhai scope is preserved).
-// Use these for state machines, counters, or tracking values between callbacks.
 let state = "selling_puts";
 let stock = #{
     entry_price: 0.0,
@@ -16,14 +14,6 @@ let stock = #{
 };
 let cycles_completed = 0;
 
-// ---------------------------------------------------------------------------
-// config() — Called once before the simulation starts.
-//
-// Returns a map describing what data to load and how the engine should behave.
-// Required fields: symbol, capital.
-// Optional: interval, data (ohlcv/options/indicators), engine (slippage,
-//   commission, expiration_filter), defaults (script-readable values).
-// ---------------------------------------------------------------------------
 fn config() {
     #{
         symbol: params.SYMBOL,
@@ -43,85 +33,40 @@ fn config() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// on_bar(ctx) — Called once per bar (or twice if exits happen: Phase A then B).
-//
-// This is where entry logic lives. Return an array of action maps:
-//   [#{ action: "open_spread", spread: ctx.build_strategy([...]) }]
-//   [#{ action: "open_stock", side: "long", qty: 100 }]
-//   [] — do nothing this bar
-//
-// ctx provides: .close, .high, .low, .open, .volume, .date, .bar_idx,
-//   .equity, .cash, .has_positions(), .position_count, .sma(n), .rsi(n),
-//   .highest_high(n), .lowest_low(n), .close(n), .build_strategy([...]), etc.
-// ---------------------------------------------------------------------------
 fn on_bar(ctx) {
     if state == "selling_puts" {
         if ctx.has_positions() { return []; }
 
-        let spread = ctx.build_strategy([
-            #{ side: "short", option_type: "put", delta: params.PUT_DELTA, dte: params.PUT_DTE },
-        ]);
+        let spread = ctx.short_put(params.PUT_DELTA, params.PUT_DTE);
         if spread == () { return []; }
 
-        return [#{ action: "open_spread", spread: spread }];
+        return [spread];
     }
 
     if state == "holding_stock" {
         if ctx.has_positions() { return []; }
 
-        let spread = ctx.build_strategy([
-            #{ side: "short", option_type: "call", delta: params.CALL_DELTA, dte: params.CALL_DTE },
-        ]);
+        let spread = ctx.covered_call(params.CALL_DELTA, params.CALL_DTE);
         if spread == () { return []; }
 
         // Only sell calls above adjusted cost basis
-        if spread.legs[0].strike < stock.adjusted_basis { return []; }
+        let spread_map = spread;
+        let spread_inner = spread_map["spread"];
+        if spread_inner.legs[0].strike < stock.adjusted_basis { return []; }
 
         state = "selling_calls";
-        return [#{ action: "open_spread", spread: spread }];
+        return [spread_map];
     }
 
     // selling_calls — wait for expiration/assignment
     []
 }
 
-// ---------------------------------------------------------------------------
-// on_exit_check(ctx, pos) — Called once per open position per bar (Phase A).
-//
-// Decides whether to close a position early. Return one of:
-//   #{ action: "hold" }                          — keep the position open
-//   #{ action: "close", reason: "take_profit" }  — close it (reason becomes exit_type)
-//   #{ action: "close", reason: "stop_loss" }
-//
-// Built-in reasons mapped to ExitType: "take_profit", "stop_loss", "dte_exit",
-//   "signal", "max_hold". Custom strings map to ExitType::Signal.
-//
-// pos provides: .pnl, .pnl_pct, .entry_cost, .unrealized_pnl, .days_held,
-//   .dte (days to expiration, () for stocks), .legs (array of leg maps),
-//   .side, .entry_date.
-//
-// Note: positions at expiration are auto-closed by the engine (with ITM
-// detection for assignment/called_away). This callback is for EARLY exits.
-// ---------------------------------------------------------------------------
 fn on_exit_check(ctx, pos) {
     // Hold till expiration — no early exits
-    #{ action: "hold" }
+    hold_position()
 }
 
-// ---------------------------------------------------------------------------
-// on_position_closed(ctx, pos, exit_type) — Called after a position is closed.
-//
-// Fires for ALL close reasons: expiration, assignment, called_away, take_profit,
-// stop_loss, dte_exit, signal, end_of_data, etc.
-//
-// The position is already removed from ctx.positions when this fires.
-// pos is a snapshot of the closed position (same fields as on_exit_check).
-// exit_type is a string matching the close reason.
-//
-// Common uses: state machine transitions, tracking win/loss streaks,
-// accumulating statistics, adjusting risk after losses.
-// ---------------------------------------------------------------------------
 fn on_position_closed(ctx, pos, exit_type) {
     if state == "selling_puts" {
         if exit_type == "assignment" {

@@ -193,34 +193,120 @@ All require declaration in `config().data.indicators`.
 | `ctx.crossed_above("sma:20", "sma:50")` | bool | True if first crossed above second this bar |
 | `ctx.crossed_below("sma:20", "sma:50")` | bool | True if first crossed below second this bar |
 
-### Options Strategy
+### Indicator Utility
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `ctx.indicators_ready(["sma:50", "rsi:14"])` | bool | True if all listed indicators have valid (non-NaN) values at current bar |
+
+Replaces repeated null-check boilerplate:
+```rhai
+// Before: verbose null checks
+let sma50 = ctx.sma(50); let rsi = ctx.rsi(14);
+if sma50 == () || rsi == () { return []; }
+
+// After: one call
+if !ctx.indicators_ready(["sma:50", "rsi:14"]) { return []; }
+```
+
+### Options Strategy Helpers
+
+Named helpers that build and wrap strategies into ready-to-use action maps. All return an action map or `()` if leg resolution fails. Use directly in the array returned from `on_bar()`.
+
+#### Singles
+| Method | Description |
+|--------|-------------|
+| `ctx.long_call(call_delta, dte)` | Buy one call |
+| `ctx.short_call(call_delta, dte)` | Sell one call |
+| `ctx.long_put(put_delta, dte)` | Buy one put |
+| `ctx.short_put(put_delta, dte)` | Sell one put |
+| `ctx.covered_call(call_delta, dte)` | Sell one call (assumes stock held) |
+
+#### Vertical Spreads
+| Method | Description |
+|--------|-------------|
+| `ctx.bull_call_spread(long_call_delta, short_call_delta, dte)` | Buy call + sell higher call |
+| `ctx.bear_call_spread(short_call_delta, long_call_delta, dte)` | Sell call + buy higher call |
+| `ctx.bull_put_spread(short_put_delta, long_put_delta, dte)` | Sell put + buy lower put |
+| `ctx.bear_put_spread(long_put_delta, short_put_delta, dte)` | Buy put + sell lower put |
+
+#### Straddles & Strangles
+| Method | Description |
+|--------|-------------|
+| `ctx.long_straddle(call_delta, put_delta, dte)` | Buy call + buy put |
+| `ctx.short_straddle(call_delta, put_delta, dte)` | Sell call + sell put |
+| `ctx.long_strangle(put_delta, call_delta, dte)` | Buy OTM put + buy OTM call |
+| `ctx.short_strangle(put_delta, call_delta, dte)` | Sell OTM put + sell OTM call |
+
+#### Butterflies
+| Method | Description |
+|--------|-------------|
+| `ctx.long_call_butterfly(lower_call_delta, center_call_delta, upper_call_delta, dte)` | Long wing + 2x short center + long wing (calls) |
+| `ctx.short_call_butterfly(lower_call_delta, center_call_delta, upper_call_delta, dte)` | Short wing + 2x long center + short wing (calls) |
+| `ctx.long_put_butterfly(lower_put_delta, center_put_delta, upper_put_delta, dte)` | Long wing + 2x short center + long wing (puts) |
+| `ctx.short_put_butterfly(lower_put_delta, center_put_delta, upper_put_delta, dte)` | Short wing + 2x long center + short wing (puts) |
+
+#### Condors (same option type)
+| Method | Description |
+|--------|-------------|
+| `ctx.long_call_condor(outer_lower_call_delta, inner_lower_call_delta, inner_upper_call_delta, outer_upper_call_delta, dte)` | 4-leg all-call condor |
+| `ctx.short_call_condor(outer_lower_call_delta, inner_lower_call_delta, inner_upper_call_delta, outer_upper_call_delta, dte)` | Inverted 4-leg call condor |
+| `ctx.long_put_condor(outer_lower_put_delta, inner_lower_put_delta, inner_upper_put_delta, outer_upper_put_delta, dte)` | 4-leg all-put condor |
+| `ctx.short_put_condor(outer_lower_put_delta, inner_lower_put_delta, inner_upper_put_delta, outer_upper_put_delta, dte)` | Inverted 4-leg put condor |
+
+#### Iron Strategies (mixed put + call)
+| Method | Description |
+|--------|-------------|
+| `ctx.iron_condor(short_put_delta, long_put_delta, short_call_delta, long_call_delta, dte)` | Sell put spread + sell call spread |
+| `ctx.reverse_iron_condor(long_put_delta, short_put_delta, long_call_delta, short_call_delta, dte)` | Buy put spread + buy call spread |
+| `ctx.iron_butterfly(short_put_delta, long_put_delta, short_call_delta, long_call_delta, dte)` | Sell ATM straddle + buy OTM wings |
+| `ctx.reverse_iron_butterfly(long_put_delta, short_put_delta, long_call_delta, short_call_delta, dte)` | Buy ATM straddle + sell OTM wings |
+
+#### Calendar & Diagonal (multi-expiration)
+| Method | Description |
+|--------|-------------|
+| `ctx.call_calendar(near_call_delta, far_call_delta, near_dte, far_dte)` | Short near call + long far call |
+| `ctx.put_calendar(near_put_delta, far_put_delta, near_dte, far_dte)` | Short near put + long far put |
+| `ctx.call_diagonal(short_call_delta, long_call_delta, near_dte, far_dte)` | Short near call + long far call (diff deltas) |
+| `ctx.put_diagonal(short_put_delta, long_put_delta, near_dte, far_dte)` | Short near put + long far put (diff deltas) |
+| `ctx.double_calendar(near_put_delta, far_put_delta, near_call_delta, far_call_delta, near_dte, far_dte)` | Put calendar + call calendar |
+| `ctx.double_diagonal(short_put_delta, long_put_delta, short_call_delta, long_call_delta, near_dte, far_dte)` | Put diagonal + call diagonal |
+
+#### Usage Examples
+```rhai
+// Bull put spread — returns ready action map
+let spread = ctx.bull_put_spread(0.30, 0.15, 45);
+if spread == () { return []; }
+[spread]
+
+// Iron condor with per-leg deltas
+let ic = ctx.iron_condor(0.30, 0.10, 0.30, 0.10, 45);
+if ic == () { return []; }
+[ic]
+
+// Multiple positions in one bar
+let put = ctx.short_put(0.25, 30);
+let call = ctx.short_call(0.25, 30);
+if put == () || call == () { return []; }
+[put, call]
+```
+
+### Low-Level Strategy Builder
+
+For custom leg combinations not covered by the helpers above, `ctx.build_strategy(legs)` accepts an array of leg maps. You must wrap the result in an action map manually.
+
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `ctx.build_strategy(legs)` | Map or () | Build any options strategy from a legs array |
 
-Each leg is a map with `side`, `option_type`, `delta`, and `dte`:
 ```rhai
-// Single short put
-let strat = ctx.build_strategy([
-    #{ side: "short", option_type: "put", delta: 0.30, dte: 45 },
-]);
-
-// Iron condor (4 legs)
-let strat = ctx.build_strategy([
-    #{ side: "short", option_type: "put", delta: 0.30, dte: 45 },
-    #{ side: "long", option_type: "put", delta: 0.10, dte: 45 },
-    #{ side: "short", option_type: "call", delta: 0.30, dte: 45 },
-    #{ side: "long", option_type: "call", delta: 0.10, dte: 45 },
-]);
-
-// Vertical spread
 let strat = ctx.build_strategy([
     #{ side: "short", option_type: "put", delta: 0.30, dte: 45 },
     #{ side: "long", option_type: "put", delta: 0.15, dte: 45 },
 ]);
+if strat != () {
+    [#{ action: "open_spread", spread: strat }]
+}
 ```
-
-**Return shape:** Map with resolved legs including `strike`, `bid`, `ask`, `delta`, `expiration`, `dte` for each leg, or `()` if no matching contracts found.
 
 ### Cross-Symbol
 | Method | Returns | Description |
@@ -228,46 +314,58 @@ let strat = ctx.build_strategy([
 | `ctx.price_of(symbol)` | f64 or () | Close price of another symbol (forward-filled) |
 | `ctx.price_of_col(symbol, col)` | f64 or () | Specific column: "open", "high", "low", "close", "volume" |
 
-## Action Maps (returned by on_bar)
+## Action Helpers (returned by on_bar / on_exit_check)
+
+Global helper functions that return ready-to-use action maps:
+
+| Function | Returns | Use in |
+|----------|---------|--------|
+| `hold_position()` | `#{ action: "hold" }` | on_exit_check |
+| `close_position(reason)` | `#{ action: "close", reason }` | on_exit_check, on_bar |
+| `close_position_id(id, reason)` | `#{ action: "close", position_id: id, reason }` | on_bar |
+| `stop_backtest(reason)` | `#{ action: "stop", reason }` | on_bar, on_exit_check |
+| `buy_stock(qty)` | `#{ action: "open_stock", side: "long", qty }` | on_bar |
+| `sell_stock(qty)` | `#{ action: "open_stock", side: "short", qty }` | on_bar |
 
 ```rhai
-// Open options spread (preferred — uses build_strategy for resolved legs)
-let spread = ctx.build_strategy([
-    #{ side: "short", option_type: "put", delta: 0.30, dte: 45 },
-]);
-if spread != () {
-    [#{ action: "open_spread", spread: spread }]
+// on_bar — entry logic
+fn on_bar(ctx) {
+    // Open a bull put spread
+    let spread = ctx.bull_put_spread(0.30, 0.15, 45);
+    if spread == () { return []; }
+    [spread]
+
+    // Open stock
+    [buy_stock(100)]
+
+    // Close position by ID
+    [close_position_id(pos.id, "take_profit")]
+
+    // Stop backtest
+    [stop_backtest("capital_depleted")]
+
+    // No action
+    []
 }
 
-// Open options (unresolved — engine resolves contracts at execution)
-[#{ action: "open_options", legs: [
-    #{ side: "short", option_type: "put", delta: 0.30, dte: 45 },
-]}]
-
-// Open stock position
-[#{ action: "open_stock", side: "long", qty: 100 }]
-
-// Close a specific position by ID (from on_bar)
-[#{ action: "close", position_id: pos.id, reason: "take_profit" }]
-
-// Stop the backtest early
-[#{ action: "stop", reason: "capital_depleted" }]
-
-// No action this bar
-[]
+// on_exit_check — per-position exit logic
+fn on_exit_check(ctx, pos) {
+    if pos.pnl_pct > 0.50 { return close_position("take_profit"); }
+    if pos.pnl_pct < -2.0 { return close_position("stop_loss"); }
+    hold_position()
+}
 ```
 
-## Exit Actions (returned by on_exit_check)
+### Low-Level Action Maps (still supported)
+
+The helpers above return these maps. You can also construct them directly:
 
 ```rhai
-// Close this position
-#{ action: "close", reason: "stop_loss" }
-
-// Keep holding
+#{ action: "open_spread", spread: ctx.build_strategy([...]) }
+#{ action: "open_stock", side: "long", qty: 100 }
+#{ action: "close", position_id: pos.id, reason: "take_profit" }
+#{ action: "stop", reason: "capital_depleted" }
 #{ action: "hold" }
-
-// Stop the entire backtest
-#{ action: "stop", reason: "max_loss_reached" }
 ```
 
 ## pos Object (in on_exit_check / on_position_closed)
