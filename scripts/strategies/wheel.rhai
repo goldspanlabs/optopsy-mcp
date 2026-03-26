@@ -9,6 +9,14 @@
 // Top-level variables persist across bars (Rhai scope is preserved).
 // Use these for state machines, counters, or tracking values between callbacks.
 let state = "selling_puts";
+
+// Defaults for optional params (set in config, used in on_bar/on_position_closed)
+let PUT_DELTA = 0.30;
+let PUT_DTE = 45;
+let CALL_DELTA = 0.30;
+let CALL_DTE = 30;
+let SLIPPAGE = "mid";
+let MULTIPLIER = 100;
 let stock = #{
     entry_price: 0.0,
     adjusted_basis: 0.0,
@@ -27,6 +35,14 @@ let cycles_completed = 0;
 //   commission, expiration_filter), defaults (script-readable values).
 // ---------------------------------------------------------------------------
 fn config() {
+    // Override defaults from params if provided
+    if params.contains("PUT_DELTA") { PUT_DELTA = params.PUT_DELTA; }
+    if params.contains("PUT_DTE") { PUT_DTE = params.PUT_DTE; }
+    if params.contains("CALL_DELTA") { CALL_DELTA = params.CALL_DELTA; }
+    if params.contains("CALL_DTE") { CALL_DTE = params.CALL_DTE; }
+    if params.contains("SLIPPAGE") { SLIPPAGE = params.SLIPPAGE; }
+    if params.contains("MULTIPLIER") { MULTIPLIER = params.MULTIPLIER; }
+
     #{
         symbol: params.SYMBOL,
         capital: params.CAPITAL,
@@ -36,7 +52,7 @@ fn config() {
             options: true,
         },
         engine: #{
-            slippage: params.SLIPPAGE,
+            slippage: SLIPPAGE,
             expiration_filter: "monthly",
         },
         defaults: #{
@@ -62,7 +78,7 @@ fn on_bar(ctx) {
     if state == "selling_puts" {
         if ctx.has_positions() { return []; }
 
-        let spread = ctx.short_put(params.PUT_DELTA, params.PUT_DTE);
+        let spread = ctx.short_put(PUT_DELTA, PUT_DTE);
         if spread == () { return []; }
 
         return [spread];
@@ -71,7 +87,7 @@ fn on_bar(ctx) {
     if state == "holding_stock" {
         if ctx.has_positions() { return []; }
 
-        let spread = ctx.covered_call(params.CALL_DELTA, params.CALL_DTE);
+        let spread = ctx.covered_call(CALL_DELTA, CALL_DTE);
         if spread == () { return []; }
 
         // Only sell calls above adjusted cost basis
@@ -130,7 +146,7 @@ fn on_position_closed(ctx, pos, exit_type) {
             // The engine auto-creates an implicit long stock position.
             stock.entry_price = pos.legs[0].strike;
             stock.adjusted_basis = pos.legs[0].strike - pos.legs[0].entry_price;
-            stock.quantity = params.MULTIPLIER;
+            stock.quantity = MULTIPLIER;
             stock.entry_date = ctx.date;
             stock.total_premium += pos.legs[0].entry_price;
             state = "holding_stock";
