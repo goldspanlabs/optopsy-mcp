@@ -435,7 +435,69 @@ mod tests {
     }
 
     fn make_test_strategy_def() -> StrategyDef {
-        crate::strategies::find_strategy("long_call").unwrap()
+        StrategyDef {
+            name: "long_call".to_string(),
+            category: "singles".to_string(),
+            description: "Long call option".to_string(),
+            legs: vec![LegDef {
+                side: Side::Long,
+                option_type: OptionType::Call,
+                delta: TargetRange {
+                    target: 0.50,
+                    min: 0.30,
+                    max: 0.70,
+                },
+                qty: 1,
+                expiration_cycle: ExpirationCycle::Primary,
+            }],
+            strict_strike_order: true,
+            direction: Direction::Bullish,
+            has_stock_leg: false,
+        }
+    }
+
+    fn make_covered_call_def() -> StrategyDef {
+        StrategyDef {
+            name: "covered_call".to_string(),
+            category: "singles".to_string(),
+            description: "Covered call".to_string(),
+            legs: vec![LegDef {
+                side: Side::Short,
+                option_type: OptionType::Call,
+                delta: TargetRange {
+                    target: 0.30,
+                    min: 0.20,
+                    max: 0.40,
+                },
+                qty: 1,
+                expiration_cycle: ExpirationCycle::Primary,
+            }],
+            strict_strike_order: true,
+            direction: Direction::Bullish,
+            has_stock_leg: true,
+        }
+    }
+
+    fn make_short_call_def() -> StrategyDef {
+        StrategyDef {
+            name: "short_call".to_string(),
+            category: "singles".to_string(),
+            description: "Short call".to_string(),
+            legs: vec![LegDef {
+                side: Side::Short,
+                option_type: OptionType::Call,
+                delta: TargetRange {
+                    target: 0.30,
+                    min: 0.20,
+                    max: 0.40,
+                },
+                qty: 1,
+                expiration_cycle: ExpirationCycle::Primary,
+            }],
+            strict_strike_order: true,
+            direction: Direction::Bearish,
+            has_stock_leg: false,
+        }
     }
 
     #[test]
@@ -823,7 +885,7 @@ mod tests {
             net_premium: -5.25,
             net_delta: -0.50,
         };
-        let strategy_def = crate::strategies::find_strategy("covered_call").unwrap();
+        let strategy_def = make_covered_call_def();
         let mut params = make_test_params(Slippage::Mid, 100);
         params.strategy = "covered_call".to_string();
         let empty_idx = DateIndex::new();
@@ -861,7 +923,7 @@ mod tests {
             net_premium: -5.25,
             net_delta: -0.50,
         };
-        let strategy_def = crate::strategies::find_strategy("covered_call").unwrap();
+        let strategy_def = make_covered_call_def();
         let mut params = make_test_params(Slippage::Mid, 100);
         params.strategy = "covered_call".to_string();
         let closes = make_ohlcv_closes();
@@ -907,7 +969,7 @@ mod tests {
             net_premium: -5.25,
             net_delta: -0.50,
         };
-        let strategy_def = crate::strategies::find_strategy("short_call").unwrap();
+        let strategy_def = make_short_call_def();
         let mut params = make_test_params(Slippage::Mid, 100);
         params.strategy = "short_call".to_string();
         let empty_idx = DateIndex::new();

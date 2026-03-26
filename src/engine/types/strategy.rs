@@ -170,80 +170,10 @@ impl StrategyDef {
     }
 }
 
-/// Look up the market direction bias for a named strategy, defaulting to `Neutral` if unknown.
-pub fn strategy_direction(name: &str) -> Direction {
-    if let Some(def) = crate::strategies::find_strategy(name) {
-        return def.direction;
-    }
-    tracing::warn!(
-        strategy = name,
-        "Unknown strategy — defaulting to Neutral direction"
-    );
+/// Look up the market direction bias for a named strategy.
+///
+/// The built-in strategy registry has been removed; this now always returns
+/// `Neutral`. Scripting-engine strategies carry their own direction metadata.
+pub fn strategy_direction(_name: &str) -> Direction {
     Direction::Neutral
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn strategy_direction_bullish() {
-        assert_eq!(strategy_direction("long_call"), Direction::Bullish);
-        assert_eq!(strategy_direction("short_put"), Direction::Bullish);
-        assert_eq!(strategy_direction("covered_call"), Direction::Bullish);
-        assert_eq!(strategy_direction("bull_call_spread"), Direction::Bullish);
-        assert_eq!(strategy_direction("bull_put_spread"), Direction::Bullish);
-    }
-
-    #[test]
-    fn strategy_direction_bearish() {
-        assert_eq!(strategy_direction("short_call"), Direction::Bearish);
-        assert_eq!(strategy_direction("long_put"), Direction::Bearish);
-        assert_eq!(strategy_direction("bear_call_spread"), Direction::Bearish);
-        assert_eq!(strategy_direction("bear_put_spread"), Direction::Bearish);
-    }
-
-    #[test]
-    fn strategy_direction_volatile() {
-        assert_eq!(strategy_direction("long_straddle"), Direction::Volatile);
-        assert_eq!(strategy_direction("long_strangle"), Direction::Volatile);
-        assert_eq!(
-            strategy_direction("reverse_iron_condor"),
-            Direction::Volatile
-        );
-        assert_eq!(
-            strategy_direction("reverse_iron_butterfly"),
-            Direction::Volatile
-        );
-    }
-
-    #[test]
-    fn strategy_direction_neutral() {
-        assert_eq!(strategy_direction("iron_condor"), Direction::Neutral);
-        assert_eq!(strategy_direction("short_straddle"), Direction::Neutral);
-        assert_eq!(
-            strategy_direction("long_call_butterfly"),
-            Direction::Neutral
-        );
-        assert_eq!(strategy_direction("short_put_condor"), Direction::Neutral);
-    }
-
-    #[test]
-    fn strategy_direction_all_32_covered() {
-        let all = crate::strategies::all_strategies();
-        for s in all {
-            let dir = strategy_direction(&s.name);
-            assert!(
-                matches!(
-                    dir,
-                    Direction::Bullish
-                        | Direction::Bearish
-                        | Direction::Neutral
-                        | Direction::Volatile
-                ),
-                "strategy {} returned unexpected direction",
-                s.name
-            );
-        }
-    }
 }

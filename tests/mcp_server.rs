@@ -67,12 +67,9 @@ async fn tool_router_lists_all_tools() {
     let tools = client.list_all_tools().await.unwrap();
     let tool_names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
 
-    assert_eq!(tools.len(), 18, "Expected 18 tools, got: {tool_names:?}");
+    assert_eq!(tools.len(), 14, "Expected 14 tools, got: {tool_names:?}");
     for expected in [
         "run_script",
-        "parameter_sweep",
-        "walk_forward",
-        "permutation_test",
         "build_signal",
         "aggregate_prices",
         "distribution",
@@ -86,7 +83,6 @@ async fn tool_router_lists_all_tools() {
         "factor_attribution",
         "portfolio_optimize",
         "benchmark_analysis",
-        "bayesian_optimize",
     ] {
         assert!(
             tool_names.contains(&expected.to_string()),

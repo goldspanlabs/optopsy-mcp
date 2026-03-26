@@ -10,7 +10,6 @@ mod sanitize;
 pub use params::FactorProxies;
 
 use garde::Validate;
-use polars::prelude::*;
 
 use rmcp::{
     handler::server::router::tool::ToolRouter,
@@ -22,34 +21,23 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::data::cache::{validate_path_segment, CachedStore};
-use crate::data::DataStore;
-use crate::engine::types::BacktestParams;
-use crate::signals::registry::{collect_cross_symbols, extract_formula_cross_symbols, SignalSpec};
 use crate::tools;
 use crate::tools::response_types::{
-    AggregatePricesResponse, BayesianOptimizeResponse, BenchmarkAnalysisResponse,
-    BuildSignalResponse, CointegrationResponse, CorrelateResponse, DistributionResponse,
-    DrawdownAnalysisResponse, FactorAttributionResponse, HypothesisParams, HypothesisResponse,
-    MonteCarloResponse, PermutationTestResponse, PortfolioOptimizeResponse, RegimeDetectResponse,
-    RollingMetricResponse, SweepResponse, WalkForwardResponse,
+    AggregatePricesResponse, BenchmarkAnalysisResponse, BuildSignalResponse, CointegrationResponse,
+    CorrelateResponse, DistributionResponse, DrawdownAnalysisResponse, FactorAttributionResponse,
+    HypothesisParams, HypothesisResponse, MonteCarloResponse, PortfolioOptimizeResponse,
+    RegimeDetectResponse, RollingMetricResponse,
 };
 use params::{
-    resolve_leg_deltas, tool_err, validation_err, AggregatePricesParams, BacktestBaseParams,
-    BayesianOptimizeParams, BenchmarkAnalysisParams, BuildSignalParams, CointegrationParams,
-    CorrelateParams, DistributionParams, DrawdownAnalysisParams, FactorAttributionParams,
-    MonteCarloParams, ParameterSweepParams, PermutationTestParams, PortfolioOptimizeParams,
-    RegimeDetectParams, RollingMetricParams, WalkForwardParams,
+    tool_err, validation_err, AggregatePricesParams, BenchmarkAnalysisParams, BuildSignalParams,
+    CointegrationParams, CorrelateParams, DistributionParams, DrawdownAnalysisParams,
+    FactorAttributionParams, MonteCarloParams, PortfolioOptimizeParams, RegimeDetectParams,
+    RollingMetricParams,
 };
 use sanitize::SanitizedResult;
 
 /// Loaded data: `HashMap<Symbol, DataFrame>` for multi-symbol support.
-type LoadedData = HashMap<String, DataFrame>;
-
-/// Resolved stock backtest parameters with symbol, ready for execution.
-struct StockResolvedParams {
-    symbol: String,
-    params: crate::engine::stock_sim::StockBacktestParams,
-}
+type LoadedData = HashMap<String, polars::prelude::DataFrame>;
 
 /// MCP server for options backtesting, holding loaded data and the tool router.
 #[derive(Clone)]
@@ -71,57 +59,6 @@ impl OptopsyServer {
         }
     }
 
-    /// Ensure options data is loaded for a symbol, auto-loading from cache if needed.
-    /// Returns `(symbol, DataFrame)`.
-    async fn ensure_data_loaded(
-        &self,
-        symbol: Option<&str>,
-    ) -> Result<(String, DataFrame), String> {
-        // Fast path: try a read lock first to avoid serializing all requests when data
-        // is already loaded. This covers the common case of concurrent reads.
-        {
-            let data = self.data.read().await;
-            if !data.is_empty() {
-                return match Self::resolve_symbol(&data, symbol) {
-                    Ok((sym, df)) => Ok((sym.clone(), df.clone())),
-                    Err(e) => Err(format!("Error: {e}")),
-                };
-            }
-        }
-
-        // Auto-load requires a symbol
-        let sym = symbol.ok_or_else(|| {
-            "No data loaded and no symbol provided. Pass a symbol (e.g. \"SPY\").".to_string()
-        })?;
-
-        // Validate the symbol to prevent path traversal attacks before passing to the data layer.
-        let sym_upper = sym.to_uppercase();
-        validate_path_segment(&sym_upper).map_err(|e| format!("Invalid symbol: {e}"))?;
-
-        tracing::info!(symbol = %sym, "Auto-loading options data from cache");
-
-        // Load data WITHOUT holding any lock so concurrent requests aren't blocked
-        // during I/O. Two concurrent auto-loads for the same symbol may both fetch,
-        // but the insert is idempotent.
-        let df = self
-            .cache
-            .load_options(&sym_upper, None, None)
-            .await
-            .map_err(|e| format!("Failed to auto-load data for {sym}: {e}"))?;
-
-        // Brief write lock just for insertion
-        let mut data = self.data.write().await;
-
-        // Another request may have loaded data while we were fetching — check and
-        // use existing data if present for this symbol.
-        if let Some(existing) = data.get(&sym_upper) {
-            return Ok((sym_upper, existing.clone()));
-        }
-
-        data.insert(sym_upper.clone(), df.clone());
-        Ok((sym_upper, df))
-    }
-
     /// Ensure OHLCV price data exists for a symbol.
     /// Returns the parquet file path.
     ///
@@ -132,292 +69,6 @@ impl OptopsyServer {
             None => Err(format!(
                 "No OHLCV data found for {symbol}. Upload parquet to the cache directory."
             )),
-        }
-    }
-
-    /// Collect all cross-symbol references from entry/exit signals and resolve their OHLCV paths.
-    ///
-    /// Inspects both the singular `entry_signal`/`exit_signal` and the plural
-    /// `entry_signals`/`exit_signals` lists (used by parameter sweep).
-    fn resolve_cross_ohlcv_paths(
-        &self,
-        entry_signal: Option<&SignalSpec>,
-        exit_signal: Option<&SignalSpec>,
-        entry_signals: &[SignalSpec],
-        exit_signals: &[SignalSpec],
-        extra_formulas: &[String],
-    ) -> Result<HashMap<String, String>, String> {
-        let mut all_symbols = std::collections::HashSet::new();
-        if let Some(sig) = entry_signal {
-            all_symbols.extend(collect_cross_symbols(sig));
-        }
-        if let Some(sig) = exit_signal {
-            all_symbols.extend(collect_cross_symbols(sig));
-        }
-        for sig in entry_signals {
-            all_symbols.extend(collect_cross_symbols(sig));
-        }
-        for sig in exit_signals {
-            all_symbols.extend(collect_cross_symbols(sig));
-        }
-        for formula in extra_formulas {
-            all_symbols.extend(extract_formula_cross_symbols(formula));
-        }
-
-        let mut paths = HashMap::new();
-        for sym in all_symbols {
-            validate_path_segment(&sym)
-                .map_err(|e| format!("Invalid cross-symbol \"{sym}\": {e}"))?;
-            let path = self.ensure_ohlcv(&sym)?;
-            paths.insert(sym, path);
-        }
-        Ok(paths)
-    }
-
-    /// Resolve shared backtest base parameters into engine `BacktestParams`, auto-loading
-    /// data and OHLCV as needed. Returns `(symbol, DataFrame, BacktestParams)`.
-    async fn resolve_backtest_params(
-        &self,
-        base: BacktestBaseParams,
-    ) -> Result<(String, DataFrame, BacktestParams), String> {
-        let BacktestBaseParams {
-            strategy,
-            leg_deltas,
-            entry_dte,
-            exit_dte,
-            slippage,
-            commission,
-            min_bid_ask,
-            stop_loss,
-            take_profit,
-            max_hold_days,
-            capital,
-            quantity,
-            sizing,
-            multiplier,
-            max_positions,
-            selector,
-            entry_signal,
-            exit_signal,
-            symbol: symbol_param,
-            min_net_premium,
-            max_net_premium,
-            min_net_delta,
-            max_net_delta,
-            min_days_between_entries,
-            expiration_filter,
-            exit_net_delta,
-            // Stock-mode fields — ignored in this options-only path
-            mode: _,
-            side: _,
-            interval: _,
-            session_filter: _,
-            start_date: _,
-            end_date: _,
-            max_hold_bars: _,
-            min_bars_between_entries: _,
-            conflict_resolution: _,
-        } = base;
-
-        // This function is only called for options mode; validation guarantees strategy is Some.
-        let strategy = strategy
-            .ok_or_else(|| "strategy is required for options-mode backtests".to_string())?;
-
-        let (symbol, df) = self.ensure_data_loaded(symbol_param.as_deref()).await?;
-
-        let strategy_def = crate::strategies::find_strategy(&strategy);
-        let needs_ohlcv = entry_signal.is_some()
-            || exit_signal.is_some()
-            || matches!(
-                sizing.as_ref().map(|s| &s.method),
-                Some(crate::engine::types::PositionSizing::VolatilityTarget { .. })
-            )
-            || strategy_def.as_ref().is_some_and(|s| s.has_stock_leg);
-        let ohlcv_path = if needs_ohlcv {
-            Some(self.ensure_ohlcv(&symbol)?)
-        } else {
-            None
-        };
-
-        let cross_ohlcv_paths = self.resolve_cross_ohlcv_paths(
-            entry_signal.as_ref(),
-            exit_signal.as_ref(),
-            &[],
-            &[],
-            &[],
-        )?;
-
-        let leg_deltas = resolve_leg_deltas(leg_deltas, &strategy)?;
-
-        let backtest_params = BacktestParams {
-            strategy,
-            leg_deltas,
-            entry_dte,
-            exit_dte,
-            slippage,
-            commission,
-            min_bid_ask,
-            stop_loss,
-            take_profit,
-            max_hold_days,
-            capital,
-            quantity,
-            multiplier,
-            max_positions,
-            sizing,
-            selector: selector.unwrap_or_default(),
-            adjustment_rules: vec![],
-            entry_signal,
-            exit_signal,
-            ohlcv_path,
-            cross_ohlcv_paths,
-            min_net_premium,
-            max_net_premium,
-            min_net_delta,
-            max_net_delta,
-            min_days_between_entries,
-            expiration_filter: expiration_filter.unwrap_or_default(),
-            exit_net_delta,
-        };
-        backtest_params
-            .validate()
-            .map_err(|e| format!("Validation error: {e}"))?;
-
-        Ok((symbol, df, backtest_params))
-    }
-
-    /// Resolve stock-mode backtest parameters from `BacktestBaseParams`.
-    ///
-    /// Ensures OHLCV data is available, builds `StockBacktestParams`, and prepares
-    /// bars + signal filters. Returns everything needed to run a stock backtest.
-    fn resolve_stock_backtest_params(
-        &self,
-        base: BacktestBaseParams,
-    ) -> Result<StockResolvedParams, String> {
-        // entry_signal is required for stock mode — without it no trades will ever open.
-        if base.entry_signal.is_none() {
-            return Err(
-                "entry_signal is required for stock mode; provide a SignalSpec to drive trade entries".to_string()
-            );
-        }
-
-        let symbol = base
-            .symbol
-            .as_deref()
-            .ok_or("symbol is required for stock mode")?
-            .to_uppercase();
-        validate_path_segment(&symbol).map_err(|e| format!("Invalid symbol: {e}"))?;
-
-        let ohlcv_path = self.ensure_ohlcv(&symbol)?;
-
-        let cross_ohlcv_paths = self.resolve_cross_ohlcv_paths(
-            base.entry_signal.as_ref(),
-            base.exit_signal.as_ref(),
-            &[],
-            &[],
-            &[],
-        )?;
-
-        let start_date = base
-            .start_date
-            .as_deref()
-            .map(|s| {
-                chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                    .map_err(|_| format!("Invalid start_date \"{s}\": expected YYYY-MM-DD"))
-            })
-            .transpose()?;
-        let end_date = base
-            .end_date
-            .as_deref()
-            .map(|s| {
-                chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                    .map_err(|_| format!("Invalid end_date \"{s}\": expected YYYY-MM-DD"))
-            })
-            .transpose()?;
-
-        let interval = base.interval.unwrap_or_default();
-        let side = base.side.unwrap_or(crate::engine::types::Side::Long);
-
-        let stock_params = crate::engine::stock_sim::StockBacktestParams {
-            symbol: symbol.clone(),
-            side,
-            capital: base.capital,
-            quantity: base.quantity,
-            sizing: base.sizing,
-            max_positions: base.max_positions,
-            slippage: base.slippage,
-            commission: base.commission,
-            stop_loss: base.stop_loss,
-            take_profit: base.take_profit,
-            max_hold_days: base.max_hold_days,
-            max_hold_bars: base.max_hold_bars,
-            min_days_between_entries: base.min_days_between_entries,
-            min_bars_between_entries: base.min_bars_between_entries,
-            conflict_resolution: base.conflict_resolution.unwrap_or_default(),
-            entry_signal: base.entry_signal,
-            exit_signal: base.exit_signal,
-            ohlcv_path: Some(ohlcv_path),
-            cross_ohlcv_paths,
-            start_date,
-            end_date,
-            interval,
-            session_filter: base.session_filter,
-        };
-
-        Ok(StockResolvedParams {
-            symbol,
-            params: stock_params,
-        })
-    }
-
-    /// Resolve a symbol from the loaded data.
-    /// If `symbol` is provided, look it up explicitly.
-    /// If `symbol` is None:
-    ///   - If no data is loaded, return error
-    ///   - If exactly one symbol is loaded, use it
-    ///   - If multiple symbols are loaded, return error asking for explicit symbol
-    fn resolve_symbol<'a>(
-        data: &'a HashMap<String, DataFrame>,
-        symbol: Option<&str>,
-    ) -> Result<(&'a String, &'a DataFrame), String> {
-        // Check if no data is loaded first, regardless of whether symbol was provided
-        if data.is_empty() {
-            return Err("No data loaded. Pass a symbol parameter (e.g. \"SPY\").".to_string());
-        }
-
-        match symbol {
-            Some(sym) => {
-                let sym_upper = sym.to_uppercase();
-                data.get_key_value(sym_upper.as_str()).ok_or_else(|| {
-                    let mut loaded: Vec<&String> = data.keys().collect();
-                    loaded.sort();
-                    let loaded_list = loaded
-                        .iter()
-                        .map(|k| k.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    format!("Symbol '{sym_upper}' not loaded. Loaded: {loaded_list}.")
-                })
-            }
-            None => {
-                if data.len() == 1 {
-                    Ok(data
-                        .iter()
-                        .next()
-                        .expect("data.len() == 1 but iter is empty"))
-                } else {
-                    let mut keys: Vec<&String> = data.keys().collect();
-                    keys.sort();
-                    let symbols = keys
-                        .iter()
-                        .map(|k| k.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    Err(format!(
-                        "Multiple symbols loaded: {symbols}. Specify the `symbol` parameter."
-                    ))
-                }
-            }
         }
     }
 }
@@ -499,188 +150,7 @@ impl OptopsyServer {
             .await,
         )
     }
-    /// Shuffles entry candidates across dates N times, re-runs the backtest, and compares
-    /// real results against the random distribution. Produces p-values for key metrics
-    /// (Sharpe, `PnL`, win rate, profit factor, CAGR).
-    ///
-    /// **Null hypothesis**: "the specific timing of entries doesn't matter."
-    /// If p < 0.05, the strategy has a statistically significant edge.
-    ///
-    /// **Time to run**: scales linearly with `num_permutations` × single backtest time
-    #[tool(name = "permutation_test", annotations(read_only_hint = true))]
-    async fn permutation_test(
-        &self,
-        Parameters(params): Parameters<PermutationTestParams>,
-    ) -> SanitizedResult<PermutationTestResponse, String> {
-        SanitizedResult(
-            async {
-                params
-                    .validate()
-                    .map_err(|e| validation_err("permutation_test", e))?;
-                handlers::optimization::execute_permutation_test(self, params).await
-            }
-            .await,
-        )
-    }
 
-    /// Sweep parameter combinations across strategies, DTE, exit DTE, and slippage.
-    ///
-    /// **When to use**: To find optimal parameter combinations without manually building
-    ///   `compare_strategies` entries. Generates cartesian product internally and ranks by Sharpe.
-    /// **Prerequisites**: None — data is auto-loaded from cache when you pass a symbol.
-    ///
-    /// **How it works**:
-    ///   1. Generates cartesian product of delta targets × DTE targets × exit DTEs × slippage models × signal variants
-    ///   2. Filters invalid combos (`exit_dte` >= entry DTE min, inverted delta orderings)
-    ///   3. Deduplicates identical combinations
-    ///   4. Runs backtest on each combo (hard cap: 100 combinations)
-    ///   5. Ranks by Sharpe ratio, computes dimension sensitivity
-    ///   6. Optionally validates top 3 on out-of-sample data (default: 30% holdout)
-    ///
-    /// **Modes**:
-    ///   - Provide `strategies` list: sweep specific strategies with custom delta grids
-    ///   - Provide `direction` only: auto-select all matching strategies (bullish/bearish/neutral/volatile)
-    ///   - Both: filter provided list by direction
-    ///
-    /// **Output**: Ranked results, dimension sensitivity analysis, OOS validation
-    ///
-    /// **CRITICAL**: `entry_signals` (plural, with an 's') goes inside `sim_params`, NOT at the top level.
-    ///
-    /// **Example call (options)**:
-    /// ```json
-    /// {
-    ///   "symbol": "SPY",
-    ///   "direction": "bearish",
-    ///   "sim_params": {
-    ///     "capital": 100000, "quantity": 1, "multiplier": 100, "max_positions": 5,
-    ///     "entry_signals": ["rsi(close, 14) < 30", "rsi(close, 14) < 25"]
-    ///   },
-    ///   "sweep": {
-    ///     "delta_targets": [[0.20, 0.30], [0.30, 0.40]],
-    ///     "dte_targets": [30, 45],
-    ///     "exit_dte": 5
-    ///   }
-    /// }
-    /// ```
-    ///
-    /// **Example call (stocks)**:
-    /// ```json
-    /// {
-    ///   "symbol": "SPY", "mode": "stock",
-    ///   "sim_params": {
-    ///     "side": "Long", "capital": 100000, "quantity": 100,
-    ///     "entry_signals": ["rsi(close, 14) < 30", "rsi(close, 14) < 25"],
-    ///     "stop_loss": 0.05
-    ///   }
-    /// }
-    /// ```
-    #[tool(name = "parameter_sweep", annotations(read_only_hint = true))]
-    async fn parameter_sweep(
-        &self,
-        Parameters(params): Parameters<ParameterSweepParams>,
-    ) -> SanitizedResult<SweepResponse, String> {
-        SanitizedResult(
-            async {
-                params
-                    .validate()
-                    .map_err(|e| validation_err("parameter_sweep", e))?;
-                handlers::optimization::execute_sweep(self, params).await
-            }
-            .await,
-        )
-    }
-
-    /// Bayesian optimization: find optimal strategy parameters using a Gaussian Process surrogate.
-    ///
-    /// **When to use**: When you have a large parameter space (many delta/DTE/slippage combinations)
-    ///   and exhaustive grid search via `parameter_sweep` is too slow. Bayesian optimization
-    ///   typically finds near-optimal configurations in 50-100 evaluations instead of exhaustive search.
-    ///
-    /// **How it works**:
-    ///   1. Evaluates a small random initial batch (default: 10)
-    ///   2. Fits a Gaussian Process surrogate model to observed (params → objective) pairs
-    ///   3. Maximizes Expected Improvement acquisition function to pick the next most informative config
-    ///   4. Evaluates, updates surrogate, repeats until budget exhausted
-    ///
-    /// **Key differences from `parameter_sweep`**:
-    ///   - Continuous search over delta/DTE ranges (not discrete grid points)
-    ///   - Budget-aware: specify max evaluations instead of enumerating all combinations
-    ///   - Returns convergence trace showing how the objective improved over time
-    ///   - Single strategy only (use `parameter_sweep` for multi-strategy comparison)
-    ///
-    /// **Output**: Ranked results, convergence trace, sensitivity analysis, OOS validation
-    ///
-    /// **Example call**:
-    /// ```json
-    /// {
-    ///   "symbol": "SPY",
-    ///   "strategy": "bull_call_spread",
-    ///   "leg_delta_bounds": [{"min": 0.30, "max": 0.70}, {"min": 0.10, "max": 0.40}],
-    ///   "entry_dte_min": 20,
-    ///   "entry_dte_max": 60,
-    ///   "exit_dtes": [0, 5, 10],
-    ///   "max_evaluations": 50,
-    ///   "sim_params": {"capital": 100000, "quantity": 1, "multiplier": 100}
-    /// }
-    /// ```
-    #[tool(name = "bayesian_optimize", annotations(read_only_hint = true))]
-    async fn bayesian_optimize(
-        &self,
-        Parameters(params): Parameters<BayesianOptimizeParams>,
-    ) -> SanitizedResult<BayesianOptimizeResponse, String> {
-        SanitizedResult(
-            async {
-                params
-                    .validate()
-                    .map_err(|e| validation_err("bayesian_optimize", e))?;
-
-                tracing::info!(
-                    strategy = %params.strategy,
-                    symbol = params.symbol.as_deref().unwrap_or("auto"),
-                    max_evaluations = params.max_evaluations,
-                    objective = params.objective.as_deref().unwrap_or("sharpe"),
-                    "Bayesian optimization request received"
-                );
-
-                handlers::optimization::execute_bayesian_optimize(self, params).await
-            }
-            .await,
-        )
-    }
-
-    /// Rolling walk-forward validation: train on window 1, test on window 2, slide forward, repeat.
-    ///
-    /// **When to use**: After finding promising parameters via `run_options_backtest` or `parameter_sweep`,
-    ///   validate that the strategy performs consistently across multiple time periods
-    /// **Prerequisites**: None — data is auto-loaded from cache when you pass a symbol
-    ///
-    /// **How it works**:
-    ///   1. Slides rolling train/test windows across the full date range
-    ///   2. For each window: runs backtest on train slice, then on test slice
-    ///   3. Collects per-window train/test metrics (Sharpe, P&L, trades, win rate)
-    ///   4. Computes aggregate statistics: avg test Sharpe, % profitable windows, Sharpe decay
-    ///
-    /// **Key metrics**:
-    ///   - `avg_train_test_sharpe_decay`: high values (>0.5) indicate overfitting
-    ///   - `pct_profitable_windows`: % of test windows with positive P&L
-    ///   - `std_test_sharpe`: lower = more consistent performance
-    ///
-    /// **Time to run**: Proportional to number of windows × backtest time per window
-    #[tool(name = "walk_forward", annotations(read_only_hint = true))]
-    async fn walk_forward(
-        &self,
-        Parameters(params): Parameters<WalkForwardParams>,
-    ) -> SanitizedResult<WalkForwardResponse, String> {
-        SanitizedResult(
-            async {
-                params
-                    .validate()
-                    .map_err(|e| validation_err("walk_forward", e))?;
-                handlers::optimization::execute_walk_forward(self, params).await
-            }
-            .await,
-        )
-    }
     /// Aggregate OHLCV price statistics by time dimension (day-of-week, month, quarter, year, hour-of-day).
     /// Returns per-bucket descriptive stats with t-test p-values for significance.
     ///
@@ -1244,6 +714,7 @@ impl ServerHandler for OptopsyServer {
 mod tests {
     use super::*;
     use chrono::NaiveDate;
+    use polars::prelude::*;
 
     /// Load OHLCV prices from a cached parquet file for chart overlay.
     ///
