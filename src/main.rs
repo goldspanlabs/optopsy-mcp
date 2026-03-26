@@ -76,6 +76,12 @@ async fn main() -> Result<()> {
                 }),
             )
             .route(
+                "/scripts",
+                axum::routing::get(|| async {
+                    axum::Json(optopsy_mcp::scripting::stdlib::list_scripts())
+                }),
+            )
+            .route(
                 "/prices/{symbol}",
                 axum::routing::get({
                     let cache = prices_cache.clone();
