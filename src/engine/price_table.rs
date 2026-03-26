@@ -1,7 +1,7 @@
 //! Build the `PriceTable` hash map from a raw options `DataFrame` for O(1)
 //! quote lookups during event-driven simulation.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use anyhow::{bail, Result};
 use chrono::NaiveDate;
@@ -10,8 +10,24 @@ use polars::prelude::*;
 
 #[allow(clippy::wildcard_imports)]
 use super::types::*;
-use super::vectorized_sim::CarryIndex;
 use crate::data::parquet::DATETIME_COL;
+
+/// Secondary index for O(log n) carry-forward lookups.
+/// Key: (expiration, strike, `option_type`) -> sorted map of date -> snapshot reference data.
+pub type CarryIndex =
+    BTreeMap<(NaiveDate, OrderedFloat<f64>, OptionType), BTreeMap<NaiveDate, QuoteSnapshot>>;
+
+/// Build the carry-forward index from the price table.
+pub fn build_carry_index(price_table: &PriceTable) -> CarryIndex {
+    let mut index = CarryIndex::new();
+    for ((date, exp, strike, opt), snap) in price_table {
+        index
+            .entry((*exp, *strike, *opt))
+            .or_default()
+            .insert(*date, snap.clone());
+    }
+    index
+}
 
 /// Build a price lookup table from the raw options `DataFrame`.
 /// Returns the table and a sorted list of unique trading dates.
@@ -326,7 +342,7 @@ impl PriceTableCache {
     pub fn build(df: &polars::prelude::DataFrame) -> anyhow::Result<Self> {
         let t0 = std::time::Instant::now();
         let (price_table, trading_days, date_index) = build_price_table(df)?;
-        let carry_index = super::vectorized_sim::build_carry_index(&price_table);
+        let carry_index = build_carry_index(&price_table);
         tracing::info!(
             elapsed_ms = t0.elapsed().as_millis(),
             entries = price_table.len(),

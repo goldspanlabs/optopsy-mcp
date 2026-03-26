@@ -358,8 +358,32 @@ pub fn sizing_method_label(config: &SizingConfig) -> String {
 mod tests {
     use super::*;
     use crate::engine::sim_types::EntryCandidate;
-    use crate::engine::types::{ExitType, SizingConstraints};
+    use crate::engine::types::{
+        Direction, ExitType, ExpirationCycle, SizingConstraints, TargetRange,
+    };
     use chrono::{NaiveDate, NaiveDateTime};
+
+    fn make_covered_call_def() -> StrategyDef {
+        StrategyDef {
+            name: "covered_call".to_string(),
+            category: "singles".to_string(),
+            description: "Covered call".to_string(),
+            legs: vec![LegDef {
+                side: Side::Short,
+                option_type: OptionType::Call,
+                delta: TargetRange {
+                    target: 0.30,
+                    min: 0.20,
+                    max: 0.40,
+                },
+                qty: 1,
+                expiration_cycle: ExpirationCycle::Primary,
+            }],
+            strict_strike_order: true,
+            direction: Direction::Bullish,
+            has_stock_leg: true,
+        }
+    }
 
     fn make_trade(pnl: f64) -> TradeRecord {
         let dt = NaiveDateTime::parse_from_str("2024-01-15 09:30:00", "%Y-%m-%d %H:%M:%S").unwrap();
@@ -615,7 +639,7 @@ mod tests {
     fn max_loss_covered_call_no_stop() {
         // Covered call: stock=$100, short call premium=$5, multiplier=100
         // Max loss = (100 - 5) * 100 = 9500 (stock goes to zero, keep premium)
-        let strategy_def = crate::strategies::find_strategy("covered_call").unwrap();
+        let strategy_def = make_covered_call_def();
         let candidate = EntryCandidate {
             entry_date: NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
             expiration: NaiveDate::from_ymd_opt(2024, 2, 16).unwrap(),
@@ -683,7 +707,7 @@ mod tests {
     fn max_loss_covered_call_with_stop() {
         // Covered call with 10% stop loss: stock=$100, short call premium=$5
         // Max loss = (100*0.10 - 5) * 100 = (10 - 5) * 100 = 500
-        let strategy_def = crate::strategies::find_strategy("covered_call").unwrap();
+        let strategy_def = make_covered_call_def();
         let candidate = EntryCandidate {
             entry_date: NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
             expiration: NaiveDate::from_ymd_opt(2024, 2, 16).unwrap(),
@@ -749,7 +773,7 @@ mod tests {
 
     #[test]
     fn max_loss_covered_call_no_stock_price_returns_none() {
-        let strategy_def = crate::strategies::find_strategy("covered_call").unwrap();
+        let strategy_def = make_covered_call_def();
         let candidate = EntryCandidate {
             entry_date: NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
             expiration: NaiveDate::from_ymd_opt(2024, 2, 16).unwrap(),

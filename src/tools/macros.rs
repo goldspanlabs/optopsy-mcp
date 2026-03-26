@@ -1,3 +1,4 @@
+#[allow(unused_macros)]
 /// Log elapsed time with optional tracing fields.
 ///
 /// # Examples
@@ -16,4 +17,5 @@ macro_rules! log_elapsed {
     };
 }
 
+#[allow(unused_imports)]
 pub(crate) use log_elapsed;
