@@ -321,30 +321,42 @@ Global helper functions that return ready-to-use action maps:
 | Function | Returns | Use in |
 |----------|---------|--------|
 | `hold_position()` | `#{ action: "hold" }` | on_exit_check |
-| `close_position(reason)` | `#{ action: "close", reason }` | on_exit_check, on_bar |
+| `close_position(reason)` | `#{ action: "close", reason }` | on_exit_check |
 | `close_position_id(id, reason)` | `#{ action: "close", position_id: id, reason }` | on_bar |
 | `stop_backtest(reason)` | `#{ action: "stop", reason }` | on_bar, on_exit_check |
 | `buy_stock(qty)` | `#{ action: "open_stock", side: "long", qty }` | on_bar |
 | `sell_stock(qty)` | `#{ action: "open_stock", side: "short", qty }` | on_bar |
 
 ```rhai
-// on_bar — entry logic
+// on_bar — entry examples (each is a separate function body)
+
+// Example 1: Open a bull put spread
 fn on_bar(ctx) {
-    // Open a bull put spread
     let spread = ctx.bull_put_spread(0.30, 0.15, 45);
     if spread == () { return []; }
     [spread]
+}
 
-    // Open stock
+// Example 2: Open stock
+fn on_bar(ctx) {
     [buy_stock(100)]
+}
 
-    // Close position by ID
-    [close_position_id(pos.id, "take_profit")]
+// Example 3: Close a specific position by ID
+fn on_bar(ctx) {
+    let positions = ctx.positions();
+    if positions.len() > 0 {
+        let pos = positions[0];
+        return [close_position_id(pos.id, "take_profit")];
+    }
+    []
+}
 
-    // Stop backtest
-    [stop_backtest("capital_depleted")]
-
-    // No action
+// Example 4: Stop backtest
+fn on_bar(ctx) {
+    if ctx.equity < 5000.0 {
+        return [stop_backtest("capital_depleted")];
+    }
     []
 }
 

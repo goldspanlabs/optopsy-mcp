@@ -96,18 +96,29 @@ pub fn sell_stock(qty: i64) -> Dynamic {
 impl BarContext {
     /// Check if all listed indicators have valid (non-NaN) values at the current bar.
     ///
-    /// Usage: `ctx.indicators_ready(["sma:50", "rsi:14", "atr:14"])`
+    /// Usage: `ctx.indicators_ready(["sma:50", "rsi:14", "atr:14", "obv"])`
     pub fn indicators_ready(&mut self, indicators: rhai::Array) -> bool {
+        use super::indicators::{IndicatorKey, IndicatorParam};
+
         for item in indicators {
             let Ok(s) = item.into_immutable_string() else {
                 return false;
             };
             let parts: Vec<&str> = s.split(':').collect();
             let name = parts[0];
-            let period: i64 = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(0);
-            let val = self.indicator_value(name, period);
-            if val.is_unit() {
-                return false;
+            let params: Vec<IndicatorParam> = parts[1..]
+                .iter()
+                .filter_map(|p| p.parse::<i64>().ok())
+                .map(IndicatorParam::Int)
+                .collect();
+
+            let key = IndicatorKey {
+                name: name.to_string(),
+                params,
+            };
+            match self.indicator_store.get(&key, self.bar_idx) {
+                Some(v) if !v.is_nan() => {}
+                _ => return false,
             }
         }
         true
@@ -151,7 +162,7 @@ impl BarContext {
     // Vertical Spreads
     // -----------------------------------------------------------------------
 
-    /// Bull call spread: buy lower-delta call, sell higher-delta call.
+    /// Bull call spread: buy higher-delta (lower-strike) call, sell lower-delta (higher-strike) call.
     pub fn bull_call_spread(
         &mut self,
         long_call_delta: f64,
@@ -165,7 +176,7 @@ impl BarContext {
         wrap_spread_action(self.build_strategy(legs))
     }
 
-    /// Bear call spread: sell lower-delta call, buy higher-delta call.
+    /// Bear call spread: sell higher-delta (lower-strike) call, buy lower-delta (higher-strike) call.
     pub fn bear_call_spread(
         &mut self,
         short_call_delta: f64,
