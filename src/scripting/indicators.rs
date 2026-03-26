@@ -294,12 +294,11 @@ fn compute_indicator(
 
             // Signal = EMA of MACD line
             let valid_line: Vec<f64> = line.iter().copied().filter(|v| !v.is_nan()).collect();
-            if valid_line.len() < signal {
+            if signal == 0 || valid_line.len() < signal {
                 return Ok(vec![f64::NAN; n]);
             }
             let sig_ema = sti::exponential_moving_average(&valid_line, signal);
             let mut sig = vec![f64::NAN; n];
-            // Align signal EMA to the end of the line
             let first_valid = line.iter().position(|v| !v.is_nan()).unwrap_or(0);
             let offset = first_valid + signal - 1;
             for (i, &v) in sig_ema.iter().enumerate() {
