@@ -2,11 +2,31 @@
 
 Guide for writing `.rhai` backtest scripts. The AI agent should reference this when generating scripts from user prompts.
 
+## Script Metadata
+
+Every script should start with `//!` doc-comment lines for metadata. These are parsed by the engine for listing and display without running the script.
+
+```rhai
+//! name: My Strategy Name
+//! description: One-line summary of what this strategy does
+//! category: stock
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | No (defaults to filename) | Human-readable display name |
+| `description` | No | One-line summary for UI/agent display |
+| `category` | No | Grouping: `stock`, `options`, etc. |
+
 ## Script Structure
 
 Every script must define `config()` and `on_bar(ctx)`. Other callbacks are optional.
 
 ```rhai
+//! name: Example Strategy
+//! description: Brief description for UI display
+//! category: stock
+
 // Top-level state variables (persisted across bars via Rhai scope)
 let state = "initial";
 let counter = 0;
@@ -208,6 +228,33 @@ if sma50 == () || rsi == () { return []; }
 if !ctx.indicators_ready(["sma:50", "rsi:14"]) { return []; }
 ```
 
+### Position Sizing Helpers
+
+Compute share quantities dynamically based on equity, risk, volatility, or trade history. All return an `i64` share count (0 if inputs are invalid or insufficient history).
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `ctx.size_by_equity(fraction)` | i64 | Invest `fraction` of equity (1.0 = full, 0.5 = half, 1.5 = leveraged) |
+| `ctx.size_by_risk(risk_pct, stop_price)` | i64 | Risk `risk_pct` of equity per trade. Stop must be below close for longs (returns 0 otherwise) |
+| `ctx.size_by_volatility(target_risk, atr_period)` | i64 | Size so 1 ATR move = `target_risk` dollars. Requires `atr:{period}` in indicators |
+| `ctx.size_by_kelly(fraction, lookback)` | i64 | Kelly criterion sizing. `fraction` = Kelly fraction (0.5 = half-Kelly). Returns 0 until 20+ closed trades |
+
+```rhai
+// Full equity investment
+let qty = ctx.size_by_equity(1.0);
+
+// Risk 2% of equity per trade, stop at 2 ATR below close
+let stop = ctx.close - 2.0 * ctx.atr(14);
+let qty = ctx.size_by_risk(0.02, stop);
+
+// Volatility-based: $1000 risk per ATR move
+let qty = ctx.size_by_volatility(1000.0, 14);
+
+// Half-Kelly using all trade history (returns 0 until 20+ trades)
+let qty = ctx.size_by_kelly(0.5, 0);
+if qty == 0 { qty = ctx.size_by_equity(0.1); }  // fallback for cold start
+```
+
 ### Options Strategy Helpers
 
 Named helpers that build and wrap strategies into ready-to-use action maps. All return an action map or `()` if leg resolution fails. Use directly in the array returned from `on_bar()`.
@@ -359,6 +406,7 @@ fn on_bar(ctx) {
     }
     []
 }
+
 
 // on_exit_check — per-position exit logic
 fn on_exit_check(ctx, pos) {

@@ -76,6 +76,16 @@ async fn main() -> Result<()> {
                 }),
             )
             .route(
+                "/scripts",
+                axum::routing::get(|| async {
+                    let scripts =
+                        tokio::task::spawn_blocking(optopsy_mcp::scripting::stdlib::list_scripts)
+                            .await
+                            .unwrap_or_default();
+                    axum::Json(scripts)
+                }),
+            )
+            .route(
                 "/prices/{symbol}",
                 axum::routing::get({
                     let cache = prices_cache.clone();

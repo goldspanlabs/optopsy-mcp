@@ -178,6 +178,7 @@ pub async fn run_script_backtest(
 
     let mut positions: Vec<ScriptPosition> = Vec::new();
     let mut trade_log: Vec<TradeRecord> = Vec::new();
+    let mut pnl_history: Vec<f64> = Vec::new();
     let mut equity_curve: Vec<EquityPoint> = Vec::new();
     let mut warnings: Vec<String> = early_warnings;
     let mut realized_equity = config.capital;
@@ -186,6 +187,8 @@ pub async fn run_script_backtest(
     let mut stop_requested = false;
     let loop_start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(config.timeout_secs);
+    let mut pnl_history_arc = Arc::new(Vec::<f64>::new());
+    let mut pnl_dirty = false;
 
     for (bar_idx, bar) in price_history.iter().enumerate() {
         if stop_requested {
@@ -199,6 +202,11 @@ pub async fn run_script_backtest(
                 config.timeout_secs
             ));
             break;
+        }
+
+        if pnl_dirty {
+            pnl_history_arc = Arc::new(pnl_history.clone());
+            pnl_dirty = false;
         }
 
         let today = bar.datetime.date();
@@ -247,6 +255,7 @@ pub async fn run_script_backtest(
                     &cross_symbol_data,
                     &config,
                     &options_by_date,
+                    &pnl_history_arc,
                 );
                 let pos_dyn = Dynamic::from(positions[i].clone());
 
@@ -297,6 +306,7 @@ pub async fn run_script_backtest(
                         &cross_symbol_data,
                         &config,
                         &options_by_date,
+                        &pnl_history_arc,
                     );
                     let pos_dyn = Dynamic::from(closed_pos.clone());
                     let exit_type_dyn = Dynamic::from(exit_reason.clone());
@@ -316,6 +326,8 @@ pub async fn run_script_backtest(
                     pnl,
                     &exit_reason,
                 ));
+                pnl_history.push(pnl);
+                pnl_dirty = true;
 
                 positions.remove(i);
                 positions_dirty = true; // positions changed, Arc needs rebuild
@@ -400,6 +412,8 @@ pub async fn run_script_backtest(
                                                 stock_pnl,
                                                 "called_away",
                                             ));
+                                            pnl_history.push(stock_pnl);
+                                            pnl_dirty = true;
                                             positions.remove(j);
                                             // Don't increment j
                                         } else {
@@ -436,6 +450,7 @@ pub async fn run_script_backtest(
             &cross_symbol_data,
             &config,
             &options_by_date,
+            &pnl_history_arc,
         );
 
         // Call on_bar(ctx)
@@ -491,6 +506,7 @@ pub async fn run_script_backtest(
                                     &cross_symbol_data,
                                     &config,
                                     &options_by_date,
+                                    &pnl_history_arc,
                                 );
                                 let pos_dyn = Dynamic::from(pos.clone());
                                 let _ = call_fn_persistent(
@@ -527,6 +543,7 @@ pub async fn run_script_backtest(
                                             &cross_symbol_data,
                                             &config,
                                             &options_by_date,
+                                            &pnl_history_arc,
                                         );
                                         let pos_dyn = Dynamic::from(positions[idx].clone());
                                         let exit_dyn = Dynamic::from(reason.clone());
@@ -545,6 +562,8 @@ pub async fn run_script_backtest(
                                         pnl,
                                         &reason,
                                     ));
+                                    pnl_history.push(pnl);
+                                    pnl_dirty = true;
                                     positions.remove(idx);
                                 } else {
                                     warnings
@@ -602,6 +621,7 @@ pub async fn run_script_backtest(
                                     &cross_symbol_data,
                                     &config,
                                     &options_by_date,
+                                    &pnl_history_arc,
                                 );
                                 let pos_dyn = Dynamic::from(pos.clone());
                                 let _ = call_fn_persistent(
@@ -699,6 +719,7 @@ pub async fn run_script_backtest(
                     pnl,
                     "end_of_data",
                 ));
+                pnl_history.push(pnl);
             }
         }
     }
@@ -706,6 +727,7 @@ pub async fn run_script_backtest(
     // Call on_end(ctx) — may return metadata
     let metadata = if has_on_end {
         let end_positions_arc = Arc::new(positions.clone());
+        let pnl_history_arc = Arc::new(pnl_history.clone());
         let ctx = if let Some(last_bar) = price_history.last() {
             build_bar_context(
                 last_bar,
@@ -717,6 +739,7 @@ pub async fn run_script_backtest(
                 &cross_symbol_data,
                 &config,
                 &options_by_date,
+                &pnl_history_arc,
             )
         } else {
             // Empty bars — shouldn't reach here due to early bail
@@ -1101,6 +1124,7 @@ fn build_bar_context(
     cross_symbol_data: &Arc<HashMap<String, Vec<CrossSymbolBar>>>,
     config: &Arc<ScriptConfig>,
     options_by_date: &Option<Arc<DatePartitionedOptions>>,
+    pnl_history: &Arc<Vec<f64>>,
 ) -> BarContext {
     let cash = equity - positions_arc.iter().map(|p| p.unrealized_pnl).sum::<f64>();
     BarContext {
@@ -1119,6 +1143,7 @@ fn build_bar_context(
         cross_symbol_data: Arc::clone(cross_symbol_data),
         options_by_date: options_by_date.clone(),
         config: Arc::clone(config),
+        pnl_history: Arc::clone(pnl_history),
     }
 }
 

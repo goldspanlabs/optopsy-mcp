@@ -1,5 +1,7 @@
-// Wheel Strategy — sell puts -> assignment -> sell covered calls -> repeat
-//
+//! name: Wheel Strategy
+//! description: Sell puts, get assigned, sell covered calls, repeat
+//! category: options
+
 // Required params: SYMBOL, CAPITAL
 // Optional params: PUT_DELTA (0.30), PUT_DTE (45), CALL_DELTA (0.30),
 //   CALL_DTE (30), SLIPPAGE ("mid"), MULTIPLIER (100)

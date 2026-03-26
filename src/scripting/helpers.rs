@@ -15,7 +15,7 @@ use super::types::BarContext;
 // Internal: build a leg map for passing to build_strategy()
 // ---------------------------------------------------------------------------
 
-fn leg(side: &str, option_type: &str, delta: f64, dte: i64) -> Dynamic {
+pub(super) fn leg(side: &str, option_type: &str, delta: f64, dte: i64) -> Dynamic {
     let mut map = rhai::Map::new();
     map.insert("side".into(), side.into());
     map.insert("option_type".into(), option_type.into());
@@ -120,6 +120,128 @@ impl BarContext {
             }
         }
         true
+    }
+
+    // -----------------------------------------------------------------------
+    // Position sizing helpers
+    // -----------------------------------------------------------------------
+
+    /// Size by equity fraction: invest `fraction` of equity at current price.
+    ///
+    /// `fraction` > 1.0 allows leveraged sizing (e.g., 1.5 = 150% exposure).
+    ///
+    /// Usage: `ctx.size_by_equity(1.0)` → full equity, `ctx.size_by_equity(0.5)` → half
+    pub fn size_by_equity(&mut self, fraction: f64) -> i64 {
+        if self.close <= 0.0 || fraction <= 0.0 {
+            return 0;
+        }
+        ((self.equity * fraction) / self.close).floor() as i64
+    }
+
+    /// Size by risk percentage: risk `risk_pct` of equity per trade with a defined stop.
+    ///
+    /// `risk_pct`: fraction of equity to risk (e.g., 0.02 = 2%)
+    /// `stop_price`: price at which you'd exit (must be below current price).
+    ///   e.g., `ctx.close - 2.0 * ctx.atr(14)`
+    ///   Returns 0 if `stop_price >= close` (long-only: stop must be below entry).
+    ///
+    /// Usage: `ctx.size_by_risk(0.02, stop_price)` → shares where loss at stop = 2% of equity
+    pub fn size_by_risk(&mut self, risk_pct: f64, stop_price: f64) -> i64 {
+        let risk_per_share = self.close - stop_price;
+        if risk_per_share <= 0.0 || risk_pct <= 0.0 {
+            return 0;
+        }
+        let risk_amount = self.equity * risk_pct.min(1.0);
+        (risk_amount / risk_per_share).floor() as i64
+    }
+
+    /// Size by target volatility: normalize position size by ATR so each trade
+    /// has approximately equal dollar risk.
+    ///
+    /// `target_risk`: dollar risk per trade (e.g., 1000.0 = $1000 risk per position)
+    /// `atr_period`: ATR lookback period (must be declared in config indicators)
+    ///
+    /// Usage: `ctx.size_by_volatility(1000.0, 14)` → shares where 1 ATR move = $1000
+    pub fn size_by_volatility(&mut self, target_risk: f64, atr_period: i64) -> i64 {
+        if target_risk <= 0.0 {
+            return 0;
+        }
+        let atr_val = self.indicator_value("atr", atr_period);
+        if atr_val.is_unit() {
+            return 0;
+        }
+        let atr = match atr_val.as_float() {
+            Ok(v) if v > 0.0 => v,
+            _ => return 0,
+        };
+        let qty = (target_risk / atr).floor() as i64;
+        // Cap at full equity worth of shares
+        if self.close <= 0.0 {
+            return 0;
+        }
+        let max_shares = (self.equity / self.close).floor() as i64;
+        qty.min(max_shares).max(0)
+    }
+
+    /// Size by Kelly criterion: use historical win rate and avg win/loss to compute
+    /// optimal fraction of equity to bet.
+    ///
+    /// `fraction`: Kelly fraction (0.0–1.0). Use 0.5 for half-Kelly (recommended).
+    /// `lookback`: number of recent trades to consider (0 = all trades).
+    /// Returns 0 if fewer than 20 closed trades (cold start).
+    ///
+    /// Usage: `ctx.size_by_kelly(0.5, 0)` → half-Kelly using all trade history
+    pub fn size_by_kelly(&mut self, fraction: f64, lookback: i64) -> i64 {
+        const MIN_TRADES: usize = 20;
+
+        let trades = &*self.pnl_history;
+        if trades.len() < MIN_TRADES {
+            return 0;
+        }
+
+        // Slice to lookback window
+        let window = if lookback > 0 && (lookback as usize) < trades.len() {
+            &trades[trades.len() - lookback as usize..]
+        } else {
+            trades
+        };
+
+        if window.len() < MIN_TRADES {
+            return 0;
+        }
+
+        let wins: Vec<f64> = window.iter().filter(|&&p| p > 0.0).copied().collect();
+        let losses: Vec<f64> = window.iter().filter(|&&p| p < 0.0).copied().collect();
+
+        if wins.is_empty() || losses.is_empty() {
+            return 0;
+        }
+
+        let win_rate = wins.len() as f64 / window.len() as f64;
+        let avg_win = wins.iter().sum::<f64>() / wins.len() as f64;
+        let avg_loss = losses.iter().sum::<f64>().abs() / losses.len() as f64;
+
+        if avg_loss <= 0.0 {
+            return 0;
+        }
+
+        let win_loss_ratio = avg_win / avg_loss;
+
+        // Kelly formula: f* = W - (1 - W) / R
+        // where W = win rate, R = win/loss ratio
+        let kelly_pct = win_rate - (1.0 - win_rate) / win_loss_ratio;
+
+        if kelly_pct <= 0.0 {
+            return 0;
+        }
+
+        // Apply fractional Kelly and compute shares
+        if self.close <= 0.0 {
+            return 0;
+        }
+        let bet_size = self.equity * kelly_pct * fraction.clamp(0.0, 1.0);
+        let qty = (bet_size / self.close).floor() as i64;
+        qty.max(0)
     }
 
     // -----------------------------------------------------------------------
