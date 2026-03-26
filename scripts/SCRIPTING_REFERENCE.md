@@ -4,7 +4,7 @@ Guide for writing `.rhai` backtest scripts. The AI agent should reference this w
 
 ## Script Structure
 
-Every script must define `config()` and `on_bar(ctx)`. Other callbacks are optional.
+Every script must define `config()` and `on_bar(account)`. Other callbacks are optional.
 
 ```rhai
 // Top-level state variables (persisted across bars via Rhai scope)
@@ -15,25 +15,25 @@ fn config() {
     #{ symbol: params.SYMBOL, capital: params.CAPITAL, ... }
 }
 
-fn on_bar(ctx) {
+fn on_bar(account) {
     // Entry logic — return array of actions or []
     []
 }
 
-fn on_exit_check(ctx, pos) {
+fn on_exit_check(account, pos) {
     // Per-position exit logic — return close or hold
     #{ action: "hold" }
 }
 
-fn on_position_closed(ctx, pos, exit_type) {
+fn on_position_closed(account, pos, exit_type) {
     // Fires after any position close — state transitions, tracking
 }
 
-fn on_position_opened(ctx, pos) {
+fn on_position_opened(account, pos) {
     // Fires after a new position opens — logging, adjustments
 }
 
-fn on_end(ctx) {
+fn on_end(account) {
     // Fires once after the last bar — return custom metadata map (optional)
 }
 ```
@@ -43,13 +43,13 @@ fn on_end(ctx) {
 ```
 Phase A: Exits
   1. Auto-check: options at/past expiration → classify as expiration/assignment/called_away
-  2. on_exit_check(ctx, pos) called for each open position (oldest first)
-  3. Closed positions → on_position_closed(ctx, pos, exit_type)
+  2. on_exit_check(account, pos) called for each open position (oldest first)
+  3. Closed positions → on_position_closed(account, pos, exit_type)
 
 Phase B: Entries
-  4. on_bar(ctx) called with fresh context (positions updated from Phase A)
+  4. on_bar(account) called with fresh context (positions updated from Phase A)
   5. Actions processed: open_spread, open_stock, open_options, close, stop
-  6. Opened positions → on_position_opened(ctx, pos)
+  6. Opened positions → on_position_opened(account, pos)
 
 Phase C: Bookkeeping
   7. Mark-to-market all open positions (options via PriceTable, stocks via close)
@@ -67,7 +67,7 @@ inside callbacks are cleaned up, but mutations to top-level variables persist.
 let counter = 0;        // persists across bars
 let state = "initial";  // can be mutated in any callback
 
-fn on_bar(ctx) {
+fn on_bar(account) {
     counter += 1;        // mutation persists
     let temp = 42;       // cleaned up after this call returns
     []
@@ -89,7 +89,7 @@ fn config() {
         data: #{
             ohlcv: true,
             options: true,           // set true for options strategies
-            cross_symbols: ["VIX"],  // other symbols for ctx.price_of()
+            cross_symbols: ["VIX"],  // other symbols for account.price_of()
             indicators: ["sma:20", "rsi:14", "atr:14", "macd_line", "bbands_upper:20"],
         },
         engine: #{
@@ -108,104 +108,104 @@ fn config() {
 }
 ```
 
-## ctx Object — Available Methods
+## account Object — Available Methods
 
 ### Bar Data
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `ctx.date` | String | Current date (YYYY-MM-DD) |
-| `ctx.datetime` | String | Current datetime (ISO 8601) |
-| `ctx.open` | f64 | Current bar open price |
-| `ctx.high` | f64 | Current bar high price |
-| `ctx.low` | f64 | Current bar low price |
-| `ctx.close` | f64 | Current bar close price |
-| `ctx.volume` | f64 | Current bar volume |
-| `ctx.bar_idx` | i64 | Bar index (0-based) |
-| `ctx.price(n)` | f64 or () | Close price n bars ago. Returns () if n > bar_idx |
+| `account.date` | String | Current date (YYYY-MM-DD) |
+| `account.datetime` | String | Current datetime (ISO 8601) |
+| `account.open` | f64 | Current bar open price |
+| `account.high` | f64 | Current bar high price |
+| `account.low` | f64 | Current bar low price |
+| `account.close` | f64 | Current bar close price |
+| `account.volume` | f64 | Current bar volume |
+| `account.bar_idx` | i64 | Bar index (0-based) |
+| `account.price(n)` | f64 or () | Close price n bars ago. Returns () if n > bar_idx |
 
 ### Historical Bar Lookback (MQL4-inspired)
 Access OHLCV values N bars ago (0 = current bar). Returns `()` if out of range.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `ctx.high(n)` | f64 or () | High price N bars ago |
-| `ctx.low(n)` | f64 or () | Low price N bars ago |
-| `ctx.open(n)` | f64 or () | Open price N bars ago |
-| `ctx.close(n)` | f64 or () | Close price N bars ago |
-| `ctx.volume(n)` | f64 or () | Volume N bars ago |
+| `account.high(n)` | f64 or () | High price N bars ago |
+| `account.low(n)` | f64 or () | Low price N bars ago |
+| `account.open(n)` | f64 or () | Open price N bars ago |
+| `account.close(n)` | f64 or () | Close price N bars ago |
+| `account.volume(n)` | f64 or () | Volume N bars ago |
 
-Note: `ctx.high` (no args) returns current bar's high via getter. `ctx.high(0)` also returns current bar's high. `ctx.high(5)` returns the high from 5 bars ago.
+Note: `account.high` (no args) returns current bar's high via getter. `account.high(0)` also returns current bar's high. `account.high(5)` returns the high from 5 bars ago.
 
 ### Range Queries (MQL4-inspired iHighest/iLowest)
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `ctx.highest_high(period)` | f64 | Max high over last `period` bars (including current) |
-| `ctx.lowest_low(period)` | f64 | Min low over last `period` bars |
-| `ctx.highest_close(period)` | f64 | Max close over last `period` bars |
-| `ctx.lowest_close(period)` | f64 | Min close over last `period` bars |
+| `account.highest_high(period)` | f64 | Max high over last `period` bars (including current) |
+| `account.lowest_low(period)` | f64 | Min low over last `period` bars |
+| `account.highest_close(period)` | f64 | Max close over last `period` bars |
+| `account.lowest_close(period)` | f64 | Min close over last `period` bars |
 
 ### Portfolio
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `ctx.cash` | f64 | Available cash |
-| `ctx.equity` | f64 | Total portfolio value (cash + unrealized) |
-| `ctx.unrealized_pnl` | f64 | Sum of unrealized P&L across all open positions |
-| `ctx.realized_pnl` | f64 | Realized P&L (equity - starting capital) |
-| `ctx.total_exposure` | f64 | Sum of abs(entry_cost) across all open positions |
-| `ctx.positions()` | Array | All open positions |
-| `ctx.position_count` | i64 | Count of script-opened positions (excludes implicit) |
-| `ctx.has_positions()` | bool | True if any script-opened positions exist |
+| `account.cash` | f64 | Available cash |
+| `account.equity` | f64 | Total portfolio value (cash + unrealized) |
+| `account.unrealized_pnl` | f64 | Sum of unrealized P&L across all open positions |
+| `account.realized_pnl` | f64 | Realized P&L (equity - starting capital) |
+| `account.total_exposure` | f64 | Sum of abs(entry_cost) across all open positions |
+| `account.positions()` | Array | All open positions |
+| `account.position_count` | i64 | Count of script-opened positions (excludes implicit) |
+| `account.has_positions()` | bool | True if any script-opened positions exist |
 
 ### Indicators (current bar)
 All require declaration in `config().data.indicators`.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `ctx.sma(period)` | f64 or () | Simple Moving Average |
-| `ctx.ema(period)` | f64 or () | Exponential Moving Average |
-| `ctx.rsi(period)` | f64 or () | Relative Strength Index (0-100) |
-| `ctx.atr(period)` | f64 or () | Average True Range |
-| `ctx.macd_line()` | f64 or () | MACD line (defaults: 12, 26, 9) |
-| `ctx.macd_signal()` | f64 or () | MACD signal line |
-| `ctx.macd_hist()` | f64 or () | MACD histogram |
-| `ctx.bbands_upper(period)` | f64 or () | Bollinger upper band (std=2.0) |
-| `ctx.bbands_mid(period)` | f64 or () | Bollinger middle band (SMA) |
-| `ctx.bbands_lower(period)` | f64 or () | Bollinger lower band |
-| `ctx.stochastic(period)` | f64 or () | Stochastic %K |
-| `ctx.cci(period)` | f64 or () | Commodity Channel Index |
-| `ctx.obv()` | f64 or () | On-Balance Volume (cumulative) |
-| `ctx.indicator(name, period)` | f64 or () | Generic accessor |
+| `account.sma(period)` | f64 or () | Simple Moving Average |
+| `account.ema(period)` | f64 or () | Exponential Moving Average |
+| `account.rsi(period)` | f64 or () | Relative Strength Index (0-100) |
+| `account.atr(period)` | f64 or () | Average True Range |
+| `account.macd_line()` | f64 or () | MACD line (defaults: 12, 26, 9) |
+| `account.macd_signal()` | f64 or () | MACD signal line |
+| `account.macd_hist()` | f64 or () | MACD histogram |
+| `account.bbands_upper(period)` | f64 or () | Bollinger upper band (std=2.0) |
+| `account.bbands_mid(period)` | f64 or () | Bollinger middle band (SMA) |
+| `account.bbands_lower(period)` | f64 or () | Bollinger lower band |
+| `account.stochastic(period)` | f64 or () | Stochastic %K |
+| `account.cci(period)` | f64 or () | Commodity Channel Index |
+| `account.obv()` | f64 or () | On-Balance Volume (cumulative) |
+| `account.indicator(name, period)` | f64 or () | Generic accessor |
 
 **Custom parameter overloads:**
 | Method | Description |
 |--------|-------------|
-| `ctx.macd_line_custom(fast, slow, signal)` | MACD with custom periods |
-| `ctx.bbands_upper_custom(period, std_dev)` | BBands with custom std dev |
-| `ctx.stochastic_custom(k_period, d_smooth)` | Stochastic with custom smoothing |
+| `account.macd_line_custom(fast, slow, signal)` | MACD with custom periods |
+| `account.bbands_upper_custom(period, std_dev)` | BBands with custom std dev |
+| `account.stochastic_custom(k_period, d_smooth)` | Stochastic with custom smoothing |
 
 ### Indicator Lookback (for crossover detection)
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `ctx.sma_at(period, bars_ago)` | f64 or () | SMA N bars ago |
-| `ctx.ema_at(period, bars_ago)` | f64 or () | EMA N bars ago |
-| `ctx.rsi_at(period, bars_ago)` | f64 or () | RSI N bars ago |
-| `ctx.indicator_at(name, period, bars_ago)` | f64 or () | Any indicator N bars ago |
-| `ctx.crossed_above("sma:20", "sma:50")` | bool | True if first crossed above second this bar |
-| `ctx.crossed_below("sma:20", "sma:50")` | bool | True if first crossed below second this bar |
+| `account.sma_at(period, bars_ago)` | f64 or () | SMA N bars ago |
+| `account.ema_at(period, bars_ago)` | f64 or () | EMA N bars ago |
+| `account.rsi_at(period, bars_ago)` | f64 or () | RSI N bars ago |
+| `account.indicator_at(name, period, bars_ago)` | f64 or () | Any indicator N bars ago |
+| `account.crossed_above("sma:20", "sma:50")` | bool | True if first crossed above second this bar |
+| `account.crossed_below("sma:20", "sma:50")` | bool | True if first crossed below second this bar |
 
 ### Indicator Utility
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `ctx.indicators_ready(["sma:50", "rsi:14"])` | bool | True if all listed indicators have valid (non-NaN) values at current bar |
+| `account.indicators_ready(["sma:50", "rsi:14"])` | bool | True if all listed indicators have valid (non-NaN) values at current bar |
 
 Replaces repeated null-check boilerplate:
 ```rhai
 // Before: verbose null checks
-let sma50 = ctx.sma(50); let rsi = ctx.rsi(14);
+let sma50 = account.sma(50); let rsi = account.rsi(14);
 if sma50 == () || rsi == () { return []; }
 
 // After: one call
-if !ctx.indicators_ready(["sma:50", "rsi:14"]) { return []; }
+if !account.indicators_ready(["sma:50", "rsi:14"]) { return []; }
 ```
 
 ### Options Strategy Helpers
@@ -215,91 +215,91 @@ Named helpers that build and wrap strategies into ready-to-use action maps. All 
 #### Singles
 | Method | Description |
 |--------|-------------|
-| `ctx.long_call(call_delta, dte)` | Buy one call |
-| `ctx.short_call(call_delta, dte)` | Sell one call |
-| `ctx.long_put(put_delta, dte)` | Buy one put |
-| `ctx.short_put(put_delta, dte)` | Sell one put |
-| `ctx.covered_call(call_delta, dte)` | Sell one call (assumes stock held) |
+| `account.long_call(call_delta, dte)` | Buy one call |
+| `account.short_call(call_delta, dte)` | Sell one call |
+| `account.long_put(put_delta, dte)` | Buy one put |
+| `account.short_put(put_delta, dte)` | Sell one put |
+| `account.covered_call(call_delta, dte)` | Sell one call (assumes stock held) |
 
 #### Vertical Spreads
 | Method | Description |
 |--------|-------------|
-| `ctx.bull_call_spread(long_call_delta, short_call_delta, dte)` | Buy call + sell higher call |
-| `ctx.bear_call_spread(short_call_delta, long_call_delta, dte)` | Sell call + buy higher call |
-| `ctx.bull_put_spread(short_put_delta, long_put_delta, dte)` | Sell put + buy lower put |
-| `ctx.bear_put_spread(long_put_delta, short_put_delta, dte)` | Buy put + sell lower put |
+| `account.bull_call_spread(long_call_delta, short_call_delta, dte)` | Buy call + sell higher call |
+| `account.bear_call_spread(short_call_delta, long_call_delta, dte)` | Sell call + buy higher call |
+| `account.bull_put_spread(short_put_delta, long_put_delta, dte)` | Sell put + buy lower put |
+| `account.bear_put_spread(long_put_delta, short_put_delta, dte)` | Buy put + sell lower put |
 
 #### Straddles & Strangles
 | Method | Description |
 |--------|-------------|
-| `ctx.long_straddle(call_delta, put_delta, dte)` | Buy call + buy put |
-| `ctx.short_straddle(call_delta, put_delta, dte)` | Sell call + sell put |
-| `ctx.long_strangle(put_delta, call_delta, dte)` | Buy OTM put + buy OTM call |
-| `ctx.short_strangle(put_delta, call_delta, dte)` | Sell OTM put + sell OTM call |
+| `account.long_straddle(call_delta, put_delta, dte)` | Buy call + buy put |
+| `account.short_straddle(call_delta, put_delta, dte)` | Sell call + sell put |
+| `account.long_strangle(put_delta, call_delta, dte)` | Buy OTM put + buy OTM call |
+| `account.short_strangle(put_delta, call_delta, dte)` | Sell OTM put + sell OTM call |
 
 #### Butterflies
 | Method | Description |
 |--------|-------------|
-| `ctx.long_call_butterfly(lower_call_delta, center_call_delta, upper_call_delta, dte)` | Long wing + 2x short center + long wing (calls) |
-| `ctx.short_call_butterfly(lower_call_delta, center_call_delta, upper_call_delta, dte)` | Short wing + 2x long center + short wing (calls) |
-| `ctx.long_put_butterfly(lower_put_delta, center_put_delta, upper_put_delta, dte)` | Long wing + 2x short center + long wing (puts) |
-| `ctx.short_put_butterfly(lower_put_delta, center_put_delta, upper_put_delta, dte)` | Short wing + 2x long center + short wing (puts) |
+| `account.long_call_butterfly(lower_call_delta, center_call_delta, upper_call_delta, dte)` | Long wing + 2x short center + long wing (calls) |
+| `account.short_call_butterfly(lower_call_delta, center_call_delta, upper_call_delta, dte)` | Short wing + 2x long center + short wing (calls) |
+| `account.long_put_butterfly(lower_put_delta, center_put_delta, upper_put_delta, dte)` | Long wing + 2x short center + long wing (puts) |
+| `account.short_put_butterfly(lower_put_delta, center_put_delta, upper_put_delta, dte)` | Short wing + 2x long center + short wing (puts) |
 
 #### Condors (same option type)
 | Method | Description |
 |--------|-------------|
-| `ctx.long_call_condor(outer_lower_call_delta, inner_lower_call_delta, inner_upper_call_delta, outer_upper_call_delta, dte)` | 4-leg all-call condor |
-| `ctx.short_call_condor(outer_lower_call_delta, inner_lower_call_delta, inner_upper_call_delta, outer_upper_call_delta, dte)` | Inverted 4-leg call condor |
-| `ctx.long_put_condor(outer_lower_put_delta, inner_lower_put_delta, inner_upper_put_delta, outer_upper_put_delta, dte)` | 4-leg all-put condor |
-| `ctx.short_put_condor(outer_lower_put_delta, inner_lower_put_delta, inner_upper_put_delta, outer_upper_put_delta, dte)` | Inverted 4-leg put condor |
+| `account.long_call_condor(outer_lower_call_delta, inner_lower_call_delta, inner_upper_call_delta, outer_upper_call_delta, dte)` | 4-leg all-call condor |
+| `account.short_call_condor(outer_lower_call_delta, inner_lower_call_delta, inner_upper_call_delta, outer_upper_call_delta, dte)` | Inverted 4-leg call condor |
+| `account.long_put_condor(outer_lower_put_delta, inner_lower_put_delta, inner_upper_put_delta, outer_upper_put_delta, dte)` | 4-leg all-put condor |
+| `account.short_put_condor(outer_lower_put_delta, inner_lower_put_delta, inner_upper_put_delta, outer_upper_put_delta, dte)` | Inverted 4-leg put condor |
 
 #### Iron Strategies (mixed put + call)
 | Method | Description |
 |--------|-------------|
-| `ctx.iron_condor(short_put_delta, long_put_delta, short_call_delta, long_call_delta, dte)` | Sell put spread + sell call spread |
-| `ctx.reverse_iron_condor(long_put_delta, short_put_delta, long_call_delta, short_call_delta, dte)` | Buy put spread + buy call spread |
-| `ctx.iron_butterfly(short_put_delta, long_put_delta, short_call_delta, long_call_delta, dte)` | Sell ATM straddle + buy OTM wings |
-| `ctx.reverse_iron_butterfly(long_put_delta, short_put_delta, long_call_delta, short_call_delta, dte)` | Buy ATM straddle + sell OTM wings |
+| `account.iron_condor(short_put_delta, long_put_delta, short_call_delta, long_call_delta, dte)` | Sell put spread + sell call spread |
+| `account.reverse_iron_condor(long_put_delta, short_put_delta, long_call_delta, short_call_delta, dte)` | Buy put spread + buy call spread |
+| `account.iron_butterfly(short_put_delta, long_put_delta, short_call_delta, long_call_delta, dte)` | Sell ATM straddle + buy OTM wings |
+| `account.reverse_iron_butterfly(long_put_delta, short_put_delta, long_call_delta, short_call_delta, dte)` | Buy ATM straddle + sell OTM wings |
 
 #### Calendar & Diagonal (multi-expiration)
 | Method | Description |
 |--------|-------------|
-| `ctx.call_calendar(near_call_delta, far_call_delta, near_dte, far_dte)` | Short near call + long far call |
-| `ctx.put_calendar(near_put_delta, far_put_delta, near_dte, far_dte)` | Short near put + long far put |
-| `ctx.call_diagonal(short_call_delta, long_call_delta, near_dte, far_dte)` | Short near call + long far call (diff deltas) |
-| `ctx.put_diagonal(short_put_delta, long_put_delta, near_dte, far_dte)` | Short near put + long far put (diff deltas) |
-| `ctx.double_calendar(near_put_delta, far_put_delta, near_call_delta, far_call_delta, near_dte, far_dte)` | Put calendar + call calendar |
-| `ctx.double_diagonal(short_put_delta, long_put_delta, short_call_delta, long_call_delta, near_dte, far_dte)` | Put diagonal + call diagonal |
+| `account.call_calendar(near_call_delta, far_call_delta, near_dte, far_dte)` | Short near call + long far call |
+| `account.put_calendar(near_put_delta, far_put_delta, near_dte, far_dte)` | Short near put + long far put |
+| `account.call_diagonal(short_call_delta, long_call_delta, near_dte, far_dte)` | Short near call + long far call (diff deltas) |
+| `account.put_diagonal(short_put_delta, long_put_delta, near_dte, far_dte)` | Short near put + long far put (diff deltas) |
+| `account.double_calendar(near_put_delta, far_put_delta, near_call_delta, far_call_delta, near_dte, far_dte)` | Put calendar + call calendar |
+| `account.double_diagonal(short_put_delta, long_put_delta, short_call_delta, long_call_delta, near_dte, far_dte)` | Put diagonal + call diagonal |
 
 #### Usage Examples
 ```rhai
 // Bull put spread — returns ready action map
-let spread = ctx.bull_put_spread(0.30, 0.15, 45);
+let spread = account.bull_put_spread(0.30, 0.15, 45);
 if spread == () { return []; }
 [spread]
 
 // Iron condor with per-leg deltas
-let ic = ctx.iron_condor(0.30, 0.10, 0.30, 0.10, 45);
+let ic = account.iron_condor(0.30, 0.10, 0.30, 0.10, 45);
 if ic == () { return []; }
 [ic]
 
 // Multiple positions in one bar
-let put = ctx.short_put(0.25, 30);
-let call = ctx.short_call(0.25, 30);
+let put = account.short_put(0.25, 30);
+let call = account.short_call(0.25, 30);
 if put == () || call == () { return []; }
 [put, call]
 ```
 
 ### Low-Level Strategy Builder
 
-For custom leg combinations not covered by the helpers above, `ctx.build_strategy(legs)` accepts an array of leg maps. You must wrap the result in an action map manually.
+For custom leg combinations not covered by the helpers above, `account.build_strategy(legs)` accepts an array of leg maps. You must wrap the result in an action map manually.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `ctx.build_strategy(legs)` | Map or () | Build any options strategy from a legs array |
+| `account.build_strategy(legs)` | Map or () | Build any options strategy from a legs array |
 
 ```rhai
-let strat = ctx.build_strategy([
+let strat = account.build_strategy([
     #{ side: "short", option_type: "put", delta: 0.30, dte: 45 },
     #{ side: "long", option_type: "put", delta: 0.15, dte: 45 },
 ]);
@@ -311,8 +311,8 @@ if strat != () {
 ### Cross-Symbol
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `ctx.price_of(symbol)` | f64 or () | Close price of another symbol (forward-filled) |
-| `ctx.price_of_col(symbol, col)` | f64 or () | Specific column: "open", "high", "low", "close", "volume" |
+| `account.price_of(symbol)` | f64 or () | Close price of another symbol (forward-filled) |
+| `account.price_of_col(symbol, col)` | f64 or () | Specific column: "open", "high", "low", "close", "volume" |
 
 ## Action Helpers (returned by on_bar / on_exit_check)
 
@@ -329,9 +329,9 @@ Global helper functions that return ready-to-use action maps:
 
 ```rhai
 // on_bar — entry logic
-fn on_bar(ctx) {
+fn on_bar(account) {
     // Open a bull put spread
-    let spread = ctx.bull_put_spread(0.30, 0.15, 45);
+    let spread = account.bull_put_spread(0.30, 0.15, 45);
     if spread == () { return []; }
     [spread]
 
@@ -349,7 +349,7 @@ fn on_bar(ctx) {
 }
 
 // on_exit_check — per-position exit logic
-fn on_exit_check(ctx, pos) {
+fn on_exit_check(account, pos) {
     if pos.pnl_pct > 0.50 { return close_position("take_profit"); }
     if pos.pnl_pct < -2.0 { return close_position("stop_loss"); }
     hold_position()
@@ -361,7 +361,7 @@ fn on_exit_check(ctx, pos) {
 The helpers above return these maps. You can also construct them directly:
 
 ```rhai
-#{ action: "open_spread", spread: ctx.build_strategy([...]) }
+#{ action: "open_spread", spread: account.build_strategy([...]) }
 #{ action: "open_stock", side: "long", qty: 100 }
 #{ action: "close", position_id: pos.id, reason: "take_profit" }
 #{ action: "stop", reason: "capital_depleted" }

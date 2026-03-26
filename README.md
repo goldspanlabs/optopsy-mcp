@@ -125,7 +125,7 @@ Fixed quantity, fixed fractional, risk per trade, Kelly criterion, and volatilit
 
 ### Rhai Scripting Engine
 
-Write backtests as [Rhai](https://rhai.rs/) scripts with a callback-driven API. The engine provides a `BarContext` (`ctx`) object with access to OHLCV data, pre-computed indicators (SMA, EMA, RSI, ATR, MACD, Bollinger Bands, Stochastic, CCI, OBV), options chain lookup, portfolio state, and cross-symbol data. Scripts are fully sandboxed with no file or network access.
+Write backtests as [Rhai](https://rhai.rs/) scripts with a callback-driven API. The engine provides an `account` object with access to OHLCV data, pre-computed indicators (SMA, EMA, RSI, ATR, MACD, Bollinger Bands, Stochastic, CCI, OBV), options chain lookup, portfolio state, and cross-symbol data. Scripts are fully sandboxed with no file or network access.
 
 ```rhai
 fn config() {
@@ -133,14 +133,14 @@ fn config() {
        data: #{ ohlcv: true, options: true, indicators: ["rsi:14", "sma:50"] } }
 }
 
-fn on_bar(ctx) {
-    if ctx.position_count >= 3 { return []; }
-    let spread = ctx.short_put(0.30, 45);
+fn on_bar(account) {
+    if account.position_count >= 3 { return []; }
+    let spread = account.short_put(0.30, 45);
     if spread == () { return []; }
     [spread]
 }
 
-fn on_exit_check(ctx, pos) {
+fn on_exit_check(account, pos) {
     if pos.dte <= 7 { return close_position("dte_exit"); }
     hold_position()
 }
@@ -152,7 +152,7 @@ A built-in wheel strategy script is included and parameterized via constant inje
 
 ### 67 Indicators and Signal DSL
 
-RSI, MACD, Stochastic, Bollinger Bands, Keltner Channels, Supertrend, ATR, OBV, MFI, IV Rank, HMM regime filter, and more. Available as pre-computed O(1) lookups in Rhai scripts (`ctx.rsi(14)`, `ctx.sma(50)`) and as a formula DSL for the built-in backtest tools (`rsi(close, 14) < 30 and VIX > 20`).
+RSI, MACD, Stochastic, Bollinger Bands, Keltner Channels, Supertrend, ATR, OBV, MFI, IV Rank, HMM regime filter, and more. Available as pre-computed O(1) lookups in Rhai scripts (`account.rsi(14)`, `account.sma(50)`) and as a formula DSL for the built-in backtest tools (`rsi(close, 14) < 30 and VIX > 20`).
 
 ## Data
 
