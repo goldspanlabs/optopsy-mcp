@@ -102,11 +102,20 @@ pub fn parse_script_meta(id: &str, source: &str) -> ScriptMeta {
         if let Some(rest) = trimmed.strip_prefix("//!") {
             let rest = rest.trim();
             if let Some(val) = rest.strip_prefix("name:") {
-                name = Some(val.trim().to_string());
+                let val = val.trim();
+                if !val.is_empty() {
+                    name = Some(val.to_string());
+                }
             } else if let Some(val) = rest.strip_prefix("description:") {
-                description = Some(val.trim().to_string());
+                let val = val.trim();
+                if !val.is_empty() {
+                    description = Some(val.to_string());
+                }
             } else if let Some(val) = rest.strip_prefix("category:") {
-                category = Some(val.trim().to_string());
+                let val = val.trim();
+                if !val.is_empty() {
+                    category = Some(val.to_string());
+                }
             }
         } else if !trimmed.is_empty() && !trimmed.starts_with("//") {
             break; // Stop at first non-comment line

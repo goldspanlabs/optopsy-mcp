@@ -32,9 +32,9 @@ fn on_bar(ctx) {
     if ctx.has_positions() { return []; }
 
     // IBS = (close - low) / (high - low)
-    let range = ctx.high - ctx.low;
-    if range <= 0.0 { return []; }
-    let ibs = (ctx.close - ctx.low) / range;
+    let bar_range = ctx.high - ctx.low;
+    if bar_range <= 0.0 { return []; }
+    let ibs = (ctx.close - ctx.low) / bar_range;
 
     // Highest high over last 10 bars
     let hh10 = ctx.highest_high(10);
