@@ -58,7 +58,7 @@ fn register_bar_context(engine: &mut Engine) {
     // Methods
     engine.register_fn("price", BarContext::price);
     engine.register_fn("positions", BarContext::get_positions);
-    engine.register_fn("position_count", BarContext::position_count);
+    engine.register_get("position_count", BarContext::position_count);
     engine.register_fn("has_positions", BarContext::has_positions);
 
     // Indicators (current bar)
