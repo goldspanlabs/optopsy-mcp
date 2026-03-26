@@ -24,6 +24,7 @@ pub async fn execute(server: &OptopsyServer, params: RunScriptParams) -> Result<
     let ScriptBacktestResult {
         result,
         metadata: _,
+        indicator_data,
         ..
     } = crate::scripting::engine::run_script_backtest(&source, &params.params, &loader).await?;
 
@@ -61,11 +62,12 @@ pub async fn execute(server: &OptopsyServer, params: RunScriptParams) -> Result<
         equity_curve_length: result.equity_curve.len(),
         warnings: result.warnings,
         execution_time_ms: elapsed,
+        indicator_data,
         summary,
         key_findings: findings,
         suggested_next_steps: vec![
-            "Run parameter_sweep to optimize strategy parameters".to_string(),
             "Use monte_carlo to assess tail risk".to_string(),
+            "Try different parameters and compare results".to_string(),
         ],
     })
 }

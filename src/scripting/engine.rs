@@ -724,6 +724,7 @@ pub async fn run_script_backtest(
         },
         metadata,
         execution_time_ms: backtest_start.elapsed().as_millis() as u64,
+        indicator_data: indicator_store.to_series_map(),
     })
 }
 
@@ -1806,4 +1807,15 @@ pub struct ScriptBacktestResult {
     pub result: BacktestResult,
     pub metadata: Option<rhai::Map>,
     pub execution_time_ms: u64,
+    /// Pre-computed indicator series used by the script, keyed by declaration
+    /// (e.g., "sma:20", "rsi:14"). Each value is aligned to the bar index.
+    /// The FE can plot these on the chart to show what the script used.
+    pub indicator_data: HashMap<String, Vec<f64>>,
+}
+
+/// A single indicator series for JSON serialization in the response.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct IndicatorSeries {
+    pub name: String,
+    pub values: Vec<f64>,
 }

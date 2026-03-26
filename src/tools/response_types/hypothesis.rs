@@ -4,7 +4,7 @@ use garde::Validate;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::signals::registry::SignalSpec;
+use crate::engine::types::SignalSpec;
 
 use super::inputs::{default_analysis_years, default_dedup_threshold, default_significance};
 

@@ -38,64 +38,6 @@ pub(crate) fn tool_err(e: impl std::fmt::Display) -> String {
     format!("Error: {e}")
 }
 
-/// Parameters for the `build_signal` tool, supporting multiple actions (search, create, etc.).
-#[derive(Debug, Deserialize, JsonSchema, Validate)]
-pub struct BuildSignalParams {
-    /// Action to perform: "catalog", "search", "create", "list", "delete", "validate", or "get"
-    #[garde(length(min = 1))]
-    pub action: String,
-    /// Natural language description for action="search" (e.g. "RSI oversold", "MACD bullish")
-    #[serde(default)]
-    #[garde(inner(length(min = 1, max = 500), pattern(r"[^ \t\n\r]")))]
-    pub prompt: Option<String>,
-    /// Signal name (required for create, delete, get, update)
-    #[serde(default)]
-    #[garde(inner(length(min = 1, max = 64), pattern(r"^[A-Za-z0-9_-]+$")))]
-    pub name: Option<String>,
-    /// New signal name for storage (required for action="update"). Must be filesystem-safe.
-    #[serde(default)]
-    #[garde(inner(length(min = 1, max = 64), pattern(r"^[A-Za-z0-9_-]+$")))]
-    pub new_name: Option<String>,
-    /// Human-readable display name (may contain spaces). Used by action="update".
-    #[serde(default)]
-    #[garde(inner(length(min = 1, max = 100)))]
-    pub display_name: Option<String>,
-    /// Formula expression (required for create, validate).
-    /// Uses price columns (close, open, high, low, volume) with operators and functions.
-    /// Examples: "close > sma(close, 20)", "volume > sma(volume, 20) * 2.0"
-    #[serde(default)]
-    #[garde(inner(length(min = 1, max = 2000)))]
-    pub formula: Option<String>,
-    /// Optional description of what this signal detects
-    #[serde(default)]
-    #[garde(inner(length(max = 500)))]
-    pub description: Option<String>,
-    /// Whether to persist the signal to disk (default: true for create)
-    #[serde(default = "default_save")]
-    #[garde(skip)]
-    pub save: bool,
-    /// Chart display type: "overlay" or "subchart" (requires `chart_label` too)
-    #[serde(default)]
-    #[garde(skip)]
-    pub chart_display_type: Option<String>,
-    /// Chart label shown in the UI (requires `chart_display_type` too)
-    #[serde(default)]
-    #[garde(skip)]
-    pub chart_label: Option<String>,
-    /// Threshold levels to draw on the chart (e.g. [30.0, 70.0] for RSI)
-    #[serde(default)]
-    #[garde(skip)]
-    pub chart_thresholds: Option<Vec<f64>>,
-    /// Expression to chart (defaults to the signal formula if omitted)
-    #[serde(default)]
-    #[garde(skip)]
-    pub chart_expression: Option<String>,
-}
-
-fn default_save() -> bool {
-    true
-}
-
 // ── Analysis tool parameter structs ──────────────────────────────────────────
 
 /// Default years of history to fetch.
