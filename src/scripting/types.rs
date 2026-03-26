@@ -144,7 +144,7 @@ pub struct BarContext {
     pub cross_symbol_data: Arc<HashMap<String, Vec<CrossSymbolBar>>>,
 
     // Options data, pre-partitioned by date (None for pure stock backtests)
-    pub options_by_date: Option<Arc<super::engine::DatePartitionedOptions>>,
+    pub options_by_date: Option<Arc<super::options_cache::DatePartitionedOptions>>,
 
     // Config reference for ctx.config.defaults access
     pub config: Arc<ScriptConfig>,
@@ -869,34 +869,6 @@ fn parse_indicator_ref(s: &str) -> (String, i64) {
 // ---------------------------------------------------------------------------
 // Options chain helpers
 // ---------------------------------------------------------------------------
-
-/// Filter a DataFrame to rows matching a specific quote date.
-pub fn filter_to_date(
-    df: &polars::prelude::DataFrame,
-    date: NaiveDate,
-) -> Option<polars::prelude::DataFrame> {
-    use polars::prelude::*;
-
-    // The datetime column may be NaiveDateTime — we need to compare just the date part
-    let _datetime_col = df.column("datetime").ok()?;
-
-    // Build a boolean mask: date part of datetime == target date
-    let target_start = date.and_hms_opt(0, 0, 0)?;
-    let target_end = date.succ_opt()?.and_hms_opt(0, 0, 0)?;
-
-    let result = df
-        .clone()
-        .lazy()
-        .filter(
-            col("datetime")
-                .gt_eq(lit(target_start))
-                .and(col("datetime").lt(lit(target_end))),
-        )
-        .collect()
-        .ok()?;
-
-    Some(result)
-}
 
 /// Convert a DataFrame row to a Rhai Map for find_option results.
 /// Returns `#{ strike, bid, ask, delta, expiration, dte }` or `()`.

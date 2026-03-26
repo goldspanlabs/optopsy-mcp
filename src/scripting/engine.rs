@@ -18,64 +18,7 @@ use crate::engine::types::{
 };
 
 use super::indicators::IndicatorStore;
-
-// ---------------------------------------------------------------------------
-// Date-partitioned options: pre-split the full DataFrame by date at load time
-// so each bar does O(1) lookup + small-DF filter instead of scanning 20M rows.
-// ---------------------------------------------------------------------------
-
-/// Options data pre-partitioned by quote date for O(1) per-bar access.
-pub struct DatePartitionedOptions {
-    pub by_date: HashMap<NaiveDate, polars::prelude::DataFrame>,
-}
-
-impl DatePartitionedOptions {
-    /// Build from a full options DataFrame by grouping on the date portion of `datetime`.
-    pub fn from_df(df: &polars::prelude::DataFrame) -> Result<Self> {
-        use polars::prelude::*;
-
-        let col = df.column("datetime")?;
-        let dt_ca = col.datetime()?;
-        let tu = dt_ca.time_unit();
-        let n = df.height();
-        let mut date_indices: HashMap<NaiveDate, Vec<u32>> = HashMap::new();
-
-        for i in 0..n {
-            if let Some(raw) = dt_ca.phys.get(i) {
-                let ndt = match tu {
-                    TimeUnit::Milliseconds => {
-                        chrono::DateTime::from_timestamp_millis(raw).map(|dt| dt.naive_utc())
-                    }
-                    TimeUnit::Microseconds => {
-                        chrono::DateTime::from_timestamp_micros(raw).map(|dt| dt.naive_utc())
-                    }
-                    TimeUnit::Nanoseconds => {
-                        let secs = raw.div_euclid(1_000_000_000);
-                        let nsecs = raw.rem_euclid(1_000_000_000) as u32;
-                        chrono::DateTime::from_timestamp(secs, nsecs).map(|dt| dt.naive_utc())
-                    }
-                };
-                if let Some(ndt) = ndt {
-                    date_indices.entry(ndt.date()).or_default().push(i as u32);
-                }
-            }
-        }
-
-        let mut by_date = HashMap::with_capacity(date_indices.len());
-        for (date, indices) in date_indices {
-            let idx = IdxCa::new("idx".into(), &indices);
-            let slice = df.take(&idx)?;
-            by_date.insert(date, slice);
-        }
-
-        Ok(Self { by_date })
-    }
-
-    /// Get the options slice for a given date (typically ~5K-10K rows).
-    pub fn get(&self, date: NaiveDate) -> Option<&polars::prelude::DataFrame> {
-        self.by_date.get(&date)
-    }
-}
+use super::options_cache::DatePartitionedOptions;
 use super::registration::build_engine;
 use super::types::*;
 
@@ -120,32 +63,32 @@ pub async fn run_script_backtest(
         bail!("No OHLCV data found for symbol '{}'", config.symbol);
     }
 
-    // 4a. Resample to the configured interval.
-    // Detect if the raw data is higher-frequency than requested (e.g. minute data
-    // when daily is requested) by checking if there are many more bars than expected
-    // for daily granularity.
-    let ohlcv_df = if config.interval == Interval::Daily && ohlcv_df.height() > 10_000 {
-        // Data is likely intraday — resample to daily
+    // 4a. Resample to daily if needed.
+    // Detect intraday data by checking the time gap between the first two bars:
+    // a gap < 1 day means the data is sub-daily.
+    let data_is_intraday = is_intraday_data(&ohlcv_df);
+    let needs_daily =
+        (config.interval == Interval::Daily && data_is_intraday) || config.needs_options;
+
+    let ohlcv_df = if needs_daily && data_is_intraday {
         let original_rows = ohlcv_df.height();
         let resampled =
             crate::engine::ohlcv::resample_ohlcv(&ohlcv_df, crate::engine::types::Interval::Daily)?;
-        early_warnings.push(format!(
-            "Resampled {} intraday bars to {} daily bars",
-            original_rows,
-            resampled.height()
-        ));
-        resampled
-    } else if config.needs_options && config.interval != Interval::Daily {
-        let original_rows = ohlcv_df.height();
-        let resampled =
-            crate::engine::ohlcv::resample_ohlcv(&ohlcv_df, crate::engine::types::Interval::Daily)?;
-        early_warnings.push(format!(
-            "Options require daily data; resampled {} intraday ({:?}) bars to {} daily bars",
-            original_rows,
-            config.interval,
-            resampled.height()
-        ));
-        config.interval = Interval::Daily;
+        if config.needs_options && config.interval != Interval::Daily {
+            early_warnings.push(format!(
+                "Options require daily data; resampled {} intraday ({:?}) bars to {} daily bars",
+                original_rows,
+                config.interval,
+                resampled.height()
+            ));
+            config.interval = Interval::Daily;
+        } else {
+            early_warnings.push(format!(
+                "Resampled {} intraday bars to {} daily bars",
+                original_rows,
+                resampled.height()
+            ));
+        }
         resampled
     } else {
         ohlcv_df
@@ -1870,6 +1813,38 @@ fn ohlcv_bars_from_df(df: &polars::prelude::DataFrame) -> Result<Vec<OhlcvBar>> 
                 .unwrap_or(0.0),
         })
         .collect())
+}
+
+/// Detect whether a DataFrame contains intraday data by checking the time gap
+/// between the first two rows. A gap of less than one day indicates sub-daily bars.
+/// Returns `false` if the DataFrame has fewer than two rows or lacks a `datetime` column.
+fn is_intraday_data(df: &polars::prelude::DataFrame) -> bool {
+    use crate::engine::types::timestamp_to_naive_datetime;
+
+    if df.height() < 2 {
+        return false;
+    }
+
+    let Ok(col) = df.column("datetime") else {
+        return false;
+    };
+    let Ok(dt_ca) = col.datetime() else {
+        return false;
+    };
+    let tu = dt_ca.time_unit();
+
+    let (Some(raw0), Some(raw1)) = (dt_ca.phys.get(0), dt_ca.phys.get(1)) else {
+        return false;
+    };
+    let (Some(t0), Some(t1)) = (
+        timestamp_to_naive_datetime(raw0, tu),
+        timestamp_to_naive_datetime(raw1, tu),
+    ) else {
+        return false;
+    };
+
+    let gap = t1.signed_duration_since(t0);
+    gap < chrono::Duration::days(1)
 }
 
 // ---------------------------------------------------------------------------

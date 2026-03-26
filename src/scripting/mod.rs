@@ -7,6 +7,7 @@
 
 pub mod engine;
 pub mod indicators;
+pub mod options_cache;
 pub mod registration;
 pub mod stdlib;
 #[cfg(test)]

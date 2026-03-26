@@ -235,19 +235,7 @@ pub(crate) fn extract_date_from_column(col: &Column, idx: usize) -> Result<Naive
             let val = col.datetime()?.phys.get(idx);
             match val {
                 Some(v) => {
-                    let ndt = match tu {
-                        TimeUnit::Milliseconds => {
-                            chrono::DateTime::from_timestamp_millis(v).map(|dt| dt.naive_utc())
-                        }
-                        TimeUnit::Microseconds => {
-                            chrono::DateTime::from_timestamp_micros(v).map(|dt| dt.naive_utc())
-                        }
-                        TimeUnit::Nanoseconds => {
-                            let secs = v.div_euclid(1_000_000_000);
-                            let nsecs = v.rem_euclid(1_000_000_000) as u32;
-                            chrono::DateTime::from_timestamp(secs, nsecs).map(|dt| dt.naive_utc())
-                        }
-                    };
+                    let ndt = super::types::timestamp_to_naive_datetime(v, *tu);
                     match ndt {
                         Some(dt) => Ok(dt.date()),
                         None => bail!("Invalid datetime value at index {idx}"),
@@ -291,19 +279,7 @@ pub(crate) fn extract_datetime_from_column(
             let val = col.datetime()?.phys.get(idx);
             match val {
                 Some(v) => {
-                    let ndt = match tu {
-                        TimeUnit::Milliseconds => {
-                            chrono::DateTime::from_timestamp_millis(v).map(|dt| dt.naive_utc())
-                        }
-                        TimeUnit::Microseconds => {
-                            chrono::DateTime::from_timestamp_micros(v).map(|dt| dt.naive_utc())
-                        }
-                        TimeUnit::Nanoseconds => {
-                            let secs = v.div_euclid(1_000_000_000);
-                            let nsecs = v.rem_euclid(1_000_000_000) as u32;
-                            chrono::DateTime::from_timestamp(secs, nsecs).map(|dt| dt.naive_utc())
-                        }
-                    };
+                    let ndt = super::types::timestamp_to_naive_datetime(v, *tu);
                     ndt.ok_or_else(|| anyhow::anyhow!("Invalid datetime value at index {idx}"))
                 }
                 None => bail!("Null datetime at index {idx}"),
