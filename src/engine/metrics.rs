@@ -5,6 +5,8 @@
 
 use anyhow::Result;
 
+use crate::constants::CALENDAR_DAYS_PER_YEAR;
+
 use super::types::{EquityPoint, PerformanceMetrics, TradeRecord};
 
 /// Maximum finite value for profit factor when there are no losing trades.
@@ -192,7 +194,7 @@ fn compute_equity_metrics(
     let total_return_pct = total_return * 100.0;
 
     let (cagr, calmar) = if calendar_days >= MIN_CALENDAR_DAYS_FOR_ANNUALIZED {
-        let years = calendar_days / 365.0;
+        let years = calendar_days / CALENDAR_DAYS_PER_YEAR as f64;
         let cagr = if final_equity > 0.0 && initial_capital > 0.0 {
             (final_equity / initial_capital).powf(1.0 / years) - 1.0
         } else {

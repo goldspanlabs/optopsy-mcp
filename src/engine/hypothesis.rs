@@ -3,6 +3,8 @@
 //! returns ranked hypotheses with deployable signal specs.
 
 use chrono::{Datelike, NaiveDate};
+
+use crate::constants::TRADING_DAYS_PER_YEAR;
 use statrs::distribution::{ContinuousCDF, Normal};
 use std::collections::{HashMap, HashSet};
 
@@ -141,7 +143,7 @@ pub fn generate_hypotheses(
         let m = stats::mean(returns);
         let sd = stats::std_dev(returns);
         let sharpe = if sd > 0.0 {
-            m / sd * (252.0_f64).sqrt()
+            m / sd * TRADING_DAYS_PER_YEAR.sqrt()
         } else {
             0.0
         };

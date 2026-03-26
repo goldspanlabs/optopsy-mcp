@@ -4,11 +4,13 @@
 //! Momentum) using ETF proxies and OLS regression. Identifies whether returns
 //! are driven by genuine alpha or by exposure to known risk premia.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::sync::Arc;
 
+use crate::constants::{P_VALUE_THRESHOLD, TRADING_DAYS_PER_YEAR};
 use crate::data::cache::CachedStore;
 use crate::server::FactorProxies;
+use crate::tools::ai_helpers::{compute_years_cutoff, load_returns};
 use crate::tools::response_types::{FactorAttributionResponse, FactorExposure};
 
 /// Execute the factor attribution analysis.
@@ -22,8 +24,7 @@ pub async fn execute(
 ) -> Result<FactorAttributionResponse> {
     let upper = symbol.to_uppercase();
     let bench_upper = benchmark.to_uppercase();
-    let cutoff = chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
-    let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
+    let cutoff_str = compute_years_cutoff(years);
 
     // Load target returns
     let target_returns = load_returns(cache, &upper, &cutoff_str).await?;
@@ -109,19 +110,19 @@ pub async fn execute(
     let result = multi_factor_ols(&y, &factors);
 
     let alpha = result.coefficients[0];
-    let alpha_annualized = alpha * 252.0; // Annualize daily alpha
+    let alpha_annualized = alpha * TRADING_DAYS_PER_YEAR; // Annualize daily alpha
 
     // Build factor exposures
     let mut factor_exposures: Vec<FactorExposure> = Vec::new();
     let mut total_factor_contribution = 0.0;
-    let total_mean_return = y.iter().sum::<f64>() / n as f64 * 252.0;
+    let total_mean_return = y.iter().sum::<f64>() / n as f64 * TRADING_DAYS_PER_YEAR;
 
     for (i, name) in factor_names.iter().enumerate() {
         let beta = result.coefficients[i + 1];
         let t_stat = result.t_stats[i + 1];
         let p_val = result.p_values[i + 1];
         let factor_mean = factors[i].iter().sum::<f64>() / factors[i].len() as f64;
-        let contribution = beta * factor_mean * 252.0; // Annualized
+        let contribution = beta * factor_mean * TRADING_DAYS_PER_YEAR; // Annualized
         total_factor_contribution += contribution;
 
         factor_exposures.push(FactorExposure {
@@ -129,7 +130,7 @@ pub async fn execute(
             beta,
             t_stat,
             p_value: p_val,
-            is_significant: p_val < 0.05,
+            is_significant: p_val < P_VALUE_THRESHOLD,
             return_contribution_pct: if total_mean_return.abs() > 1e-10 {
                 contribution / total_mean_return * 100.0
             } else {
@@ -140,7 +141,7 @@ pub async fn execute(
 
     let alpha_t_stat = result.t_stats[0];
     let alpha_p_value = result.p_values[0];
-    let alpha_significant = alpha_p_value < 0.05;
+    let alpha_significant = alpha_p_value < P_VALUE_THRESHOLD;
 
     let pct_explained = if total_mean_return.abs() > 1e-10 {
         (total_factor_contribution / total_mean_return * 100.0).clamp(0.0, 100.0)
@@ -228,40 +229,6 @@ pub async fn execute(
         key_findings,
         suggested_next_steps,
     })
-}
-
-/// Load daily returns for a symbol.
-async fn load_returns(
-    cache: &Arc<CachedStore>,
-    symbol: &str,
-    cutoff_str: &str,
-) -> Result<Vec<f64>> {
-    let resp = crate::tools::raw_prices::load_and_execute(
-        cache,
-        symbol,
-        Some(cutoff_str),
-        None,
-        None,
-        crate::engine::types::Interval::Daily,
-        None,
-    )
-    .await
-    .context(format!("Failed to load OHLCV data for {symbol}"))?;
-
-    let returns: Vec<f64> = resp
-        .prices
-        .windows(2)
-        .filter_map(|w| {
-            if w[0].close == 0.0 {
-                None
-            } else {
-                Some((w[1].close - w[0].close) / w[0].close)
-            }
-        })
-        .filter(|r| r.is_finite())
-        .collect();
-
-    Ok(returns)
 }
 
 /// Result of a multi-factor OLS regression.

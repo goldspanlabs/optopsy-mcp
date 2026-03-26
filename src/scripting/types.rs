@@ -9,6 +9,8 @@ use std::sync::Arc;
 
 use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike};
 
+use crate::constants::TRADING_DAYS_PER_YEAR;
+
 use crate::engine::types::{
     Commission, ExpirationFilter, OptionType, Side, Slippage, TradeSelector,
 };
@@ -73,16 +75,16 @@ impl Interval {
     #[must_use]
     pub fn bars_per_year(self) -> f64 {
         match self {
-            Self::Daily => 252.0,
+            Self::Daily => TRADING_DAYS_PER_YEAR,
             Self::Intraday(intra) => match intra {
-                IntradayInterval::Min1 => 252.0 * 390.0,
-                IntradayInterval::Min5 => 252.0 * 78.0,
-                IntradayInterval::Min10 => 252.0 * 39.0,
-                IntradayInterval::Min15 => 252.0 * 26.0,
-                IntradayInterval::Min30 => 252.0 * 13.0,
-                IntradayInterval::Hour1 => 252.0 * 6.5,
-                IntradayInterval::Hour2 => 252.0 * 3.25,
-                IntradayInterval::Hour4 => 252.0 * 1.625,
+                IntradayInterval::Min1 => TRADING_DAYS_PER_YEAR * 390.0,
+                IntradayInterval::Min5 => TRADING_DAYS_PER_YEAR * 78.0,
+                IntradayInterval::Min10 => TRADING_DAYS_PER_YEAR * 39.0,
+                IntradayInterval::Min15 => TRADING_DAYS_PER_YEAR * 26.0,
+                IntradayInterval::Min30 => TRADING_DAYS_PER_YEAR * 13.0,
+                IntradayInterval::Hour1 => TRADING_DAYS_PER_YEAR * 6.5,
+                IntradayInterval::Hour2 => TRADING_DAYS_PER_YEAR * 3.25,
+                IntradayInterval::Hour4 => TRADING_DAYS_PER_YEAR * 1.625,
             },
         }
     }

@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::constants::P_VALUE_THRESHOLD;
 use crate::data::cache::CachedStore;
 use crate::stats;
 use crate::tools::ai_format;
@@ -263,7 +264,7 @@ pub async fn execute(
                 f_statistic: f_stat,
                 p_value: gp,
                 lag_order: order,
-                is_significant: gp < 0.05,
+                is_significant: gp < P_VALUE_THRESHOLD,
             });
         }
         // Test: does A Granger-cause B?
@@ -277,7 +278,7 @@ pub async fn execute(
                 f_statistic: f_stat,
                 p_value: gp,
                 lag_order: order,
-                is_significant: gp < 0.05,
+                is_significant: gp < P_VALUE_THRESHOLD,
             });
         }
 

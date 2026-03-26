@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use std::sync::Arc;
 
+use crate::constants::TRADING_DAYS_PER_YEAR;
 use crate::data::cache::CachedStore;
 use crate::stats;
 use crate::tools::ai_format;
@@ -115,7 +116,7 @@ pub async fn execute(
     };
 
     // Compute rolling metric
-    let annualization = 252.0_f64.sqrt();
+    let annualization = TRADING_DAYS_PER_YEAR.sqrt();
     let series_values: Vec<f64> = match metric {
         "volatility" => {
             stats::rolling_apply(&returns, window, |w| {
@@ -131,7 +132,7 @@ pub async fn execute(
             }
         }),
         "mean_return" => stats::rolling_apply(&returns, window, |w| {
-            stats::mean(w) * 252.0 * 100.0 // annualized %
+            stats::mean(w) * TRADING_DAYS_PER_YEAR * 100.0 // annualized %
         }),
         "max_drawdown" => stats::rolling_apply(&returns, window, |w| {
             let mut equity: f64 = 1.0;

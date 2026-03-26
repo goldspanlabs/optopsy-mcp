@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use std::sync::Arc;
 
+use crate::constants::{CALENDAR_DAYS_PER_YEAR, P_VALUE_THRESHOLD};
 use crate::data::cache::CachedStore;
 use crate::stats;
 use crate::tools::ai_format;
@@ -20,8 +21,8 @@ pub async fn execute(
     {
         DistributionSource::PriceReturns { symbol, years } => {
             let upper = symbol.to_uppercase();
-            let cutoff =
-                chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(*years) * 365);
+            let cutoff = chrono::Utc::now().date_naive()
+                - chrono::Duration::days(i64::from(*years) * CALENDAR_DAYS_PER_YEAR);
             let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
 
             let resp = crate::tools::raw_prices::load_and_execute(
@@ -102,7 +103,7 @@ pub async fn execute(
         test_name: "Jarque-Bera".to_string(),
         statistic: r.statistic,
         p_value: r.p_value,
-        is_normal: r.p_value > 0.05,
+        is_normal: r.p_value > P_VALUE_THRESHOLD,
     });
 
     // Tail ratio

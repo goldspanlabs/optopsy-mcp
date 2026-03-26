@@ -8,6 +8,8 @@
 use anyhow::{Context, Result};
 use std::sync::Arc;
 
+use crate::constants::CALENDAR_DAYS_PER_YEAR;
+
 use crate::data::cache::CachedStore;
 use crate::tools::response_types::{
     DrawdownAnalysisResponse, DrawdownEpisode, DrawdownStats, UnderwaterPoint,
@@ -21,7 +23,8 @@ pub async fn execute(
     years: u32,
 ) -> Result<DrawdownAnalysisResponse> {
     let upper = symbol.to_uppercase();
-    let cutoff = chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
+    let cutoff = chrono::Utc::now().date_naive()
+        - chrono::Duration::days(i64::from(years) * CALENDAR_DAYS_PER_YEAR);
     let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
 
     let resp = crate::tools::raw_prices::load_and_execute(

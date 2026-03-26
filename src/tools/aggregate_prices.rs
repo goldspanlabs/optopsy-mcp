@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use chrono::{Datelike, Timelike};
 use std::sync::Arc;
 
+use crate::constants::CALENDAR_DAYS_PER_YEAR;
 use crate::data::cache::CachedStore;
 use crate::stats;
 use crate::tools::ai_format;
@@ -68,8 +69,8 @@ pub async fn execute(
     // load_and_execute bypasses its 7-day intraday cutoff (which only triggers
     // when start_date is None).
     let years_start = if start_date.is_none() && end_date.is_none() && years < 50 {
-        let cutoff =
-            chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
+        let cutoff = chrono::Utc::now().date_naive()
+            - chrono::Duration::days(i64::from(years) * CALENDAR_DAYS_PER_YEAR);
         Some(cutoff.format("%Y-%m-%d").to_string())
     } else {
         None

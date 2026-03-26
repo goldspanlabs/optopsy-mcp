@@ -4,10 +4,12 @@
 //! tracking error, and up/down capture ratios by comparing asset returns
 //! to a benchmark.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::sync::Arc;
 
+use crate::constants::TRADING_DAYS_PER_YEAR;
 use crate::data::cache::CachedStore;
+use crate::tools::ai_helpers::{compute_years_cutoff, load_returns};
 use crate::tools::response_types::BenchmarkAnalysisResponse;
 
 /// Execute benchmark-relative analysis.
@@ -20,8 +22,7 @@ pub async fn execute(
 ) -> Result<BenchmarkAnalysisResponse> {
     let upper = symbol.to_uppercase();
     let bench_upper = benchmark.to_uppercase();
-    let cutoff = chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
-    let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
+    let cutoff_str = compute_years_cutoff(years);
 
     // Load both return series
     let asset_returns = load_returns(cache, &upper, &cutoff_str).await?;
@@ -52,7 +53,7 @@ pub async fn execute(
 
     let beta = if var_b > 0.0 { cov_ab / var_b } else { 0.0 };
     let alpha_daily = mean_a - beta * mean_b;
-    let alpha_annualized = alpha_daily * 252.0;
+    let alpha_annualized = alpha_daily * TRADING_DAYS_PER_YEAR;
 
     // R² and residual analysis
     let ss_tot: f64 = asset_ret.iter().map(|a| (a - mean_a).powi(2)).sum();
@@ -100,18 +101,18 @@ pub async fn execute(
         .sum::<f64>()
         / (n - 1) as f64)
         .sqrt();
-    let tracking_error = tracking_error_daily * 252.0_f64.sqrt();
+    let tracking_error = tracking_error_daily * TRADING_DAYS_PER_YEAR.sqrt();
 
     // Information Ratio = annualized excess return / tracking error
     let information_ratio = if tracking_error > 0.0 {
-        (excess_mean * 252.0) / tracking_error
+        (excess_mean * TRADING_DAYS_PER_YEAR) / tracking_error
     } else {
         0.0
     };
 
     // Treynor ratio = annualized mean return / beta (no risk-free subtraction)
     let treynor = if beta.abs() > 1e-10 {
-        (mean_a * 252.0) / beta
+        (mean_a * TRADING_DAYS_PER_YEAR) / beta
     } else {
         0.0
     };
@@ -212,40 +213,6 @@ pub async fn execute(
         key_findings,
         suggested_next_steps,
     })
-}
-
-/// Load daily returns for a symbol.
-async fn load_returns(
-    cache: &Arc<CachedStore>,
-    symbol: &str,
-    cutoff_str: &str,
-) -> Result<Vec<f64>> {
-    let resp = crate::tools::raw_prices::load_and_execute(
-        cache,
-        symbol,
-        Some(cutoff_str),
-        None,
-        None,
-        crate::engine::types::Interval::Daily,
-        None,
-    )
-    .await
-    .context(format!("Failed to load OHLCV data for {symbol}"))?;
-
-    let returns: Vec<f64> = resp
-        .prices
-        .windows(2)
-        .filter_map(|w| {
-            if w[0].close == 0.0 {
-                None
-            } else {
-                Some((w[1].close - w[0].close) / w[0].close)
-            }
-        })
-        .filter(|r| r.is_finite())
-        .collect();
-
-    Ok(returns)
 }
 
 /// Compute up and down capture ratios.

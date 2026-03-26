@@ -4,6 +4,10 @@
 //! warnings) so that all formatting modules use consistent language and thresholds.
 
 use anyhow::Context;
+use std::sync::Arc;
+
+use crate::constants::CALENDAR_DAYS_PER_YEAR;
+use crate::data::cache::CachedStore;
 
 use super::response_types::PriceBar;
 
@@ -39,7 +43,8 @@ pub(crate) fn epoch_to_timestamp_string(
 
 /// Compute a date cutoff string (YYYY-MM-DD) going back `years` from today.
 pub(crate) fn compute_years_cutoff(years: u32) -> String {
-    let cutoff = chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
+    let cutoff = chrono::Utc::now().date_naive()
+        - chrono::Duration::days(i64::from(years) * CALENDAR_DAYS_PER_YEAR);
     cutoff.format("%Y-%m-%d").to_string()
 }
 
@@ -70,6 +75,41 @@ pub(crate) fn compute_returns(prices: &[PriceBar]) -> (Vec<f64>, Vec<i64>) {
         .collect();
     let dates: Vec<i64> = prices[1..].iter().map(|p| p.date).collect();
     (returns, dates)
+}
+
+/// Load daily OHLCV prices for `symbol` starting from `cutoff_str` and compute
+/// simple returns, filtering out zero-price bars and non-finite values.
+pub(crate) async fn load_returns(
+    cache: &Arc<CachedStore>,
+    symbol: &str,
+    cutoff_str: &str,
+) -> anyhow::Result<Vec<f64>> {
+    let resp = crate::tools::raw_prices::load_and_execute(
+        cache,
+        symbol,
+        Some(cutoff_str),
+        None,
+        None,
+        crate::engine::types::Interval::Daily,
+        None,
+    )
+    .await
+    .context(format!("Failed to load OHLCV data for {symbol}"))?;
+
+    let returns: Vec<f64> = resp
+        .prices
+        .windows(2)
+        .filter_map(|w| {
+            if w[0].close == 0.0 {
+                None
+            } else {
+                Some((w[1].close - w[0].close) / w[0].close)
+            }
+        })
+        .filter(|r| r.is_finite())
+        .collect();
+
+    Ok(returns)
 }
 
 /// Compute p-value for a Pearson correlation coefficient.

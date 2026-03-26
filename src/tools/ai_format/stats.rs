@@ -4,6 +4,7 @@
 //! `correlate`, `rolling_metric`, and `regime_detect`, following the same
 //! pattern as the backtest and data formatters.
 
+use crate::constants::P_VALUE_THRESHOLD;
 use crate::tools::response_types::{
     AggregateBucket, AggregatePricesResponse, CorrelateResponse, DateRange, DistributionResponse,
     HistogramBin, LagAnalysis, NormalityTest, RegimeDetectResponse, RegimeInfo, RegimeSeriesPoint,
@@ -26,7 +27,7 @@ pub fn format_aggregate_prices(
 
     let sig_buckets: Vec<&AggregateBucket> = buckets
         .iter()
-        .filter(|b| b.p_value.is_some_and(|p| p < 0.05))
+        .filter(|b| b.p_value.is_some_and(|p| p < P_VALUE_THRESHOLD))
         .collect();
 
     let summary = if metric == "return" {
@@ -322,7 +323,7 @@ pub fn format_correlate(
             "p-value={p:.4} — {}",
             if p < 0.01 {
                 "highly significant"
-            } else if p < 0.05 {
+            } else if p < P_VALUE_THRESHOLD {
                 "significant"
             } else {
                 "not significant"

@@ -3,6 +3,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::constants::TRADING_DAYS_PER_YEAR;
+
 /// Bar interval for OHLCV resampling.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -43,16 +45,16 @@ impl Interval {
     /// `Hour4` uses 2 bars/day (approximate for a 6.5h session).
     pub fn bars_per_year(self) -> f64 {
         match self {
-            Self::Daily => 252.0,
+            Self::Daily => TRADING_DAYS_PER_YEAR,
             Self::Weekly => 52.0,
             Self::Monthly => 12.0,
-            Self::Min1 => 252.0 * 390.0,
-            Self::Min5 => 252.0 * 78.0,
-            Self::Min10 => 252.0 * 39.0,
-            Self::Min15 => 252.0 * 26.0,
-            Self::Min30 => 252.0 * 13.0,
-            Self::Hour1 => 252.0 * 7.0,
-            Self::Hour4 => 252.0 * 2.0,
+            Self::Min1 => TRADING_DAYS_PER_YEAR * 390.0,
+            Self::Min5 => TRADING_DAYS_PER_YEAR * 78.0,
+            Self::Min10 => TRADING_DAYS_PER_YEAR * 39.0,
+            Self::Min15 => TRADING_DAYS_PER_YEAR * 26.0,
+            Self::Min30 => TRADING_DAYS_PER_YEAR * 13.0,
+            Self::Hour1 => TRADING_DAYS_PER_YEAR * 7.0,
+            Self::Hour4 => TRADING_DAYS_PER_YEAR * 2.0,
         }
     }
 

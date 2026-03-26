@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::constants::TRADING_DAYS_PER_YEAR;
 use crate::data::cache::CachedStore;
 use crate::engine::hypothesis::{generate_hypotheses, HypothesisConfig};
 use crate::engine::types::HypothesisDimension;
@@ -120,7 +121,7 @@ pub async fn execute(
 fn compute_regime_labels(returns: &[f64]) -> (Vec<usize>, Vec<String>, usize) {
     let n_regimes = 2;
     let lookback = 20;
-    let annualization = 252.0_f64.sqrt();
+    let annualization = TRADING_DAYS_PER_YEAR.sqrt();
     let rolling_vol = crate::stats::rolling::rolling_apply(returns, lookback, |w| {
         crate::stats::std_dev(w) * annualization
     });

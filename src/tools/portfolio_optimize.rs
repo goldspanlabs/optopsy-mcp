@@ -6,6 +6,7 @@
 use anyhow::{Context, Result};
 use std::sync::Arc;
 
+use crate::constants::{CALENDAR_DAYS_PER_YEAR, TRADING_DAYS_PER_YEAR};
 use crate::data::cache::CachedStore;
 use crate::tools::response_types::{
     AssetStats, CorrelationEntry, OptimalWeight, OptimizationResult, PortfolioOptimizeResponse,
@@ -23,7 +24,8 @@ pub async fn execute(
     years: u32,
     risk_free_rate: f64,
 ) -> Result<PortfolioOptimizeResponse> {
-    let cutoff = chrono::Utc::now().date_naive() - chrono::Duration::days(i64::from(years) * 365);
+    let cutoff = chrono::Utc::now().date_naive()
+        - chrono::Duration::days(i64::from(years) * CALENDAR_DAYS_PER_YEAR);
     let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
 
     // Load returns for all symbols
@@ -87,13 +89,13 @@ pub async fn execute(
         .map(|r| r.iter().sum::<f64>() / r.len() as f64)
         .collect();
 
-    let annualized_returns: Vec<f64> = means.iter().map(|m| m * 252.0).collect();
+    let annualized_returns: Vec<f64> = means.iter().map(|m| m * TRADING_DAYS_PER_YEAR).collect();
     let annualized_vols: Vec<f64> = aligned
         .iter()
         .map(|r| {
             let m = r.iter().sum::<f64>() / r.len() as f64;
             let var = r.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (r.len() - 1) as f64;
-            var.sqrt() * 252.0_f64.sqrt()
+            var.sqrt() * TRADING_DAYS_PER_YEAR.sqrt()
         })
         .collect();
 
@@ -107,7 +109,7 @@ pub async fn execute(
                 .map(|(a, b)| (a - means[i]) * (b - means[j]))
                 .sum::<f64>()
                 / (min_len - 1) as f64;
-            cov_matrix[i][j] = cov * 252.0; // Annualize
+            cov_matrix[i][j] = cov * TRADING_DAYS_PER_YEAR; // Annualize
         }
     }
 
