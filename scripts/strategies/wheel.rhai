@@ -4,8 +4,6 @@
 // Optional params: PUT_DELTA (0.30), PUT_DTE (45), CALL_DELTA (0.30),
 //   CALL_DTE (30), SLIPPAGE ("mid"), MULTIPLIER (100)
 
-// Top-level variables persist across bars (Rhai scope is preserved).
-// Use these for state machines, counters, or tracking values between callbacks.
 let state = "selling_puts";
 let stock = #{
     entry_price: 0.0,
@@ -16,14 +14,6 @@ let stock = #{
 };
 let cycles_completed = 0;
 
-// ---------------------------------------------------------------------------
-// config() — Called once before the simulation starts.
-//
-// Returns a map describing what data to load and how the engine should behave.
-// Required fields: symbol, capital.
-// Optional: interval, data (ohlcv/options/indicators), engine (slippage,
-//   commission, expiration_filter), defaults (script-readable values).
-// ---------------------------------------------------------------------------
 fn config() {
     #{
         symbol: params.SYMBOL,
@@ -108,19 +98,6 @@ fn on_exit_check(ctx, pos) {
     hold_position()
 }
 
-// ---------------------------------------------------------------------------
-// on_position_closed(ctx, pos, exit_type) — Called after a position is closed.
-//
-// Fires for ALL close reasons: expiration, assignment, called_away, take_profit,
-// stop_loss, dte_exit, signal, end_of_data, etc.
-//
-// The position is already removed from ctx.positions when this fires.
-// pos is a snapshot of the closed position (same fields as on_exit_check).
-// exit_type is a string matching the close reason.
-//
-// Common uses: state machine transitions, tracking win/loss streaks,
-// accumulating statistics, adjusting risk after losses.
-// ---------------------------------------------------------------------------
 fn on_position_closed(ctx, pos, exit_type) {
     if state == "selling_puts" {
         if exit_type == "assignment" {

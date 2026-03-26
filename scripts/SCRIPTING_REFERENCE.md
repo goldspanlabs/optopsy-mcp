@@ -360,6 +360,7 @@ fn on_bar(ctx) {
     []
 }
 
+
 // on_exit_check — per-position exit logic
 fn on_exit_check(ctx, pos) {
     if pos.pnl_pct > 0.50 { return close_position("take_profit"); }
