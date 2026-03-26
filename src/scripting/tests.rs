@@ -594,4 +594,289 @@ mod tests {
         assert_eq!(scope.get_value::<String>("state").unwrap(), "holding_stock");
         assert_eq!(scope.get_value::<f64>("cost_basis").unwrap(), 395.0);
     }
+
+    // -----------------------------------------------------------------------
+    // BarContext helper
+    // -----------------------------------------------------------------------
+
+    use crate::engine::types::{ExpirationFilter, Slippage, TradeSelector};
+    use crate::scripting::types::{
+        BarContext, Interval, ScriptConfig, ScriptPosition, ScriptPositionInner,
+    };
+    use std::sync::Arc;
+
+    /// Build a minimal BarContext at `bar_idx` with the given price history.
+    fn make_ctx(bars: &[OhlcvBar], bar_idx: usize) -> BarContext {
+        make_ctx_with_positions(bars, bar_idx, vec![])
+    }
+
+    fn make_ctx_with_positions(
+        bars: &[OhlcvBar],
+        bar_idx: usize,
+        positions: Vec<ScriptPosition>,
+    ) -> BarContext {
+        let bar = &bars[bar_idx];
+        let config = Arc::new(ScriptConfig {
+            symbol: "TEST".into(),
+            capital: 50000.0,
+            start_date: None,
+            end_date: None,
+            interval: Interval::Daily,
+            multiplier: 100,
+            timeout_secs: 60,
+            auto_close_on_end: false,
+            needs_ohlcv: true,
+            needs_options: false,
+            cross_symbols: vec![],
+            declared_indicators: vec![],
+            slippage: Slippage::Mid,
+            commission: None,
+            min_days_between_entries: None,
+            expiration_filter: ExpirationFilter::Any,
+            trade_selector: TradeSelector::Nearest,
+            defaults: HashMap::new(),
+        });
+        let indicator_store = Arc::new(IndicatorStore::build(&[], bars).unwrap());
+        BarContext {
+            datetime: bar.datetime,
+            open: bar.open,
+            high: bar.high,
+            low: bar.low,
+            close: bar.close,
+            volume: bar.volume,
+            bar_idx,
+            cash: 50000.0,
+            equity: 50000.0,
+            positions: Arc::new(positions),
+            indicator_store,
+            price_history: Arc::new(bars.to_vec()),
+            cross_symbol_data: Arc::new(HashMap::new()),
+            options_by_date: None,
+            config,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Historical bar lookback tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_lookback_current_bar() {
+        let bars = make_bars(&[100.0, 110.0, 120.0, 130.0, 140.0]);
+        let mut ctx = make_ctx(&bars, 4);
+
+        // n=0 should return current bar values
+        assert_eq!(ctx.high_at(0).as_float().unwrap(), bars[4].high);
+        assert_eq!(ctx.low_at(0).as_float().unwrap(), bars[4].low);
+        assert_eq!(ctx.open_at(0).as_float().unwrap(), bars[4].open);
+        assert_eq!(ctx.close_at(0).as_float().unwrap(), bars[4].close);
+        assert_eq!(ctx.volume_at(0).as_float().unwrap(), bars[4].volume);
+    }
+
+    #[test]
+    fn test_lookback_previous_bars() {
+        let bars = make_bars(&[100.0, 110.0, 120.0, 130.0, 140.0]);
+        let mut ctx = make_ctx(&bars, 4);
+
+        // 1 bar ago = bar[3] (close=130)
+        assert_eq!(ctx.close_at(1).as_float().unwrap(), 130.0);
+        // 4 bars ago = bar[0] (close=100)
+        assert_eq!(ctx.close_at(4).as_float().unwrap(), 100.0);
+    }
+
+    #[test]
+    fn test_lookback_out_of_range() {
+        let bars = make_bars(&[100.0, 110.0, 120.0]);
+        let mut ctx = make_ctx(&bars, 2);
+
+        // 3 bars ago from index 2 → out of range
+        assert!(ctx.close_at(3).is_unit());
+        // Negative index
+        assert!(ctx.close_at(-1).is_unit());
+    }
+
+    #[test]
+    fn test_lookback_at_first_bar() {
+        let bars = make_bars(&[100.0, 110.0, 120.0]);
+        let mut ctx = make_ctx(&bars, 0);
+
+        // Current bar works
+        assert_eq!(ctx.close_at(0).as_float().unwrap(), 100.0);
+        // Any lookback is out of range
+        assert!(ctx.close_at(1).is_unit());
+    }
+
+    // -----------------------------------------------------------------------
+    // Range query tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_highest_high() {
+        // bars have high = price * 1.01
+        let bars = make_bars(&[100.0, 110.0, 105.0, 120.0, 115.0]);
+        let mut ctx = make_ctx(&bars, 4);
+
+        // Highest high over all 5 bars = 120 * 1.01 = 121.2
+        let hh = ctx.highest_high(5);
+        assert!((hh - 121.2).abs() < 1e-10, "Expected 121.2, got {hh}");
+
+        // Highest high over last 2 bars (index 3, 4) = 120 * 1.01
+        let hh2 = ctx.highest_high(2);
+        assert!((hh2 - 121.2).abs() < 1e-10);
+
+        // Highest high over last 1 bar (just current) = 115 * 1.01
+        let hh1 = ctx.highest_high(1);
+        assert!((hh1 - 116.15).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_lowest_low() {
+        // bars have low = price * 0.99
+        let bars = make_bars(&[100.0, 110.0, 105.0, 120.0, 115.0]);
+        let mut ctx = make_ctx(&bars, 4);
+
+        // Lowest low over all 5 bars = 100 * 0.99 = 99.0
+        let ll = ctx.lowest_low(5);
+        assert!((ll - 99.0).abs() < 1e-10, "Expected 99.0, got {ll}");
+
+        // Lowest low over last 2 bars (index 3, 4) = 115 * 0.99 = 113.85
+        let ll2 = ctx.lowest_low(2);
+        assert!((ll2 - 113.85).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_highest_close_lowest_close() {
+        let bars = make_bars(&[100.0, 110.0, 105.0, 120.0, 115.0]);
+        let mut ctx = make_ctx(&bars, 4);
+
+        assert!((ctx.highest_close(5) - 120.0).abs() < 1e-10);
+        assert!((ctx.lowest_close(5) - 100.0).abs() < 1e-10);
+
+        // Last 3 bars: 105, 120, 115
+        assert!((ctx.highest_close(3) - 120.0).abs() < 1e-10);
+        assert!((ctx.lowest_close(3) - 105.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_range_query_period_zero() {
+        let bars = make_bars(&[100.0, 110.0]);
+        let mut ctx = make_ctx(&bars, 1);
+        assert_eq!(ctx.highest_high(0), 0.0);
+        assert_eq!(ctx.lowest_low(0), 0.0);
+    }
+
+    #[test]
+    fn test_range_query_period_exceeds_history() {
+        let bars = make_bars(&[100.0, 110.0, 120.0]);
+        let mut ctx = make_ctx(&bars, 1);
+
+        // Period 10 but only 2 bars available (index 0..=1)
+        // Should use all available bars, not panic
+        let hh = ctx.highest_high(10);
+        assert!((hh - 110.0 * 1.01).abs() < 1e-10);
+    }
+
+    // -----------------------------------------------------------------------
+    // Portfolio method tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_unrealized_pnl_no_positions() {
+        let bars = make_bars(&[100.0]);
+        let mut ctx = make_ctx(&bars, 0);
+        assert_eq!(ctx.get_unrealized_pnl(), 0.0);
+    }
+
+    #[test]
+    fn test_unrealized_pnl_with_positions() {
+        use crate::engine::types::Side;
+        let bars = make_bars(&[100.0]);
+        let positions = vec![
+            ScriptPosition {
+                id: 1,
+                entry_date: bars[0].datetime.date(),
+                inner: ScriptPositionInner::Stock {
+                    side: Side::Long,
+                    qty: 100,
+                    entry_price: 95.0,
+                },
+                entry_cost: 9500.0,
+                unrealized_pnl: 500.0,
+                days_held: 5,
+                current_date: bars[0].datetime.date(),
+                source: String::new(),
+                implicit: false,
+            },
+            ScriptPosition {
+                id: 2,
+                entry_date: bars[0].datetime.date(),
+                inner: ScriptPositionInner::Stock {
+                    side: Side::Long,
+                    qty: 50,
+                    entry_price: 100.0,
+                },
+                entry_cost: 5000.0,
+                unrealized_pnl: -200.0,
+                days_held: 3,
+                current_date: bars[0].datetime.date(),
+                source: String::new(),
+                implicit: false,
+            },
+        ];
+        let mut ctx = make_ctx_with_positions(&bars, 0, positions);
+        assert!((ctx.get_unrealized_pnl() - 300.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_realized_pnl() {
+        let bars = make_bars(&[100.0]);
+        let mut ctx = make_ctx(&bars, 0);
+        // equity=50000, capital=50000 → realized=0
+        assert_eq!(ctx.get_realized_pnl(), 0.0);
+
+        // Simulate some realized gains
+        ctx.equity = 52000.0;
+        assert!((ctx.get_realized_pnl() - 2000.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_total_exposure() {
+        use crate::engine::types::Side;
+        let bars = make_bars(&[100.0]);
+        let positions = vec![
+            ScriptPosition {
+                id: 1,
+                entry_date: bars[0].datetime.date(),
+                inner: ScriptPositionInner::Stock {
+                    side: Side::Long,
+                    qty: 100,
+                    entry_price: 95.0,
+                },
+                entry_cost: 9500.0,
+                unrealized_pnl: 0.0,
+                days_held: 0,
+                current_date: bars[0].datetime.date(),
+                source: String::new(),
+                implicit: false,
+            },
+            ScriptPosition {
+                id: 2,
+                entry_date: bars[0].datetime.date(),
+                inner: ScriptPositionInner::Stock {
+                    side: Side::Short,
+                    qty: 50,
+                    entry_price: 100.0,
+                },
+                entry_cost: -5000.0, // short → negative entry cost
+                unrealized_pnl: 0.0,
+                days_held: 0,
+                current_date: bars[0].datetime.date(),
+                source: String::new(),
+                implicit: false,
+            },
+        ];
+        let mut ctx = make_ctx_with_positions(&bars, 0, positions);
+        // abs(9500) + abs(-5000) = 14500
+        assert!((ctx.get_total_exposure() - 14500.0).abs() < 1e-10);
+    }
 }
