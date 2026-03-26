@@ -141,10 +141,9 @@ impl BarContext {
     /// Size by risk percentage: risk `risk_pct` of equity per trade with a defined stop.
     ///
     /// `risk_pct`: fraction of equity to risk (e.g., 0.02 = 2%)
-    /// `stop_price`: price at which you'd exit. Must differ from current price.
-    ///   For longs: stop below close (e.g., `ctx.close - 2.0 * ctx.atr(14)`)
-    ///   For shorts: stop above close (e.g., `ctx.close + 2.0 * ctx.atr(14)`)
-    ///   Returns 0 if stop is on the wrong side (stop >= close for longs).
+    /// `stop_price`: price at which you'd exit (must be below current price).
+    ///   e.g., `ctx.close - 2.0 * ctx.atr(14)`
+    ///   Returns 0 if `stop_price >= close` (long-only: stop must be below entry).
     ///
     /// Usage: `ctx.size_by_risk(0.02, stop_price)` → shares where loss at stop = 2% of equity
     pub fn size_by_risk(&mut self, risk_pct: f64, stop_price: f64) -> i64 {
@@ -177,6 +176,9 @@ impl BarContext {
         };
         let qty = (target_risk / atr).floor() as i64;
         // Cap at full equity worth of shares
+        if self.close <= 0.0 {
+            return 0;
+        }
         let max_shares = (self.equity / self.close).floor() as i64;
         qty.min(max_shares).max(0)
     }
@@ -234,6 +236,9 @@ impl BarContext {
         }
 
         // Apply fractional Kelly and compute shares
+        if self.close <= 0.0 {
+            return 0;
+        }
         let bet_size = self.equity * kelly_pct * fraction.clamp(0.0, 1.0);
         let qty = (bet_size / self.close).floor() as i64;
         qty.max(0)

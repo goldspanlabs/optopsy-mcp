@@ -78,7 +78,11 @@ async fn main() -> Result<()> {
             .route(
                 "/scripts",
                 axum::routing::get(|| async {
-                    axum::Json(optopsy_mcp::scripting::stdlib::list_scripts())
+                    let scripts =
+                        tokio::task::spawn_blocking(optopsy_mcp::scripting::stdlib::list_scripts)
+                            .await
+                            .unwrap_or_default();
+                    axum::Json(scripts)
                 }),
             )
             .route(
