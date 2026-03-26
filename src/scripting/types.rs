@@ -858,6 +858,155 @@ impl BarContext {
         // TODO: wrap sizing.rs::compute_quantity()
         1
     }
+
+    // --- Historical bar lookback (MQL4-inspired) ---
+
+    /// High price N bars ago (0 = current bar). Returns `()` if out of range.
+    pub fn high_at(&mut self, n: i64) -> Dynamic {
+        if n < 0 {
+            return Dynamic::UNIT;
+        }
+        let n = n as usize;
+        if n > self.bar_idx {
+            return Dynamic::UNIT;
+        }
+        self.price_history
+            .get(self.bar_idx - n)
+            .map(|b| Dynamic::from(b.high))
+            .unwrap_or(Dynamic::UNIT)
+    }
+
+    /// Low price N bars ago (0 = current bar). Returns `()` if out of range.
+    pub fn low_at(&mut self, n: i64) -> Dynamic {
+        if n < 0 {
+            return Dynamic::UNIT;
+        }
+        let n = n as usize;
+        if n > self.bar_idx {
+            return Dynamic::UNIT;
+        }
+        self.price_history
+            .get(self.bar_idx - n)
+            .map(|b| Dynamic::from(b.low))
+            .unwrap_or(Dynamic::UNIT)
+    }
+
+    /// Open price N bars ago (0 = current bar). Returns `()` if out of range.
+    pub fn open_at(&mut self, n: i64) -> Dynamic {
+        if n < 0 {
+            return Dynamic::UNIT;
+        }
+        let n = n as usize;
+        if n > self.bar_idx {
+            return Dynamic::UNIT;
+        }
+        self.price_history
+            .get(self.bar_idx - n)
+            .map(|b| Dynamic::from(b.open))
+            .unwrap_or(Dynamic::UNIT)
+    }
+
+    /// Close price N bars ago (0 = current bar). Returns `()` if out of range.
+    pub fn close_at(&mut self, n: i64) -> Dynamic {
+        if n < 0 {
+            return Dynamic::UNIT;
+        }
+        let n = n as usize;
+        if n > self.bar_idx {
+            return Dynamic::UNIT;
+        }
+        self.price_history
+            .get(self.bar_idx - n)
+            .map(|b| Dynamic::from(b.close))
+            .unwrap_or(Dynamic::UNIT)
+    }
+
+    /// Volume N bars ago (0 = current bar). Returns `()` if out of range.
+    pub fn volume_at(&mut self, n: i64) -> Dynamic {
+        if n < 0 {
+            return Dynamic::UNIT;
+        }
+        let n = n as usize;
+        if n > self.bar_idx {
+            return Dynamic::UNIT;
+        }
+        self.price_history
+            .get(self.bar_idx - n)
+            .map(|b| Dynamic::from(b.volume))
+            .unwrap_or(Dynamic::UNIT)
+    }
+
+    // --- Range queries (MQL4-inspired iHighest/iLowest) ---
+
+    /// Maximum high over the last `period` bars (including current). Returns 0.0 if period <= 0.
+    pub fn highest_high(&mut self, period: i64) -> f64 {
+        if period <= 0 {
+            return 0.0;
+        }
+        let period = period as usize;
+        let start = self.bar_idx.saturating_sub(period - 1);
+        self.price_history[start..=self.bar_idx]
+            .iter()
+            .map(|b| b.high)
+            .fold(f64::NEG_INFINITY, f64::max)
+    }
+
+    /// Minimum low over the last `period` bars (including current). Returns 0.0 if period <= 0.
+    pub fn lowest_low(&mut self, period: i64) -> f64 {
+        if period <= 0 {
+            return 0.0;
+        }
+        let period = period as usize;
+        let start = self.bar_idx.saturating_sub(period - 1);
+        self.price_history[start..=self.bar_idx]
+            .iter()
+            .map(|b| b.low)
+            .fold(f64::INFINITY, f64::min)
+    }
+
+    /// Maximum close over the last `period` bars (including current). Returns 0.0 if period <= 0.
+    pub fn highest_close(&mut self, period: i64) -> f64 {
+        if period <= 0 {
+            return 0.0;
+        }
+        let period = period as usize;
+        let start = self.bar_idx.saturating_sub(period - 1);
+        self.price_history[start..=self.bar_idx]
+            .iter()
+            .map(|b| b.close)
+            .fold(f64::NEG_INFINITY, f64::max)
+    }
+
+    /// Minimum close over the last `period` bars (including current). Returns 0.0 if period <= 0.
+    pub fn lowest_close(&mut self, period: i64) -> f64 {
+        if period <= 0 {
+            return 0.0;
+        }
+        let period = period as usize;
+        let start = self.bar_idx.saturating_sub(period - 1);
+        self.price_history[start..=self.bar_idx]
+            .iter()
+            .map(|b| b.close)
+            .fold(f64::INFINITY, f64::min)
+    }
+
+    // --- Portfolio methods ---
+
+    /// Sum of unrealized P&L across all open positions.
+    pub fn get_unrealized_pnl(&mut self) -> f64 {
+        self.positions.iter().map(|p| p.unrealized_pnl).sum()
+    }
+
+    /// Realized P&L = equity - starting capital.
+    /// `equity` in the engine is realized equity (cash + realized gains).
+    pub fn get_realized_pnl(&mut self) -> f64 {
+        self.equity - self.config.capital
+    }
+
+    /// Total exposure = sum of abs(entry_cost) across all open positions.
+    pub fn get_total_exposure(&mut self) -> f64 {
+        self.positions.iter().map(|p| p.entry_cost.abs()).sum()
+    }
 }
 
 /// Parse "sma:20" into ("sma", 20).

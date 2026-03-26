@@ -87,11 +87,35 @@ fn config() {
 | `ctx.bar_idx` | i64 | Bar index (0-based) |
 | `ctx.price(n)` | f64 or () | Close price n bars ago. Returns () if n > bar_idx |
 
+### Historical Bar Lookback (MQL4-inspired)
+Access OHLCV values N bars ago (0 = current bar). Returns `()` if out of range.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `ctx.high(n)` | f64 or () | High price N bars ago |
+| `ctx.low(n)` | f64 or () | Low price N bars ago |
+| `ctx.open(n)` | f64 or () | Open price N bars ago |
+| `ctx.close(n)` | f64 or () | Close price N bars ago |
+| `ctx.volume(n)` | f64 or () | Volume N bars ago |
+
+Note: `ctx.high` (no args) returns current bar's high via getter. `ctx.high(0)` also returns current bar's high. `ctx.high(5)` returns the high from 5 bars ago.
+
+### Range Queries (MQL4-inspired iHighest/iLowest)
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `ctx.highest_high(period)` | f64 | Max high over last `period` bars (including current) |
+| `ctx.lowest_low(period)` | f64 | Min low over last `period` bars |
+| `ctx.highest_close(period)` | f64 | Max close over last `period` bars |
+| `ctx.lowest_close(period)` | f64 | Min close over last `period` bars |
+
 ### Portfolio
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `ctx.cash` | f64 | Available cash |
 | `ctx.equity` | f64 | Total portfolio value (cash + unrealized) |
+| `ctx.unrealized_pnl` | f64 | Sum of unrealized P&L across all open positions |
+| `ctx.realized_pnl` | f64 | Realized P&L (equity - starting capital) |
+| `ctx.total_exposure` | f64 | Sum of abs(entry_cost) across all open positions |
 | `ctx.positions()` | Array | All open positions |
 | `ctx.position_count()` | i64 | Count of script-opened positions (excludes implicit) |
 | `ctx.has_positions()` | bool | True if any script-opened positions exist |

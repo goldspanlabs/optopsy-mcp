@@ -1,6 +1,6 @@
 //! Rhai engine configuration, sandboxing, and type/function registration.
 
-use rhai::Engine;
+use rhai::{Dynamic, Engine};
 
 use super::types::{BarContext, ScriptPosition};
 
@@ -125,6 +125,34 @@ fn register_bar_context(engine: &mut Engine) {
     engine.register_fn("bbands_mid_custom", BarContext::bbands_mid_custom);
     engine.register_fn("bbands_lower_custom", BarContext::bbands_lower_custom);
     engine.register_fn("stochastic_custom", BarContext::stochastic_custom);
+
+    // Historical bar lookback (MQL4-inspired)
+    engine.register_fn("high", |ctx: &mut BarContext, n: i64| -> Dynamic {
+        ctx.high_at(n)
+    });
+    engine.register_fn("low", |ctx: &mut BarContext, n: i64| -> Dynamic {
+        ctx.low_at(n)
+    });
+    engine.register_fn("open", |ctx: &mut BarContext, n: i64| -> Dynamic {
+        ctx.open_at(n)
+    });
+    engine.register_fn("close", |ctx: &mut BarContext, n: i64| -> Dynamic {
+        ctx.close_at(n)
+    });
+    engine.register_fn("volume", |ctx: &mut BarContext, n: i64| -> Dynamic {
+        ctx.volume_at(n)
+    });
+
+    // Range queries (MQL4-inspired iHighest/iLowest)
+    engine.register_fn("highest_high", BarContext::highest_high);
+    engine.register_fn("lowest_low", BarContext::lowest_low);
+    engine.register_fn("highest_close", BarContext::highest_close);
+    engine.register_fn("lowest_close", BarContext::lowest_close);
+
+    // Portfolio methods
+    engine.register_get("unrealized_pnl", BarContext::get_unrealized_pnl);
+    engine.register_get("realized_pnl", BarContext::get_realized_pnl);
+    engine.register_get("total_exposure", BarContext::get_total_exposure);
 
     // Options strategy building
     engine.register_fn("build_strategy", BarContext::build_strategy);
