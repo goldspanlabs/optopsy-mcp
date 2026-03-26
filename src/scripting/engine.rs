@@ -1469,19 +1469,22 @@ fn build_script_trade_record(
                 entry_price: l.entry_price,
                 exit_price: Some(l.current_price),
                 qty: l.qty,
+                is_stock: false,
             })
             .collect(),
-        ScriptPositionInner::Stock { side, qty, .. } => vec![LegDetail {
+        ScriptPositionInner::Stock {
+            side,
+            qty,
+            entry_price,
+        } => vec![LegDetail {
             side: *side,
-            option_type: crate::engine::types::OptionType::Call, // placeholder for stock
+            option_type: crate::engine::types::OptionType::Call, // unused for stock
             strike: 0.0,
             expiration: String::new(),
-            entry_price: match &pos.inner {
-                ScriptPositionInner::Stock { entry_price, .. } => *entry_price,
-                ScriptPositionInner::Options { .. } => 0.0,
-            },
+            entry_price: *entry_price,
             exit_price: None,
             qty: *qty,
+            is_stock: true,
         }],
     };
 

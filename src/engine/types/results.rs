@@ -101,6 +101,9 @@ pub struct LegDetail {
     /// Fill price at exit (`None` if the option expired worthless or was never closed).
     pub exit_price: Option<f64>,
     pub qty: i32,
+    /// True for stock/equity legs (ignore `option_type`, strike, expiration for display).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_stock: bool,
 }
 
 /// Complete record of a single round-trip trade (entry through exit).
