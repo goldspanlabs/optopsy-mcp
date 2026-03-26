@@ -9,6 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::engine::types::BacktestResult;
+use crate::scripting::stdlib::ScriptMeta;
 
 /// Base directory for strategy scripts (relative to project root).
 const STRATEGIES_DIR: &str = "scripts/strategies";
@@ -34,6 +35,10 @@ pub struct RunScriptParams {
 /// so the FE can render trade markers, equity curves, and indicator overlays.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct RunScriptResponse {
+    /// Script metadata (name, description, category) parsed from `//!` header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script_meta: Option<ScriptMeta>,
+
     /// Full backtest result: `trade_log`, `equity_curve`, `metrics`, `warnings`.
     #[serde(flatten)]
     pub result: BacktestResult,

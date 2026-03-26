@@ -73,18 +73,76 @@ fn json_to_dynamic(value: &serde_json::Value) -> Dynamic {
     }
 }
 
-/// List `.rhai` strategy files in `scripts/strategies/`.
+/// Metadata extracted from a script's `//!` doc-comment header.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct ScriptMeta {
+    /// Filename stem (e.g., `"ibs_mean_reversion"`)
+    pub id: String,
+    /// Human-readable display name (from `//! name:` or derived from filename)
+    pub name: String,
+    /// One-line description (from `//! description:`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Strategy category for UI grouping (from `//! category:`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+}
+
+/// Parse `//!` doc-comment header from script source for metadata fields.
+///
+/// Recognized keys: `name`, `description`, `category`.
+/// Lines must start with `//!` followed by `key: value`.
+pub fn parse_script_meta(id: &str, source: &str) -> ScriptMeta {
+    let mut name = None;
+    let mut description = None;
+    let mut category = None;
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("//!") {
+            let rest = rest.trim();
+            if let Some(val) = rest.strip_prefix("name:") {
+                name = Some(val.trim().to_string());
+            } else if let Some(val) = rest.strip_prefix("description:") {
+                description = Some(val.trim().to_string());
+            } else if let Some(val) = rest.strip_prefix("category:") {
+                category = Some(val.trim().to_string());
+            }
+        } else if !trimmed.is_empty() && !trimmed.starts_with("//") {
+            break; // Stop at first non-comment line
+        }
+    }
+
+    ScriptMeta {
+        id: id.to_string(),
+        name: name.unwrap_or_else(|| id.replace('_', " ")),
+        description,
+        category,
+    }
+}
+
+/// List `.rhai` strategy scripts with parsed metadata.
 #[must_use]
-pub fn list_strategies() -> Vec<String> {
+pub fn list_scripts() -> Vec<ScriptMeta> {
     let dir = std::path::Path::new("scripts/strategies");
     let Ok(entries) = std::fs::read_dir(dir) else {
         return vec![];
     };
-    entries
+    let mut scripts: Vec<ScriptMeta> = entries
         .filter_map(|e| {
             let e = e.ok()?;
-            let name = e.file_name().to_string_lossy().to_string();
-            name.strip_suffix(".rhai").map(String::from)
+            let filename = e.file_name().to_string_lossy().to_string();
+            let id = filename.strip_suffix(".rhai")?;
+            let source = std::fs::read_to_string(e.path()).ok()?;
+            Some(parse_script_meta(id, &source))
         })
-        .collect()
+        .collect();
+    scripts.sort_by(|a, b| a.name.cmp(&b.name));
+    scripts
+}
+
+/// List `.rhai` strategy file stems (legacy — use `list_scripts()` for metadata).
+#[must_use]
+pub fn list_strategies() -> Vec<String> {
+    list_scripts().into_iter().map(|s| s.id).collect()
 }

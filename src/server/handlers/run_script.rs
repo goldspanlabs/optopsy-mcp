@@ -5,6 +5,7 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use crate::scripting::engine::{CachedDataLoader, ScriptBacktestResult};
+use crate::scripting::stdlib::parse_script_meta;
 use crate::server::OptopsyServer;
 use crate::tools::run_script::{format_indicator_data, RunScriptParams, RunScriptResponse};
 
@@ -13,6 +14,12 @@ pub async fn execute(server: &OptopsyServer, params: RunScriptParams) -> Result<
     let start = std::time::Instant::now();
 
     let source = crate::tools::run_script::resolve_script_source(&params)?;
+
+    // Parse script metadata from //! header
+    let script_meta = params
+        .strategy
+        .as_deref()
+        .map(|id| parse_script_meta(id, &source));
 
     let loader = CachedDataLoader {
         cache: Arc::clone(&server.cache),
@@ -29,6 +36,7 @@ pub async fn execute(server: &OptopsyServer, params: RunScriptParams) -> Result<
     let formatted_indicators = format_indicator_data(&indicator_data);
 
     Ok(RunScriptResponse {
+        script_meta,
         result,
         indicator_data: formatted_indicators,
         execution_time_ms: start.elapsed().as_millis() as u64,

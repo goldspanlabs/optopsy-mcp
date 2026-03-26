@@ -2,11 +2,31 @@
 
 Guide for writing `.rhai` backtest scripts. The AI agent should reference this when generating scripts from user prompts.
 
+## Script Metadata
+
+Every script should start with `//!` doc-comment lines for metadata. These are parsed by the engine for listing and display without running the script.
+
+```rhai
+//! name: My Strategy Name
+//! description: One-line summary of what this strategy does
+//! category: stock
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | No (defaults to filename) | Human-readable display name |
+| `description` | No | One-line summary for UI/agent display |
+| `category` | No | Grouping: `stock`, `options`, etc. |
+
 ## Script Structure
 
 Every script must define `config()` and `on_bar(ctx)`. Other callbacks are optional.
 
 ```rhai
+//! name: Example Strategy
+//! description: Brief description for UI display
+//! category: stock
+
 // Top-level state variables (persisted across bars via Rhai scope)
 let state = "initial";
 let counter = 0;

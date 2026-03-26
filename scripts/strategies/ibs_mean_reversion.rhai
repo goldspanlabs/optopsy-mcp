@@ -1,5 +1,7 @@
-// IBS Mean Reversion (Stock)
-//
+//! name: IBS Mean Reversion
+//! description: Stock mean reversion using IBS indicator with volatility-adjusted entry channel
+//! category: stock
+
 // Buys when price pulls back below a volatility-adjusted channel and IBS shows
 // intraday weakness (close in bottom 30% of range). Exits when close breaks
 // above yesterday's high.
