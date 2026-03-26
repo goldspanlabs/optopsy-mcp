@@ -123,7 +123,7 @@ Rhai-based scripting engine for user-defined backtesting strategies. Scripts def
 
 - **`engine.rs`** — Unified simulation loop with immediate exit processing, scope rewind, PriceTable MTM, and assignment detection
 - **`types.rs`** — `BarContext` (exposed to scripts as `ctx`), `ScriptPosition`, `ScriptConfig`, action enums
-- **`helpers.rs`** — 32 named strategy constructors (`bull_put_spread`, `iron_condor`, etc.) and 6 action builders (`hold_position`, `close_position`, `buy_stock`, etc.)
+- **`helpers.rs`** — 31 named strategy constructors (`bull_put_spread`, `iron_condor`, etc.), the `indicators_ready` utility, and 6 action builders (`hold_position`, `close_position`, `buy_stock`, etc.)
 - **`indicators.rs`** — Pre-computed indicator store (SMA, EMA, RSI, ATR, MACD, BBands, Stochastic, CCI, OBV) with O(1) per-bar lookups
 - **`registration.rs`** — Sandboxed Rhai engine builder (ops limit, print interception, type registration, helper registration)
 - **`stdlib.rs`** — Parameter injection (`const` and scope modes), strategy script listing
