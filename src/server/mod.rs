@@ -3,7 +3,7 @@
 //! Holds shared state (loaded `DataFrames`, data cache, tool router) and exposes
 //! all MCP tool handlers via `rmcp`'s `#[tool_router]` and `#[tool_handler]` macros.
 
-mod handlers;
+pub mod handlers;
 mod params;
 mod sanitize;
 

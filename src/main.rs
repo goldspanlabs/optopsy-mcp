@@ -12,6 +12,8 @@ use std::sync::Arc;
 use tracing_subscriber::{self, EnvFilter};
 
 use optopsy_mcp::{data, server};
+use optopsy_mcp::data::backtest_store::BacktestStore;
+use optopsy_mcp::server::handlers::backtests::{self, AppState};
 
 /// Query parameters for the `/prices/{symbol}` REST endpoint.
 #[derive(serde::Deserialize)]
@@ -64,11 +66,43 @@ async fn main() -> Result<()> {
         };
 
         let prices_cache = cache.clone();
+
+        let data_root = std::env::var("DATA_ROOT")
+            .unwrap_or_else(|_| shellexpand::tilde("~/.optopsy/cache").to_string());
+        let db_path = std::path::PathBuf::from(&data_root).join("backtests.db");
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        let backtest_store = BacktestStore::open(&db_path)
+            .expect("Failed to open backtest database");
+
+        let app_state = AppState {
+            server: server::OptopsyServer::new(cache.clone()),
+            backtest_store,
+        };
+
         let service = StreamableHttpService::new(
             move || Ok(server::OptopsyServer::new(cache.clone())),
             LocalSessionManager::default().into(),
             StreamableHttpServerConfig::default(),
         );
+
+        let backtest_routes = axum::Router::new()
+            .route(
+                "/backtests",
+                axum::routing::post(backtests::create_backtest)
+                    .get(backtests::list_backtests),
+            )
+            .route(
+                "/backtests/{id}",
+                axum::routing::get(backtests::get_backtest)
+                    .delete(backtests::delete_backtest),
+            )
+            .route(
+                "/backtests/{id}/trades",
+                axum::routing::get(backtests::get_backtest_trades),
+            )
+            .with_state(app_state);
 
         let app = axum::Router::new()
             .route(
@@ -89,7 +123,8 @@ async fn main() -> Result<()> {
                 }),
             )
             .nest_service("/mcp", service)
-            .route("/health", axum::routing::get(|| async { "ok" }));
+            .route("/health", axum::routing::get(|| async { "ok" }))
+            .merge(backtest_routes);
 
         let addr = format!("0.0.0.0:{port}");
         tracing::info!("Starting optopsy-mcp HTTP server on {addr}");
