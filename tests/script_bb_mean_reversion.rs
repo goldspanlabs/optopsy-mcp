@@ -74,9 +74,9 @@ fn make_bb_test_bars() -> Vec<OhlcvBar> {
     // 30 bars of very stable prices (tight range around 100)
     // This ensures SMA(20) is well-established and std dev is small
     let stable_closes = [
-        100.0, 100.2, 99.8, 100.1, 99.9, 100.0, 100.1, 99.9, 100.0, 100.2,
-        99.8, 100.1, 99.9, 100.0, 100.2, 99.8, 100.1, 99.9, 100.0, 100.1,
-        99.9, 100.0, 100.2, 99.8, 100.1, 99.9, 100.0, 100.1, 99.9, 100.0,
+        100.0, 100.2, 99.8, 100.1, 99.9, 100.0, 100.1, 99.9, 100.0, 100.2, 99.8, 100.1, 99.9,
+        100.0, 100.2, 99.8, 100.1, 99.9, 100.0, 100.1, 99.9, 100.0, 100.2, 99.8, 100.1, 99.9,
+        100.0, 100.1, 99.9, 100.0,
     ];
 
     for (i, &close) in stable_closes.iter().enumerate() {
@@ -94,8 +94,7 @@ fn make_bb_test_bars() -> Vec<OhlcvBar> {
     // Bar 30: massive spike above upper BB
     // SMA(20) ≈ 100.0, std ≈ 0.1, upper BB ≈ 100.2
     // Close at 105.0 — way above the band
-    let spike_date =
-        NaiveDate::from_ymd_opt(2024, 1, 2).unwrap() + chrono::Duration::days(30);
+    let spike_date = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap() + chrono::Duration::days(30);
     bars.push(OhlcvBar {
         datetime: spike_date.and_hms_opt(0, 0, 0).unwrap(),
         open: 100.0,
@@ -232,9 +231,9 @@ async fn bb_max_hold_exit() {
 
     // 30 bars of stable prices for indicator warmup
     let stable_closes = [
-        100.0, 100.2, 99.8, 100.1, 99.9, 100.0, 100.1, 99.9, 100.0, 100.2,
-        99.8, 100.1, 99.9, 100.0, 100.2, 99.8, 100.1, 99.9, 100.0, 100.1,
-        99.9, 100.0, 100.2, 99.8, 100.1, 99.9, 100.0, 100.1, 99.9, 100.0,
+        100.0, 100.2, 99.8, 100.1, 99.9, 100.0, 100.1, 99.9, 100.0, 100.2, 99.8, 100.1, 99.9,
+        100.0, 100.2, 99.8, 100.1, 99.9, 100.0, 100.1, 99.9, 100.0, 100.2, 99.8, 100.1, 99.9,
+        100.0, 100.1, 99.9, 100.0,
     ];
 
     for (i, &close) in stable_closes.iter().enumerate() {
@@ -250,8 +249,7 @@ async fn bb_max_hold_exit() {
     }
 
     // Bar 30: massive spike above upper BB
-    let spike_date =
-        NaiveDate::from_ymd_opt(2024, 1, 2).unwrap() + chrono::Duration::days(30);
+    let spike_date = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap() + chrono::Duration::days(30);
     bars.push(OhlcvBar {
         datetime: spike_date.and_hms_opt(0, 0, 0).unwrap(),
         open: 100.0,

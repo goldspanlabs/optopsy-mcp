@@ -9,13 +9,19 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::data::backtest_store::{BacktestRow, BacktestStore, BacktestSummary, MetricsRow, TradeRow};
+use crate::data::backtest_store::{
+    BacktestRow, BacktestStore, BacktestSummary, MetricsRow, TradeRow,
+};
 use crate::server::OptopsyServer;
 use crate::tools::run_script::RunScriptParams;
 
 /// Replace NaN/Infinity with 0.0 to prevent JSON serialization errors.
 fn sanitize(v: f64) -> f64 {
-    if v.is_finite() { v } else { 0.0 }
+    if v.is_finite() {
+        v
+    } else {
+        0.0
+    }
 }
 
 /// Shared application state for backtest REST routes.

@@ -12,9 +12,9 @@ use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{self, EnvFilter};
 
-use optopsy_mcp::{data, server};
 use optopsy_mcp::data::backtest_store::BacktestStore;
 use optopsy_mcp::server::handlers::backtests::{self, AppState};
+use optopsy_mcp::{data, server};
 
 /// Query parameters for the `/prices/{symbol}` REST endpoint.
 #[derive(serde::Deserialize)]
@@ -74,8 +74,8 @@ async fn main() -> Result<()> {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        let backtest_store = BacktestStore::open(&db_path)
-            .expect("Failed to open backtest database");
+        let backtest_store =
+            BacktestStore::open(&db_path).expect("Failed to open backtest database");
 
         let app_state = AppState {
             server: server::OptopsyServer::new(cache.clone()),
@@ -91,13 +91,11 @@ async fn main() -> Result<()> {
         let backtest_routes = axum::Router::new()
             .route(
                 "/backtests",
-                axum::routing::post(backtests::create_backtest)
-                    .get(backtests::list_backtests),
+                axum::routing::post(backtests::create_backtest).get(backtests::list_backtests),
             )
             .route(
                 "/backtests/{id}",
-                axum::routing::get(backtests::get_backtest)
-                    .delete(backtests::delete_backtest),
+                axum::routing::get(backtests::get_backtest).delete(backtests::delete_backtest),
             )
             .route(
                 "/backtests/{id}/trades",

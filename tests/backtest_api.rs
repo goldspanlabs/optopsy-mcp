@@ -203,7 +203,10 @@ fn full_lifecycle_insert_list_get_delete() {
 
     // ── id2 still intact ─────────────────────────────────────────────────────
 
-    let row2 = store.get(&id2).expect("get id2").expect("id2 should still exist");
+    let row2 = store
+        .get(&id2)
+        .expect("get id2")
+        .expect("id2 should still exist");
     assert_eq!(row2.strategy_key, "ibs_mean_reversion");
     assert_eq!(row2.symbol, "QQQ");
     assert_eq!(row2.trades.len(), 1, "id2 should still have its 1 trade");
@@ -229,13 +232,19 @@ fn list_filters_combine_correctly() {
 
     // Insert 3 backtests: (strat_a, SPY), (strat_a, QQQ), (strat_b, SPY)
     store
-        .insert("strat_a", "SPY", 10_000.0, &p, &metrics, &empty, &ec, &ind, 100)
+        .insert(
+            "strat_a", "SPY", 10_000.0, &p, &metrics, &empty, &ec, &ind, 100,
+        )
         .expect("insert strat_a/SPY");
     store
-        .insert("strat_a", "QQQ", 10_000.0, &p, &metrics, &empty, &ec, &ind, 100)
+        .insert(
+            "strat_a", "QQQ", 10_000.0, &p, &metrics, &empty, &ec, &ind, 100,
+        )
         .expect("insert strat_a/QQQ");
     store
-        .insert("strat_b", "SPY", 10_000.0, &p, &metrics, &empty, &ec, &ind, 100)
+        .insert(
+            "strat_b", "SPY", 10_000.0, &p, &metrics, &empty, &ec, &ind, 100,
+        )
         .expect("insert strat_b/SPY");
 
     // list(strat_a, SPY) = 1

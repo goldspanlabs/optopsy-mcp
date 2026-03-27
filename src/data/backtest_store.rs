@@ -100,8 +100,8 @@ impl BacktestStore {
 
     /// Open an in-memory `SQLite` database (intended for tests).
     pub fn open_in_memory() -> Result<Self> {
-        let conn = Connection::open_in_memory()
-            .context("Failed to open in-memory SQLite database")?;
+        let conn =
+            Connection::open_in_memory().context("Failed to open in-memory SQLite database")?;
         let store = Self {
             conn: Arc::new(Mutex::new(conn)),
         };
@@ -289,25 +289,25 @@ impl BacktestStore {
                 rusqlite::params![id],
                 |row| {
                     Ok((
-                        row.get::<_, String>(0)?,   // id
-                        row.get::<_, String>(1)?,   // strategy_key
-                        row.get::<_, String>(2)?,   // symbol
-                        row.get::<_, f64>(3)?,      // capital
-                        row.get::<_, String>(4)?,   // params
-                        row.get::<_, String>(5)?,   // equity_curve
-                        row.get::<_, String>(6)?,   // indicator_data
-                        row.get::<_, i64>(7)?,      // execution_time_ms
-                        row.get::<_, String>(8)?,   // created_at
-                        row.get::<_, f64>(9)?,      // sharpe
-                        row.get::<_, f64>(10)?,     // sortino
-                        row.get::<_, f64>(11)?,     // cagr
-                        row.get::<_, f64>(12)?,     // max_drawdown
-                        row.get::<_, f64>(13)?,     // win_rate
-                        row.get::<_, f64>(14)?,     // profit_factor
-                        row.get::<_, f64>(15)?,     // total_pnl
-                        row.get::<_, i64>(16)?,     // trade_count
-                        row.get::<_, f64>(17)?,     // expectancy
-                        row.get::<_, f64>(18)?,     // var_95
+                        row.get::<_, String>(0)?, // id
+                        row.get::<_, String>(1)?, // strategy_key
+                        row.get::<_, String>(2)?, // symbol
+                        row.get::<_, f64>(3)?,    // capital
+                        row.get::<_, String>(4)?, // params
+                        row.get::<_, String>(5)?, // equity_curve
+                        row.get::<_, String>(6)?, // indicator_data
+                        row.get::<_, i64>(7)?,    // execution_time_ms
+                        row.get::<_, String>(8)?, // created_at
+                        row.get::<_, f64>(9)?,    // sharpe
+                        row.get::<_, f64>(10)?,   // sortino
+                        row.get::<_, f64>(11)?,   // cagr
+                        row.get::<_, f64>(12)?,   // max_drawdown
+                        row.get::<_, f64>(13)?,   // win_rate
+                        row.get::<_, f64>(14)?,   // profit_factor
+                        row.get::<_, f64>(15)?,   // total_pnl
+                        row.get::<_, i64>(16)?,   // trade_count
+                        row.get::<_, f64>(17)?,   // expectancy
+                        row.get::<_, f64>(18)?,   // var_95
                     ))
                 },
             )
@@ -343,8 +343,8 @@ impl BacktestStore {
             serde_json::from_str(&params_str).context("Failed to deserialize params")?;
         let equity_curve: Value =
             serde_json::from_str(&equity_str).context("Failed to deserialize equity_curve")?;
-        let indicator_data: Value = serde_json::from_str(&indicator_str)
-            .context("Failed to deserialize indicator_data")?;
+        let indicator_data: Value =
+            serde_json::from_str(&indicator_str).context("Failed to deserialize indicator_data")?;
 
         let metrics = MetricsRow {
             sharpe,
@@ -427,9 +427,7 @@ impl BacktestStore {
         let params_refs: Vec<&dyn rusqlite::types::ToSql> =
             params_vec.iter().map(std::convert::AsRef::as_ref).collect();
 
-        let mut stmt = conn
-            .prepare(&sql)
-            .context("Failed to prepare list query")?;
+        let mut stmt = conn.prepare(&sql).context("Failed to prepare list query")?;
 
         let rows = stmt
             .query_map(params_refs.as_slice(), |row| {
@@ -576,9 +574,7 @@ mod tests {
 
         let tables: Vec<String> = {
             let mut stmt = conn
-                .prepare(
-                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
-                )
+                .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
                 .unwrap();
             stmt.query_map([], |row| row.get(0))
                 .unwrap()
@@ -635,13 +631,43 @@ mod tests {
         let p = serde_json::json!({});
 
         store
-            .insert("strategy_a", "SPY", 10_000.0, &p, &metrics, &empty, &ec, &ind, 100)
+            .insert(
+                "strategy_a",
+                "SPY",
+                10_000.0,
+                &p,
+                &metrics,
+                &empty,
+                &ec,
+                &ind,
+                100,
+            )
             .unwrap();
         store
-            .insert("strategy_a", "QQQ", 10_000.0, &p, &metrics, &empty, &ec, &ind, 100)
+            .insert(
+                "strategy_a",
+                "QQQ",
+                10_000.0,
+                &p,
+                &metrics,
+                &empty,
+                &ec,
+                &ind,
+                100,
+            )
             .unwrap();
         store
-            .insert("strategy_b", "SPY", 10_000.0, &p, &metrics, &empty, &ec, &ind, 100)
+            .insert(
+                "strategy_b",
+                "SPY",
+                10_000.0,
+                &p,
+                &metrics,
+                &empty,
+                &ec,
+                &ind,
+                100,
+            )
             .unwrap();
 
         // No filter — all 3
@@ -676,7 +702,17 @@ mod tests {
         let ind = serde_json::json!({});
 
         let id = store
-            .insert("strategy_a", "SPY", 10_000.0, &p, &metrics, &empty, &ec, &ind, 100)
+            .insert(
+                "strategy_a",
+                "SPY",
+                10_000.0,
+                &p,
+                &metrics,
+                &empty,
+                &ec,
+                &ind,
+                100,
+            )
             .unwrap();
 
         // Verify it exists
@@ -702,7 +738,17 @@ mod tests {
         let ind = serde_json::json!({});
 
         let id = store
-            .insert("strategy_a", "SPY", 10_000.0, &p, &metrics, &trades, &ec, &ind, 100)
+            .insert(
+                "strategy_a",
+                "SPY",
+                10_000.0,
+                &p,
+                &metrics,
+                &trades,
+                &ec,
+                &ind,
+                100,
+            )
             .unwrap();
 
         let fetched = store.get_trades(&id).unwrap();
