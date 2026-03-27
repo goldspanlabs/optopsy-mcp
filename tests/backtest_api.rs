@@ -100,6 +100,9 @@ fn full_lifecycle_insert_list_get_delete() {
             &trades3,
             "{}",
             512,
+            None,
+            None,
+            None,
         )
         .expect("insert id1");
 
@@ -113,6 +116,9 @@ fn full_lifecycle_insert_list_get_delete() {
             &trades1,
             "{}",
             256,
+            None,
+            None,
+            None,
         )
         .expect("insert id2");
 
@@ -120,13 +126,13 @@ fn full_lifecycle_insert_list_get_delete() {
 
     // ── list all → 2 results ──────────────────────────────────────────────────
 
-    let all = store.list(None, None).expect("list all");
+    let all = store.list(None, None, None, None).expect("list all");
     assert_eq!(all.len(), 2, "expected 2 backtests after two inserts");
 
     // ── list filtered by strategy → 1 result ─────────────────────────────────
 
     let filtered = store
-        .list(Some("bb_mean_reversion"), None)
+        .list(Some("bb_mean_reversion"), None, None, None)
         .expect("list by strategy");
     assert_eq!(filtered.len(), 1);
     assert_eq!(filtered[0].strategy_key, "bb_mean_reversion");
@@ -182,7 +188,7 @@ fn full_lifecycle_insert_list_get_delete() {
 
     // ── id2 still intact ─────────────────────────────────────────────────────
 
-    let remaining = store.list(None, None).expect("list after delete");
+    let remaining = store.list(None, None, None, None).expect("list after delete");
     assert_eq!(remaining.len(), 1, "only id2 should remain");
     assert_eq!(remaining[0].strategy_key, "ibs_mean_reversion");
     assert_eq!(remaining[0].symbol, "QQQ");
@@ -206,39 +212,42 @@ fn list_filters_combine_correctly() {
 
     // Insert 3 backtests: (strat_a, SPY), (strat_a, QQQ), (strat_b, SPY)
     store
-        .insert("strat_a", "SPY", 10_000.0, &p, &metrics, &empty, "{}", 100)
+        .insert("strat_a", "SPY", 10_000.0, &p, &metrics, &empty, "{}", 100, None, None, None)
         .expect("insert strat_a/SPY");
     store
-        .insert("strat_a", "QQQ", 10_000.0, &p, &metrics, &empty, "{}", 100)
+        .insert("strat_a", "QQQ", 10_000.0, &p, &metrics, &empty, "{}", 100, None, None, None)
         .expect("insert strat_a/QQQ");
     store
-        .insert("strat_b", "SPY", 10_000.0, &p, &metrics, &empty, "{}", 100)
+        .insert("strat_b", "SPY", 10_000.0, &p, &metrics, &empty, "{}", 100, None, None, None)
         .expect("insert strat_b/SPY");
 
     // list(strat_a, SPY) = 1
     assert_eq!(
-        store.list(Some("strat_a"), Some("SPY")).unwrap().len(),
+        store
+            .list(Some("strat_a"), Some("SPY"), None, None)
+            .unwrap()
+            .len(),
         1,
         "strat_a + SPY should yield exactly 1"
     );
 
     // list(strat_a, None) = 2
     assert_eq!(
-        store.list(Some("strat_a"), None).unwrap().len(),
+        store.list(Some("strat_a"), None, None, None).unwrap().len(),
         2,
         "strat_a alone should yield 2"
     );
 
     // list(None, SPY) = 2
     assert_eq!(
-        store.list(None, Some("SPY")).unwrap().len(),
+        store.list(None, Some("SPY"), None, None).unwrap().len(),
         2,
         "SPY alone should yield 2"
     );
 
     // list(None, None) = 3
     assert_eq!(
-        store.list(None, None).unwrap().len(),
+        store.list(None, None, None, None).unwrap().len(),
         3,
         "no filters should yield all 3"
     );

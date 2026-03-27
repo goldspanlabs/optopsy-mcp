@@ -43,6 +43,8 @@ pub struct CreateBacktestRequest {
 pub struct ListQuery {
     pub strategy: Option<String>,
     pub symbol: Option<String>,
+    pub tag: Option<String>,
+    pub regime: Option<String>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -127,6 +129,17 @@ pub async fn create_backtest(
     let result_json = serde_json::to_string(&response)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Extract provenance from script_meta
+    let hypothesis = response
+        .script_meta
+        .as_ref()
+        .and_then(|m| m.hypothesis.as_deref());
+    let tags = response.script_meta.as_ref().and_then(|m| m.tags.as_ref());
+    let regime = response
+        .script_meta
+        .as_ref()
+        .and_then(|m| m.regime.as_ref());
+
     let (id, created_at) = state
         .backtest_store
         .insert(
@@ -138,6 +151,9 @@ pub async fn create_backtest(
             &trades,
             &result_json,
             response.execution_time_ms as i64,
+            hypothesis,
+            tags,
+            regime,
         )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -160,7 +176,12 @@ pub async fn list_backtests(
 ) -> Result<Json<Vec<BacktestSummary>>, (StatusCode, String)> {
     let rows = state
         .backtest_store
-        .list(query.strategy.as_deref(), query.symbol.as_deref())
+        .list(
+            query.strategy.as_deref(),
+            query.symbol.as_deref(),
+            query.tag.as_deref(),
+            query.regime.as_deref(),
+        )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(rows))
 }

@@ -68,6 +68,12 @@ pub struct BacktestSummary {
     pub metrics: MetricsRow,
     pub execution_time_ms: i64,
     pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hypothesis: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub regime: Option<String>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -119,7 +125,10 @@ impl BacktestStore {
                 params              TEXT NOT NULL,
                 result_json         TEXT NOT NULL DEFAULT '{}',
                 execution_time_ms   INTEGER NOT NULL,
-                created_at          TEXT NOT NULL
+                created_at          TEXT NOT NULL,
+                hypothesis          TEXT,
+                tags                TEXT,
+                regime              TEXT
             );
 
             CREATE TABLE IF NOT EXISTS backtest_metrics (
@@ -181,19 +190,24 @@ impl BacktestStore {
         trades: &[TradeRow],
         result_json: &str,
         execution_time_ms: i64,
+        hypothesis: Option<&str>,
+        tags: Option<&Vec<String>>,
+        regime: Option<&Vec<String>>,
     ) -> Result<(String, String)> {
         let id = uuid::Uuid::new_v4().to_string();
         let created_at = chrono::Utc::now().to_rfc3339();
 
         let params_str = serde_json::to_string(params).context("Failed to serialize params")?;
+        let tags_str = tags.map(|t| serde_json::to_string(t).unwrap_or_default());
+        let regime_str = regime.map(|r| serde_json::to_string(r).unwrap_or_default());
 
         let conn = self.conn.lock().expect("mutex poisoned");
 
         conn.execute(
             "INSERT INTO backtests
                 (id, strategy_key, symbol, capital, params, result_json,
-                 execution_time_ms, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                 execution_time_ms, created_at, hypothesis, tags, regime)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             rusqlite::params![
                 id,
                 strategy_key,
@@ -203,6 +217,9 @@ impl BacktestStore {
                 result_json,
                 execution_time_ms,
                 created_at,
+                hypothesis,
+                tags_str,
+                regime_str,
             ],
         )
         .context("Failed to insert into backtests")?;
@@ -294,13 +311,15 @@ impl BacktestStore {
         }))
     }
 
-    /// List backtest summaries, optionally filtered by strategy key and/or symbol.
+    /// List backtest summaries, optionally filtered by strategy key, symbol, tag, or regime.
     ///
     /// Results are ordered newest-first by `created_at`.
     pub fn list(
         &self,
         strategy: Option<&str>,
         symbol: Option<&str>,
+        tag: Option<&str>,
+        regime: Option<&str>,
     ) -> Result<Vec<BacktestSummary>> {
         let conn = self.conn.lock().expect("mutex poisoned");
 
@@ -308,7 +327,8 @@ impl BacktestStore {
             "SELECT b.id, b.strategy_key, b.symbol, b.capital,
                     b.execution_time_ms, b.created_at,
                     m.sharpe, m.sortino, m.cagr, m.max_drawdown, m.win_rate,
-                    m.profit_factor, m.total_pnl, m.trade_count, m.expectancy, m.var_95
+                    m.profit_factor, m.total_pnl, m.trade_count, m.expectancy, m.var_95,
+                    b.hypothesis, b.tags, b.regime
              FROM backtests b
              JOIN backtest_metrics m ON m.backtest_id = b.id",
         );
@@ -322,7 +342,18 @@ impl BacktestStore {
         }
         if symbol.is_some() {
             conditions.push(format!("b.symbol = ?{param_idx}"));
+            param_idx += 1;
         }
+        if tag.is_some() {
+            conditions.push(format!("b.tags LIKE ?{param_idx}"));
+            param_idx += 1;
+        }
+        if regime.is_some() {
+            conditions.push(format!("b.regime LIKE ?{param_idx}"));
+            param_idx += 1;
+        }
+        // suppress unused warning when no filters are added
+        let _ = param_idx;
 
         if !conditions.is_empty() {
             sql.push_str(" WHERE ");
@@ -337,6 +368,12 @@ impl BacktestStore {
         }
         if let Some(s) = symbol {
             params_vec.push(Box::new(s.to_owned()));
+        }
+        if let Some(t) = tag {
+            params_vec.push(Box::new(format!("%\"{t}\"%")));
+        }
+        if let Some(r) = regime {
+            params_vec.push(Box::new(format!("%\"{r}\"%")));
         }
 
         let params_refs: Vec<&dyn rusqlite::types::ToSql> =
@@ -365,6 +402,9 @@ impl BacktestStore {
                         expectancy: row.get(14)?,
                         var_95: row.get(15)?,
                     },
+                    hypothesis: row.get(16)?,
+                    tags: row.get(17)?,
+                    regime: row.get(18)?,
                 })
             })
             .context("Failed to query backtest list")?
@@ -519,6 +559,9 @@ mod tests {
                 &trades,
                 "{}",
                 1234,
+                None,
+                None,
+                None,
             )
             .expect("insert");
 
@@ -551,6 +594,9 @@ mod tests {
                 &empty,
                 "{}",
                 100,
+                None,
+                None,
+                None,
             )
             .unwrap();
         store
@@ -563,6 +609,9 @@ mod tests {
                 &empty,
                 "{}",
                 100,
+                None,
+                None,
+                None,
             )
             .unwrap();
         store
@@ -575,27 +624,48 @@ mod tests {
                 &empty,
                 "{}",
                 100,
+                None,
+                None,
+                None,
             )
             .unwrap();
 
         // No filter — all 3
-        assert_eq!(store.list(None, None).unwrap().len(), 3);
+        assert_eq!(store.list(None, None, None, None).unwrap().len(), 3);
 
         // Filter by strategy
-        assert_eq!(store.list(Some("strategy_a"), None).unwrap().len(), 2);
-        assert_eq!(store.list(Some("strategy_b"), None).unwrap().len(), 1);
+        assert_eq!(
+            store.list(Some("strategy_a"), None, None, None).unwrap().len(),
+            2
+        );
+        assert_eq!(
+            store.list(Some("strategy_b"), None, None, None).unwrap().len(),
+            1
+        );
 
         // Filter by symbol
-        assert_eq!(store.list(None, Some("SPY")).unwrap().len(), 2);
-        assert_eq!(store.list(None, Some("QQQ")).unwrap().len(), 1);
+        assert_eq!(
+            store.list(None, Some("SPY"), None, None).unwrap().len(),
+            2
+        );
+        assert_eq!(
+            store.list(None, Some("QQQ"), None, None).unwrap().len(),
+            1
+        );
 
         // Filter by both
         assert_eq!(
-            store.list(Some("strategy_a"), Some("SPY")).unwrap().len(),
+            store
+                .list(Some("strategy_a"), Some("SPY"), None, None)
+                .unwrap()
+                .len(),
             1
         );
         assert_eq!(
-            store.list(Some("strategy_b"), Some("QQQ")).unwrap().len(),
+            store
+                .list(Some("strategy_b"), Some("QQQ"), None, None)
+                .unwrap()
+                .len(),
             0
         );
     }
@@ -617,6 +687,9 @@ mod tests {
                 &empty,
                 "{}",
                 100,
+                None,
+                None,
+                None,
             )
             .unwrap();
 
@@ -647,6 +720,9 @@ mod tests {
                 &trades,
                 "{}",
                 100,
+                None,
+                None,
+                None,
             )
             .unwrap();
 
@@ -658,5 +734,133 @@ mod tests {
         assert_eq!(fetched[1].group_label, Some("group-A".to_string()));
         assert_eq!(fetched[0].computed_quantity, Some(2));
         assert!(fetched[1].computed_quantity.is_none());
+    }
+
+    #[test]
+    fn test_insert_with_provenance() {
+        let store = BacktestStore::open_in_memory().expect("open_in_memory");
+        let metrics = sample_metrics();
+        let empty: Vec<TradeRow> = vec![];
+        let p = serde_json::json!({});
+
+        let (id, _) = store
+            .insert(
+                "strategy_a",
+                "SPY",
+                10_000.0,
+                &p,
+                &metrics,
+                &empty,
+                "{}",
+                100,
+                Some("IBS reverts in uptrends"),
+                Some(&vec!["mean_reversion".to_string(), "options".to_string()]),
+                Some(&vec!["uptrend".to_string()]),
+            )
+            .unwrap();
+
+        let summaries = store.list(None, None, None, None).unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(
+            summaries[0].hypothesis.as_deref(),
+            Some("IBS reverts in uptrends")
+        );
+        assert_eq!(
+            summaries[0].tags.as_deref(),
+            Some(r#"["mean_reversion","options"]"#)
+        );
+        assert_eq!(
+            summaries[0].regime.as_deref(),
+            Some(r#"["uptrend"]"#)
+        );
+
+        // Verify the id matches
+        assert_eq!(summaries[0].id, id);
+    }
+
+    #[test]
+    fn test_list_filter_by_tag() {
+        let store = BacktestStore::open_in_memory().expect("open_in_memory");
+        let metrics = sample_metrics();
+        let empty: Vec<TradeRow> = vec![];
+        let p = serde_json::json!({});
+
+        store
+            .insert(
+                "s1",
+                "SPY",
+                10_000.0,
+                &p,
+                &metrics,
+                &empty,
+                "{}",
+                100,
+                None,
+                Some(&vec!["mean_reversion".to_string()]),
+                None,
+            )
+            .unwrap();
+        store
+            .insert(
+                "s2",
+                "SPY",
+                10_000.0,
+                &p,
+                &metrics,
+                &empty,
+                "{}",
+                100,
+                None,
+                Some(&vec!["momentum".to_string()]),
+                None,
+            )
+            .unwrap();
+
+        let filtered = store.list(None, None, Some("mean_reversion"), None).unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].strategy_key, "s1");
+    }
+
+    #[test]
+    fn test_list_filter_by_regime() {
+        let store = BacktestStore::open_in_memory().expect("open_in_memory");
+        let metrics = sample_metrics();
+        let empty: Vec<TradeRow> = vec![];
+        let p = serde_json::json!({});
+
+        store
+            .insert(
+                "s1",
+                "SPY",
+                10_000.0,
+                &p,
+                &metrics,
+                &empty,
+                "{}",
+                100,
+                None,
+                None,
+                Some(&vec!["uptrend".to_string()]),
+            )
+            .unwrap();
+        store
+            .insert(
+                "s2",
+                "QQQ",
+                10_000.0,
+                &p,
+                &metrics,
+                &empty,
+                "{}",
+                100,
+                None,
+                None,
+                Some(&vec!["high_vol".to_string()]),
+            )
+            .unwrap();
+
+        let filtered = store.list(None, None, None, Some("uptrend")).unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].strategy_key, "s1");
     }
 }
