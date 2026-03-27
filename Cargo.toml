@@ -28,6 +28,8 @@ statrs = "0.18"
 nalgebra = { version = "0.33", default-features = false, features = ["std"] }
 rhai = { version = "1", features = ["sync"] }
 dotenvy = "0.15"
+rusqlite = { version = "0.35", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
