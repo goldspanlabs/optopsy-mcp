@@ -117,13 +117,18 @@ pub struct ScriptMeta {
     /// Expected market regime(s) (parsed from comma-separated `//! regime:` header).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub regime: Option<Vec<String>>,
+    /// Asset-class parameter profiles (parsed from `//! profile.<name>:` headers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profiles: Option<HashMap<String, HashMap<String, serde_json::Value>>>,
 }
 
 /// Parse `//!` doc-comment header from script source for metadata fields.
 ///
-/// Recognized keys: `name`, `description`, `category`, `hypothesis`, `tags`, `regime`.
+/// Recognized keys: `name`, `description`, `category`, `hypothesis`, `tags`, `regime`,
+/// and `profile.<name>:` for asset-class parameter profiles.
 /// Lines must start with `//!` followed by `key: value`.
 /// `tags` and `regime` accept comma-separated values.
+/// `profile.<name>:` accepts comma-separated `key=value` pairs.
 pub fn parse_script_meta(id: &str, source: &str) -> ScriptMeta {
     let mut name = None;
     let mut description = None;
@@ -131,6 +136,7 @@ pub fn parse_script_meta(id: &str, source: &str) -> ScriptMeta {
     let mut hypothesis = None;
     let mut tags = None;
     let mut regime = None;
+    let mut profiles: HashMap<String, HashMap<String, serde_json::Value>> = HashMap::new();
 
     for line in source.lines() {
         let trimmed = line.trim();
@@ -174,6 +180,24 @@ pub fn parse_script_meta(id: &str, source: &str) -> ScriptMeta {
                 if !items.is_empty() {
                     regime = Some(items);
                 }
+            } else if let Some(rest_profile) = rest.strip_prefix("profile.") {
+                if let Some((profile_name, kv_str)) = rest_profile.split_once(':') {
+                    let profile_name = profile_name.trim();
+                    let kv_str = kv_str.trim();
+                    if !profile_name.is_empty() && !kv_str.is_empty() {
+                        let entry = profiles.entry(profile_name.to_string()).or_default();
+                        for pair in kv_str.split(',') {
+                            let pair = pair.trim();
+                            if let Some((k, v)) = pair.split_once('=') {
+                                let k = k.trim();
+                                let v = v.trim();
+                                if !k.is_empty() {
+                                    entry.insert(k.to_string(), parse_profile_value(v));
+                                }
+                            }
+                        }
+                    }
+                }
             }
         } else if !trimmed.is_empty() && !trimmed.starts_with("//") {
             break; // Stop at first non-comment line
@@ -189,7 +213,50 @@ pub fn parse_script_meta(id: &str, source: &str) -> ScriptMeta {
         hypothesis,
         tags,
         regime,
+        profiles: if profiles.is_empty() { None } else { Some(profiles) },
     }
+}
+
+/// Parse a scalar value string into a `serde_json::Value`.
+fn parse_profile_value(s: &str) -> serde_json::Value {
+    if let Ok(i) = s.parse::<i64>() {
+        serde_json::json!(i)
+    } else if let Ok(f) = s.parse::<f64>() {
+        serde_json::json!(f)
+    } else if s == "true" {
+        serde_json::json!(true)
+    } else if s == "false" {
+        serde_json::json!(false)
+    } else {
+        serde_json::json!(s)
+    }
+}
+
+/// Convert a `toml::Value` to a `serde_json::Value` (scalar types only).
+fn toml_to_json(val: &toml::Value) -> serde_json::Value {
+    match val {
+        toml::Value::String(s) => serde_json::Value::String(s.clone()),
+        toml::Value::Integer(i) => serde_json::json!(i),
+        toml::Value::Float(f) => serde_json::json!(f),
+        toml::Value::Boolean(b) => serde_json::json!(b),
+        _ => serde_json::Value::Null,
+    }
+}
+
+/// Parse a TOML profiles string into a map of profile name → param name → JSON value.
+pub fn parse_profiles_toml(content: &str) -> HashMap<String, HashMap<String, serde_json::Value>> {
+    let table: toml::Table = content.parse().unwrap_or_default();
+    let mut profiles = HashMap::new();
+    for (profile_name, value) in &table {
+        if let Some(params_table) = value.as_table() {
+            let mut params = HashMap::new();
+            for (key, val) in params_table {
+                params.insert(key.clone(), toml_to_json(val));
+            }
+            profiles.insert(profile_name.clone(), params);
+        }
+    }
+    profiles
 }
 
 /// Convert a Rhai Dynamic to a serde_json::Value for storage in ExternParam.
@@ -359,5 +426,53 @@ mod tests {
         assert!(meta.hypothesis.is_none());
         assert!(meta.tags.is_none());
         assert!(meta.regime.is_none());
+    }
+
+    #[test]
+    fn test_load_profiles_from_toml() {
+        let toml_content = r#"
+[equities]
+delta = 0.30
+dte = 45
+stop_pct = 0.05
+
+[crypto]
+delta = 0.25
+dte = 14
+stop_pct = 0.15
+"#;
+        let profiles = parse_profiles_toml(toml_content);
+        assert_eq!(profiles.len(), 2);
+        let equities = &profiles["equities"];
+        assert_eq!(equities["delta"], serde_json::json!(0.3));
+        assert_eq!(equities["dte"], serde_json::json!(45));
+        let crypto = &profiles["crypto"];
+        assert_eq!(crypto["delta"], serde_json::json!(0.25));
+        assert_eq!(crypto["dte"], serde_json::json!(14));
+    }
+
+    #[test]
+    fn test_parse_script_profiles() {
+        let source = r#"//! name: Test Strategy
+//! profile.equities: delta=0.30, dte=45, ibs_threshold=0.2
+//! profile.crypto: delta=0.20, dte=14
+"#;
+        let meta = parse_script_meta("test", source);
+        let profiles = meta.profiles.as_ref().expect("profiles should be present");
+        assert_eq!(profiles.len(), 2);
+        let eq = &profiles["equities"];
+        assert_eq!(eq["delta"], serde_json::json!(0.3));
+        assert_eq!(eq["dte"], serde_json::json!(45));
+        assert_eq!(eq["ibs_threshold"], serde_json::json!(0.2));
+        let cr = &profiles["crypto"];
+        assert_eq!(cr["delta"], serde_json::json!(0.2));
+        assert_eq!(cr["dte"], serde_json::json!(14));
+    }
+
+    #[test]
+    fn test_parse_no_profiles() {
+        let source = "//! name: Basic\n";
+        let meta = parse_script_meta("basic", source);
+        assert!(meta.profiles.is_none());
     }
 }
