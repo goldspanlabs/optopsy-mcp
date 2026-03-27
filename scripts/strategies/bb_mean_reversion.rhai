@@ -1,6 +1,9 @@
 //! name: Bollinger Band Mean Reversion
 //! description: Short when price breaks above upper BBand (2σ), exit on reversion to SMA(20) or max 10 bars
 //! category: stock
+//! hypothesis: Bollinger Band squeezes followed by lower band touches signal mean reversion
+//! tags: mean_reversion, options, bollinger_bands
+//! regime: range_bound, low_volatility
 
 // Based on hypothesis: price breaks above upper Bollinger Band (2σ) mean reverts strongly.
 // 10-day forward return: +0.68% avg, DSR=1.00, p=0.0175 over 53 setups in 5 years.

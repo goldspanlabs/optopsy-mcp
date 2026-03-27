@@ -1,6 +1,9 @@
 //! name: IBS Mean Reversion
 //! description: Stock mean reversion using IBS indicator with volatility-adjusted entry channel
 //! category: stock
+//! hypothesis: Low IBS readings (< threshold) in uptrending markets revert within days
+//! tags: mean_reversion, options, short_put, ibs
+//! regime: uptrend, low_volatility
 
 // Buys when price pulls back below a volatility-adjusted channel and IBS shows
 // intraday weakness (close in bottom 30% of range). Exits when close breaks

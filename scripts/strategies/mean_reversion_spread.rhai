@@ -1,6 +1,9 @@
 //! name: Mean-Reversion Bull Put Spread
 //! description: Bull put spreads on RSI dips with volatility-adaptive delta and dynamic exits
 //! category: options
+//! hypothesis: RSI dips below 40 in uptrending markets revert, profiting bull put spreads
+//! tags: mean_reversion, spreads, bull_put, rsi
+//! regime: uptrend, moderate_volatility
 
 // Sells bull put spreads on RSI dips within an uptrend, with volatility-adaptive
 // delta selection and dynamic exit rules using multiple indicators.

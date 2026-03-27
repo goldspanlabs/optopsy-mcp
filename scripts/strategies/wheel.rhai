@@ -1,6 +1,9 @@
 //! name: Wheel Strategy
 //! description: Sell puts, get assigned, sell covered calls, repeat
 //! category: options
+//! hypothesis: Selling premium via wheel strategy captures theta decay in range-bound markets
+//! tags: wheel, premium_selling, covered_call, cash_secured_put
+//! regime: sideways, low_volatility
 
 // SYMBOL and CAPITAL are universal — provided by the FE dialog via params map.
 
