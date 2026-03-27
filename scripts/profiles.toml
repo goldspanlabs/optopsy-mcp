@@ -1,0 +1,17 @@
+[equities]
+delta = 0.30
+dte = 45
+stop_pct = 0.05
+lookback = 20
+
+[crypto]
+delta = 0.25
+dte = 14
+stop_pct = 0.15
+lookback = 10
+
+[etf]
+delta = 0.30
+dte = 30
+stop_pct = 0.08
+lookback = 20

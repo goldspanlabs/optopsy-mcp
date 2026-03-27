@@ -25,12 +25,22 @@ pub async fn execute(server: &OptopsyServer, params: RunScriptParams) -> Result<
         cache: Arc::clone(&server.cache),
     };
 
+    // Merge profile params if a profile was requested
+    let effective_params = if let Some(ref profile_name) = params.profile {
+        use crate::scripting::stdlib::{load_profiles_registry, merge_profile_params};
+        let registry = load_profiles_registry();
+        let script_profiles = script_meta.as_ref().and_then(|m| m.profiles.as_ref());
+        merge_profile_params(profile_name, &registry, script_profiles, &params.params)
+    } else {
+        params.params.clone()
+    };
+
     let ScriptBacktestResult {
         result,
         metadata: _,
         indicator_data,
         ..
-    } = crate::scripting::engine::run_script_backtest(&source, &params.params, &loader).await?;
+    } = crate::scripting::engine::run_script_backtest(&source, &effective_params, &loader).await?;
 
     // Convert raw indicator arrays to compact IndicatorData format
     let formatted_indicators = format_indicator_data(&indicator_data);

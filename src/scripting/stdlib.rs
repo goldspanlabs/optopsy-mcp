@@ -259,6 +259,44 @@ pub fn parse_profiles_toml(content: &str) -> HashMap<String, HashMap<String, ser
     profiles
 }
 
+/// Load the central profiles registry from `scripts/profiles.toml`.
+/// Returns an empty map if the file doesn't exist or can't be parsed.
+pub fn load_profiles_registry() -> HashMap<String, HashMap<String, serde_json::Value>> {
+    let path = std::path::Path::new("scripts/profiles.toml");
+    match std::fs::read_to_string(path) {
+        Ok(content) => parse_profiles_toml(&content),
+        Err(_) => HashMap::new(),
+    }
+}
+
+/// Merge parameter values from three layers: registry → script profile → caller params.
+/// Each layer overrides the previous.
+pub fn merge_profile_params(
+    profile_name: &str,
+    registry: &HashMap<String, HashMap<String, serde_json::Value>>,
+    script_profiles: Option<&HashMap<String, HashMap<String, serde_json::Value>>>,
+    caller_params: &HashMap<String, serde_json::Value>,
+) -> HashMap<String, serde_json::Value> {
+    let mut merged = HashMap::new();
+
+    // Layer 1: central registry
+    if let Some(reg_profile) = registry.get(profile_name) {
+        merged.extend(reg_profile.clone());
+    }
+
+    // Layer 2: script-level profile
+    if let Some(script_profiles) = script_profiles {
+        if let Some(script_profile) = script_profiles.get(profile_name) {
+            merged.extend(script_profile.clone());
+        }
+    }
+
+    // Layer 3: caller params (highest precedence)
+    merged.extend(caller_params.clone());
+
+    merged
+}
+
 /// Convert a Rhai Dynamic to a serde_json::Value for storage in ExternParam.
 fn dynamic_to_json(val: &Dynamic) -> (Option<serde_json::Value>, String) {
     if val.is_unit() {
@@ -474,5 +512,43 @@ stop_pct = 0.15
         let source = "//! name: Basic\n";
         let meta = parse_script_meta("basic", source);
         assert!(meta.profiles.is_none());
+    }
+
+    #[test]
+    fn test_merge_profiles() {
+        let registry = parse_profiles_toml(
+            "[equities]\ndelta = 0.30\ndte = 45\nlookback = 20\n",
+        );
+
+        let mut script_profiles = HashMap::new();
+        let mut eq_overrides = HashMap::new();
+        eq_overrides.insert("delta".to_string(), serde_json::json!(0.35));
+        eq_overrides.insert("ibs_threshold".to_string(), serde_json::json!(0.2));
+        script_profiles.insert("equities".to_string(), eq_overrides);
+
+        let caller_params: HashMap<String, serde_json::Value> =
+            vec![("dte".to_string(), serde_json::json!(30))]
+                .into_iter()
+                .collect();
+
+        let merged = merge_profile_params("equities", &registry, Some(&script_profiles), &caller_params);
+
+        assert_eq!(merged["delta"], serde_json::json!(0.35));
+        assert_eq!(merged["dte"], serde_json::json!(30));
+        assert_eq!(merged["lookback"], serde_json::json!(20));
+        assert_eq!(merged["ibs_threshold"], serde_json::json!(0.2));
+    }
+
+    #[test]
+    fn test_merge_unknown_profile() {
+        let registry = parse_profiles_toml("[equities]\ndelta = 0.30\n");
+        let caller: HashMap<String, serde_json::Value> =
+            vec![("dte".to_string(), serde_json::json!(45))]
+                .into_iter()
+                .collect();
+
+        let merged = merge_profile_params("unknown", &registry, None, &caller);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged["dte"], serde_json::json!(45));
     }
 }

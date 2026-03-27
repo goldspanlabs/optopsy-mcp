@@ -29,6 +29,12 @@ pub struct RunScriptParams {
     #[serde(default)]
     #[garde(skip)]
     pub params: HashMap<String, serde_json::Value>,
+
+    /// Asset-class profile name (e.g., "equities", "crypto"). Loads defaults from
+    /// `scripts/profiles.toml` and script-level `//! profile.<name>:` headers.
+    #[serde(default)]
+    #[garde(skip)]
+    pub profile: Option<String>,
 }
 
 /// Response from a script backtest — passes through the full `BacktestResult`

@@ -36,6 +36,8 @@ pub struct AppState {
 pub struct CreateBacktestRequest {
     pub strategy: String,
     pub params: HashMap<String, Value>,
+    #[serde(default)]
+    pub profile: Option<String>,
 }
 
 /// Query parameters for `GET /backtests`.
@@ -60,6 +62,7 @@ pub async fn create_backtest(
         strategy: Some(req.strategy.clone()),
         script: None,
         params: req.params.clone(),
+        profile: req.profile.clone(),
     };
 
     let response = crate::server::handlers::run_script::execute(&state.server, run_params)
