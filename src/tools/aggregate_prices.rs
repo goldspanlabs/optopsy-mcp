@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use crate::constants::CALENDAR_DAYS_PER_YEAR;
 use crate::data::cache::CachedStore;
+use crate::server::{AggMetric, GroupBy};
 use crate::stats;
 use crate::tools::ai_format;
 use crate::tools::response_types::{AggregateBucket, AggregatePricesResponse, DateRange};
@@ -16,32 +17,15 @@ pub async fn execute(
     cache: &Arc<CachedStore>,
     symbol: &str,
     years: u32,
-    group_by: &str,
-    metric: &str,
+    group_by: GroupBy,
+    metric: AggMetric,
     interval: Option<crate::engine::types::Interval>,
     start_date: Option<&str>,
     end_date: Option<&str>,
 ) -> Result<AggregatePricesResponse> {
-    // Validate group_by
-    let valid_groups = ["day_of_week", "month", "quarter", "year", "hour_of_day"];
-    if !valid_groups.contains(&group_by) {
-        anyhow::bail!(
-            "Invalid group_by: \"{group_by}\". Must be one of: {}",
-            valid_groups.join(", ")
-        );
-    }
-    // Validate metric
-    let valid_metrics = ["return", "range", "volume", "gap"];
-    if !valid_metrics.contains(&metric) {
-        anyhow::bail!(
-            "Invalid metric: \"{metric}\". Must be one of: {}",
-            valid_metrics.join(", ")
-        );
-    }
-
     // Resolve interval: auto-select Hour1 for hour_of_day if not specified
     let resolved_interval = interval.unwrap_or_else(|| {
-        if group_by == "hour_of_day" {
+        if group_by == GroupBy::HourOfDay {
             crate::engine::types::Interval::Hour1
         } else {
             crate::engine::types::Interval::Daily
@@ -49,7 +33,7 @@ pub async fn execute(
     });
 
     // Reject hour_of_day with daily-resolution intervals
-    if group_by == "hour_of_day"
+    if group_by == GroupBy::HourOfDay
         && matches!(
             resolved_interval,
             crate::engine::types::Interval::Daily
@@ -116,21 +100,20 @@ pub async fn execute(
         };
 
         let bucket_label = match group_by {
-            "day_of_week" => date.format("%A").to_string(),
-            "month" => date.format("%B").to_string(),
-            "quarter" => format!("Q{}", ((date.month() - 1) / 3) + 1),
-            "year" => date.format("%Y").to_string(),
-            "hour_of_day" => {
+            GroupBy::DayOfWeek => date.format("%A").to_string(),
+            GroupBy::Month => date.format("%B").to_string(),
+            GroupBy::Quarter => format!("Q{}", ((date.month() - 1) / 3) + 1),
+            GroupBy::Year => date.format("%Y").to_string(),
+            GroupBy::HourOfDay => {
                 // Midnight bars may be formatted as date-only by raw_prices,
                 // so hour=None means 00:00 when using an intraday interval.
                 let h = hour.unwrap_or(0);
                 format!("{h:02}:00")
             }
-            _ => unreachable!("group_by already validated against known values"),
         };
 
         let value = match metric {
-            "return" => {
+            AggMetric::Return => {
                 if i == 0 {
                     continue; // skip first bar (no previous close)
                 }
@@ -140,7 +123,7 @@ pub async fn execute(
                 }
                 (prices[i].close - prev_close) / prev_close * 100.0
             }
-            "gap" => {
+            AggMetric::Gap => {
                 if i == 0 {
                     continue; // skip first bar (no previous close)
                 }
@@ -150,22 +133,29 @@ pub async fn execute(
                 }
                 (prices[i].open - prev_close) / prev_close * 100.0
             }
-            "range" => {
+            AggMetric::Range => {
                 if prices[i].low == 0.0 {
                     continue;
                 }
                 (prices[i].high - prices[i].low) / prices[i].low * 100.0
             }
-            "volume" => prices[i].volume as f64,
-            _ => unreachable!("metric already validated against known values"),
+            AggMetric::Volume => prices[i].volume as f64,
         };
         bar_data.push((bucket_label, value));
     }
 
-    let (buckets, warnings) = build_buckets(group_by, metric, &bar_data);
+    let group_by_str = group_by.as_str();
+    let metric_str = metric.as_str();
+    let (buckets, warnings) = build_buckets(group_by_str, metric_str, &bar_data);
 
     Ok(ai_format::format_aggregate_prices(
-        &upper, group_by, metric, total_bars, date_range, buckets, warnings,
+        &upper,
+        group_by_str,
+        metric_str,
+        total_bars,
+        date_range,
+        buckets,
+        warnings,
     ))
 }
 

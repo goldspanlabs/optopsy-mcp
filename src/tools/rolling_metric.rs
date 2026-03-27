@@ -5,11 +5,10 @@ use std::sync::Arc;
 
 use crate::constants::TRADING_DAYS_PER_YEAR;
 use crate::data::cache::CachedStore;
+use crate::server::RollingMetric;
 use crate::stats;
 use crate::tools::ai_format;
-use crate::tools::ai_helpers::{
-    compute_years_cutoff, epoch_to_date_string, subsample_to_max, validate_choice,
-};
+use crate::tools::ai_helpers::{compute_years_cutoff, epoch_to_date_string, subsample_to_max};
 use crate::tools::response_types::{RollingMetricResponse, RollingPoint, RollingStats};
 
 /// Execute the `rolling_metric` analysis.
@@ -17,25 +16,13 @@ use crate::tools::response_types::{RollingMetricResponse, RollingPoint, RollingS
 pub async fn execute(
     cache: &Arc<CachedStore>,
     symbol: &str,
-    metric: &str,
+    metric: RollingMetric,
     window: usize,
     benchmark: Option<&str>,
     years: u32,
 ) -> Result<RollingMetricResponse> {
-    validate_choice(
-        metric,
-        &[
-            "volatility",
-            "sharpe",
-            "mean_return",
-            "max_drawdown",
-            "beta",
-            "correlation",
-        ],
-        "metric",
-    )?;
-    if (metric == "beta" || metric == "correlation") && benchmark.is_none() {
-        anyhow::bail!("Metric \"{metric}\" requires a benchmark symbol");
+    if metric.requires_benchmark() && benchmark.is_none() {
+        anyhow::bail!("Metric \"{}\" requires a benchmark symbol", metric.as_str());
     }
 
     let upper = symbol.to_uppercase();
@@ -117,13 +104,14 @@ pub async fn execute(
 
     // Compute rolling metric
     let annualization = TRADING_DAYS_PER_YEAR.sqrt();
+    let metric_str = metric.as_str();
     let series_values: Vec<f64> = match metric {
-        "volatility" => {
+        RollingMetric::Volatility => {
             stats::rolling_apply(&returns, window, |w| {
                 stats::std_dev(w) * annualization * 100.0 // annualized %
             })
         }
-        "sharpe" => stats::rolling_apply(&returns, window, |w| {
+        RollingMetric::Sharpe => stats::rolling_apply(&returns, window, |w| {
             let s = stats::std_dev(w);
             if s == 0.0 {
                 0.0
@@ -131,10 +119,10 @@ pub async fn execute(
                 (stats::mean(w) / s) * annualization
             }
         }),
-        "mean_return" => stats::rolling_apply(&returns, window, |w| {
+        RollingMetric::MeanReturn => stats::rolling_apply(&returns, window, |w| {
             stats::mean(w) * TRADING_DAYS_PER_YEAR * 100.0 // annualized %
         }),
-        "max_drawdown" => stats::rolling_apply(&returns, window, |w| {
+        RollingMetric::MaxDrawdown => stats::rolling_apply(&returns, window, |w| {
             let mut equity: f64 = 1.0;
             let mut peak: f64 = 1.0;
             let mut max_dd: f64 = 0.0;
@@ -146,8 +134,10 @@ pub async fn execute(
             }
             max_dd * 100.0
         }),
-        "beta" => {
-            let bench = bench_returns.as_ref().unwrap();
+        RollingMetric::Beta => {
+            let bench = bench_returns
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("benchmark is required for beta metric"))?;
             rolling_paired(&returns, bench, window, |asset, bench_w| {
                 let cov = stats::covariance(asset, bench_w);
                 let var = stats::std_dev(bench_w).powi(2);
@@ -158,13 +148,14 @@ pub async fn execute(
                 }
             })
         }
-        "correlation" => {
-            let bench = bench_returns.as_ref().unwrap();
+        RollingMetric::Correlation => {
+            let bench = bench_returns
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("benchmark is required for correlation metric"))?;
             rolling_paired(&returns, bench, window, |asset, bench_w| {
                 stats::pearson(asset, bench_w)
             })
         }
-        _ => unreachable!(),
     };
 
     // Build series (skip NaN leading values)
@@ -190,7 +181,7 @@ pub async fn execute(
 
     if valid_values.is_empty() {
         anyhow::bail!(
-            "Rolling {metric} for {upper} produced no finite values — \
+            "Rolling {metric_str} for {upper} produced no finite values — \
              check benchmark alignment or try increasing the years of history."
         );
     }
@@ -240,7 +231,7 @@ pub async fn execute(
 
     Ok(ai_format::format_rolling_metric(
         &upper,
-        metric,
+        metric_str,
         window,
         valid_values.len(),
         rolling_stats,

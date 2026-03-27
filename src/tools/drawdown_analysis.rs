@@ -5,12 +5,11 @@
 //! underwater curve, and Ulcer Index. Complements the aggregate `max_drawdown`
 //! metric in `PerformanceMetrics` with a full distributional view.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::sync::Arc;
 
-use crate::constants::CALENDAR_DAYS_PER_YEAR;
-
 use crate::data::cache::CachedStore;
+use crate::tools::ai_helpers::load_prices;
 use crate::tools::response_types::{
     DrawdownAnalysisResponse, DrawdownEpisode, DrawdownStats, UnderwaterPoint,
 };
@@ -22,30 +21,19 @@ pub async fn execute(
     symbol: &str,
     years: u32,
 ) -> Result<DrawdownAnalysisResponse> {
-    let upper = symbol.to_uppercase();
-    let cutoff = chrono::Utc::now().date_naive()
-        - chrono::Duration::days(i64::from(years) * CALENDAR_DAYS_PER_YEAR);
-    let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
-
-    let resp = crate::tools::raw_prices::load_and_execute(
+    let prices = load_prices(
         cache,
-        &upper,
-        Some(&cutoff_str),
-        None,
-        None,
+        symbol,
+        years,
+        10,
         crate::engine::types::Interval::Daily,
-        None,
     )
-    .await
-    .context("Failed to load OHLCV data")?;
-
-    if resp.prices.len() < 10 {
-        anyhow::bail!("Insufficient price data for {upper}: need at least 10 bars");
-    }
+    .await?;
+    let upper = symbol.to_uppercase();
 
     // Build equity curve from close prices (treat first close as initial capital)
-    let closes: Vec<f64> = resp.prices.iter().map(|p| p.close).collect();
-    let dates: Vec<i64> = resp.prices.iter().map(|p| p.date).collect();
+    let closes: Vec<f64> = prices.iter().map(|p| p.close).collect();
+    let dates: Vec<i64> = prices.iter().map(|p| p.date).collect();
     let initial = closes[0];
 
     // Compute per-bar drawdown percentage and detect episodes

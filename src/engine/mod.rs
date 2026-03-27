@@ -9,7 +9,6 @@ pub mod hypothesis;
 pub mod metrics;
 pub mod multiple_comparisons;
 pub mod ohlcv;
-#[allow(dead_code)]
 pub mod positions;
 pub mod price_table;
 pub mod pricing;

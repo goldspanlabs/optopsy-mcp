@@ -4,15 +4,14 @@
 //! historical returns to produce confidence intervals on terminal wealth,
 //! max drawdown distributions, and ruin probabilities.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;
 
-use crate::constants::CALENDAR_DAYS_PER_YEAR;
-
 use crate::data::cache::CachedStore;
 use crate::stats;
+use crate::tools::ai_helpers::load_prices;
 use crate::tools::response_types::{
     DrawdownDistribution, HistogramBin, MonteCarloPercentilePath, MonteCarloResponse, RuinAnalysis,
 };
@@ -31,30 +30,18 @@ pub async fn execute(
     years: u32,
     seed: Option<u64>,
 ) -> Result<MonteCarloResponse> {
-    let upper = symbol.to_uppercase();
-    let cutoff = chrono::Utc::now().date_naive()
-        - chrono::Duration::days(i64::from(years) * CALENDAR_DAYS_PER_YEAR);
-    let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
-
-    let resp = crate::tools::raw_prices::load_and_execute(
+    let prices = load_prices(
         cache,
-        &upper,
-        Some(&cutoff_str),
-        None,
-        None,
+        symbol,
+        years,
+        60,
         crate::engine::types::Interval::Daily,
-        None,
     )
-    .await
-    .context("Failed to load OHLCV data")?;
-
-    if resp.prices.len() < 60 {
-        anyhow::bail!("Insufficient price data for {upper}: need at least 60 bars for Monte Carlo");
-    }
+    .await?;
+    let upper = symbol.to_uppercase();
 
     // Compute daily returns
-    let returns: Vec<f64> = resp
-        .prices
+    let returns: Vec<f64> = prices
         .windows(2)
         .filter_map(|w| {
             if w[0].close == 0.0 {

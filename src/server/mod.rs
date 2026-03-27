@@ -7,7 +7,7 @@ pub mod handlers;
 mod params;
 mod sanitize;
 
-pub use params::FactorProxies;
+pub use params::{AggMetric, CorrelateMode, FactorProxies, GroupBy, RegimeMethod, RollingMetric};
 
 use garde::Validate;
 
@@ -98,8 +98,8 @@ impl OptopsyServer {
                     &self.cache,
                     &params.symbol,
                     params.years,
-                    &params.group_by,
-                    &params.metric,
+                    params.group_by,
+                    params.metric,
                     params.interval,
                     params.start_date.as_deref(),
                     params.end_date.as_deref(),
@@ -164,7 +164,7 @@ impl OptopsyServer {
                     &self.cache,
                     &params.series_a,
                     &params.series_b,
-                    &params.mode,
+                    params.mode,
                     params.window,
                     params.years,
                     params.lag_range.as_ref().map(|lr| (lr.min, lr.max)),
@@ -196,7 +196,7 @@ impl OptopsyServer {
                 tools::rolling_metric::execute(
                     &self.cache,
                     &params.symbol,
-                    &params.metric,
+                    params.metric,
                     params.window,
                     params.benchmark.as_deref(),
                     params.years,
@@ -226,7 +226,7 @@ impl OptopsyServer {
                 tools::regime_detect::execute(
                     &self.cache,
                     &params.symbol,
-                    &params.method,
+                    params.method,
                     params.n_regimes,
                     params.years,
                     params.lookback_window,
@@ -612,7 +612,11 @@ mod tests {
     use chrono::NaiveDate;
     use polars::prelude::*;
 
-    /// Load OHLCV prices from a cached parquet file for chart overlay.
+    /// Test-only helper: load OHLCV prices from a Parquet file for assertions.
+    ///
+    /// This mirrors production price-loading logic (filtering, resampling, date
+    /// normalization) so that integration tests can verify the full pipeline
+    /// without going through the MCP tool layer.
     ///
     /// When `filter_datetimes` is provided, only OHLCV bars whose `datetime` matches
     /// one of the given timestamps are returned. This is used for options backtests

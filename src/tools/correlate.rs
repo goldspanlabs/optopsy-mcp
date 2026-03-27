@@ -6,11 +6,11 @@ use std::sync::Arc;
 
 use crate::constants::P_VALUE_THRESHOLD;
 use crate::data::cache::CachedStore;
+use crate::server::CorrelateMode;
 use crate::stats;
 use crate::tools::ai_format;
 use crate::tools::ai_helpers::{
     compute_years_cutoff, epoch_to_timestamp_string, pearson_p_value, subsample_to_max,
-    validate_choice,
 };
 use crate::tools::response_types::CorrelationSeries;
 use crate::tools::response_types::{
@@ -28,14 +28,12 @@ pub async fn execute(
     cache: &Arc<CachedStore>,
     series_a: &CorrelationSeries,
     series_b: &CorrelationSeries,
-    mode: &str,
+    mode: CorrelateMode,
     window: usize,
     years: u32,
     lag_range: Option<(i32, i32)>,
     interval: crate::engine::types::Interval,
 ) -> Result<CorrelateResponse> {
-    validate_choice(mode, &["full", "rolling"], "mode")?;
-
     let cutoff_str = compute_years_cutoff(years);
 
     // Load both series
@@ -191,13 +189,13 @@ pub async fn execute(
     let p_value = pearson_p_value(pearson, n);
 
     // Rolling correlation
-    if mode == "rolling" && n < window {
+    if mode == CorrelateMode::Rolling && n < window {
         anyhow::bail!(
             "Rolling window ({window}) exceeds available observations ({n}). \
              Reduce the window or increase the years of history."
         );
     }
-    let rolling_correlation = if mode == "rolling" && n >= window {
+    let rolling_correlation = if mode == CorrelateMode::Rolling && n >= window {
         let mut points = Vec::with_capacity(n - window + 1);
         for i in (window - 1)..n {
             let start = i + 1 - window;

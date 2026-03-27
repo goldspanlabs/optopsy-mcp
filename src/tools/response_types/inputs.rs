@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 /// Default years of history for analysis tools.
 pub fn default_analysis_years() -> u32 {
-    5
+    crate::constants::DEFAULT_ANALYSIS_YEARS
 }
 
 /// Default label for trade P&L source.

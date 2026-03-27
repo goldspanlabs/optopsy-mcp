@@ -1,7 +1,5 @@
 //! Tool modules for the MCP server.
 
-mod macros;
-
 pub mod aggregate_prices;
 pub mod ai_format;
 pub mod ai_helpers;

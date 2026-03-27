@@ -4,11 +4,11 @@ use anyhow::{Context, Result};
 use std::sync::Arc;
 
 use crate::data::cache::CachedStore;
+use crate::server::RegimeMethod;
 use crate::stats;
 use crate::tools::ai_format;
 use crate::tools::ai_helpers::{
     compute_returns, compute_years_cutoff, epoch_to_timestamp_string, subsample_to_max,
-    validate_choice,
 };
 use crate::tools::response_types::{RegimeDetectResponse, RegimeInfo, RegimeSeriesPoint};
 
@@ -17,18 +17,12 @@ use crate::tools::response_types::{RegimeDetectResponse, RegimeInfo, RegimeSerie
 pub async fn execute(
     cache: &Arc<CachedStore>,
     symbol: &str,
-    method: &str,
+    method: RegimeMethod,
     n_regimes: usize,
     years: u32,
     lookback_window: usize,
     interval: crate::engine::types::Interval,
 ) -> Result<RegimeDetectResponse> {
-    validate_choice(
-        method,
-        &["volatility_cluster", "trend_state", "hmm"],
-        "method",
-    )?;
-
     let upper = symbol.to_uppercase();
     let cutoff_str = compute_years_cutoff(years);
 
@@ -47,14 +41,15 @@ pub async fn execute(
     let prices = &resp.prices;
 
     // For trend_state, the long SMA uses lookback_window * 3 bars, so we need more data.
+    let method_str = method.as_str();
     let min_bars = match method {
-        "trend_state" => lookback_window * 3 + 2,
-        "hmm" => 50, // HMM needs enough observations for EM convergence
-        _ => lookback_window + 2,
+        RegimeMethod::TrendState => lookback_window * 3 + 2,
+        RegimeMethod::Hmm => 50, // HMM needs enough observations for EM convergence
+        RegimeMethod::VolatilityCluster => lookback_window + 2,
     };
     if prices.len() < min_bars {
         anyhow::bail!(
-            "Insufficient data for {upper} with method=\"{method}\": need at least {min_bars} bars, have {}",
+            "Insufficient data for {upper} with method=\"{method_str}\": need at least {min_bars} bars, have {}",
             prices.len()
         );
     }
@@ -64,16 +59,15 @@ pub async fn execute(
     let (returns, dates) = compute_returns(prices);
 
     let (regime_labels, regime_names, hmm_params) = match method {
-        "volatility_cluster" => {
+        RegimeMethod::VolatilityCluster => {
             let (l, n) = classify_by_volatility(&returns, lookback_window, n_regimes, interval);
             (l, n, None)
         }
-        "trend_state" => {
+        RegimeMethod::TrendState => {
             let (l, n) = classify_by_trend(prices, lookback_window, n_regimes);
             (l, n, None)
         }
-        "hmm" => classify_by_hmm(&returns, n_regimes),
-        _ => unreachable!("method already validated against known values"),
+        RegimeMethod::Hmm => classify_by_hmm(&returns, n_regimes),
     };
 
     // Build regime series (skip leading NaN window)
@@ -173,7 +167,7 @@ pub async fn execute(
 
     Ok(ai_format::format_regime_detect(
         &upper,
-        method,
+        method_str,
         n_regimes,
         prices.len(),
         total_classified,

@@ -651,10 +651,7 @@ pub fn filter_datetime_set(
 
 /// Get the min and max calendar dates from a slice of bars.
 pub fn bar_date_range(bars: &[Bar]) -> Option<(NaiveDate, NaiveDate)> {
-    if bars.is_empty() {
-        return None;
-    }
-    let min = bars.first().unwrap().datetime.date();
-    let max = bars.last().unwrap().datetime.date();
+    let min = bars.first()?.datetime.date();
+    let max = bars.last()?.datetime.date();
     Some((min, max))
 }

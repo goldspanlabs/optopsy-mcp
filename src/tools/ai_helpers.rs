@@ -77,6 +77,41 @@ pub(crate) fn compute_returns(prices: &[PriceBar]) -> (Vec<f64>, Vec<i64>) {
     (returns, dates)
 }
 
+/// Load OHLCV prices for a symbol with a year-based cutoff and minimum-bars check.
+///
+/// Consolidates the repeated boilerplate: uppercase symbol → date cutoff → load → min check.
+pub(crate) async fn load_prices(
+    cache: &Arc<CachedStore>,
+    symbol: &str,
+    years: u32,
+    min_bars: usize,
+    interval: crate::engine::types::Interval,
+) -> anyhow::Result<Vec<PriceBar>> {
+    let upper = symbol.to_uppercase();
+    let cutoff_str = compute_years_cutoff(years);
+
+    let resp = crate::tools::raw_prices::load_and_execute(
+        cache,
+        &upper,
+        Some(&cutoff_str),
+        None,
+        None,
+        interval,
+        None,
+    )
+    .await
+    .context(format!("Failed to load OHLCV data for {upper}"))?;
+
+    if resp.prices.len() < min_bars {
+        anyhow::bail!(
+            "Insufficient price data for {upper}: need at least {min_bars} bars, have {}",
+            resp.prices.len()
+        );
+    }
+
+    Ok(resp.prices)
+}
+
 /// Load daily OHLCV prices for `symbol` starting from `cutoff_str` and compute
 /// simple returns, filtering out zero-price bars and non-finite values.
 pub(crate) async fn load_returns(
@@ -140,22 +175,6 @@ pub(crate) fn parse_date_param(
     date_str
         .parse::<chrono::NaiveDate>()
         .with_context(|| format!("Invalid {param_name}: {date_str}"))
-}
-
-/// Validate that a string value is one of the allowed choices.
-pub(crate) fn validate_choice<'a>(
-    value: &'a str,
-    valid: &[&str],
-    field_name: &str,
-) -> anyhow::Result<&'a str> {
-    if valid.contains(&value) {
-        Ok(value)
-    } else {
-        anyhow::bail!(
-            "Invalid {field_name}: \"{value}\". Must be one of: {}",
-            valid.join(", ")
-        )
-    }
 }
 
 #[cfg(test)]

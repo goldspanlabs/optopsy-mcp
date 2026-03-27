@@ -42,7 +42,7 @@ pub(crate) fn tool_err(e: impl std::fmt::Display) -> String {
 
 /// Default years of history to fetch.
 fn default_years() -> u32 {
-    5
+    crate::constants::DEFAULT_ANALYSIS_YEARS
 }
 
 /// Default number of histogram bins.
@@ -65,6 +65,144 @@ fn default_lookback_window() -> usize {
     21
 }
 
+// ── Typed enums for tool parameters ─────────────────────────────────────────
+
+/// Grouping dimension for `aggregate_prices`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+pub enum GroupBy {
+    #[serde(rename = "day_of_week")]
+    DayOfWeek,
+    #[serde(rename = "month")]
+    Month,
+    #[serde(rename = "quarter")]
+    Quarter,
+    #[serde(rename = "year")]
+    Year,
+    #[serde(rename = "hour_of_day")]
+    HourOfDay,
+}
+
+impl GroupBy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DayOfWeek => "day_of_week",
+            Self::Month => "month",
+            Self::Quarter => "quarter",
+            Self::Year => "year",
+            Self::HourOfDay => "hour_of_day",
+        }
+    }
+}
+
+/// Aggregation metric for `aggregate_prices`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+pub enum AggMetric {
+    /// Close-to-close percentage change
+    #[default]
+    #[serde(rename = "return")]
+    Return,
+    /// High-low range as percentage of low
+    #[serde(rename = "range")]
+    Range,
+    /// Raw volume
+    #[serde(rename = "volume")]
+    Volume,
+    /// Open vs previous close percentage gap
+    #[serde(rename = "gap")]
+    Gap,
+}
+
+impl AggMetric {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Return => "return",
+            Self::Range => "range",
+            Self::Volume => "volume",
+            Self::Gap => "gap",
+        }
+    }
+}
+
+/// Correlation mode for `correlate`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+pub enum CorrelateMode {
+    /// Full-period correlation (default)
+    #[default]
+    #[serde(rename = "full")]
+    Full,
+    /// Rolling window correlation
+    #[serde(rename = "rolling")]
+    Rolling,
+}
+
+impl CorrelateMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Rolling => "rolling",
+        }
+    }
+}
+
+/// Rolling metric type for `rolling_metric`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+pub enum RollingMetric {
+    #[serde(rename = "volatility")]
+    Volatility,
+    #[serde(rename = "sharpe")]
+    Sharpe,
+    #[serde(rename = "mean_return")]
+    MeanReturn,
+    #[serde(rename = "max_drawdown")]
+    MaxDrawdown,
+    #[serde(rename = "beta")]
+    Beta,
+    #[serde(rename = "correlation")]
+    Correlation,
+}
+
+impl RollingMetric {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Volatility => "volatility",
+            Self::Sharpe => "sharpe",
+            Self::MeanReturn => "mean_return",
+            Self::MaxDrawdown => "max_drawdown",
+            Self::Beta => "beta",
+            Self::Correlation => "correlation",
+        }
+    }
+
+    pub fn requires_benchmark(self) -> bool {
+        matches!(self, Self::Beta | Self::Correlation)
+    }
+}
+
+/// Regime detection method for `regime_detect`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+pub enum RegimeMethod {
+    /// Quantile-based volatility clustering (default)
+    #[default]
+    #[serde(rename = "volatility_cluster")]
+    VolatilityCluster,
+    /// SMA crossover trend state
+    #[serde(rename = "trend_state")]
+    TrendState,
+    /// Gaussian Hidden Markov Model
+    #[serde(rename = "hmm")]
+    Hmm,
+}
+
+impl RegimeMethod {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::VolatilityCluster => "volatility_cluster",
+            Self::TrendState => "trend_state",
+            Self::Hmm => "hmm",
+        }
+    }
+}
+
 /// Parameters for the `aggregate_prices` tool.
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 #[garde(context(()))]
@@ -77,12 +215,12 @@ pub struct AggregatePricesParams {
     #[garde(range(min = 1, max = 50))]
     pub years: u32,
     /// Grouping dimension: `"day_of_week"`, `"month"`, `"quarter"`, `"year"`, `"hour_of_day"` (for intraday data)
-    #[garde(length(min = 1))]
-    pub group_by: String,
+    #[garde(skip)]
+    pub group_by: GroupBy,
     /// Metric to aggregate: "return" (default: close-to-close pct change), "range", "volume", "gap" (open vs prev close pct)
-    #[serde(default = "default_agg_metric")]
-    #[garde(length(min = 1))]
-    pub metric: String,
+    #[serde(default)]
+    #[garde(skip)]
+    pub metric: AggMetric,
     /// Bar interval. Defaults to "daily" (auto-selects "1h" when `group_by="hour_of_day"`).
     /// Intraday data must be available in the cache — daily-only data cannot be resampled to intraday.
     #[serde(default)]
@@ -96,10 +234,6 @@ pub struct AggregatePricesParams {
     #[serde(default)]
     #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")), custom(validate_end_date_after_start(&self.start_date)))]
     pub end_date: Option<String>,
-}
-
-fn default_agg_metric() -> String {
-    "return".to_string()
 }
 
 pub use crate::tools::response_types::DistributionSource;
@@ -142,9 +276,9 @@ pub struct CorrelateParams {
     #[garde(dive)]
     pub series_b: CorrelationSeries,
     /// Correlation mode: "full" (default), "rolling"
-    #[serde(default = "default_corr_mode")]
-    #[garde(length(min = 1))]
-    pub mode: String,
+    #[serde(default)]
+    #[garde(skip)]
+    pub mode: CorrelateMode,
     /// Rolling window size in bars/observations at the selected interval (for mode="rolling")
     #[serde(default = "default_window")]
     #[garde(range(min = 5, max = 504))]
@@ -166,10 +300,6 @@ pub struct CorrelateParams {
     pub interval: Option<Interval>,
 }
 
-fn default_corr_mode() -> String {
-    "full".to_string()
-}
-
 /// Parameters for the `rolling_metric` tool.
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 #[garde(context(()))]
@@ -178,8 +308,8 @@ pub struct RollingMetricParams {
     #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub symbol: String,
     /// Metric to compute: `"volatility"`, `"sharpe"`, `"mean_return"`, `"max_drawdown"`, `"beta"`, `"correlation"`
-    #[garde(length(min = 1))]
-    pub metric: String,
+    #[garde(skip)]
+    pub metric: RollingMetric,
     /// Rolling window size in trading days (default: 21)
     #[serde(default = "default_window")]
     #[garde(range(min = 5, max = 504))]
@@ -202,9 +332,9 @@ pub struct RegimeDetectParams {
     #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub symbol: String,
     /// Detection method: `"volatility_cluster"` (default), `"trend_state"`, or `"hmm"` (Gaussian HMM)
-    #[serde(default = "default_regime_method")]
-    #[garde(length(min = 1))]
-    pub method: String,
+    #[serde(default)]
+    #[garde(skip)]
+    pub method: RegimeMethod,
     /// Number of regimes to detect (default: 3, range: 2-4)
     #[serde(default = "default_n_regimes")]
     #[garde(range(min = 2, max = 4))]
@@ -224,14 +354,10 @@ pub struct RegimeDetectParams {
     pub interval: Option<Interval>,
 }
 
-fn default_regime_method() -> String {
-    "volatility_cluster".to_string()
-}
-
 // ── Default helpers for new quant tools ─────────────────────────────────
 
 fn default_analysis_years() -> u32 {
-    5
+    crate::constants::DEFAULT_ANALYSIS_YEARS
 }
 
 fn default_n_simulations() -> usize {

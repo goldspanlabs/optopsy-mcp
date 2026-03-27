@@ -14,6 +14,7 @@ use super::types::*;
 ///
 /// `effective_quantity` overrides `params.quantity` when dynamic sizing is active.
 /// Returns `None` if the strategy has a stock leg but no OHLCV price is available for the entry date.
+#[allow(dead_code)] // Used by tests; will be called when options event_sim moves to scripting
 pub(crate) fn open_position(
     candidate: &EntryCandidate,
     date: NaiveDate,
@@ -85,6 +86,7 @@ pub(crate) fn open_position(
 
 /// Close a position, setting leg close prices from current market.
 /// Returns realized P&L for the position.
+#[allow(dead_code)]
 pub(crate) fn close_position(
     position: &mut Position,
     date: NaiveDate,
@@ -233,6 +235,7 @@ pub fn mark_to_market(
 /// Returns sum of (delta × `side_multiplier` × qty) for all open legs,
 /// plus +1.0 per contract for stock-leg strategies (e.g. covered call).
 /// Falls back to the last-known quote when no live price exists.
+#[allow(dead_code)]
 pub(crate) fn compute_position_net_delta(
     position: &Position,
     today: NaiveDate,
@@ -267,6 +270,7 @@ pub(crate) fn compute_position_net_delta(
 }
 
 /// Select the best candidate based on `TradeSelector`.
+#[allow(dead_code)]
 pub(crate) fn select_candidate<'a>(
     candidates: &[&'a EntryCandidate],
     selector: &TradeSelector,
@@ -307,6 +311,7 @@ pub(crate) fn select_candidate<'a>(
 }
 
 /// Look up the fill price for a leg from the price table or last-known cache.
+#[allow(dead_code)]
 pub(crate) fn lookup_fill_price(
     leg_exp: NaiveDate,
     leg_strike: f64,
@@ -327,6 +332,7 @@ pub(crate) fn lookup_fill_price(
 }
 
 /// Close a single leg of a position by setting its close price/date.
+#[allow(dead_code)]
 pub(crate) fn close_leg(leg: &mut PositionLeg, today: NaiveDate, close_price: f64) {
     leg.closed = true;
     leg.close_price = Some(close_price);

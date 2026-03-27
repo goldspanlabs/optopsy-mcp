@@ -9,11 +9,11 @@
 pub mod constants;
 pub mod data;
 pub mod engine;
-// Rhai integration patterns require many clippy exceptions:
+// Rhai integration patterns require clippy exceptions:
 // - pass-by-value String args (Rhai calling convention)
-// - unused Dynamic returns from fire-and-forget callbacks
 // - verbose map access patterns for Dynamic → typed extraction
-// - too_many_lines on the main simulation loop
+// - too_many_lines/arguments on the simulation loop and bar-context builder
+// Only lints actually triggered in this module are suppressed here.
 #[allow(
     clippy::too_many_lines,
     clippy::too_many_arguments,
@@ -22,28 +22,18 @@ pub mod engine;
     clippy::default_trait_access,
     clippy::similar_names,
     clippy::map_unwrap_or,
-    clippy::option_if_let_else,
-    clippy::unnested_or_patterns,
-    clippy::wildcard_enum_match_arm,
     clippy::needless_pass_by_value,
-    clippy::trivially_copy_pass_by_ref,
     clippy::cast_lossless,
-    clippy::unused_self,
-    clippy::let_underscore_untyped,
     clippy::match_same_arms,
-    clippy::redundant_else,
-    clippy::option_option,
     clippy::implicit_hasher,
     clippy::wildcard_imports,
     clippy::redundant_closure_for_method_calls,
-    clippy::if_same_then_else,
     clippy::unnecessary_wraps,
-    clippy::type_complexity,
     clippy::ref_option,
-    clippy::module_inception,
-    clippy::let_and_return,
-    clippy::manual_midpoint,
-    clippy::needless_range_loop
+    clippy::type_complexity,
+    clippy::if_same_then_else,
+    clippy::needless_range_loop,
+    clippy::module_inception
 )]
 pub mod scripting;
 pub mod server;

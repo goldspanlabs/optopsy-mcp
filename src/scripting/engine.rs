@@ -223,6 +223,14 @@ pub async fn run_script_backtest(
     let mut pnl_history_arc = Arc::new(Vec::<f64>::new());
     let mut pnl_dirty = false;
 
+    let ctx_factory = BarContextFactory {
+        indicator_store: Arc::clone(&indicator_store),
+        price_history: Arc::clone(&price_history),
+        cross_symbol_data: Arc::clone(&cross_symbol_data),
+        config: Arc::clone(&config),
+        options_by_date: options_by_date.clone(),
+    };
+
     for (bar_idx, bar) in price_history.iter().enumerate() {
         if stop_requested {
             break;
@@ -278,16 +286,11 @@ pub async fn run_script_backtest(
                     positions_arc = Arc::new(positions.clone());
                     positions_dirty = false;
                 }
-                let ctx = build_bar_context(
+                let ctx = ctx_factory.build(
                     bar,
                     bar_idx,
                     &positions_arc,
                     realized_equity,
-                    &indicator_store,
-                    &price_history,
-                    &cross_symbol_data,
-                    &config,
-                    &options_by_date,
                     &pnl_history_arc,
                 );
                 let pos_dyn = Dynamic::from(positions[i].clone());
@@ -329,16 +332,11 @@ pub async fn run_script_backtest(
                 if has_on_position_closed {
                     // Rebuild Arc snapshot for the callback (positions changed)
                     positions_arc = Arc::new(positions.clone());
-                    let ctx = build_bar_context(
+                    let ctx = ctx_factory.build(
                         bar,
                         bar_idx,
                         &positions_arc,
                         realized_equity,
-                        &indicator_store,
-                        &price_history,
-                        &cross_symbol_data,
-                        &config,
-                        &options_by_date,
                         &pnl_history_arc,
                     );
                     let pos_dyn = Dynamic::from(closed_pos.clone());
@@ -474,16 +472,11 @@ pub async fn run_script_backtest(
 
         // Build ONE context for Phase B (reused by on_bar and callbacks)
         let phase_b_positions = Arc::new(positions.clone());
-        let ctx = build_bar_context(
+        let ctx = ctx_factory.build(
             bar,
             bar_idx,
             &phase_b_positions,
             realized_equity,
-            &indicator_store,
-            &price_history,
-            &cross_symbol_data,
-            &config,
-            &options_by_date,
             &pnl_history_arc,
         );
 
@@ -531,16 +524,11 @@ pub async fn run_script_backtest(
 
                             if has_on_position_opened {
                                 // Reuse Phase B positions Arc for callback
-                                let ctx = build_bar_context(
+                                let ctx = ctx_factory.build(
                                     bar,
                                     bar_idx,
                                     &phase_b_positions,
                                     realized_equity,
-                                    &indicator_store,
-                                    &price_history,
-                                    &cross_symbol_data,
-                                    &config,
-                                    &options_by_date,
                                     &pnl_history_arc,
                                 );
                                 let pos_dyn = Dynamic::from(pos.clone());
@@ -568,16 +556,11 @@ pub async fn run_script_backtest(
 
                                     if has_on_position_closed {
                                         // Reuse Phase B positions Arc for callback
-                                        let ctx = build_bar_context(
+                                        let ctx = ctx_factory.build(
                                             bar,
                                             bar_idx,
                                             &phase_b_positions,
                                             realized_equity,
-                                            &indicator_store,
-                                            &price_history,
-                                            &cross_symbol_data,
-                                            &config,
-                                            &options_by_date,
                                             &pnl_history_arc,
                                         );
                                         let pos_dyn = Dynamic::from(positions[idx].clone());
@@ -647,16 +630,11 @@ pub async fn run_script_backtest(
 
                             if has_on_position_opened {
                                 // Reuse Phase B positions Arc for callback
-                                let ctx = build_bar_context(
+                                let ctx = ctx_factory.build(
                                     bar,
                                     bar_idx,
                                     &phase_b_positions,
                                     realized_equity,
-                                    &indicator_store,
-                                    &price_history,
-                                    &cross_symbol_data,
-                                    &config,
-                                    &options_by_date,
                                     &pnl_history_arc,
                                 );
                                 let pos_dyn = Dynamic::from(pos.clone());
@@ -766,16 +744,11 @@ pub async fn run_script_backtest(
         let end_positions_arc = Arc::new(positions.clone());
         let pnl_history_arc = Arc::new(pnl_history.clone());
         let ctx = if let Some(last_bar) = price_history.last() {
-            build_bar_context(
+            ctx_factory.build(
                 last_bar,
                 price_history.len() - 1,
                 &end_positions_arc,
                 realized_equity,
-                &indicator_store,
-                &price_history,
-                &cross_symbol_data,
-                &config,
-                &options_by_date,
                 &pnl_history_arc,
             )
         } else {
@@ -1167,37 +1140,45 @@ fn get_date_opt(map: &rhai::Map, key: &str) -> Option<NaiveDate> {
 // Simulation helpers
 // ---------------------------------------------------------------------------
 
-/// Build a `BarContext` for the given bar.
-fn build_bar_context(
-    bar: &OhlcvBar,
-    bar_idx: usize,
-    positions_arc: &Arc<Vec<ScriptPosition>>,
-    equity: f64,
-    indicator_store: &Arc<IndicatorStore>,
-    price_history: &Arc<Vec<OhlcvBar>>,
-    cross_symbol_data: &Arc<HashMap<String, Vec<CrossSymbolBar>>>,
-    config: &Arc<ScriptConfig>,
-    options_by_date: &Option<Arc<DatePartitionedOptions>>,
-    pnl_history: &Arc<Vec<f64>>,
-) -> BarContext {
-    let cash = equity - positions_arc.iter().map(|p| p.unrealized_pnl).sum::<f64>();
-    BarContext {
-        datetime: bar.datetime,
-        open: bar.open,
-        high: bar.high,
-        low: bar.low,
-        close: bar.close,
-        volume: bar.volume,
-        bar_idx,
-        cash,
-        equity,
-        positions: Arc::clone(positions_arc),
-        indicator_store: Arc::clone(indicator_store),
-        price_history: Arc::clone(price_history),
-        cross_symbol_data: Arc::clone(cross_symbol_data),
-        options_by_date: options_by_date.clone(),
-        config: Arc::clone(config),
-        pnl_history: Arc::clone(pnl_history),
+/// Holds immutable references shared across all `build()` calls in the simulation loop.
+///
+/// Reduces 10-argument `build_bar_context` calls to 4-argument `build()` calls.
+struct BarContextFactory {
+    indicator_store: Arc<IndicatorStore>,
+    price_history: Arc<Vec<OhlcvBar>>,
+    cross_symbol_data: Arc<HashMap<String, Vec<CrossSymbolBar>>>,
+    config: Arc<ScriptConfig>,
+    options_by_date: Option<Arc<DatePartitionedOptions>>,
+}
+
+impl BarContextFactory {
+    fn build(
+        &self,
+        bar: &OhlcvBar,
+        bar_idx: usize,
+        positions_arc: &Arc<Vec<ScriptPosition>>,
+        equity: f64,
+        pnl_history: &Arc<Vec<f64>>,
+    ) -> BarContext {
+        let cash = equity - positions_arc.iter().map(|p| p.unrealized_pnl).sum::<f64>();
+        BarContext {
+            datetime: bar.datetime,
+            open: bar.open,
+            high: bar.high,
+            low: bar.low,
+            close: bar.close,
+            volume: bar.volume,
+            bar_idx,
+            cash,
+            equity,
+            positions: Arc::clone(positions_arc),
+            indicator_store: Arc::clone(&self.indicator_store),
+            price_history: Arc::clone(&self.price_history),
+            cross_symbol_data: Arc::clone(&self.cross_symbol_data),
+            options_by_date: self.options_by_date.clone(),
+            config: Arc::clone(&self.config),
+            pnl_history: Arc::clone(pnl_history),
+        }
     }
 }
 
