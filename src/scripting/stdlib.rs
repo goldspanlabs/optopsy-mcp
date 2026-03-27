@@ -108,16 +108,29 @@ pub struct ScriptMeta {
     /// Parameters declared via `extern()` in the script
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub params: Vec<ExternParam>,
+    /// Research hypothesis this strategy is testing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hypothesis: Option<String>,
+    /// Searchable tags for categorization (parsed from comma-separated `//! tags:` header).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
+    /// Expected market regime(s) (parsed from comma-separated `//! regime:` header).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regime: Option<Vec<String>>,
 }
 
 /// Parse `//!` doc-comment header from script source for metadata fields.
 ///
-/// Recognized keys: `name`, `description`, `category`.
+/// Recognized keys: `name`, `description`, `category`, `hypothesis`, `tags`, `regime`.
 /// Lines must start with `//!` followed by `key: value`.
+/// `tags` and `regime` accept comma-separated values.
 pub fn parse_script_meta(id: &str, source: &str) -> ScriptMeta {
     let mut name = None;
     let mut description = None;
     let mut category = None;
+    let mut hypothesis = None;
+    let mut tags = None;
+    let mut regime = None;
 
     for line in source.lines() {
         let trimmed = line.trim();
@@ -138,6 +151,29 @@ pub fn parse_script_meta(id: &str, source: &str) -> ScriptMeta {
                 if !val.is_empty() {
                     category = Some(val.to_string());
                 }
+            } else if let Some(val) = rest.strip_prefix("hypothesis:") {
+                let val = val.trim();
+                if !val.is_empty() {
+                    hypothesis = Some(val.to_string());
+                }
+            } else if let Some(val) = rest.strip_prefix("tags:") {
+                let items: Vec<String> = val
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if !items.is_empty() {
+                    tags = Some(items);
+                }
+            } else if let Some(val) = rest.strip_prefix("regime:") {
+                let items: Vec<String> = val
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if !items.is_empty() {
+                    regime = Some(items);
+                }
             }
         } else if !trimmed.is_empty() && !trimmed.starts_with("//") {
             break; // Stop at first non-comment line
@@ -150,6 +186,9 @@ pub fn parse_script_meta(id: &str, source: &str) -> ScriptMeta {
         description,
         category,
         params: Vec::new(),
+        hypothesis,
+        tags,
+        regime,
     }
 }
 
@@ -285,4 +324,40 @@ pub fn list_scripts() -> Vec<ScriptMeta> {
         .collect();
     scripts.sort_by(|a, b| a.name.cmp(&b.name));
     scripts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_provenance_fields() {
+        let source = "//! name: Test Strategy\n//! description: A test\n//! category: test\n//! hypothesis: Low IBS reverts in uptrends\n//! tags: mean_reversion, options, short_put\n//! regime: uptrend, low_volatility\n";
+        let meta = parse_script_meta("test", source);
+        assert_eq!(
+            meta.hypothesis.as_deref(),
+            Some("Low IBS reverts in uptrends")
+        );
+        assert_eq!(
+            meta.tags,
+            Some(vec![
+                "mean_reversion".to_string(),
+                "options".to_string(),
+                "short_put".to_string()
+            ])
+        );
+        assert_eq!(
+            meta.regime,
+            Some(vec!["uptrend".to_string(), "low_volatility".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_parse_no_provenance_fields() {
+        let source = "//! name: Basic Strategy\n//! description: No provenance\n";
+        let meta = parse_script_meta("basic", source);
+        assert!(meta.hypothesis.is_none());
+        assert!(meta.tags.is_none());
+        assert!(meta.regime.is_none());
+    }
 }
