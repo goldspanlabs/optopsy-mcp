@@ -550,6 +550,41 @@ fn resample_datetime(
     }
 }
 
+/// Extract unique sorted dates from an OHLCV `DataFrame`.
+pub fn extract_unique_dates(df: &polars::prelude::DataFrame) -> anyhow::Result<Vec<NaiveDate>> {
+    let dt_col = detect_date_col(df);
+    let series = df.column(dt_col)?;
+
+    let epoch_offset = super::types::EPOCH_DAYS_CE_OFFSET;
+
+    let mut dates: Vec<NaiveDate> = if series.datetime().is_ok() {
+        // Datetime column: extract via the same helper used in bars_from_df
+        let mut result = Vec::with_capacity(df.height());
+        for i in 0..df.height() {
+            if let Ok(ndt) = crate::engine::price_table::extract_datetime_from_column(series, i) {
+                result.push(ndt.date());
+            }
+        }
+        result
+    } else if let Ok(ca) = series.date() {
+        let mut result = Vec::with_capacity(df.height());
+        for i in 0..ca.len() {
+            if let Some(days) = ca.phys.get(i) {
+                if let Some(date) = NaiveDate::from_num_days_from_ce_opt(days + epoch_offset) {
+                    result.push(date);
+                }
+            }
+        }
+        result
+    } else {
+        anyhow::bail!("Column '{dt_col}' is neither Date nor Datetime");
+    };
+
+    dates.sort();
+    dates.dedup();
+    Ok(dates)
+}
+
 /// Derive the cache root directory from an OHLCV parquet path.
 ///
 /// Cache paths follow the convention `{cache_root}/{category}/{SYMBOL}.parquet`, so

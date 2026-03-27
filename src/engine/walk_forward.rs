@@ -8,7 +8,11 @@ use std::collections::HashMap;
 use anyhow::{bail, Result};
 use chrono::NaiveDate;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use crate::engine::types::{BacktestResult, EquityPoint, PerformanceMetrics};
+use crate::scripting::engine::{run_script_backtest, DataLoader};
 
 /// Walk-forward mode.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -60,8 +64,7 @@ pub fn compute_windows(
     match mode {
         WfMode::Rolling => {
             let test_size = total / (n_windows + 1).max(2);
-            let train_size =
-                ((test_size as f64) * train_pct / (1.0 - train_pct)).round() as usize;
+            let train_size = ((test_size as f64) * train_pct / (1.0 - train_pct)).round() as usize;
 
             if train_size < 2 || test_size < 1 {
                 bail!("Not enough data for {n_windows} windows with train_pct={train_pct}");
@@ -89,8 +92,8 @@ pub fn compute_windows(
         }
         WfMode::Anchored => {
             let test_size = total / (n_windows + 1).max(2);
-            let min_train = ((total as f64) * train_pct / (n_windows as f64 + 1.0)).round()
-                as usize;
+            let min_train =
+                ((total as f64) * train_pct / (n_windows as f64 + 1.0)).round() as usize;
 
             if min_train < 2 || test_size < 1 {
                 bail!("Not enough data for {n_windows} anchored windows");
@@ -149,6 +152,237 @@ pub fn cartesian_product(
     combos
 }
 
+/// Parameters for walk-forward optimization.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WalkForwardParams {
+    pub strategy: String,
+    pub symbol: String,
+    pub capital: f64,
+    pub params_grid: HashMap<String, Vec<Value>>,
+    #[serde(default = "default_objective")]
+    pub objective: WfObjective,
+    #[serde(default = "default_n_windows")]
+    pub n_windows: usize,
+    #[serde(default = "default_mode")]
+    pub mode: WfMode,
+    #[serde(default = "default_train_pct")]
+    pub train_pct: f64,
+    #[serde(default)]
+    pub start_date: Option<String>,
+    #[serde(default)]
+    pub end_date: Option<String>,
+    #[serde(default)]
+    pub profile: Option<String>,
+}
+
+fn default_objective() -> WfObjective {
+    WfObjective::Sharpe
+}
+fn default_n_windows() -> usize {
+    5
+}
+fn default_mode() -> WfMode {
+    WfMode::Rolling
+}
+fn default_train_pct() -> f64 {
+    0.70
+}
+
+/// Result for a single walk-forward window.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct WfWindowResult {
+    pub window_idx: usize,
+    pub train_start: String,
+    pub train_end: String,
+    pub test_start: String,
+    pub test_end: String,
+    pub best_params: HashMap<String, Value>,
+    pub in_sample_metric: f64,
+    pub out_of_sample_metric: f64,
+}
+
+/// Full walk-forward optimization response.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct WalkForwardResponse {
+    pub windows: Vec<WfWindowResult>,
+    pub stitched_equity: Vec<EquityPoint>,
+    pub stitched_metrics: PerformanceMetrics,
+    pub efficiency_ratio: f64,
+    pub objective: String,
+    pub mode: String,
+    pub execution_time_ms: u64,
+}
+
+/// Extract the target metric from a backtest result.
+fn extract_metric(result: &BacktestResult, objective: &WfObjective) -> f64 {
+    match objective {
+        WfObjective::Sharpe => result.metrics.sharpe,
+        WfObjective::Sortino => result.metrics.sortino,
+        WfObjective::ProfitFactor => result.metrics.profit_factor,
+        WfObjective::Cagr => result.metrics.cagr,
+    }
+}
+
+/// Run walk-forward optimization.
+#[allow(clippy::too_many_lines)]
+pub async fn execute(
+    params: WalkForwardParams,
+    data_loader: &dyn DataLoader,
+) -> Result<WalkForwardResponse> {
+    let start = std::time::Instant::now();
+
+    // Load script source
+    let script_path = format!("scripts/strategies/{}.rhai", params.strategy);
+    let script_source = std::fs::read_to_string(&script_path)
+        .map_err(|e| anyhow::anyhow!("Failed to read strategy script '{script_path}': {e}"))?;
+
+    // Load OHLCV data to get the date range
+    let start_date = params
+        .start_date
+        .as_deref()
+        .and_then(|s| s.parse::<NaiveDate>().ok());
+    let end_date = params
+        .end_date
+        .as_deref()
+        .and_then(|s| s.parse::<NaiveDate>().ok());
+    let ohlcv = data_loader
+        .load_ohlcv(&params.symbol, start_date, end_date)
+        .await?;
+
+    // Extract unique sorted dates
+    let dates = crate::engine::ohlcv::extract_unique_dates(&ohlcv)?;
+
+    // Compute window boundaries
+    let windows = compute_windows(&dates, params.n_windows, params.train_pct, &params.mode)?;
+
+    // Generate param combos
+    let combos = cartesian_product(&params.params_grid);
+    if combos.is_empty() {
+        bail!("params_grid produced no parameter combinations");
+    }
+
+    // Build base params with SYMBOL and CAPITAL
+    let mut base_params: HashMap<String, Value> = HashMap::new();
+    base_params.insert("SYMBOL".to_string(), serde_json::json!(params.symbol));
+    base_params.insert("CAPITAL".to_string(), serde_json::json!(params.capital));
+
+    // Profile merge if requested
+    let base_params = if let Some(ref profile_name) = params.profile {
+        use crate::scripting::stdlib::{
+            load_profiles_registry, merge_profile_params, parse_script_meta,
+        };
+        let registry = load_profiles_registry();
+        let meta = parse_script_meta(&params.strategy, &script_source);
+        merge_profile_params(
+            profile_name,
+            &registry,
+            meta.profiles.as_ref(),
+            &base_params,
+        )
+    } else {
+        base_params
+    };
+
+    let mut window_results = Vec::new();
+    let mut all_oos_equity: Vec<EquityPoint> = Vec::new();
+    let mut is_metrics_sum = 0.0_f64;
+    let mut oos_metrics_sum = 0.0_f64;
+
+    for (idx, window) in windows.iter().enumerate() {
+        // --- Training phase: sweep all combos ---
+        let mut best_metric = f64::NEG_INFINITY;
+        let mut best_params = combos[0].clone();
+
+        for combo in &combos {
+            let mut run_params = base_params.clone();
+            run_params.extend(combo.clone());
+            run_params.insert(
+                "START_DATE".to_string(),
+                serde_json::json!(window.train_start.to_string()),
+            );
+            run_params.insert(
+                "END_DATE".to_string(),
+                serde_json::json!(window.train_end.to_string()),
+            );
+
+            if let Ok(result) = run_script_backtest(&script_source, &run_params, data_loader).await
+            {
+                let metric = extract_metric(&result.result, &params.objective);
+                if metric.is_finite() && metric > best_metric {
+                    best_metric = metric;
+                    best_params = combo.clone();
+                }
+            }
+        }
+
+        let is_metric = best_metric;
+
+        // --- Test phase: run best params on OOS window ---
+        let mut oos_params = base_params.clone();
+        oos_params.extend(best_params.clone());
+        oos_params.insert(
+            "START_DATE".to_string(),
+            serde_json::json!(window.test_start.to_string()),
+        );
+        oos_params.insert(
+            "END_DATE".to_string(),
+            serde_json::json!(window.test_end.to_string()),
+        );
+
+        let oos_result = run_script_backtest(&script_source, &oos_params, data_loader).await?;
+        let oos_metric = extract_metric(&oos_result.result, &params.objective);
+
+        all_oos_equity.extend(oos_result.result.equity_curve.clone());
+
+        is_metrics_sum += if is_metric.is_finite() {
+            is_metric
+        } else {
+            0.0
+        };
+        oos_metrics_sum += if oos_metric.is_finite() {
+            oos_metric
+        } else {
+            0.0
+        };
+
+        window_results.push(WfWindowResult {
+            window_idx: idx,
+            train_start: window.train_start.to_string(),
+            train_end: window.train_end.to_string(),
+            test_start: window.test_start.to_string(),
+            test_end: window.test_end.to_string(),
+            best_params,
+            in_sample_metric: is_metric,
+            out_of_sample_metric: oos_metric,
+        });
+    }
+
+    let efficiency_ratio = if is_metrics_sum.abs() > f64::EPSILON {
+        oos_metrics_sum / is_metrics_sum
+    } else {
+        0.0
+    };
+
+    let stitched_metrics = if all_oos_equity.is_empty() {
+        PerformanceMetrics::default()
+    } else {
+        crate::engine::metrics::calculate_metrics(&all_oos_equity, &[], params.capital, 252.0)?
+    };
+
+    let objective_str = format!("{:?}", params.objective).to_lowercase();
+    let mode_str = format!("{:?}", params.mode).to_lowercase();
+
+    Ok(WalkForwardResponse {
+        windows: window_results,
+        stitched_equity: all_oos_equity,
+        stitched_metrics,
+        efficiency_ratio,
+        objective: objective_str,
+        mode: mode_str,
+        execution_time_ms: start.elapsed().as_millis() as u64,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,8 +390,7 @@ mod tests {
     fn make_dates(n: usize) -> Vec<NaiveDate> {
         (0..n)
             .map(|i| {
-                NaiveDate::from_ymd_opt(2020, 1, 1).unwrap()
-                    + chrono::Duration::days(i as i64)
+                NaiveDate::from_ymd_opt(2020, 1, 1).unwrap() + chrono::Duration::days(i as i64)
             })
             .collect()
     }

@@ -37,7 +37,7 @@ pub struct BacktestResult {
 }
 
 /// Aggregate performance metrics derived from the equity curve and trade log.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct PerformanceMetrics {
     pub sharpe: f64,
     pub sortino: f64,
