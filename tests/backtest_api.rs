@@ -1,6 +1,6 @@
 //! Integration tests for the `BacktestStore` REST API storage layer.
 //!
-//! Exercises the full lifecycle: insert, list, get_detail, `get_trades`, and delete.
+//! Exercises the full lifecycle: insert, list, `get_detail`, `get_trades`, and delete.
 
 use optopsy_mcp::data::backtest_store::{BacktestStore, MetricsRow, TradeRow};
 
@@ -162,7 +162,10 @@ fn full_lifecycle_insert_list_get_delete() {
 
     // get_detail returns None after deletion
     assert!(
-        store.get_detail(&id1).expect("get_detail after delete").is_none(),
+        store
+            .get_detail(&id1)
+            .expect("get_detail after delete")
+            .is_none(),
         "id1 should not exist after deletion"
     );
 

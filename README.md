@@ -51,6 +51,35 @@ Discover seasonality, regime shifts, and price patterns. Gate entries using HMM 
 "Detect volatility regimes in SPY and show when they shift"
 ```
 
+## REST API
+
+When running in HTTP mode (`PORT=8000 cargo run`), a REST API is available alongside the MCP endpoint for direct integration with frontends and agents.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/backtests` | Run a strategy and persist the result |
+| `GET` | `/backtests` | List backtests with summary metrics (filterable by `strategy`, `symbol`) |
+| `GET` | `/backtests/{id}` | Full backtest result (same shape as MCP `run_script` response) |
+| `GET` | `/backtests/{id}/trades` | Trade log for a specific run |
+| `DELETE` | `/backtests/{id}` | Remove a backtest |
+| `GET` | `/strategies` | List available Rhai strategy scripts |
+| `GET` | `/prices/{symbol}` | Load OHLCV price data |
+
+```bash
+# Run a backtest
+curl -X POST http://localhost:8000/backtests \
+  -H 'Content-Type: application/json' \
+  -d '{"strategy":"bb_mean_reversion","params":{"SYMBOL":"SPY","CAPITAL":100000}}'
+
+# List all backtests
+curl http://localhost:8000/backtests
+
+# Filter by strategy
+curl "http://localhost:8000/backtests?strategy=bb_mean_reversion"
+```
+
+Backtest results are persisted to SQLite (`{DATA_ROOT}/backtests.db`) for retrieval and comparison.
+
 ## MCP Tools
 
 | Tool | Description |
@@ -224,7 +253,8 @@ PORT=8000 cargo run          # Run as HTTP server (optional)
 - [Polars](https://pola.rs/) — DataFrame engine for data processing
 - [rmcp](https://github.com/anthropics/rmcp) — MCP server framework (v0.17)
 - [Tokio](https://tokio.rs/) — Async runtime
-- [Axum](https://github.com/tokio-rs/axum) — HTTP server (optional, via `PORT` env var)
+- [Axum](https://github.com/tokio-rs/axum) — HTTP server and REST API (via `PORT` env var)
+- [rusqlite](https://github.com/rusqlite/rusqlite) — SQLite storage for backtest persistence
 - [rust_ti](https://crates.io/crates/rust_ti) — Technical analysis indicators
 - [Rhai](https://rhai.rs/) — Embedded scripting language for custom strategies
 - [garde](https://crates.io/crates/garde) — Input validation

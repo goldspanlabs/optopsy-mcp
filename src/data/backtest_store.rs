@@ -169,7 +169,7 @@ impl BacktestStore {
     // CRUD methods
     // ──────────────────────────────────────────────────────────────────────────
 
-    /// Insert a new backtest result and return its generated UUID and created_at timestamp.
+    /// Insert a new backtest result and return its generated UUID and `created_at` timestamp.
     #[allow(clippy::too_many_arguments)]
     pub fn insert(
         &self,
