@@ -30,6 +30,7 @@ rhai = { version = "1", features = ["sync"] }
 dotenvy = "0.15"
 rusqlite = { version = "0.35", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
+tower-http = { version = "0.6", features = ["cors"] }
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }

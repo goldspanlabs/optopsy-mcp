@@ -9,6 +9,7 @@
 use anyhow::Result;
 use rmcp::ServiceExt;
 use std::sync::Arc;
+use tower_http::cors::CorsLayer;
 use tracing_subscriber::{self, EnvFilter};
 
 use optopsy_mcp::{data, server};
@@ -124,7 +125,8 @@ async fn main() -> Result<()> {
             )
             .merge(backtest_routes)
             .nest_service("/mcp", service)
-            .route("/health", axum::routing::get(|| async { "ok" }));
+            .route("/health", axum::routing::get(|| async { "ok" }))
+            .layer(CorsLayer::permissive());
 
         let addr = format!("0.0.0.0:{port}");
         tracing::info!("Starting optopsy-mcp HTTP server on {addr}");

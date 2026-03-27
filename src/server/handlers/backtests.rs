@@ -13,6 +13,11 @@ use crate::data::backtest_store::{BacktestRow, BacktestStore, BacktestSummary, M
 use crate::server::OptopsyServer;
 use crate::tools::run_script::RunScriptParams;
 
+/// Replace NaN/Infinity with 0.0 to prevent JSON serialization errors.
+fn sanitize(v: f64) -> f64 {
+    if v.is_finite() { v } else { 0.0 }
+}
+
 /// Shared application state for backtest REST routes.
 #[derive(Clone)]
 pub struct AppState {
@@ -69,16 +74,16 @@ pub async fn create_backtest(
 
     let m = &response.result.metrics;
     let metrics = MetricsRow {
-        sharpe: m.sharpe,
-        sortino: m.sortino,
-        cagr: m.cagr,
-        max_drawdown: m.max_drawdown,
-        win_rate: m.win_rate,
-        profit_factor: m.profit_factor,
-        total_pnl: response.result.total_pnl,
+        sharpe: sanitize(m.sharpe),
+        sortino: sanitize(m.sortino),
+        cagr: sanitize(m.cagr),
+        max_drawdown: sanitize(m.max_drawdown),
+        win_rate: sanitize(m.win_rate),
+        profit_factor: sanitize(m.profit_factor),
+        total_pnl: sanitize(response.result.total_pnl),
         trade_count: response.result.trade_count as i64,
-        expectancy: m.expectancy,
-        var_95: m.var_95,
+        expectancy: sanitize(m.expectancy),
+        var_95: sanitize(m.var_95),
     };
 
     let trades: Vec<TradeRow> = response
@@ -95,15 +100,15 @@ pub async fn create_backtest(
                 trade_id: t.trade_id as i64,
                 entry_datetime: t.entry_datetime.to_string(),
                 exit_datetime: t.exit_datetime.to_string(),
-                entry_cost: t.entry_cost,
-                exit_proceeds: t.exit_proceeds,
-                pnl: t.pnl,
-                pnl_pct,
+                entry_cost: sanitize(t.entry_cost),
+                exit_proceeds: sanitize(t.exit_proceeds),
+                pnl: sanitize(t.pnl),
+                pnl_pct: sanitize(pnl_pct),
                 days_held: t.days_held,
                 exit_type: format!("{:?}", t.exit_type),
                 legs: serde_json::to_string(&t.legs).unwrap_or_else(|_| "[]".to_owned()),
                 computed_quantity: t.computed_quantity,
-                entry_equity: t.entry_equity,
+                entry_equity: t.entry_equity.map(sanitize),
                 group_label: t.group.clone(),
             }
         })
