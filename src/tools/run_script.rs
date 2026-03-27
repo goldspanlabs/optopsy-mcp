@@ -33,7 +33,7 @@ pub struct RunScriptParams {
 
 /// Response from a script backtest — passes through the full `BacktestResult`
 /// so the FE can render trade markers, equity curves, and indicator overlays.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RunScriptResponse {
     /// Script metadata (name, description, category) parsed from `//!` header.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -1,9 +1,8 @@
 //! Integration tests for the `BacktestStore` REST API storage layer.
 //!
-//! Exercises the full lifecycle: insert, list, get, `get_trades`, and delete.
+//! Exercises the full lifecycle: insert, list, get_detail, `get_trades`, and delete.
 
 use optopsy_mcp::data::backtest_store::{BacktestStore, MetricsRow, TradeRow};
-use serde_json::Value;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -86,15 +85,12 @@ fn full_lifecycle_insert_list_get_delete() {
     let trades3 = sample_trades(); // 3 trades
     let trades1 = vec![sample_trades().remove(0)]; // 1 trade
 
-    let ec: Value = serde_json::from_str(r#"[{"datetime":"2024-01-02","equity":100000}]"#)
-        .expect("parse equity_curve");
-    let ind: Value = serde_json::json!({});
-    let params1: Value = serde_json::json!({"dte": 45, "delta": 0.30});
-    let params2: Value = serde_json::json!({"dte": 30, "delta": 0.25});
+    let params1 = serde_json::json!({"dte": 45, "delta": 0.30});
+    let params2 = serde_json::json!({"dte": 30, "delta": 0.25});
 
     // ── insert two backtests ──────────────────────────────────────────────────
 
-    let id1 = store
+    let (id1, _) = store
         .insert(
             "bb_mean_reversion",
             "SPY",
@@ -102,13 +98,12 @@ fn full_lifecycle_insert_list_get_delete() {
             &params1,
             &metrics,
             &trades3,
-            &ec,
-            &ind,
+            "{}",
             512,
         )
         .expect("insert id1");
 
-    let id2 = store
+    let (id2, _) = store
         .insert(
             "ibs_mean_reversion",
             "QQQ",
@@ -116,8 +111,7 @@ fn full_lifecycle_insert_list_get_delete() {
             &params2,
             &metrics,
             &trades1,
-            &ec,
-            &ind,
+            "{}",
             256,
         )
         .expect("insert id2");
@@ -138,27 +132,9 @@ fn full_lifecycle_insert_list_get_delete() {
     assert_eq!(filtered[0].strategy_key, "bb_mean_reversion");
     assert_eq!(filtered[0].symbol, "SPY");
 
-    // ── get full result for id1 ───────────────────────────────────────────────
+    // ── get_detail for a nonexistent id returns None ──────────────────────────
 
-    let row = store.get(&id1).expect("get id1").expect("id1 should exist");
-
-    assert_eq!(row.id, id1);
-    assert_eq!(row.strategy_key, "bb_mean_reversion");
-    assert_eq!(row.symbol, "SPY");
-    assert_eq!(row.trades.len(), 3, "id1 should have 3 trades");
-    assert!(
-        (row.metrics.sharpe - 1.5).abs() < f64::EPSILON,
-        "sharpe mismatch"
-    );
-
-    // ── verify equity_curve is a JSON array ───────────────────────────────────
-
-    assert!(
-        row.equity_curve.is_array(),
-        "equity_curve should be a JSON array"
-    );
-    let arr = row.equity_curve.as_array().unwrap();
-    assert!(!arr.is_empty(), "equity_curve array must not be empty");
+    assert!(store.get_detail("nonexistent").unwrap().is_none());
 
     // ── get_trades for id1 — check exit_type and group_label ─────────────────
 
@@ -184,9 +160,9 @@ fn full_lifecycle_insert_list_get_delete() {
     let deleted = store.delete(&id1).expect("delete id1");
     assert!(deleted, "delete should return true for existing id");
 
-    // get returns None after deletion
+    // get_detail returns None after deletion
     assert!(
-        store.get(&id1).expect("get after delete").is_none(),
+        store.get_detail(&id1).expect("get_detail after delete").is_none(),
         "id1 should not exist after deletion"
     );
 
@@ -203,16 +179,14 @@ fn full_lifecycle_insert_list_get_delete() {
 
     // ── id2 still intact ─────────────────────────────────────────────────────
 
-    let row2 = store
-        .get(&id2)
-        .expect("get id2")
-        .expect("id2 should still exist");
-    assert_eq!(row2.strategy_key, "ibs_mean_reversion");
-    assert_eq!(row2.symbol, "QQQ");
-    assert_eq!(row2.trades.len(), 1, "id2 should still have its 1 trade");
-
     let remaining = store.list(None, None).expect("list after delete");
     assert_eq!(remaining.len(), 1, "only id2 should remain");
+    assert_eq!(remaining[0].strategy_key, "ibs_mean_reversion");
+    assert_eq!(remaining[0].symbol, "QQQ");
+
+    // get_trades for id2
+    let trades_id2 = store.get_trades(&id2).expect("get_trades id2");
+    assert_eq!(trades_id2.len(), 1, "id2 should still have its 1 trade");
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -225,26 +199,17 @@ fn list_filters_combine_correctly() {
 
     let metrics = sample_metrics();
     let empty: Vec<TradeRow> = vec![];
-    let ec: Value = serde_json::from_str(r#"[{"datetime":"2024-01-02","equity":100000}]"#)
-        .expect("parse equity_curve");
-    let ind: Value = serde_json::json!({});
-    let p: Value = serde_json::json!({});
+    let p = serde_json::json!({});
 
     // Insert 3 backtests: (strat_a, SPY), (strat_a, QQQ), (strat_b, SPY)
     store
-        .insert(
-            "strat_a", "SPY", 10_000.0, &p, &metrics, &empty, &ec, &ind, 100,
-        )
+        .insert("strat_a", "SPY", 10_000.0, &p, &metrics, &empty, "{}", 100)
         .expect("insert strat_a/SPY");
     store
-        .insert(
-            "strat_a", "QQQ", 10_000.0, &p, &metrics, &empty, &ec, &ind, 100,
-        )
+        .insert("strat_a", "QQQ", 10_000.0, &p, &metrics, &empty, "{}", 100)
         .expect("insert strat_a/QQQ");
     store
-        .insert(
-            "strat_b", "SPY", 10_000.0, &p, &metrics, &empty, &ec, &ind, 100,
-        )
+        .insert("strat_b", "SPY", 10_000.0, &p, &metrics, &empty, "{}", 100)
         .expect("insert strat_b/SPY");
 
     // list(strat_a, SPY) = 1

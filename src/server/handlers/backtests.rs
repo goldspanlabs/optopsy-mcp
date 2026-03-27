@@ -10,7 +10,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::data::backtest_store::{
-    BacktestRow, BacktestStore, BacktestSummary, MetricsRow, TradeRow,
+    BacktestDetail, BacktestStore, BacktestSummary, MetricsRow, TradeRow,
 };
 use crate::server::OptopsyServer;
 use crate::tools::run_script::RunScriptParams;
@@ -53,7 +53,7 @@ pub struct ListQuery {
 pub async fn create_backtest(
     State(state): State<AppState>,
     Json(req): Json<CreateBacktestRequest>,
-) -> Result<(StatusCode, Json<BacktestRow>), (StatusCode, String)> {
+) -> Result<(StatusCode, Json<BacktestDetail>), (StatusCode, String)> {
     let run_params = RunScriptParams {
         strategy: Some(req.strategy.clone()),
         script: None,
@@ -120,16 +120,14 @@ pub async fn create_backtest(
         })
         .collect();
 
-    let equity_curve_json = serde_json::to_value(&response.result.equity_curve)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    let indicator_data_json = serde_json::to_value(&response.indicator_data)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
     let params_value = serde_json::to_value(&req.params)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let id = state
+    // Serialize the full response as the result_json blob
+    let result_json = serde_json::to_string(&response)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let (id, created_at) = state
         .backtest_store
         .insert(
             &req.strategy,
@@ -138,24 +136,20 @@ pub async fn create_backtest(
             &params_value,
             &metrics,
             &trades,
-            &equity_curve_json,
-            &indicator_data_json,
+            &result_json,
             response.execution_time_ms as i64,
         )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let row = state
-        .backtest_store
-        .get(&id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Backtest not found after insert".to_owned(),
-            )
-        })?;
-
-    Ok((StatusCode::CREATED, Json(row)))
+    Ok((
+        StatusCode::CREATED,
+        Json(BacktestDetail {
+            id,
+            created_at,
+            strategy_key: req.strategy,
+            response,
+        }),
+    ))
 }
 
 /// `GET /backtests` — List backtest summaries, optionally filtered.
@@ -171,18 +165,18 @@ pub async fn list_backtests(
     Ok(Json(rows))
 }
 
-/// `GET /backtests/{id}` — Retrieve a full backtest result by id.
+/// `GET /backtests/{id}` — Retrieve a full backtest detail by id.
 #[allow(clippy::unused_async)]
 pub async fn get_backtest(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<BacktestRow>, (StatusCode, String)> {
-    let row = state
+) -> Result<Json<BacktestDetail>, (StatusCode, String)> {
+    let detail = state
         .backtest_store
-        .get(&id)
+        .get_detail(&id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Backtest '{id}' not found")))?;
-    Ok(Json(row))
+    Ok(Json(detail))
 }
 
 /// `GET /backtests/{id}/trades` — Retrieve trades for a backtest.
