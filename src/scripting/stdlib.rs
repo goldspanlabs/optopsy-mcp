@@ -213,7 +213,11 @@ pub fn parse_script_meta(id: &str, source: &str) -> ScriptMeta {
         hypothesis,
         tags,
         regime,
-        profiles: if profiles.is_empty() { None } else { Some(profiles) },
+        profiles: if profiles.is_empty() {
+            None
+        } else {
+            Some(profiles)
+        },
     }
 }
 
@@ -516,9 +520,7 @@ stop_pct = 0.15
 
     #[test]
     fn test_merge_profiles() {
-        let registry = parse_profiles_toml(
-            "[equities]\ndelta = 0.30\ndte = 45\nlookback = 20\n",
-        );
+        let registry = parse_profiles_toml("[equities]\ndelta = 0.30\ndte = 45\nlookback = 20\n");
 
         let mut script_profiles = HashMap::new();
         let mut eq_overrides = HashMap::new();
@@ -531,7 +533,12 @@ stop_pct = 0.15
                 .into_iter()
                 .collect();
 
-        let merged = merge_profile_params("equities", &registry, Some(&script_profiles), &caller_params);
+        let merged = merge_profile_params(
+            "equities",
+            &registry,
+            Some(&script_profiles),
+            &caller_params,
+        );
 
         assert_eq!(merged["delta"], serde_json::json!(0.35));
         assert_eq!(merged["dte"], serde_json::json!(30));

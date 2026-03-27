@@ -635,23 +635,23 @@ mod tests {
 
         // Filter by strategy
         assert_eq!(
-            store.list(Some("strategy_a"), None, None, None).unwrap().len(),
+            store
+                .list(Some("strategy_a"), None, None, None)
+                .unwrap()
+                .len(),
             2
         );
         assert_eq!(
-            store.list(Some("strategy_b"), None, None, None).unwrap().len(),
+            store
+                .list(Some("strategy_b"), None, None, None)
+                .unwrap()
+                .len(),
             1
         );
 
         // Filter by symbol
-        assert_eq!(
-            store.list(None, Some("SPY"), None, None).unwrap().len(),
-            2
-        );
-        assert_eq!(
-            store.list(None, Some("QQQ"), None, None).unwrap().len(),
-            1
-        );
+        assert_eq!(store.list(None, Some("SPY"), None, None).unwrap().len(), 2);
+        assert_eq!(store.list(None, Some("QQQ"), None, None).unwrap().len(), 1);
 
         // Filter by both
         assert_eq!(
@@ -769,10 +769,7 @@ mod tests {
             summaries[0].tags.as_deref(),
             Some(r#"["mean_reversion","options"]"#)
         );
-        assert_eq!(
-            summaries[0].regime.as_deref(),
-            Some(r#"["uptrend"]"#)
-        );
+        assert_eq!(summaries[0].regime.as_deref(), Some(r#"["uptrend"]"#));
 
         // Verify the id matches
         assert_eq!(summaries[0].id, id);
@@ -816,7 +813,9 @@ mod tests {
             )
             .unwrap();
 
-        let filtered = store.list(None, None, Some("mean_reversion"), None).unwrap();
+        let filtered = store
+            .list(None, None, Some("mean_reversion"), None)
+            .unwrap();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].strategy_key, "s1");
     }

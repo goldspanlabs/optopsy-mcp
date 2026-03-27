@@ -116,9 +116,7 @@ async fn main() -> Result<()> {
             )
             .route(
                 "/profiles",
-                axum::routing::get(
-                    optopsy_mcp::server::handlers::profiles::list_profiles,
-                ),
+                axum::routing::get(optopsy_mcp::server::handlers::profiles::list_profiles),
             )
             .route(
                 "/prices/{symbol}",

@@ -24,8 +24,7 @@ pub async fn list_profiles() -> Json<Vec<ProfileInfo>> {
         .await
         .unwrap_or_default();
 
-    let mut profile_names: std::collections::BTreeSet<String> =
-        registry.keys().cloned().collect();
+    let mut profile_names: std::collections::BTreeSet<String> = registry.keys().cloned().collect();
 
     for script in &scripts {
         if let Some(profiles) = &script.profiles {
@@ -41,11 +40,7 @@ pub async fn list_profiles() -> Json<Vec<ProfileInfo>> {
             let registry_params = registry.get(&name).cloned().unwrap_or_default();
             let scripts_with_overrides: Vec<String> = scripts
                 .iter()
-                .filter(|s| {
-                    s.profiles
-                        .as_ref()
-                        .is_some_and(|p| p.contains_key(&name))
-                })
+                .filter(|s| s.profiles.as_ref().is_some_and(|p| p.contains_key(&name)))
                 .map(|s| s.id.clone())
                 .collect();
             ProfileInfo {
