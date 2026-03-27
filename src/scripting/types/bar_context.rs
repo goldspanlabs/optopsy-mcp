@@ -174,13 +174,15 @@ impl BarContext {
         self.indicator_value_multi("macd_hist", &[12, 26, 9])
     }
     pub fn bbands_upper(&mut self, period: i64) -> Dynamic {
-        self.indicator_value("bbands_upper", period)
+        // Default std_dev=2.0, stored as 20 (multiplied by 10 for hashing)
+        self.indicator_value_multi("bbands_upper", &[period, 20])
     }
     pub fn bbands_mid(&mut self, period: i64) -> Dynamic {
         self.indicator_value("bbands_mid", period)
     }
     pub fn bbands_lower(&mut self, period: i64) -> Dynamic {
-        self.indicator_value("bbands_lower", period)
+        // Default std_dev=2.0, stored as 20 (multiplied by 10 for hashing)
+        self.indicator_value_multi("bbands_lower", &[period, 20])
     }
     pub fn stochastic(&mut self, period: i64) -> Dynamic {
         self.indicator_value("stochastic", period)

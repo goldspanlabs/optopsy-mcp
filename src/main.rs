@@ -122,9 +122,9 @@ async fn main() -> Result<()> {
                     move |path, query| prices_handler(cache.clone(), path, query)
                 }),
             )
+            .merge(backtest_routes)
             .nest_service("/mcp", service)
-            .route("/health", axum::routing::get(|| async { "ok" }))
-            .merge(backtest_routes);
+            .route("/health", axum::routing::get(|| async { "ok" }));
 
         let addr = format!("0.0.0.0:{port}");
         tracing::info!("Starting optopsy-mcp HTTP server on {addr}");
