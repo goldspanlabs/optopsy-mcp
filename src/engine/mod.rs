@@ -15,3 +15,4 @@ pub mod price_table;
 pub mod pricing;
 pub mod sim_types;
 pub mod types;
+pub mod walk_forward;
