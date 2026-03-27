@@ -126,6 +126,7 @@ pub fn compute_windows(
 }
 
 /// Generate all cartesian product combinations from a param grid.
+#[allow(clippy::implicit_hasher)]
 pub fn cartesian_product(
     grid: &HashMap<String, Vec<serde_json::Value>>,
 ) -> Vec<HashMap<String, serde_json::Value>> {

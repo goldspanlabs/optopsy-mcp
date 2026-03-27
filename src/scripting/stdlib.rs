@@ -472,7 +472,7 @@ mod tests {
 
     #[test]
     fn test_load_profiles_from_toml() {
-        let toml_content = r#"
+        let toml_content = r"
 [equities]
 delta = 0.30
 dte = 45
@@ -482,7 +482,7 @@ stop_pct = 0.05
 delta = 0.25
 dte = 14
 stop_pct = 0.15
-"#;
+";
         let profiles = parse_profiles_toml(toml_content);
         assert_eq!(profiles.len(), 2);
         let equities = &profiles["equities"];
@@ -495,10 +495,10 @@ stop_pct = 0.15
 
     #[test]
     fn test_parse_script_profiles() {
-        let source = r#"//! name: Test Strategy
+        let source = r"//! name: Test Strategy
 //! profile.equities: delta=0.30, dte=45, ibs_threshold=0.2
 //! profile.crypto: delta=0.20, dte=14
-"#;
+";
         let meta = parse_script_meta("test", source);
         let profiles = meta.profiles.as_ref().expect("profiles should be present");
         assert_eq!(profiles.len(), 2);
