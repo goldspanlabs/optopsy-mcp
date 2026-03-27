@@ -1,0 +1,717 @@
+//! SQLite-backed storage for backtest results.
+//!
+//! Provides [`BacktestStore`] for persisting and querying backtest runs,
+//! their performance metrics, and individual trade records.
+
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+
+use anyhow::{Context, Result};
+use rusqlite::{Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Row types
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Performance metrics for a single backtest run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricsRow {
+    pub sharpe: f64,
+    pub sortino: f64,
+    pub cagr: f64,
+    pub max_drawdown: f64,
+    pub win_rate: f64,
+    pub profit_factor: f64,
+    pub total_pnl: f64,
+    pub trade_count: i64,
+    pub expectancy: f64,
+    pub var_95: f64,
+}
+
+/// A single trade record associated with a backtest run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TradeRow {
+    pub trade_id: i64,
+    pub entry_datetime: String,
+    pub exit_datetime: String,
+    pub entry_cost: f64,
+    pub exit_proceeds: f64,
+    pub pnl: f64,
+    pub pnl_pct: f64,
+    pub days_held: i64,
+    pub exit_type: String,
+    pub legs: String,
+    pub computed_quantity: Option<i32>,
+    pub entry_equity: Option<f64>,
+    pub group_label: Option<String>,
+}
+
+/// Full backtest result including metrics and all trades.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BacktestRow {
+    pub id: String,
+    pub strategy_key: String,
+    pub symbol: String,
+    pub capital: f64,
+    pub params: Value,
+    pub metrics: MetricsRow,
+    pub trades: Vec<TradeRow>,
+    pub equity_curve: Value,
+    pub indicator_data: Value,
+    pub execution_time_ms: i64,
+    pub created_at: String,
+}
+
+/// Summary view of a backtest (no trades).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BacktestSummary {
+    pub id: String,
+    pub strategy_key: String,
+    pub symbol: String,
+    pub capital: f64,
+    pub metrics: MetricsRow,
+    pub execution_time_ms: i64,
+    pub created_at: String,
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// BacktestStore
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Thread-safe `SQLite` store for backtest results.
+#[derive(Clone)]
+pub struct BacktestStore {
+    conn: Arc<Mutex<Connection>>,
+}
+
+impl BacktestStore {
+    /// Open (or create) a file-based `SQLite` database and initialise the schema.
+    pub fn open(path: &Path) -> Result<Self> {
+        let conn = Connection::open(path)
+            .with_context(|| format!("Failed to open SQLite database at {}", path.display()))?;
+        let store = Self {
+            conn: Arc::new(Mutex::new(conn)),
+        };
+        store.init_schema()?;
+        Ok(store)
+    }
+
+    /// Open an in-memory `SQLite` database (intended for tests).
+    pub fn open_in_memory() -> Result<Self> {
+        let conn = Connection::open_in_memory()
+            .context("Failed to open in-memory SQLite database")?;
+        let store = Self {
+            conn: Arc::new(Mutex::new(conn)),
+        };
+        store.init_schema()?;
+        Ok(store)
+    }
+
+    /// Create tables and indices if they do not already exist.
+    fn init_schema(&self) -> Result<()> {
+        let conn = self.conn.lock().expect("mutex poisoned");
+        conn.execute_batch(
+            "
+            PRAGMA journal_mode = WAL;
+            PRAGMA foreign_keys = ON;
+
+            CREATE TABLE IF NOT EXISTS backtests (
+                id                  TEXT PRIMARY KEY,
+                strategy_key        TEXT NOT NULL,
+                symbol              TEXT NOT NULL,
+                capital             REAL NOT NULL,
+                params              TEXT NOT NULL,
+                equity_curve        TEXT NOT NULL,
+                indicator_data      TEXT NOT NULL,
+                execution_time_ms   INTEGER NOT NULL,
+                created_at          TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS backtest_metrics (
+                backtest_id     TEXT PRIMARY KEY REFERENCES backtests(id) ON DELETE CASCADE,
+                sharpe          REAL,
+                sortino         REAL,
+                cagr            REAL,
+                max_drawdown    REAL,
+                win_rate        REAL,
+                profit_factor   REAL,
+                total_pnl       REAL,
+                trade_count     INTEGER,
+                expectancy      REAL,
+                var_95          REAL
+            );
+
+            CREATE TABLE IF NOT EXISTS trades (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                backtest_id         TEXT NOT NULL REFERENCES backtests(id) ON DELETE CASCADE,
+                trade_id            INTEGER NOT NULL,
+                entry_datetime      TEXT NOT NULL,
+                exit_datetime       TEXT NOT NULL,
+                entry_cost          REAL,
+                exit_proceeds       REAL,
+                pnl                 REAL,
+                pnl_pct             REAL,
+                days_held           INTEGER,
+                exit_type           TEXT,
+                legs                TEXT,
+                computed_quantity   INTEGER,
+                entry_equity        REAL,
+                group_label         TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_backtests_strategy_symbol
+                ON backtests(strategy_key, symbol);
+
+            CREATE INDEX IF NOT EXISTS idx_trades_backtest_id
+                ON trades(backtest_id);
+            ",
+        )
+        .context("Failed to initialise SQLite schema")?;
+        Ok(())
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // CRUD methods
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /// Insert a new backtest result and return its generated UUID.
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert(
+        &self,
+        strategy_key: &str,
+        symbol: &str,
+        capital: f64,
+        params: &Value,
+        metrics: &MetricsRow,
+        trades: &[TradeRow],
+        equity_curve_json: &Value,
+        indicator_data_json: &Value,
+        execution_time_ms: i64,
+    ) -> Result<String> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let created_at = chrono::Utc::now().to_rfc3339();
+
+        let params_str = serde_json::to_string(params).context("Failed to serialize params")?;
+        let equity_str =
+            serde_json::to_string(equity_curve_json).context("Failed to serialize equity_curve")?;
+        let indicator_str = serde_json::to_string(indicator_data_json)
+            .context("Failed to serialize indicator_data")?;
+
+        let conn = self.conn.lock().expect("mutex poisoned");
+
+        conn.execute(
+            "INSERT INTO backtests
+                (id, strategy_key, symbol, capital, params, equity_curve, indicator_data,
+                 execution_time_ms, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            rusqlite::params![
+                id,
+                strategy_key,
+                symbol,
+                capital,
+                params_str,
+                equity_str,
+                indicator_str,
+                execution_time_ms,
+                created_at,
+            ],
+        )
+        .context("Failed to insert into backtests")?;
+
+        conn.execute(
+            "INSERT INTO backtest_metrics
+                (backtest_id, sharpe, sortino, cagr, max_drawdown, win_rate, profit_factor,
+                 total_pnl, trade_count, expectancy, var_95)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            rusqlite::params![
+                id,
+                metrics.sharpe,
+                metrics.sortino,
+                metrics.cagr,
+                metrics.max_drawdown,
+                metrics.win_rate,
+                metrics.profit_factor,
+                metrics.total_pnl,
+                metrics.trade_count,
+                metrics.expectancy,
+                metrics.var_95,
+            ],
+        )
+        .context("Failed to insert into backtest_metrics")?;
+
+        for trade in trades {
+            conn.execute(
+                "INSERT INTO trades
+                    (backtest_id, trade_id, entry_datetime, exit_datetime, entry_cost,
+                     exit_proceeds, pnl, pnl_pct, days_held, exit_type, legs,
+                     computed_quantity, entry_equity, group_label)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                rusqlite::params![
+                    id,
+                    trade.trade_id,
+                    trade.entry_datetime,
+                    trade.exit_datetime,
+                    trade.entry_cost,
+                    trade.exit_proceeds,
+                    trade.pnl,
+                    trade.pnl_pct,
+                    trade.days_held,
+                    trade.exit_type,
+                    trade.legs,
+                    trade.computed_quantity,
+                    trade.entry_equity,
+                    trade.group_label,
+                ],
+            )
+            .context("Failed to insert trade")?;
+        }
+
+        Ok(id)
+    }
+
+    /// Retrieve a full backtest result by its UUID.
+    ///
+    /// Returns `None` if the id does not exist.
+    pub fn get(&self, id: &str) -> Result<Option<BacktestRow>> {
+        let conn = self.conn.lock().expect("mutex poisoned");
+
+        let row = conn
+            .query_row(
+                "SELECT b.id, b.strategy_key, b.symbol, b.capital, b.params,
+                        b.equity_curve, b.indicator_data, b.execution_time_ms, b.created_at,
+                        m.sharpe, m.sortino, m.cagr, m.max_drawdown, m.win_rate,
+                        m.profit_factor, m.total_pnl, m.trade_count, m.expectancy, m.var_95
+                 FROM backtests b
+                 JOIN backtest_metrics m ON m.backtest_id = b.id
+                 WHERE b.id = ?1",
+                rusqlite::params![id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,   // id
+                        row.get::<_, String>(1)?,   // strategy_key
+                        row.get::<_, String>(2)?,   // symbol
+                        row.get::<_, f64>(3)?,      // capital
+                        row.get::<_, String>(4)?,   // params
+                        row.get::<_, String>(5)?,   // equity_curve
+                        row.get::<_, String>(6)?,   // indicator_data
+                        row.get::<_, i64>(7)?,      // execution_time_ms
+                        row.get::<_, String>(8)?,   // created_at
+                        row.get::<_, f64>(9)?,      // sharpe
+                        row.get::<_, f64>(10)?,     // sortino
+                        row.get::<_, f64>(11)?,     // cagr
+                        row.get::<_, f64>(12)?,     // max_drawdown
+                        row.get::<_, f64>(13)?,     // win_rate
+                        row.get::<_, f64>(14)?,     // profit_factor
+                        row.get::<_, f64>(15)?,     // total_pnl
+                        row.get::<_, i64>(16)?,     // trade_count
+                        row.get::<_, f64>(17)?,     // expectancy
+                        row.get::<_, f64>(18)?,     // var_95
+                    ))
+                },
+            )
+            .optional()
+            .context("Failed to query backtest by id")?;
+
+        let Some((
+            id,
+            strategy_key,
+            symbol,
+            capital,
+            params_str,
+            equity_str,
+            indicator_str,
+            execution_time_ms,
+            created_at,
+            sharpe,
+            sortino,
+            cagr,
+            max_drawdown,
+            win_rate,
+            profit_factor,
+            total_pnl,
+            trade_count,
+            expectancy,
+            var_95,
+        )) = row
+        else {
+            return Ok(None);
+        };
+
+        let params: Value =
+            serde_json::from_str(&params_str).context("Failed to deserialize params")?;
+        let equity_curve: Value =
+            serde_json::from_str(&equity_str).context("Failed to deserialize equity_curve")?;
+        let indicator_data: Value = serde_json::from_str(&indicator_str)
+            .context("Failed to deserialize indicator_data")?;
+
+        let metrics = MetricsRow {
+            sharpe,
+            sortino,
+            cagr,
+            max_drawdown,
+            win_rate,
+            profit_factor,
+            total_pnl,
+            trade_count,
+            expectancy,
+            var_95,
+        };
+
+        // Drop the lock before calling get_trades (which re-acquires it)
+        drop(conn);
+
+        let trades = self.get_trades(&id)?;
+
+        Ok(Some(BacktestRow {
+            id,
+            strategy_key,
+            symbol,
+            capital,
+            params,
+            metrics,
+            trades,
+            equity_curve,
+            indicator_data,
+            execution_time_ms,
+            created_at,
+        }))
+    }
+
+    /// List backtest summaries, optionally filtered by strategy key and/or symbol.
+    ///
+    /// Results are ordered newest-first by `created_at`.
+    pub fn list(
+        &self,
+        strategy: Option<&str>,
+        symbol: Option<&str>,
+    ) -> Result<Vec<BacktestSummary>> {
+        let conn = self.conn.lock().expect("mutex poisoned");
+
+        let mut sql = String::from(
+            "SELECT b.id, b.strategy_key, b.symbol, b.capital,
+                    b.execution_time_ms, b.created_at,
+                    m.sharpe, m.sortino, m.cagr, m.max_drawdown, m.win_rate,
+                    m.profit_factor, m.total_pnl, m.trade_count, m.expectancy, m.var_95
+             FROM backtests b
+             JOIN backtest_metrics m ON m.backtest_id = b.id",
+        );
+
+        let mut conditions = Vec::new();
+        let mut param_idx = 1usize;
+
+        if strategy.is_some() {
+            conditions.push(format!("b.strategy_key = ?{param_idx}"));
+            param_idx += 1;
+        }
+        if symbol.is_some() {
+            conditions.push(format!("b.symbol = ?{param_idx}"));
+        }
+
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+        sql.push_str(" ORDER BY b.created_at DESC");
+
+        // Build a boxed params list for dynamic dispatch
+        let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        if let Some(s) = strategy {
+            params_vec.push(Box::new(s.to_owned()));
+        }
+        if let Some(s) = symbol {
+            params_vec.push(Box::new(s.to_owned()));
+        }
+
+        let params_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .context("Failed to prepare list query")?;
+
+        let rows = stmt
+            .query_map(params_refs.as_slice(), |row| {
+                Ok(BacktestSummary {
+                    id: row.get(0)?,
+                    strategy_key: row.get(1)?,
+                    symbol: row.get(2)?,
+                    capital: row.get(3)?,
+                    execution_time_ms: row.get(4)?,
+                    created_at: row.get(5)?,
+                    metrics: MetricsRow {
+                        sharpe: row.get(6)?,
+                        sortino: row.get(7)?,
+                        cagr: row.get(8)?,
+                        max_drawdown: row.get(9)?,
+                        win_rate: row.get(10)?,
+                        profit_factor: row.get(11)?,
+                        total_pnl: row.get(12)?,
+                        trade_count: row.get(13)?,
+                        expectancy: row.get(14)?,
+                        var_95: row.get(15)?,
+                    },
+                })
+            })
+            .context("Failed to query backtest list")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("Failed to collect backtest summaries")?;
+
+        Ok(rows)
+    }
+
+    /// Delete a backtest by id. Returns `true` if a row was deleted.
+    pub fn delete(&self, id: &str) -> Result<bool> {
+        let conn = self.conn.lock().expect("mutex poisoned");
+        let n = conn
+            .execute("DELETE FROM backtests WHERE id = ?1", rusqlite::params![id])
+            .context("Failed to delete backtest")?;
+        Ok(n > 0)
+    }
+
+    /// Retrieve all trades for a given backtest, ordered by `trade_id`.
+    pub fn get_trades(&self, backtest_id: &str) -> Result<Vec<TradeRow>> {
+        let conn = self.conn.lock().expect("mutex poisoned");
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT trade_id, entry_datetime, exit_datetime, entry_cost, exit_proceeds,
+                        pnl, pnl_pct, days_held, exit_type, legs,
+                        computed_quantity, entry_equity, group_label
+                 FROM trades
+                 WHERE backtest_id = ?1
+                 ORDER BY trade_id ASC",
+            )
+            .context("Failed to prepare get_trades query")?;
+
+        let rows = stmt
+            .query_map(rusqlite::params![backtest_id], |row| {
+                Ok(TradeRow {
+                    trade_id: row.get(0)?,
+                    entry_datetime: row.get(1)?,
+                    exit_datetime: row.get(2)?,
+                    entry_cost: row.get(3)?,
+                    exit_proceeds: row.get(4)?,
+                    pnl: row.get(5)?,
+                    pnl_pct: row.get(6)?,
+                    days_held: row.get(7)?,
+                    exit_type: row.get(8)?,
+                    legs: row.get(9)?,
+                    computed_quantity: row.get(10)?,
+                    entry_equity: row.get(11)?,
+                    group_label: row.get(12)?,
+                })
+            })
+            .context("Failed to query trades")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("Failed to collect trades")?;
+
+        Ok(rows)
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Tests
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_metrics() -> MetricsRow {
+        MetricsRow {
+            sharpe: 1.5,
+            sortino: 2.0,
+            cagr: 0.15,
+            max_drawdown: -0.12,
+            win_rate: 0.55,
+            profit_factor: 1.8,
+            total_pnl: 5000.0,
+            trade_count: 42,
+            expectancy: 119.05,
+            var_95: -300.0,
+        }
+    }
+
+    fn sample_trades() -> Vec<TradeRow> {
+        vec![
+            TradeRow {
+                trade_id: 1,
+                entry_datetime: "2024-01-10T00:00:00Z".to_string(),
+                exit_datetime: "2024-01-20T00:00:00Z".to_string(),
+                entry_cost: 500.0,
+                exit_proceeds: 700.0,
+                pnl: 200.0,
+                pnl_pct: 0.40,
+                days_held: 10,
+                exit_type: "TakeProfit".to_string(),
+                legs: "[]".to_string(),
+                computed_quantity: Some(2),
+                entry_equity: Some(10000.0),
+                group_label: None,
+            },
+            TradeRow {
+                trade_id: 2,
+                entry_datetime: "2024-02-01T00:00:00Z".to_string(),
+                exit_datetime: "2024-02-15T00:00:00Z".to_string(),
+                entry_cost: 600.0,
+                exit_proceeds: 550.0,
+                pnl: -50.0,
+                pnl_pct: -0.083,
+                days_held: 14,
+                exit_type: "StopLoss".to_string(),
+                legs: "[]".to_string(),
+                computed_quantity: None,
+                entry_equity: Some(10200.0),
+                group_label: Some("group-A".to_string()),
+            },
+        ]
+    }
+
+    #[test]
+    fn test_init_creates_tables() {
+        let store = BacktestStore::open_in_memory().expect("open_in_memory");
+        let conn = store.conn.lock().expect("mutex");
+
+        let tables: Vec<String> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
+                )
+                .unwrap();
+            stmt.query_map([], |row| row.get(0))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+
+        assert!(tables.contains(&"backtests".to_string()));
+        assert!(tables.contains(&"backtest_metrics".to_string()));
+        assert!(tables.contains(&"trades".to_string()));
+    }
+
+    #[test]
+    fn test_insert_and_get_backtest() {
+        let store = BacktestStore::open_in_memory().expect("open_in_memory");
+        let metrics = sample_metrics();
+        let trades = sample_trades();
+        let params = serde_json::json!({"dte": 45, "delta": 0.3});
+
+        let id = store
+            .insert(
+                "bull_put_spread",
+                "SPY",
+                50_000.0,
+                &params,
+                &metrics,
+                &trades,
+                &serde_json::json!([]),
+                &serde_json::json!({}),
+                1234,
+            )
+            .expect("insert");
+
+        let row = store.get(&id).expect("get").expect("should exist");
+
+        assert_eq!(row.id, id);
+        assert_eq!(row.strategy_key, "bull_put_spread");
+        assert_eq!(row.symbol, "SPY");
+        assert!((row.capital - 50_000.0).abs() < f64::EPSILON);
+        assert_eq!(row.execution_time_ms, 1234);
+        assert!((row.metrics.sharpe - 1.5).abs() < f64::EPSILON);
+        assert_eq!(row.metrics.trade_count, 42);
+        assert_eq!(row.trades.len(), 2);
+        assert_eq!(row.params, params);
+    }
+
+    #[test]
+    fn test_list_backtests() {
+        let store = BacktestStore::open_in_memory().expect("open_in_memory");
+        let metrics = sample_metrics();
+        let empty: Vec<TradeRow> = vec![];
+        let ec = serde_json::json!([]);
+        let ind = serde_json::json!({});
+        let p = serde_json::json!({});
+
+        store
+            .insert("strategy_a", "SPY", 10_000.0, &p, &metrics, &empty, &ec, &ind, 100)
+            .unwrap();
+        store
+            .insert("strategy_a", "QQQ", 10_000.0, &p, &metrics, &empty, &ec, &ind, 100)
+            .unwrap();
+        store
+            .insert("strategy_b", "SPY", 10_000.0, &p, &metrics, &empty, &ec, &ind, 100)
+            .unwrap();
+
+        // No filter — all 3
+        assert_eq!(store.list(None, None).unwrap().len(), 3);
+
+        // Filter by strategy
+        assert_eq!(store.list(Some("strategy_a"), None).unwrap().len(), 2);
+        assert_eq!(store.list(Some("strategy_b"), None).unwrap().len(), 1);
+
+        // Filter by symbol
+        assert_eq!(store.list(None, Some("SPY")).unwrap().len(), 2);
+        assert_eq!(store.list(None, Some("QQQ")).unwrap().len(), 1);
+
+        // Filter by both
+        assert_eq!(
+            store.list(Some("strategy_a"), Some("SPY")).unwrap().len(),
+            1
+        );
+        assert_eq!(
+            store.list(Some("strategy_b"), Some("QQQ")).unwrap().len(),
+            0
+        );
+    }
+
+    #[test]
+    fn test_delete_backtest() {
+        let store = BacktestStore::open_in_memory().expect("open_in_memory");
+        let metrics = sample_metrics();
+        let empty: Vec<TradeRow> = vec![];
+        let p = serde_json::json!({});
+        let ec = serde_json::json!([]);
+        let ind = serde_json::json!({});
+
+        let id = store
+            .insert("strategy_a", "SPY", 10_000.0, &p, &metrics, &empty, &ec, &ind, 100)
+            .unwrap();
+
+        // Verify it exists
+        assert!(store.get(&id).unwrap().is_some());
+
+        // Delete returns true
+        assert!(store.delete(&id).unwrap());
+
+        // Now gone
+        assert!(store.get(&id).unwrap().is_none());
+
+        // Second delete returns false
+        assert!(!store.delete(&id).unwrap());
+    }
+
+    #[test]
+    fn test_get_trades_by_backtest() {
+        let store = BacktestStore::open_in_memory().expect("open_in_memory");
+        let metrics = sample_metrics();
+        let trades = sample_trades();
+        let p = serde_json::json!({});
+        let ec = serde_json::json!([]);
+        let ind = serde_json::json!({});
+
+        let id = store
+            .insert("strategy_a", "SPY", 10_000.0, &p, &metrics, &trades, &ec, &ind, 100)
+            .unwrap();
+
+        let fetched = store.get_trades(&id).unwrap();
+        assert_eq!(fetched.len(), 2);
+        assert_eq!(fetched[0].trade_id, 1);
+        assert_eq!(fetched[1].trade_id, 2);
+        assert_eq!(fetched[0].exit_type, "TakeProfit");
+        assert_eq!(fetched[1].group_label, Some("group-A".to_string()));
+        assert_eq!(fetched[0].computed_quantity, Some(2));
+        assert!(fetched[1].computed_quantity.is_none());
+    }
+}

@@ -3,6 +3,7 @@
 //! Provides a `DataStore` trait with a `CachedStore` implementation that uses
 //! local Parquet files (errors if data not found in cache).
 
+pub mod backtest_store;
 pub mod cache;
 pub mod parquet;
 
