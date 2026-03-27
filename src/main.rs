@@ -115,6 +115,12 @@ async fn main() -> Result<()> {
                 }),
             )
             .route(
+                "/profiles",
+                axum::routing::get(
+                    optopsy_mcp::server::handlers::profiles::list_profiles,
+                ),
+            )
+            .route(
                 "/prices/{symbol}",
                 axum::routing::get({
                     let cache = prices_cache.clone();
