@@ -147,19 +147,44 @@ async fn wheel_script_compiles_and_configures() {
         std::fs::read_to_string("scripts/strategies/wheel.rhai").expect("wheel.rhai should exist");
     let params = wheel_params();
 
-    // Verify it compiles
-    let engine = optopsy_mcp::scripting::registration::build_engine();
+    // Verify it compiles (register extern() overloads so top-level calls resolve)
+    let mut engine = optopsy_mcp::scripting::registration::build_engine();
+    let params_clone = params.clone();
+    engine.register_fn(
+        "extern",
+        move |name: &str, default: rhai::Dynamic, _desc: &str| -> rhai::Dynamic {
+            if let Some(value) = params_clone.get(name) {
+                optopsy_mcp::scripting::stdlib::json_to_dynamic(value)
+            } else {
+                default
+            }
+        },
+    );
+    let params_clone4 = params.clone();
+    engine.register_fn(
+        "extern",
+        move |name: &str,
+              default: rhai::Dynamic,
+              _desc: &str,
+              _opts: rhai::Array|
+              -> rhai::Dynamic {
+            if let Some(value) = params_clone4.get(name) {
+                optopsy_mcp::scripting::stdlib::json_to_dynamic(value)
+            } else {
+                default
+            }
+        },
+    );
     let ast = engine.compile(&script_source);
     assert!(ast.is_ok(), "wheel.rhai should compile: {:?}", ast.err());
 
     // Verify config() can be called with params in scope
     let ast = ast.unwrap();
     let mut scope = rhai::Scope::new();
+    optopsy_mcp::scripting::stdlib::inject_params_map(&mut scope, &params);
     let _ = engine
         .eval_ast_with_scope::<rhai::Dynamic>(&mut scope, &ast)
         .unwrap();
-
-    optopsy_mcp::scripting::stdlib::inject_params_map(&mut scope, &params);
 
     let options = rhai::CallFnOptions::new()
         .eval_ast(false)

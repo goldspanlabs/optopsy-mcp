@@ -5,8 +5,8 @@
 // Sells bull put spreads on RSI dips within an uptrend, with volatility-adaptive
 // delta selection and dynamic exit rules using multiple indicators.
 //
-// Required params: SYMBOL, CAPITAL
-// Optional params: SLIPPAGE ("mid")
+// SYMBOL and CAPITAL are universal — provided by the FE dialog via params map.
+let SLIPPAGE = extern("SLIPPAGE", "mid", "Slippage model", ["mid", "spread"]);
 
 // Top-level variables persist across bars. Use for tracking state between callbacks.
 let consecutive_losses = 0;
@@ -41,7 +41,7 @@ fn config() {
             ],
         },
         engine: #{
-            slippage: params.SLIPPAGE,
+            slippage: SLIPPAGE,
             expiration_filter: "monthly",
         },
     }

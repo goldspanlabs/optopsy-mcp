@@ -34,19 +34,52 @@ pub async fn run_script_backtest(
     let backtest_start = std::time::Instant::now();
 
     // 1. Compile
-    let engine = build_engine();
+    let mut engine = build_engine();
+
+    // Register extern() with captured params for runtime resolution (3-arg)
+    let params_clone = params.clone();
+    engine.register_fn(
+        "extern",
+        move |name: &str, default: Dynamic, _desc: &str| -> Dynamic {
+            if let Some(value) = params_clone.get(name) {
+                super::stdlib::json_to_dynamic(value)
+            } else if default.is_unit() {
+                Dynamic::from(format!("ERROR: Required parameter '{name}' not provided"))
+            } else {
+                default
+            }
+        },
+    );
+
+    // Register extern() 4-arg overload (with options array — ignored at runtime)
+    let params_clone4 = params.clone();
+    engine.register_fn(
+        "extern",
+        move |name: &str, default: Dynamic, _desc: &str, _opts: rhai::Array| -> Dynamic {
+            if let Some(value) = params_clone4.get(name) {
+                super::stdlib::json_to_dynamic(value)
+            } else if default.is_unit() {
+                Dynamic::from(format!("ERROR: Required parameter '{name}' not provided"))
+            } else {
+                default
+            }
+        },
+    );
+
     let ast = engine
         .compile(script_source)
         .map_err(|e| anyhow::anyhow!("Script compile error: {e}"))?;
 
-    // 2. Initialize scope (evaluate top-level let/const statements)
+    // 2. Inject params map into scope FIRST so extern() calls during
+    //    top-level initialization can resolve parameter values.
     let mut scope = Scope::new();
+    super::stdlib::inject_params_map(&mut scope, params);
+
+    // 3. Initialize scope (evaluate top-level let/const statements)
+    //    This is where extern() calls execute and resolve from the params map.
     let _ = engine
         .eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
         .map_err(|e| anyhow::anyhow!("Script initialization error: {e}"))?;
-
-    // 2a. Inject params map into scope (immutable, accessible as `params.X`)
-    super::stdlib::inject_params_map(&mut scope, params);
 
     // 3. Call config()
     let config_map: Dynamic = call_fn_persistent(&engine, &mut scope, &ast, "config", ())?;

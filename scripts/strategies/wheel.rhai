@@ -2,21 +2,19 @@
 //! description: Sell puts, get assigned, sell covered calls, repeat
 //! category: options
 
-// Required params: SYMBOL, CAPITAL
-// Optional params: PUT_DELTA (0.30), PUT_DTE (45), CALL_DELTA (0.30),
-//   CALL_DTE (30), SLIPPAGE ("mid"), MULTIPLIER (100)
+// SYMBOL and CAPITAL are universal — provided by the FE dialog via params map.
 
 // Top-level variables persist across bars (Rhai scope is preserved).
 // Use these for state machines, counters, or tracking values between callbacks.
 let state = "selling_puts";
 
 // Defaults for optional params (set in config, used in on_bar/on_position_closed)
-let PUT_DELTA = 0.30;
-let PUT_DTE = 45;
-let CALL_DELTA = 0.30;
-let CALL_DTE = 30;
-let SLIPPAGE = "mid";
-let MULTIPLIER = 100;
+let PUT_DELTA = extern("PUT_DELTA", 0.30, "Target delta for short puts");
+let PUT_DTE = extern("PUT_DTE", 45, "Days to expiration for puts");
+let CALL_DELTA = extern("CALL_DELTA", 0.30, "Target delta for covered calls");
+let CALL_DTE = extern("CALL_DTE", 30, "Days to expiration for calls");
+let SLIPPAGE = extern("SLIPPAGE", "mid", "Slippage model", ["mid", "spread"]);
+let MULTIPLIER = extern("MULTIPLIER", 100, "Contract multiplier");
 let stock = #{
     entry_price: 0.0,
     adjusted_basis: 0.0,
@@ -36,14 +34,6 @@ let _group = "Cycle 1";
 //   commission, expiration_filter), defaults (script-readable values).
 // ---------------------------------------------------------------------------
 fn config() {
-    // Override defaults from params if provided
-    if params.contains("PUT_DELTA") { PUT_DELTA = params.PUT_DELTA; }
-    if params.contains("PUT_DTE") { PUT_DTE = params.PUT_DTE; }
-    if params.contains("CALL_DELTA") { CALL_DELTA = params.CALL_DELTA; }
-    if params.contains("CALL_DTE") { CALL_DTE = params.CALL_DTE; }
-    if params.contains("SLIPPAGE") { SLIPPAGE = params.SLIPPAGE; }
-    if params.contains("MULTIPLIER") { MULTIPLIER = params.MULTIPLIER; }
-
     #{
         symbol: params.SYMBOL,
         capital: params.CAPITAL,
