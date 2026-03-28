@@ -2,8 +2,11 @@
 //!
 //! Exercises: create → get → update → list → `get_source` → delete.
 
+use std::collections::HashMap;
+
 use optopsy_mcp::data::database::Database;
 use optopsy_mcp::data::strategy_store::StrategyRow;
+use optopsy_mcp::scripting::engine::{validate_script, DiagnosticLevel};
 fn sample_row(id: &str, name: &str) -> StrategyRow {
     StrategyRow {
         id: id.to_string(),
@@ -104,4 +107,146 @@ fn strategy_list_scripts_includes_metadata() {
     assert_eq!(scripts.len(), 1);
     assert_eq!(scripts[0].id, "script_meta_test");
     assert_eq!(scripts[0].name, "Script Meta Test");
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Validation tests
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn validate_valid_stock_script() {
+    let source = r#"
+//! name: Test Strategy
+//! category: stock
+
+fn config() {
+    #{
+        symbol: "SPY",
+        capital: 100000.0,
+        data: #{
+            indicators: ["sma:20", "rsi:14"]
+        }
+    }
+}
+
+fn on_bar(ctx) {
+    if ctx.rsi(14) < 30.0 {
+        buy_stock(100)
+    } else {
+        hold_position()
+    }
+}
+"#;
+    let result = validate_script(source, &HashMap::new());
+    assert!(
+        result.valid,
+        "Expected valid, got: {:?}",
+        result.diagnostics
+    );
+    assert!(result.callbacks.contains(&"config".to_string()));
+    assert!(result.callbacks.contains(&"on_bar".to_string()));
+    let cfg = result.config.unwrap();
+    assert_eq!(cfg.symbol, "SPY");
+    assert!((cfg.capital - 100_000.0).abs() < f64::EPSILON);
+    assert_eq!(cfg.indicators, vec!["sma:20", "rsi:14"]);
+}
+
+#[test]
+fn validate_syntax_error() {
+    let source = "fn config() { oops this is not valid rhai }}}";
+    let result = validate_script(source, &HashMap::new());
+    assert!(!result.valid);
+    assert!(result
+        .diagnostics
+        .iter()
+        .any(|d| matches!(d.level, DiagnosticLevel::Error) && d.message.contains("Compile error")));
+}
+
+#[test]
+fn validate_missing_callbacks() {
+    let source = r#"
+fn config() {
+    #{
+        symbol: "SPY",
+        capital: 50000.0
+    }
+}
+"#;
+    let result = validate_script(source, &HashMap::new());
+    // config is valid but on_bar is missing
+    assert!(!result.valid);
+    assert!(result
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("on_bar")));
+}
+
+#[test]
+fn validate_bad_indicator() {
+    let source = r#"
+fn config() {
+    #{
+        symbol: "SPY",
+        capital: 100000.0,
+        data: #{
+            indicators: ["sma:20", "bogus_indicator:14"]
+        }
+    }
+}
+
+fn on_bar(ctx) {
+    hold_position()
+}
+"#;
+    let result = validate_script(source, &HashMap::new());
+    assert!(!result.valid);
+    assert!(result
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("bogus_indicator")));
+}
+
+#[test]
+fn validate_missing_config_field() {
+    let source = r"
+fn config() {
+    #{
+        capital: 100000.0
+    }
+}
+
+fn on_bar(ctx) {
+    hold_position()
+}
+";
+    let result = validate_script(source, &HashMap::new());
+    assert!(!result.valid);
+    assert!(result
+        .diagnostics
+        .iter()
+        .any(|d| matches!(d.level, DiagnosticLevel::Error) && d.message.contains("config")));
+}
+
+#[test]
+fn validate_extracts_extern_params() {
+    let source = r#"
+let PERIOD = extern("PERIOD", 20, "SMA period");
+let THRESHOLD = extern("THRESHOLD", 0.5, "Entry threshold");
+
+fn config() {
+    #{
+        symbol: "SPY",
+        capital: 100000.0
+    }
+}
+
+fn on_bar(ctx) {
+    hold_position()
+}
+"#;
+    let result = validate_script(source, &HashMap::new());
+    assert!(result.valid);
+    assert_eq!(result.params.len(), 2);
+    assert_eq!(result.params[0].name, "PERIOD");
+    assert_eq!(result.params[1].name, "THRESHOLD");
 }

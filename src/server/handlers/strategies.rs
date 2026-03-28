@@ -1,5 +1,7 @@
 //! REST API handlers for strategy CRUD operations.
 
+use std::collections::HashMap;
+
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -7,10 +9,12 @@ use axum::{
     Json,
 };
 use serde::Deserialize;
+use serde_json::Value;
 
 use super::backtests::AppState;
 use crate::data::cache::validate_path_segment;
 use crate::data::strategy_store::StrategyRow;
+use crate::scripting::engine::ValidationResult;
 
 /// Request body for `POST /strategies` and `PUT /strategies/{id}`.
 #[derive(Debug, Deserialize)]
@@ -187,4 +191,59 @@ pub async fn get_strategy_source(
         source,
     )
         .into_response())
+}
+
+/// Request body for `POST /strategies/validate` (inline source).
+#[derive(Debug, Deserialize)]
+pub struct ValidateScriptRequest {
+    pub source: String,
+    #[serde(default)]
+    pub params: HashMap<String, Value>,
+}
+
+/// `POST /strategies/validate` — Validate inline Rhai source without saving.
+pub async fn validate_script(Json(req): Json<ValidateScriptRequest>) -> Json<ValidationResult> {
+    let result = tokio::task::spawn_blocking(move || {
+        crate::scripting::engine::validate_script(&req.source, &req.params)
+    })
+    .await
+    .unwrap_or_else(|e| ValidationResult {
+        valid: false,
+        diagnostics: vec![crate::scripting::engine::ValidationDiagnostic {
+            level: crate::scripting::engine::DiagnosticLevel::Error,
+            message: format!("Validation task panicked: {e}"),
+        }],
+        callbacks: vec![],
+        config: None,
+        params: vec![],
+    });
+    Json(result)
+}
+
+/// `POST /strategies/{id}/validate` — Validate a stored strategy's source.
+#[allow(clippy::implicit_hasher)]
+pub async fn validate_stored_strategy(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<Option<HashMap<String, Value>>>,
+) -> Result<Json<ValidationResult>, (StatusCode, String)> {
+    let store = get_store(&state)?;
+    let source = store
+        .get_source(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Strategy '{id}' not found")))?;
+
+    let params = body.unwrap_or_default();
+    let result = tokio::task::spawn_blocking(move || {
+        crate::scripting::engine::validate_script(&source, &params)
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Validation panicked: {e}"),
+        )
+    })?;
+
+    Ok(Json(result))
 }

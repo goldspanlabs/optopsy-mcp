@@ -37,6 +37,329 @@ pub async fn run_script_backtest(
     run_script_backtest_with_progress(script_source, params, data_loader, None).await
 }
 
+// ---------------------------------------------------------------------------
+// Script validation (compile + config check, no data loading or execution)
+// ---------------------------------------------------------------------------
+
+/// Diagnostic message from script validation.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ValidationDiagnostic {
+    pub level: DiagnosticLevel,
+    pub message: String,
+}
+
+/// Severity level for a validation diagnostic.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiagnosticLevel {
+    Error,
+    Warning,
+    Info,
+}
+
+/// Result of validating a Rhai script without executing a backtest.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ValidationResult {
+    /// Whether the script passed all checks (no errors).
+    pub valid: bool,
+    /// Diagnostics: errors, warnings, and info messages.
+    pub diagnostics: Vec<ValidationDiagnostic>,
+    /// Callbacks found in the script.
+    pub callbacks: Vec<String>,
+    /// Config extracted from `config()` (None if compilation/init failed).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<ValidatedConfig>,
+    /// Extern parameters declared in the script.
+    pub params: Vec<super::stdlib::ExternParam>,
+}
+
+/// Subset of `ScriptConfig` safe to expose in validation response.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ValidatedConfig {
+    pub symbol: String,
+    pub capital: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_date: Option<String>,
+    pub interval: String,
+    pub needs_ohlcv: bool,
+    pub needs_options: bool,
+    pub cross_symbols: Vec<String>,
+    pub indicators: Vec<String>,
+}
+
+/// Known indicator names accepted by the scripting engine.
+const KNOWN_INDICATORS: &[&str] = &[
+    "sma",
+    "ema",
+    "rsi",
+    "atr",
+    "macd_line",
+    "macd_signal",
+    "macd_hist",
+    "bbands_upper",
+    "bbands_mid",
+    "bbands_lower",
+    "stochastic",
+    "cci",
+    "obv",
+    "adx",
+    "plus_di",
+    "minus_di",
+    "psar",
+    "supertrend",
+    "keltner_upper",
+    "keltner_lower",
+    "donchian_upper",
+    "donchian_mid",
+    "donchian_lower",
+    "tr",
+    "williams_r",
+    "ppo",
+    "cmo",
+    "mfi",
+    "vpt",
+    "roc",
+    "rank",
+    "iv_rank",
+    "cmf",
+    "change",
+    "pct_change",
+    "std",
+    "max",
+    "min",
+    "consecutive_up",
+    "consecutive_down",
+];
+
+/// Validate a Rhai script without running a backtest.
+///
+/// Performs: syntax check (compile), top-level init, `config()` extraction,
+/// callback detection, indicator name validation, and extern param extraction.
+pub fn validate_script(
+    script_source: &str,
+    params: &HashMap<String, serde_json::Value>,
+) -> ValidationResult {
+    let mut diagnostics = Vec::new();
+    let mut callbacks = Vec::new();
+    // Extract extern params (uses its own engine instance)
+    let extern_params = super::stdlib::extract_extern_params(script_source);
+
+    // Extract metadata from doc comments
+    let meta = super::stdlib::parse_script_meta("_validate", script_source);
+    if meta.name == "_validate" {
+        diagnostics.push(ValidationDiagnostic {
+            level: DiagnosticLevel::Warning,
+            message: "Missing //! name: header in script".to_string(),
+        });
+    }
+
+    // 1. Build engine and compile
+    let mut engine = build_engine();
+
+    let params_clone = params.clone();
+    engine.register_fn(
+        "extern",
+        move |name: &str, default: rhai::Dynamic, _desc: &str| -> rhai::Dynamic {
+            if let Some(value) = params_clone.get(name) {
+                super::stdlib::json_to_dynamic(value)
+            } else if default.is_unit() {
+                rhai::Dynamic::from(format!("ERROR: Required parameter '{name}' not provided"))
+            } else {
+                default
+            }
+        },
+    );
+
+    let params_clone4 = params.clone();
+    engine.register_fn(
+        "extern",
+        move |name: &str,
+              default: rhai::Dynamic,
+              _desc: &str,
+              _opts: rhai::Array|
+              -> rhai::Dynamic {
+            if let Some(value) = params_clone4.get(name) {
+                super::stdlib::json_to_dynamic(value)
+            } else if default.is_unit() {
+                rhai::Dynamic::from(format!("ERROR: Required parameter '{name}' not provided"))
+            } else {
+                default
+            }
+        },
+    );
+
+    let ast = match engine.compile(script_source) {
+        Ok(ast) => ast,
+        Err(e) => {
+            diagnostics.push(ValidationDiagnostic {
+                level: DiagnosticLevel::Error,
+                message: format!("Compile error: {e}"),
+            });
+            return ValidationResult {
+                valid: false,
+                diagnostics,
+                callbacks,
+                config: None,
+                params: extern_params,
+            };
+        }
+    };
+
+    diagnostics.push(ValidationDiagnostic {
+        level: DiagnosticLevel::Info,
+        message: "Script compiled successfully".to_string(),
+    });
+
+    // 2. Detect callbacks
+    let expected = [
+        ("config", 0),
+        ("on_bar", 1),
+        ("on_exit_check", 2),
+        ("on_position_opened", 2),
+        ("on_position_closed", 3),
+        ("on_end", 1),
+    ];
+
+    for (name, arity) in &expected {
+        if has_fn(&ast, name, *arity) {
+            callbacks.push((*name).to_string());
+        }
+    }
+
+    if !callbacks.contains(&"config".to_string()) {
+        diagnostics.push(ValidationDiagnostic {
+            level: DiagnosticLevel::Error,
+            message: "Missing required callback: config()".to_string(),
+        });
+    }
+    if !callbacks.contains(&"on_bar".to_string()) {
+        diagnostics.push(ValidationDiagnostic {
+            level: DiagnosticLevel::Error,
+            message: "Missing required callback: on_bar(ctx)".to_string(),
+        });
+    }
+    if !callbacks.contains(&"on_exit_check".to_string()) {
+        diagnostics.push(ValidationDiagnostic {
+            level: DiagnosticLevel::Warning,
+            message: "Missing on_exit_check(ctx, pos) — positions will only exit at expiration"
+                .to_string(),
+        });
+    }
+
+    // If config() is missing, we can't proceed further
+    if !callbacks.contains(&"config".to_string()) {
+        return ValidationResult {
+            valid: false,
+            diagnostics,
+            callbacks,
+            config: None,
+            params: extern_params,
+        };
+    }
+
+    // 3. Initialize scope and call config()
+    let mut scope = Scope::new();
+    super::stdlib::inject_params_map(&mut scope, params);
+
+    if let Err(e) = engine.eval_ast_with_scope::<Dynamic>(&mut scope, &ast) {
+        diagnostics.push(ValidationDiagnostic {
+            level: DiagnosticLevel::Error,
+            message: format!("Initialization error: {e}"),
+        });
+        return ValidationResult {
+            valid: false,
+            diagnostics,
+            callbacks,
+            config: None,
+            params: extern_params,
+        };
+    }
+
+    let config_dynamic = match call_fn_persistent(&engine, &mut scope, &ast, "config", ()) {
+        Ok(d) => d,
+        Err(e) => {
+            diagnostics.push(ValidationDiagnostic {
+                level: DiagnosticLevel::Error,
+                message: format!("config() call failed: {e}"),
+            });
+            return ValidationResult {
+                valid: false,
+                diagnostics,
+                callbacks,
+                config: None,
+                params: extern_params,
+            };
+        }
+    };
+
+    let config = match parse_config(config_dynamic) {
+        Ok(c) => c,
+        Err(e) => {
+            diagnostics.push(ValidationDiagnostic {
+                level: DiagnosticLevel::Error,
+                message: format!("Invalid config: {e}"),
+            });
+            return ValidationResult {
+                valid: false,
+                diagnostics,
+                callbacks,
+                config: None,
+                params: extern_params,
+            };
+        }
+    };
+
+    diagnostics.push(ValidationDiagnostic {
+        level: DiagnosticLevel::Info,
+        message: "config() returned valid configuration".to_string(),
+    });
+
+    // 4. Validate declared indicators
+    for decl in &config.declared_indicators {
+        let name = decl.split(':').next().unwrap_or(decl).to_lowercase();
+        if !KNOWN_INDICATORS.contains(&name.as_str()) {
+            diagnostics.push(ValidationDiagnostic {
+                level: DiagnosticLevel::Error,
+                message: format!("Unknown indicator '{name}' in data.indicators"),
+            });
+        }
+    }
+
+    // 5. Check for common issues
+    if config.needs_options && !callbacks.contains(&"on_exit_check".to_string()) {
+        diagnostics.push(ValidationDiagnostic {
+            level: DiagnosticLevel::Warning,
+            message: "Options strategy without on_exit_check — no early exit logic".to_string(),
+        });
+    }
+
+    let config_out = Some(ValidatedConfig {
+        symbol: config.symbol,
+        capital: config.capital,
+        start_date: config.start_date.map(|d| d.to_string()),
+        end_date: config.end_date.map(|d| d.to_string()),
+        interval: format!("{:?}", config.interval),
+        needs_ohlcv: config.needs_ohlcv,
+        needs_options: config.needs_options,
+        cross_symbols: config.cross_symbols,
+        indicators: config.declared_indicators,
+    });
+
+    let has_errors = diagnostics
+        .iter()
+        .any(|d| matches!(d.level, DiagnosticLevel::Error));
+
+    ValidationResult {
+        valid: !has_errors,
+        diagnostics,
+        callbacks,
+        config: config_out,
+        params: extern_params,
+    }
+}
+
 pub async fn run_script_backtest_with_progress(
     script_source: &str,
     params: &HashMap<String, serde_json::Value>,

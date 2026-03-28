@@ -147,8 +147,7 @@ async fn main() -> Result<()> {
         let strategy_routes = axum::Router::new()
             .route(
                 "/strategies",
-                axum::routing::get(strategies::list_strategies)
-                    .post(strategies::create_strategy),
+                axum::routing::get(strategies::list_strategies).post(strategies::create_strategy),
             )
             .route(
                 "/strategies/validate",
@@ -173,8 +172,7 @@ async fn main() -> Result<()> {
         let chat_routes = axum::Router::new()
             .route(
                 "/threads",
-                axum::routing::get(chat_handlers::list_threads)
-                    .post(chat_handlers::create_thread),
+                axum::routing::get(chat_handlers::list_threads).post(chat_handlers::create_thread),
             )
             .route(
                 "/threads/{id}",
@@ -204,9 +202,7 @@ async fn main() -> Result<()> {
             .route(
                 "/profiles",
                 axum::routing::get(optopsy_mcp::server::handlers::profiles::list_profiles)
-                    .with_state(
-                        Some(strategy_store.clone()) as Option<Arc<dyn StrategyStore>>
-                    ),
+                    .with_state(Some(strategy_store.clone()) as Option<Arc<dyn StrategyStore>>),
             )
             .route(
                 "/prices/{symbol}",
