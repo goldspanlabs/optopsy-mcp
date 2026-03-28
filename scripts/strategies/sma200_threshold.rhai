@@ -6,6 +6,8 @@
 // Buys 100% of equity when price breaks 4% above the 200-day SMA.
 // Sells when price drops 3% below the 200-day SMA.
 // Plots the entry (+4%) and exit (-3%) threshold bands for charting.
+//
+// Required params: SYMBOL, CAPITAL
 
 let entry_threshold = 0.04;  // +4% above SMA
 let exit_threshold  = 0.03;  // -3% below SMA

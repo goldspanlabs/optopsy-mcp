@@ -104,7 +104,7 @@ pub fn format_indicator_data(
             display_type: indicator_display_type(decl),
             values: values
                 .iter()
-                .map(|&v| if v.is_nan() { None } else { Some(v) })
+                .map(|&v| if v.is_finite() { Some(v) } else { None })
                 .collect(),
             thresholds: indicator_thresholds(decl),
         })

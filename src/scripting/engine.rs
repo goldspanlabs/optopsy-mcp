@@ -805,11 +805,18 @@ pub async fn run_script_backtest(
         execution_time_ms: backtest_start.elapsed().as_millis() as u64,
         indicator_data: indicator_store.to_series_map(),
         custom_series: {
-            let store = custom_series.lock().unwrap();
-            CustomSeriesStore {
-                series: store.series.clone(),
-                display_types: store.display_types.clone(),
-                num_bars: store.num_bars,
+            // Drop the factory so its Arc reference is released
+            drop(ctx_factory);
+            match Arc::try_unwrap(custom_series) {
+                Ok(mutex) => mutex.into_inner().unwrap_or_else(|e| e.into_inner()),
+                Err(arc) => {
+                    let store = arc.lock().unwrap_or_else(|e| e.into_inner());
+                    CustomSeriesStore {
+                        series: store.series.clone(),
+                        display_types: store.display_types.clone(),
+                        num_bars: store.num_bars,
+                    }
+                }
             }
         },
     })

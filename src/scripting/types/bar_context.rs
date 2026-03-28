@@ -29,6 +29,9 @@ pub struct CustomSeriesStore {
     pub num_bars: usize,
 }
 
+/// Maximum number of distinct custom series a script may emit.
+pub const MAX_CUSTOM_SERIES: usize = 50;
+
 // ---------------------------------------------------------------------------
 // BarContext — the `ctx` object exposed to Rhai scripts
 // ---------------------------------------------------------------------------
@@ -732,14 +735,18 @@ impl BarContext {
     ///
     /// Called from Rhai as `ctx.plot("entry_threshold", sma * 1.04)`.
     pub fn plot(&mut self, name: String, value: f64) {
-        let mut store = self.custom_series.lock().unwrap();
+        let mut store = self.custom_series.lock().unwrap_or_else(|e| e.into_inner());
+        // Reject new series beyond the cap to prevent memory DoS
+        if !store.series.contains_key(&name) && store.series.len() >= MAX_CUSTOM_SERIES {
+            return;
+        }
         let num_bars = store.num_bars;
         let series = store
             .series
             .entry(name)
             .or_insert_with(|| vec![None; num_bars]);
         if self.bar_idx < series.len() {
-            series[self.bar_idx] = if value.is_nan() { None } else { Some(value) };
+            series[self.bar_idx] = if value.is_finite() { Some(value) } else { None };
         }
     }
 
@@ -748,7 +755,7 @@ impl BarContext {
     /// Called from Rhai as `ctx.plot_with("my_rsi", value, "subchart")`.
     pub fn plot_with(&mut self, name: String, value: f64, display: String) {
         {
-            let mut store = self.custom_series.lock().unwrap();
+            let mut store = self.custom_series.lock().unwrap_or_else(|e| e.into_inner());
             store.display_types.entry(name.clone()).or_insert(display);
         }
         self.plot(name, value);
