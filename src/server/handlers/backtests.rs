@@ -54,6 +54,7 @@ pub struct ListQuery {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// `POST /backtests` — Run a strategy and persist the result.
+#[allow(clippy::too_many_lines)]
 pub async fn create_backtest(
     State(state): State<AppState>,
     Json(req): Json<CreateBacktestRequest>,
@@ -206,7 +207,7 @@ pub async fn get_backtest(
 }
 
 /// `PATCH /backtests/{id}/analysis` — Save AI-generated analysis text.
-#[allow(clippy::unused_async)]
+#[allow(clippy::unused_async, clippy::implicit_hasher)]
 pub async fn set_backtest_analysis(
     State(state): State<AppState>,
     Path(id): Path<String>,
