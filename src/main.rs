@@ -73,18 +73,16 @@ async fn main() -> Result<()> {
 
         let data_root = std::env::var("DATA_ROOT")
             .unwrap_or_else(|_| shellexpand::tilde("~/.optopsy/cache").to_string());
-        let db_path = std::path::PathBuf::from(&data_root).join("backtests.db");
+        let db_path = std::path::PathBuf::from(&data_root).join("optopsy.db");
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        let backtest_store: Arc<dyn optopsy_mcp::data::traits::BacktestStore> = Arc::new(
-            SqliteBacktestStore::open(&db_path).expect("Failed to open backtest database"),
-        );
+        let backtest_store: Arc<dyn optopsy_mcp::data::traits::BacktestStore> =
+            Arc::new(SqliteBacktestStore::open(&db_path).expect("Failed to open database"));
 
-        // Strategy store — uses same data root directory
-        let strategy_db_path = std::path::PathBuf::from(&data_root).join("strategies.db");
+        // Strategy store — same database file
         let sqlite_strategy_store =
-            SqliteStrategyStore::open(&strategy_db_path).expect("Failed to open strategy database");
+            SqliteStrategyStore::open(&db_path).expect("Failed to open database");
         let seeded = sqlite_strategy_store
             .seed_builtins(std::path::Path::new("scripts/strategies"))
             .expect("Failed to seed built-in strategies");
@@ -187,15 +185,15 @@ async fn main() -> Result<()> {
         // stdio mode — used for local development with Claude Desktop
         tracing::info!("Starting optopsy-mcp MCP server (stdio)");
 
-        // Set up strategy store for stdio mode too
+        // Set up stores for stdio mode — single database file
         let data_root = std::env::var("DATA_ROOT")
             .unwrap_or_else(|_| shellexpand::tilde("~/.optopsy/cache").to_string());
-        let strategy_db_path = std::path::PathBuf::from(&data_root).join("strategies.db");
-        if let Some(parent) = strategy_db_path.parent() {
+        let db_path = std::path::PathBuf::from(&data_root).join("optopsy.db");
+        if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
         let sqlite_strategy_store =
-            SqliteStrategyStore::open(&strategy_db_path).expect("Failed to open strategy database");
+            SqliteStrategyStore::open(&db_path).expect("Failed to open database");
         sqlite_strategy_store
             .seed_builtins(std::path::Path::new("scripts/strategies"))
             .ok();
