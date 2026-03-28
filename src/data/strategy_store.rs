@@ -123,6 +123,15 @@ impl SqliteStrategyStore {
         .context("Failed to query strategy")
     }
 
+    /// Return the number of strategies in the store.
+    pub fn count(&self) -> Result<usize> {
+        let conn = self.conn.lock().expect("mutex poisoned");
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM strategies", [], |row| row.get(0))
+            .context("Failed to count strategies")?;
+        Ok(count as usize)
+    }
+
     /// Get just the source code for a strategy (hot path for `run_script`).
     pub fn get_source(&self, id: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().expect("mutex poisoned");
@@ -242,27 +251,31 @@ fn row_to_strategy(row: &rusqlite::Row) -> rusqlite::Result<StrategyRow> {
 
 impl super::traits::StrategyStore for SqliteStrategyStore {
     fn get(&self, id: &str) -> Result<Option<StrategyRow>> {
-        self.get(id)
+        SqliteStrategyStore::get(self, id)
     }
 
     fn get_source(&self, id: &str) -> Result<Option<String>> {
-        self.get_source(id)
+        SqliteStrategyStore::get_source(self, id)
+    }
+
+    fn count(&self) -> Result<usize> {
+        SqliteStrategyStore::count(self)
     }
 
     fn list(&self) -> Result<Vec<StrategyRow>> {
-        self.list()
+        SqliteStrategyStore::list(self)
     }
 
     fn list_scripts(&self) -> Result<Vec<ScriptMeta>> {
-        self.list_scripts()
+        SqliteStrategyStore::list_scripts(self)
     }
 
     fn upsert(&self, row: &StrategyRow) -> Result<()> {
-        self.upsert(row)
+        SqliteStrategyStore::upsert(self, row)
     }
 
     fn delete(&self, id: &str) -> Result<bool> {
-        self.delete(id)
+        SqliteStrategyStore::delete(self, id)
     }
 }
 

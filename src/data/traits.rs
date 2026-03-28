@@ -71,6 +71,9 @@ pub trait StrategyStore: Send + Sync {
     /// Get just the source code for a strategy (hot path for `run_script`).
     fn get_source(&self, id: &str) -> Result<Option<String>>;
 
+    /// Return the number of strategies in the store.
+    fn count(&self) -> Result<usize>;
+
     /// List all strategies, ordered by name.
     fn list(&self) -> Result<Vec<StrategyRow>>;
 
@@ -94,7 +97,7 @@ pub trait StrategyStore: Send + Sync {
 /// startup — if the store already has strategies, this is a no-op. Returns
 /// the number of strategies seeded.
 pub fn seed_strategies_if_empty(store: &dyn StrategyStore, scripts_dir: &Path) -> Result<usize> {
-    if !store.list()?.is_empty() {
+    if store.count()? > 0 {
         return Ok(0);
     }
 

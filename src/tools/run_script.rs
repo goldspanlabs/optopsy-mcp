@@ -226,9 +226,9 @@ pub fn resolve_script_source(
 /// Load a strategy by name from the database, falling back to filesystem
 /// only when no store is available (e.g. tests without a DB).
 fn load_strategy(name: &str, strategy_store: Option<&dyn StrategyStore>) -> Result<String> {
-    if name.contains('/') || name.contains('\\') || name.contains("..") || name.is_empty() {
-        anyhow::bail!("Invalid strategy name: '{name}'. Must be a simple filename.");
-    }
+    crate::data::cache::validate_path_segment(name).map_err(|_| {
+        anyhow::anyhow!("Invalid strategy name: '{name}'. Must be a simple filename.")
+    })?;
 
     if let Some(store) = strategy_store {
         return store

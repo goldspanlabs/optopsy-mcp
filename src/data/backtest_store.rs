@@ -426,7 +426,8 @@ impl super::traits::BacktestStore for SqliteBacktestStore {
         tags: Option<&[String]>,
         regime: Option<&[String]>,
     ) -> Result<(String, String)> {
-        self.insert(
+        SqliteBacktestStore::insert(
+            self,
             strategy_key,
             symbol,
             capital,
@@ -442,11 +443,11 @@ impl super::traits::BacktestStore for SqliteBacktestStore {
     }
 
     fn get_detail(&self, id: &str) -> Result<Option<BacktestDetail>> {
-        self.get_detail(id)
+        SqliteBacktestStore::get_detail(self, id)
     }
 
     fn set_analysis(&self, id: &str, analysis: &str) -> Result<bool> {
-        self.set_analysis(id, analysis)
+        SqliteBacktestStore::set_analysis(self, id, analysis)
     }
 
     fn list(
@@ -456,15 +457,15 @@ impl super::traits::BacktestStore for SqliteBacktestStore {
         tag: Option<&str>,
         regime: Option<&str>,
     ) -> Result<Vec<BacktestSummary>> {
-        self.list(strategy, symbol, tag, regime)
+        SqliteBacktestStore::list(self, strategy, symbol, tag, regime)
     }
 
     fn delete(&self, id: &str) -> Result<bool> {
-        self.delete(id)
+        SqliteBacktestStore::delete(self, id)
     }
 
     fn get_trades(&self, backtest_id: &str) -> Result<Vec<TradeRow>> {
-        self.get_trades(backtest_id)
+        SqliteBacktestStore::get_trades(self, backtest_id)
     }
 }
 
