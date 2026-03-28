@@ -31,6 +31,8 @@ dotenvy = "0.15"
 rusqlite = { version = "0.35", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 tower-http = { version = "0.6", features = ["cors"] }
+futures = "0.3"
+tokio-stream = "0.1"
 toml = "0.8"
 
 [lints.clippy]

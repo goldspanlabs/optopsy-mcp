@@ -4,13 +4,22 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use crate::scripting::engine::{CachingDataLoader, ScriptBacktestResult};
+use crate::scripting::engine::{CachingDataLoader, ProgressCallback, ScriptBacktestResult};
 use crate::scripting::stdlib::parse_script_meta;
 use crate::server::OptopsyServer;
 use crate::tools::run_script::{format_indicator_data, RunScriptParams, RunScriptResponse};
 
 /// Execute a Rhai backtest script.
 pub async fn execute(server: &OptopsyServer, params: RunScriptParams) -> Result<RunScriptResponse> {
+    execute_with_progress(server, params, None).await
+}
+
+/// Execute a Rhai backtest script with an optional progress callback.
+pub async fn execute_with_progress(
+    server: &OptopsyServer,
+    params: RunScriptParams,
+    progress: Option<ProgressCallback>,
+) -> Result<RunScriptResponse> {
     let start = std::time::Instant::now();
 
     let source = crate::tools::run_script::resolve_script_source(&params)?;
@@ -39,7 +48,13 @@ pub async fn execute(server: &OptopsyServer, params: RunScriptParams) -> Result<
         indicator_data,
         custom_series,
         ..
-    } = crate::scripting::engine::run_script_backtest(&source, &effective_params, &loader).await?;
+    } = crate::scripting::engine::run_script_backtest_with_progress(
+        &source,
+        &effective_params,
+        &loader,
+        progress,
+    )
+    .await?;
 
     // Convert raw indicator arrays and custom series to compact IndicatorData format
     let formatted_indicators = format_indicator_data(&indicator_data, &custom_series);

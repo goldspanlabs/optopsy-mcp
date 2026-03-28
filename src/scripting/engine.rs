@@ -26,10 +26,22 @@ use super::types::*;
 ///
 /// This is the main entry point. It compiles the script, extracts config,
 /// loads data, pre-computes indicators, and runs the unified simulation loop.
+/// Optional progress callback: receives (current_bar, total_bars).
+pub type ProgressCallback = Box<dyn Fn(usize, usize) + Send + Sync>;
+
 pub async fn run_script_backtest(
     script_source: &str,
     params: &HashMap<String, serde_json::Value>,
     data_loader: &dyn DataLoader,
+) -> Result<ScriptBacktestResult> {
+    run_script_backtest_with_progress(script_source, params, data_loader, None).await
+}
+
+pub async fn run_script_backtest_with_progress(
+    script_source: &str,
+    params: &HashMap<String, serde_json::Value>,
+    data_loader: &dyn DataLoader,
+    progress: Option<ProgressCallback>,
 ) -> Result<ScriptBacktestResult> {
     let backtest_start = std::time::Instant::now();
 
@@ -244,12 +256,17 @@ pub async fn run_script_backtest(
         }
 
         // Wall-clock timeout check (every 100 bars to minimize overhead)
-        if bar_idx % 100 == 0 && loop_start.elapsed() > timeout {
-            warnings.push(format!(
-                "Backtest exceeded {}s timeout at bar {bar_idx}",
-                config.timeout_secs
-            ));
-            break;
+        if bar_idx % 100 == 0 {
+            if loop_start.elapsed() > timeout {
+                warnings.push(format!(
+                    "Backtest exceeded {}s timeout at bar {bar_idx}",
+                    config.timeout_secs
+                ));
+                break;
+            }
+            if let Some(ref cb) = progress {
+                cb(bar_idx, price_history.len());
+            }
         }
 
         if pnl_dirty {

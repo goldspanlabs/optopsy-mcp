@@ -3,11 +3,15 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
+    response::sse::{Event, Sse},
     Json,
 };
+use futures::{stream::Stream, StreamExt};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use crate::data::backtest_store::{
     BacktestDetail, BacktestStore, BacktestSummary, MetricsRow, TradeRow,
@@ -258,4 +262,187 @@ pub async fn delete_backtest(
     } else {
         Err((StatusCode::NOT_FOUND, format!("Backtest '{id}' not found")))
     }
+}
+
+/// `POST /backtests/stream` — Run a strategy with SSE progress updates.
+///
+/// Streams `event: progress` with `{ "current": N, "total": M }` during the
+/// simulation loop, then emits `event: result` with the full `BacktestDetail`
+/// JSON, and finally `event: done`.
+#[allow(clippy::unused_async, clippy::too_many_lines)]
+pub async fn create_backtest_stream(
+    State(state): State<AppState>,
+    Json(req): Json<CreateBacktestRequest>,
+) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let (tx, rx) = tokio::sync::mpsc::channel::<Event>(64);
+
+    tokio::spawn(async move {
+        // Set up progress tracking via shared atomic
+        let progress_current = Arc::new(AtomicUsize::new(0));
+        let progress_total = Arc::new(AtomicUsize::new(0));
+
+        let cur = Arc::clone(&progress_current);
+        let tot = Arc::clone(&progress_total);
+        let progress_cb: crate::scripting::engine::ProgressCallback =
+            Box::new(move |current, total| {
+                cur.store(current, Ordering::Relaxed);
+                tot.store(total, Ordering::Relaxed);
+            });
+
+        // Spawn a ticker that reads atomics and sends SSE progress events
+        let progress_tx = tx.clone();
+        let pc = Arc::clone(&progress_current);
+        let pt = Arc::clone(&progress_total);
+        let ticker = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(200));
+            loop {
+                interval.tick().await;
+                let c = pc.load(Ordering::Relaxed);
+                let t = pt.load(Ordering::Relaxed);
+                if t > 0 {
+                    let evt = Event::default()
+                        .event("progress")
+                        .data(format!(r#"{{"current":{c},"total":{t}}}"#));
+                    if progress_tx.send(evt).await.is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+
+        // Run the actual backtest
+        let run_params = RunScriptParams {
+            strategy: Some(req.strategy.clone()),
+            script: None,
+            params: req.params.clone(),
+            profile: req.profile.clone(),
+        };
+
+        let result =
+            super::run_script::execute_with_progress(&state.server, run_params, Some(progress_cb))
+                .await;
+
+        // Stop the progress ticker
+        ticker.abort();
+
+        match result {
+            Ok(response) => {
+                // Persist to DB (same as create_backtest)
+                let symbol = req
+                    .params
+                    .get("SYMBOL")
+                    .and_then(Value::as_str)
+                    .unwrap_or("UNKNOWN")
+                    .to_owned();
+
+                let capital = req
+                    .params
+                    .get("CAPITAL")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0);
+
+                let m = &response.result.metrics;
+                let metrics = MetricsRow {
+                    sharpe: sanitize(m.sharpe),
+                    sortino: sanitize(m.sortino),
+                    cagr: sanitize(m.cagr),
+                    max_drawdown: sanitize(m.max_drawdown),
+                    win_rate: sanitize(m.win_rate),
+                    profit_factor: sanitize(m.profit_factor),
+                    total_pnl: sanitize(response.result.total_pnl),
+                    trade_count: response.result.trade_count as i64,
+                    expectancy: sanitize(m.expectancy),
+                    var_95: sanitize(m.var_95),
+                };
+
+                let trades: Vec<TradeRow> = response
+                    .result
+                    .trade_log
+                    .iter()
+                    .map(|t| {
+                        let pnl_pct = if t.entry_cost.abs() > 0.0 {
+                            t.pnl / t.entry_cost.abs()
+                        } else {
+                            0.0
+                        };
+                        TradeRow {
+                            trade_id: t.trade_id as i64,
+                            entry_datetime: t.entry_datetime.to_string(),
+                            exit_datetime: t.exit_datetime.to_string(),
+                            entry_cost: sanitize(t.entry_cost),
+                            exit_proceeds: sanitize(t.exit_proceeds),
+                            pnl: sanitize(t.pnl),
+                            pnl_pct: sanitize(pnl_pct),
+                            days_held: t.days_held,
+                            exit_type: format!("{:?}", t.exit_type),
+                            legs: serde_json::to_string(&t.legs)
+                                .unwrap_or_else(|_| "[]".to_owned()),
+                            computed_quantity: t.computed_quantity,
+                            entry_equity: t.entry_equity.map(sanitize),
+                            group_label: t.group.clone(),
+                        }
+                    })
+                    .collect();
+
+                let params_value = serde_json::to_value(&req.params).unwrap_or_default();
+                let result_json =
+                    serde_json::to_string(&response).unwrap_or_else(|_| "{}".to_owned());
+
+                let hypothesis = response
+                    .script_meta
+                    .as_ref()
+                    .and_then(|m| m.hypothesis.as_deref());
+                let tags = response.script_meta.as_ref().and_then(|m| m.tags.as_ref());
+                let regime = response
+                    .script_meta
+                    .as_ref()
+                    .and_then(|m| m.regime.as_ref());
+
+                match state.backtest_store.insert(
+                    &req.strategy,
+                    &symbol,
+                    capital,
+                    &params_value,
+                    &metrics,
+                    &trades,
+                    &result_json,
+                    response.execution_time_ms as i64,
+                    hypothesis,
+                    tags,
+                    regime,
+                ) {
+                    Ok((id, created_at)) => {
+                        let detail = BacktestDetail {
+                            id,
+                            created_at,
+                            strategy_key: req.strategy.clone(),
+                            params: Some(serde_json::to_value(&req.params).unwrap_or_default()),
+                            analysis: None,
+                            response,
+                        };
+                        let json = serde_json::to_string(&detail).unwrap_or_default();
+                        let _ = tx.send(Event::default().event("result").data(json)).await;
+                    }
+                    Err(e) => {
+                        let _ = tx
+                            .send(
+                                Event::default()
+                                    .event("error")
+                                    .data(format!("DB insert failed: {e}")),
+                            )
+                            .await;
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = tx
+                    .send(Event::default().event("error").data(e.to_string()))
+                    .await;
+            }
+        }
+
+        let _ = tx.send(Event::default().event("done").data("")).await;
+    });
+
+    Sse::new(tokio_stream::wrappers::ReceiverStream::new(rx).map(Ok))
 }
