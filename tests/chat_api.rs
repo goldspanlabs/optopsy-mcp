@@ -44,7 +44,10 @@ fn update_thread_title_and_status() {
         .unwrap();
     assert!(updated);
 
-    let thread = store.get_thread("t1").unwrap().expect("thread should exist");
+    let thread = store
+        .get_thread("t1")
+        .unwrap()
+        .expect("thread should exist");
     assert_eq!(thread.title.as_deref(), Some("My Title"));
     assert_eq!(thread.status, "archived");
 }
