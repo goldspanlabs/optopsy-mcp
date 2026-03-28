@@ -5,6 +5,7 @@
 
 pub mod backtest_store;
 pub mod cache;
+pub mod database;
 pub mod parquet;
 pub mod strategy_store;
 pub mod traits;

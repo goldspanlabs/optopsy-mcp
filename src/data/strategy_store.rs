@@ -6,12 +6,12 @@
 //! the `scripts/strategies/` directory on startup.
 
 use std::path::Path;
-use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 
+use super::database::DbConnection;
 use crate::scripting::stdlib::{extract_extern_params, parse_script_meta, ScriptMeta};
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -95,62 +95,21 @@ impl StrategyRow {
 // StrategyStore
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// Thread-safe `SQLite` store for strategy scripts.
+/// `SQLite`-backed store for strategy scripts.
+///
+/// Does not own or manage the database connection — receives a shared
+/// [`DbConnection`] from [`Database`](super::database::Database).
 #[derive(Clone)]
 pub struct SqliteStrategyStore {
-    conn: Arc<Mutex<Connection>>,
+    pub(crate) conn: DbConnection,
 }
 
 impl SqliteStrategyStore {
-    /// Open (or create) a file-based `SQLite` database and initialise the schema.
-    pub fn open(path: &Path) -> Result<Self> {
-        let conn = Connection::open(path)
-            .with_context(|| format!("Failed to open SQLite database at {}", path.display()))?;
-        let store = Self {
-            conn: Arc::new(Mutex::new(conn)),
-        };
-        store.init_schema()?;
-        Ok(store)
-    }
-
-    /// Open an in-memory `SQLite` database (intended for tests).
-    pub fn open_in_memory() -> Result<Self> {
-        let conn =
-            Connection::open_in_memory().context("Failed to open in-memory SQLite database")?;
-        let store = Self {
-            conn: Arc::new(Mutex::new(conn)),
-        };
-        store.init_schema()?;
-        Ok(store)
-    }
-
-    /// Create the `strategies` table if it does not already exist.
-    fn init_schema(&self) -> Result<()> {
-        let conn = self.conn.lock().expect("mutex poisoned");
-        conn.execute_batch(
-            "
-            PRAGMA journal_mode = WAL;
-
-            CREATE TABLE IF NOT EXISTS strategies (
-                id              TEXT PRIMARY KEY,
-                name            TEXT NOT NULL,
-                description     TEXT,
-                category        TEXT,
-                hypothesis      TEXT,
-                tags            TEXT,
-                regime          TEXT,
-                source          TEXT NOT NULL,
-                is_builtin      INTEGER NOT NULL DEFAULT 0,
-                created_at      TEXT NOT NULL,
-                updated_at      TEXT NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_strategies_category
-                ON strategies(category);
-            ",
-        )
-        .context("Failed to initialise strategies schema")?;
-        Ok(())
+    /// Create a new store using a shared database connection.
+    ///
+    /// Schema must already be initialised by [`Database`](super::database::Database).
+    pub fn new(conn: DbConnection) -> Self {
+        Self { conn }
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -415,7 +374,9 @@ mod tests {
 
     #[test]
     fn test_init_creates_table() {
-        let store = SqliteStrategyStore::open_in_memory().expect("open_in_memory");
+        let store = crate::data::database::Database::open_in_memory()
+            .expect("open_in_memory")
+            .strategies();
         let conn = store.conn.lock().expect("mutex");
         let tables: Vec<String> = {
             let mut stmt = conn
@@ -431,7 +392,9 @@ mod tests {
 
     #[test]
     fn test_upsert_and_get() {
-        let store = SqliteStrategyStore::open_in_memory().expect("open_in_memory");
+        let store = crate::data::database::Database::open_in_memory()
+            .expect("open_in_memory")
+            .strategies();
         let row = sample_row("test_strat", "Test Strategy");
         store.upsert(&row).unwrap();
 
@@ -445,7 +408,9 @@ mod tests {
 
     #[test]
     fn test_get_source() {
-        let store = SqliteStrategyStore::open_in_memory().expect("open_in_memory");
+        let store = crate::data::database::Database::open_in_memory()
+            .expect("open_in_memory")
+            .strategies();
         let row = sample_row("src_test", "Source Test");
         store.upsert(&row).unwrap();
 
@@ -456,7 +421,9 @@ mod tests {
 
     #[test]
     fn test_list() {
-        let store = SqliteStrategyStore::open_in_memory().expect("open_in_memory");
+        let store = crate::data::database::Database::open_in_memory()
+            .expect("open_in_memory")
+            .strategies();
         store.upsert(&sample_row("b_strat", "B Strategy")).unwrap();
         store.upsert(&sample_row("a_strat", "A Strategy")).unwrap();
 
@@ -468,7 +435,9 @@ mod tests {
 
     #[test]
     fn test_delete() {
-        let store = SqliteStrategyStore::open_in_memory().expect("open_in_memory");
+        let store = crate::data::database::Database::open_in_memory()
+            .expect("open_in_memory")
+            .strategies();
         store.upsert(&sample_row("del_test", "Delete Me")).unwrap();
 
         assert!(store.delete("del_test").unwrap());
@@ -478,7 +447,9 @@ mod tests {
 
     #[test]
     fn test_upsert_updates_existing() {
-        let store = SqliteStrategyStore::open_in_memory().expect("open_in_memory");
+        let store = crate::data::database::Database::open_in_memory()
+            .expect("open_in_memory")
+            .strategies();
         let mut row = sample_row("update_test", "Original");
         store.upsert(&row).unwrap();
 
@@ -496,7 +467,9 @@ mod tests {
 
     #[test]
     fn test_seed_builtins_from_dir() {
-        let store = SqliteStrategyStore::open_in_memory().expect("open_in_memory");
+        let store = crate::data::database::Database::open_in_memory()
+            .expect("open_in_memory")
+            .strategies();
 
         // Seed from actual scripts directory if it exists
         let scripts_dir = std::path::Path::new("scripts/strategies");
@@ -512,7 +485,9 @@ mod tests {
 
     #[test]
     fn test_seed_does_not_overwrite_user_scripts() {
-        let store = SqliteStrategyStore::open_in_memory().expect("open_in_memory");
+        let store = crate::data::database::Database::open_in_memory()
+            .expect("open_in_memory")
+            .strategies();
 
         // Create a user script with the same id as a built-in would have
         let scripts_dir = std::path::Path::new("scripts/strategies");
@@ -549,7 +524,9 @@ mod tests {
 
     #[test]
     fn test_seed_nonexistent_dir() {
-        let store = SqliteStrategyStore::open_in_memory().expect("open_in_memory");
+        let store = crate::data::database::Database::open_in_memory()
+            .expect("open_in_memory")
+            .strategies();
         let count = store
             .seed_builtins(std::path::Path::new("/nonexistent/path"))
             .unwrap();

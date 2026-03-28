@@ -12,8 +12,7 @@ use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{self, EnvFilter};
 
-use optopsy_mcp::data::backtest_store::SqliteBacktestStore;
-use optopsy_mcp::data::strategy_store::SqliteStrategyStore;
+use optopsy_mcp::data::database::Database;
 use optopsy_mcp::data::traits::StrategyStore;
 use optopsy_mcp::server::handlers::backtests::{self, AppState};
 use optopsy_mcp::{data, server};
@@ -77,17 +76,17 @@ async fn main() -> Result<()> {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        let backtest_store: Arc<dyn optopsy_mcp::data::traits::BacktestStore> =
-            Arc::new(SqliteBacktestStore::open(&db_path).expect("Failed to open database"));
+        let db = Database::open(&db_path).expect("Failed to open database");
 
-        // Strategy store — same database file
-        let sqlite_strategy_store =
-            SqliteStrategyStore::open(&db_path).expect("Failed to open database");
-        let seeded = sqlite_strategy_store
+        let backtest_store: Arc<dyn optopsy_mcp::data::traits::BacktestStore> =
+            Arc::new(db.backtests());
+
+        let strategies = db.strategies();
+        let seeded = strategies
             .seed_builtins(std::path::Path::new("scripts/strategies"))
             .expect("Failed to seed built-in strategies");
         tracing::info!("Seeded {seeded} built-in strategies");
-        let strategy_store: Arc<dyn StrategyStore> = Arc::new(sqlite_strategy_store);
+        let strategy_store: Arc<dyn StrategyStore> = Arc::new(strategies);
 
         let app_state = AppState {
             server: server::OptopsyServer::with_strategy_store(
@@ -192,12 +191,12 @@ async fn main() -> Result<()> {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        let sqlite_strategy_store =
-            SqliteStrategyStore::open(&db_path).expect("Failed to open database");
-        sqlite_strategy_store
+        let db = Database::open(&db_path).expect("Failed to open database");
+        let strategies = db.strategies();
+        strategies
             .seed_builtins(std::path::Path::new("scripts/strategies"))
             .ok();
-        let strategy_store: Arc<dyn StrategyStore> = Arc::new(sqlite_strategy_store);
+        let strategy_store: Arc<dyn StrategyStore> = Arc::new(strategies);
 
         let server = server::OptopsyServer::with_strategy_store(cache, strategy_store);
         let service = server.serve(rmcp::transport::stdio()).await?;
