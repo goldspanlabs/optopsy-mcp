@@ -749,10 +749,7 @@ impl BarContext {
     pub fn plot_with(&mut self, name: String, value: f64, display: String) {
         {
             let mut store = self.custom_series.lock().unwrap();
-            store
-                .display_types
-                .entry(name.clone())
-                .or_insert(display);
+            store.display_types.entry(name.clone()).or_insert(display);
         }
         self.plot(name, value);
     }
