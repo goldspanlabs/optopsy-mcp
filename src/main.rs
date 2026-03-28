@@ -6,7 +6,7 @@
 // float_cmp: only in tests where assert_eq! on f64 is intentional.
 #![cfg_attr(test, allow(clippy::float_cmp))]
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rmcp::ServiceExt;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
@@ -74,7 +74,9 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|_| shellexpand::tilde("~/.optopsy/cache").to_string());
         let db_path = std::path::PathBuf::from(&data_root).join("optopsy.db");
         if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent).ok();
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create data directory: {}", parent.display())
+            })?;
         }
         let db = Database::open(&db_path)?;
 
@@ -188,7 +190,9 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|_| shellexpand::tilde("~/.optopsy/cache").to_string());
         let db_path = std::path::PathBuf::from(&data_root).join("optopsy.db");
         if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent).ok();
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create data directory: {}", parent.display())
+            })?;
         }
         let db = Database::open(&db_path)?;
         db.seed_strategies_if_empty(std::path::Path::new("scripts/strategies"))?;

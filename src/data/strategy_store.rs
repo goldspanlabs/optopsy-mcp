@@ -164,6 +164,9 @@ impl SqliteStrategyStore {
     }
 
     /// Insert or update a strategy.
+    ///
+    /// Timestamps (`created_at`, `updated_at`) are managed by the store — values
+    /// on the input `row` are ignored and set to the current time.
     pub fn upsert(&self, row: &StrategyRow) -> Result<()> {
         let conn = self.conn.lock().expect("mutex poisoned");
         let tags_json = row
