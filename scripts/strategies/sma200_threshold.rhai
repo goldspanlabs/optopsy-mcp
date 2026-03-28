@@ -1,6 +1,9 @@
 //! name: SPY 200SMA Threshold
 //! description: Enter when close > SMA(200) * 1.04, exit when close < SMA(200) * 0.97
 //! category: stock
+//! hypothesis: Sustained momentum above the 200-day SMA signals trend continuation
+//! tags: trend_following, momentum, sma
+//! regime: trending, bullish
 
 // Replicates the TradingView "SPY 200SMA +4% Entry -3% Exit" strategy.
 // Buys 100% of equity when price breaks 4% above the 200-day SMA.
