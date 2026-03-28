@@ -167,6 +167,7 @@ pub async fn create_backtest(
             created_at,
             strategy_key: req.strategy.clone(),
             params: Some(serde_json::to_value(&req.params).unwrap_or_default()),
+            analysis: None,
             response,
         }),
     ))
@@ -202,6 +203,27 @@ pub async fn get_backtest(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Backtest '{id}' not found")))?;
     Ok(Json(detail))
+}
+
+/// `PATCH /backtests/{id}/analysis` — Save AI-generated analysis text.
+#[allow(clippy::unused_async)]
+pub async fn set_backtest_analysis(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<HashMap<String, String>>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let analysis = body
+        .get("analysis")
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "Missing 'analysis' field".to_string()))?;
+    let found = state
+        .backtest_store
+        .set_analysis(&id, analysis)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if found {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err((StatusCode::NOT_FOUND, format!("Backtest '{id}' not found")))
+    }
 }
 
 /// `GET /backtests/{id}/trades` — Retrieve trades for a backtest.

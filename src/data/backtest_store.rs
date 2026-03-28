@@ -57,6 +57,9 @@ pub struct BacktestDetail {
     /// The params map used when the backtest was run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<serde_json::Value>,
+    /// AI-generated research analysis text (markdown).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub analysis: Option<String>,
     #[serde(flatten)]
     pub response: crate::tools::run_script::RunScriptResponse,
 }
@@ -131,7 +134,8 @@ impl BacktestStore {
                 created_at          TEXT NOT NULL,
                 hypothesis          TEXT,
                 tags                TEXT,
-                regime              TEXT
+                regime              TEXT,
+                analysis            TEXT
             );
 
             CREATE TABLE IF NOT EXISTS backtest_metrics (
@@ -285,7 +289,7 @@ impl BacktestStore {
         let conn = self.conn.lock().expect("mutex poisoned");
         let row = conn
             .query_row(
-                "SELECT id, strategy_key, result_json, created_at, params FROM backtests WHERE id = ?1",
+                "SELECT id, strategy_key, result_json, created_at, params, analysis FROM backtests WHERE id = ?1",
                 rusqlite::params![id],
                 |row| {
                     Ok((
@@ -294,13 +298,14 @@ impl BacktestStore {
                         row.get::<_, String>(2)?,
                         row.get::<_, String>(3)?,
                         row.get::<_, String>(4)?,
+                        row.get::<_, Option<String>>(5)?,
                     ))
                 },
             )
             .optional()
             .context("Failed to query backtest detail")?;
 
-        let Some((id, strategy_key, result_json_str, created_at, params_str)) = row else {
+        let Some((id, strategy_key, result_json_str, created_at, params_str, analysis)) = row else {
             return Ok(None);
         };
 
@@ -314,8 +319,21 @@ impl BacktestStore {
             created_at,
             strategy_key,
             params,
+            analysis,
             response,
         }))
+    }
+
+    /// Save AI-generated analysis text for a backtest.
+    pub fn set_analysis(&self, id: &str, analysis: &str) -> Result<bool> {
+        let conn = self.conn.lock().expect("mutex poisoned");
+        let rows = conn
+            .execute(
+                "UPDATE backtests SET analysis = ?2 WHERE id = ?1",
+                rusqlite::params![id, analysis],
+            )
+            .context("Failed to update analysis")?;
+        Ok(rows > 0)
     }
 
     /// List backtest summaries, optionally filtered by strategy key, symbol, tag, or regime.

@@ -102,6 +102,10 @@ async fn main() -> Result<()> {
                 axum::routing::get(backtests::get_backtest_trades),
             )
             .route(
+                "/backtests/{id}/analysis",
+                axum::routing::patch(backtests::set_backtest_analysis),
+            )
+            .route(
                 "/walk-forward",
                 axum::routing::post(optopsy_mcp::server::handlers::walk_forward::run_walk_forward),
             )
