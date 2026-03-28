@@ -16,6 +16,7 @@ use optopsy_mcp::data::database::Database;
 use optopsy_mcp::data::traits::{self, StrategyStore};
 use optopsy_mcp::server::handlers::backtests::{self, AppState};
 use optopsy_mcp::server::handlers::chat as chat_handlers;
+use optopsy_mcp::server::handlers::strategies;
 use optopsy_mcp::{data, server};
 
 /// Query parameters for the `/prices/{symbol}` REST endpoint.
@@ -143,10 +144,37 @@ async fn main() -> Result<()> {
             )
             .with_state(app_state.clone());
 
+        let strategy_routes = axum::Router::new()
+            .route(
+                "/strategies",
+                axum::routing::get(strategies::list_strategies)
+                    .post(strategies::create_strategy),
+            )
+            .route(
+                "/strategies/validate",
+                axum::routing::post(strategies::validate_script),
+            )
+            .route(
+                "/strategies/{id}",
+                axum::routing::get(strategies::get_strategy)
+                    .put(strategies::update_strategy)
+                    .delete(strategies::delete_strategy),
+            )
+            .route(
+                "/strategies/{id}/source",
+                axum::routing::get(strategies::get_strategy_source),
+            )
+            .route(
+                "/strategies/{id}/validate",
+                axum::routing::post(strategies::validate_stored_strategy),
+            )
+            .with_state(app_state.clone());
+
         let chat_routes = axum::Router::new()
             .route(
                 "/threads",
-                axum::routing::get(chat_handlers::list_threads).post(chat_handlers::create_thread),
+                axum::routing::get(chat_handlers::list_threads)
+                    .post(chat_handlers::create_thread),
             )
             .route(
                 "/threads/{id}",
@@ -172,28 +200,12 @@ async fn main() -> Result<()> {
             )
             .with_state(app_state);
 
-        let strategy_store_for_routes = strategy_store.clone();
         let app = axum::Router::new()
-            .route(
-                "/strategies",
-                axum::routing::get({
-                    let store = strategy_store_for_routes.clone();
-                    move || async move {
-                        let store = store.clone();
-                        let scripts = tokio::task::spawn_blocking(move || {
-                            store.list_scripts().unwrap_or_default()
-                        })
-                        .await
-                        .unwrap_or_default();
-                        axum::Json(scripts)
-                    }
-                }),
-            )
             .route(
                 "/profiles",
                 axum::routing::get(optopsy_mcp::server::handlers::profiles::list_profiles)
                     .with_state(
-                        Some(strategy_store_for_routes.clone()) as Option<Arc<dyn StrategyStore>>
+                        Some(strategy_store.clone()) as Option<Arc<dyn StrategyStore>>
                     ),
             )
             .route(
@@ -204,6 +216,7 @@ async fn main() -> Result<()> {
                 }),
             )
             .merge(backtest_routes)
+            .merge(strategy_routes)
             .merge(chat_routes)
             .nest_service("/mcp", service)
             .route("/health", axum::routing::get(|| async { "ok" }))

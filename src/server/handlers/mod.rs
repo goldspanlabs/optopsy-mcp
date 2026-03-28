@@ -4,4 +4,5 @@ pub mod backtests;
 pub mod chat;
 pub mod profiles;
 pub mod run_script;
+pub mod strategies;
 pub mod walk_forward;
