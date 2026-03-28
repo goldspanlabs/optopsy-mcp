@@ -75,21 +75,20 @@ pub fn execute(
     // also respect the 7-day cap without requiring a full parquet load.
     let filtered = if interval.is_intraday() && start_date.is_none() && end_date.is_none() {
         let cutoff = (chrono::Utc::now() - chrono::Duration::days(7)).naive_utc();
+        // Filter in-place via lazy — no clone needed since `filtered` is already owned
         if date_col_name == "datetime" {
             filtered
-                .clone()
                 .lazy()
                 .filter(col("datetime").gt_eq(lit(cutoff)))
                 .collect()
-                .unwrap_or(filtered)
+                .unwrap_or_else(|_| DataFrame::empty())
         } else {
             let cutoff_date = cutoff.date();
             filtered
-                .clone()
                 .lazy()
                 .filter(col("date").gt_eq(lit(cutoff_date)))
                 .collect()
-                .unwrap_or(filtered)
+                .unwrap_or_else(|_| DataFrame::empty())
         }
     } else {
         filtered
@@ -122,44 +121,50 @@ pub fn execute(
 
     let rows = output_df.height();
 
-    // Extract columns into PriceBar structs
-    let opens = output_df.column("open")?.f64()?.clone();
-    let highs = output_df.column("high")?.f64()?.clone();
-    let lows = output_df.column("low")?.f64()?.clone();
-    let closes = output_df.column("close")?.f64()?.clone();
+    // Extract column references — no cloning needed, we only iterate
+    let opens = output_df.column("open")?.f64()?;
+    let highs = output_df.column("high")?.f64()?;
+    let lows = output_df.column("low")?.f64()?;
+    let closes = output_df.column("close")?.f64()?;
     let vol_col = output_df.column("volume")?;
+    // Cast volume to UInt64 if needed; hold the owned column to keep the borrow alive
+    let vol_casted;
     let volumes = if let polars::prelude::DataType::UInt64 = vol_col.dtype() {
-        vol_col.u64()?.clone()
+        vol_col.u64()?
     } else {
-        let casted = vol_col.cast(&polars::prelude::DataType::UInt64)?;
-        casted.u64()?.clone()
+        vol_casted = vol_col.cast(&polars::prelude::DataType::UInt64)?;
+        vol_casted.u64()?
     };
 
-    // Also try adjclose if available
-    let adjcloses = output_df
-        .column("adjclose")
-        .ok()
-        .and_then(|c| c.f64().ok().cloned());
+    let adjcloses = output_df.column("adjclose").ok().and_then(|c| c.f64().ok());
 
     let mut bars: Vec<PriceBar> = Vec::with_capacity(rows);
 
-    // Intraday path: Datetime column → format with time
+    // Intraday path: Datetime column → use iterator-based extraction
     if let Ok(dt_col_ref) = output_df.column(date_col_name) {
-        if matches!(
-            dt_col_ref.dtype(),
-            polars::prelude::DataType::Datetime(_, _)
-        ) {
-            for i in 0..rows {
-                let ndt = crate::engine::price_table::extract_datetime_from_column(dt_col_ref, i)?;
-                let date = ndt.and_utc().timestamp();
+        if let Ok(dt_chunked) = dt_col_ref.datetime() {
+            let tu = dt_chunked.time_unit();
+            for (((((ts_opt, o), h), l), c), v) in dt_chunked
+                .phys
+                .iter()
+                .zip(opens.iter())
+                .zip(highs.iter())
+                .zip(lows.iter())
+                .zip(closes.iter())
+                .zip(volumes.iter())
+            {
+                let Some(ts) = ts_opt else { continue };
+                let Some(ndt) = crate::engine::types::timestamp_to_naive_datetime(ts, tu) else {
+                    continue;
+                };
                 bars.push(PriceBar {
-                    date,
-                    open: opens.get(i).unwrap_or(0.0),
-                    high: highs.get(i).unwrap_or(0.0),
-                    low: lows.get(i).unwrap_or(0.0),
-                    close: closes.get(i).unwrap_or(0.0),
-                    adjclose: adjcloses.as_ref().and_then(|ac| ac.get(i)),
-                    volume: volumes.get(i).unwrap_or(0),
+                    date: ndt.and_utc().timestamp(),
+                    open: o.unwrap_or(0.0),
+                    high: h.unwrap_or(0.0),
+                    low: l.unwrap_or(0.0),
+                    close: c.unwrap_or(0.0),
+                    adjclose: adjcloses.as_ref().and_then(|ac| ac.get(bars.len())),
+                    volume: v.unwrap_or(0),
                 });
             }
             let date_range = DateRange {
@@ -172,29 +177,39 @@ pub fn execute(
         }
     }
 
-    // Daily path: Date column (typically "date")
-    let dates = output_df.column(date_col_name)?.date()?.clone();
-    for i in 0..rows {
-        let days_since_epoch = dates
-            .phys
-            .get(i)
-            .ok_or_else(|| anyhow::anyhow!("Null date at row {i}; OHLCV data may be corrupted"))?;
-        let date =
+    // Daily path: Date column — use zipped iterators
+    let dates = output_df.column(date_col_name)?.date()?;
+    for (((((day_opt, o), h), l), c), v) in dates
+        .phys
+        .iter()
+        .zip(opens.iter())
+        .zip(highs.iter())
+        .zip(lows.iter())
+        .zip(closes.iter())
+        .zip(volumes.iter())
+    {
+        let Some(days_since_epoch) = day_opt else {
+            continue;
+        };
+        let Some(naive_date) =
             chrono::NaiveDate::from_num_days_from_ce_opt(days_since_epoch + EPOCH_DAYS_CE_OFFSET)
-                .ok_or_else(|| anyhow::anyhow!("Invalid date value at row {i}"))?
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc()
-                .timestamp();
+        else {
+            continue;
+        };
+        let date = naive_date
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
 
         bars.push(PriceBar {
             date,
-            open: opens.get(i).unwrap_or(0.0),
-            high: highs.get(i).unwrap_or(0.0),
-            low: lows.get(i).unwrap_or(0.0),
-            close: closes.get(i).unwrap_or(0.0),
-            adjclose: adjcloses.as_ref().and_then(|ac| ac.get(i)),
-            volume: volumes.get(i).unwrap_or(0),
+            open: o.unwrap_or(0.0),
+            high: h.unwrap_or(0.0),
+            low: l.unwrap_or(0.0),
+            close: c.unwrap_or(0.0),
+            adjclose: adjcloses.as_ref().and_then(|ac| ac.get(bars.len())),
+            volume: v.unwrap_or(0),
         });
     }
 

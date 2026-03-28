@@ -3,7 +3,7 @@
 use axum::{extract::State, http::StatusCode, Json};
 
 use crate::engine::walk_forward::{WalkForwardParams, WalkForwardResponse};
-use crate::scripting::engine::CachedDataLoader;
+use crate::scripting::engine::CachingDataLoader;
 use std::sync::Arc;
 
 use super::backtests::AppState;
@@ -13,9 +13,7 @@ pub async fn run_walk_forward(
     State(state): State<AppState>,
     Json(params): Json<WalkForwardParams>,
 ) -> Result<Json<WalkForwardResponse>, (StatusCode, String)> {
-    let loader = CachedDataLoader {
-        cache: Arc::clone(&state.server.cache),
-    };
+    let loader = CachingDataLoader::new(Arc::clone(&state.server.cache));
 
     let response = crate::engine::walk_forward::execute(params, &loader)
         .await

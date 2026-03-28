@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use crate::scripting::engine::{CachedDataLoader, ScriptBacktestResult};
+use crate::scripting::engine::{CachingDataLoader, ScriptBacktestResult};
 use crate::scripting::stdlib::parse_script_meta;
 use crate::server::OptopsyServer;
 use crate::tools::run_script::{format_indicator_data, RunScriptParams, RunScriptResponse};
@@ -21,9 +21,7 @@ pub async fn execute(server: &OptopsyServer, params: RunScriptParams) -> Result<
         .as_deref()
         .map(|id| parse_script_meta(id, &source));
 
-    let loader = CachedDataLoader {
-        cache: Arc::clone(&server.cache),
-    };
+    let loader = CachingDataLoader::new(Arc::clone(&server.cache));
 
     // Merge profile params if a profile was requested
     let effective_params = if let Some(ref profile_name) = params.profile {

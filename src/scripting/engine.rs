@@ -360,7 +360,7 @@ pub async fn run_script_backtest(
                 pnl_history.push(pnl);
                 pnl_dirty = true;
 
-                positions.remove(i);
+                positions.swap_remove(i);
                 positions_dirty = true; // positions changed, Arc needs rebuild
 
                 // Handle implicit stock transitions for wheel-like strategies.
@@ -446,7 +446,7 @@ pub async fn run_script_backtest(
                                             ));
                                             pnl_history.push(stock_pnl);
                                             pnl_dirty = true;
-                                            positions.remove(j);
+                                            positions.swap_remove(j);
                                             // Don't increment j
                                         } else {
                                             j += 1;
@@ -582,7 +582,7 @@ pub async fn run_script_backtest(
                                     ));
                                     pnl_history.push(pnl);
                                     pnl_dirty = true;
-                                    positions.remove(idx);
+                                    positions.swap_remove(idx);
                                 } else {
                                     warnings
                                         .push(format!("Close action: position_id {pid} not found"));
@@ -1805,6 +1805,120 @@ impl DataLoader for CachedDataLoader {
         self.cache
             .load_options(&symbol.to_uppercase(), start, end)
             .await
+    }
+}
+
+/// `DataLoader` wrapper that caches full DataFrames in memory by symbol.
+///
+/// Loads the full (unfiltered) parquet once per symbol, then applies date-range
+/// filters in-memory on subsequent calls. This eliminates repeated disk I/O during
+/// walk-forward sweeps (50+ backtests hitting the same files).
+pub struct CachingDataLoader {
+    inner: CachedDataLoader,
+    ohlcv_cache: tokio::sync::Mutex<HashMap<String, Arc<polars::prelude::DataFrame>>>,
+    options_cache: tokio::sync::Mutex<HashMap<String, Arc<polars::prelude::DataFrame>>>,
+}
+
+impl CachingDataLoader {
+    pub fn new(cache: Arc<crate::data::cache::CachedStore>) -> Self {
+        Self {
+            inner: CachedDataLoader { cache },
+            ohlcv_cache: tokio::sync::Mutex::new(HashMap::new()),
+            options_cache: tokio::sync::Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+/// Apply date-range filter to a cached (full) DataFrame.
+fn filter_df_by_date(
+    df: &polars::prelude::DataFrame,
+    start: Option<NaiveDate>,
+    end: Option<NaiveDate>,
+) -> Result<polars::prelude::DataFrame> {
+    use polars::prelude::*;
+
+    if start.is_none() && end.is_none() {
+        return Ok(df.clone());
+    }
+
+    let date_col_name = crate::engine::ohlcv::detect_date_col(df);
+    let is_datetime = date_col_name == "datetime";
+    let mut lazy = df.clone().lazy();
+
+    if let Some(s) = start {
+        if is_datetime {
+            let sdt = s.and_hms_opt(0, 0, 0).unwrap();
+            lazy = lazy.filter(col(date_col_name).gt_eq(lit(sdt)));
+        } else {
+            lazy = lazy.filter(col(date_col_name).gt_eq(lit(s)));
+        }
+    }
+    if let Some(e) = end {
+        if is_datetime {
+            let edt = e.succ_opt().unwrap_or(e).and_hms_opt(0, 0, 0).unwrap();
+            lazy = lazy.filter(col(date_col_name).lt(lit(edt)));
+        } else {
+            lazy = lazy.filter(col(date_col_name).lt_eq(lit(e)));
+        }
+    }
+
+    Ok(lazy.collect()?)
+}
+
+#[async_trait::async_trait]
+impl DataLoader for CachingDataLoader {
+    async fn load_ohlcv(
+        &self,
+        symbol: &str,
+        start: Option<NaiveDate>,
+        end: Option<NaiveDate>,
+    ) -> Result<polars::prelude::DataFrame> {
+        let key = symbol.to_uppercase();
+
+        // Check cache
+        {
+            let cache = self.ohlcv_cache.lock().await;
+            if let Some(df) = cache.get(&key) {
+                return filter_df_by_date(df, start, end);
+            }
+        }
+
+        // Cache miss — load full file (no date filter) and store
+        let full_df = self.inner.load_ohlcv(symbol, None, None).await?;
+        let arc_df = Arc::new(full_df);
+        {
+            let mut cache = self.ohlcv_cache.lock().await;
+            cache.insert(key, Arc::clone(&arc_df));
+        }
+
+        filter_df_by_date(&arc_df, start, end)
+    }
+
+    async fn load_options(
+        &self,
+        symbol: &str,
+        start: Option<NaiveDate>,
+        end: Option<NaiveDate>,
+    ) -> Result<polars::prelude::DataFrame> {
+        let key = symbol.to_uppercase();
+
+        // Check cache
+        {
+            let cache = self.options_cache.lock().await;
+            if let Some(df) = cache.get(&key) {
+                return filter_df_by_date(df, start, end);
+            }
+        }
+
+        // Cache miss — load full file and store
+        let full_df = self.inner.load_options(symbol, None, None).await?;
+        let arc_df = Arc::new(full_df);
+        {
+            let mut cache = self.options_cache.lock().await;
+            cache.insert(key, Arc::clone(&arc_df));
+        }
+
+        filter_df_by_date(&arc_df, start, end)
     }
 }
 

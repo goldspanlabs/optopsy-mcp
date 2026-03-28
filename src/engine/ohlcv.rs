@@ -127,23 +127,30 @@ pub fn bars_from_df(df: &polars::prelude::DataFrame) -> Result<Vec<Bar>> {
     // Intraday path: "datetime" column (Datetime type)
     let date_col_name = detect_date_col(df);
     if date_col_name == "datetime" {
-        let dt_col_ref = df.column("datetime")?;
-        for i in 0..df.height() {
-            let Ok(datetime) =
-                crate::engine::price_table::extract_datetime_from_column(dt_col_ref, i)
+        let dt_col = df.column("datetime")?;
+        let dt_chunked = dt_col.datetime()?;
+        let tu = dt_chunked.time_unit();
+        // Use zipped iterators for OHLCV columns; extract datetime from raw i64 values
+        let iter = dt_chunked
+            .phys
+            .iter()
+            .zip(opens.iter())
+            .zip(highs.iter())
+            .zip(lows.iter())
+            .zip(closes.iter());
+
+        for ((((ts_opt, open_opt), high_opt), low_opt), close_opt) in iter {
+            let (Some(ts), Some(open), Some(high), Some(low), Some(close)) =
+                (ts_opt, open_opt, high_opt, low_opt, close_opt)
             else {
                 continue;
             };
-
-            let open = opens.get(i).unwrap_or(0.0);
-            let high = highs.get(i).unwrap_or(0.0);
-            let low = lows.get(i).unwrap_or(0.0);
-            let close = closes.get(i).unwrap_or(0.0);
-
             if open <= 0.0 || close <= 0.0 {
                 continue;
             }
-
+            let Some(datetime) = super::types::timestamp_to_naive_datetime(ts, tu) else {
+                continue;
+            };
             bars.push(Bar {
                 datetime,
                 open,
@@ -162,25 +169,30 @@ pub fn bars_from_df(df: &polars::prelude::DataFrame) -> Result<Vec<Bar>> {
         .date()
         .map_err(|e| anyhow::anyhow!("'date' column is not Date type: {e}"))?;
 
-    for i in 0..df.height() {
-        let Some(days) = dates.phys.get(i) else {
+    // Use zipped iterators instead of per-element .get(i) for better cache locality
+    let iter = dates
+        .phys
+        .iter()
+        .zip(opens.iter())
+        .zip(highs.iter())
+        .zip(lows.iter())
+        .zip(closes.iter());
+
+    for ((((day_opt, open_opt), high_opt), low_opt), close_opt) in iter {
+        let (Some(days), Some(open), Some(high), Some(low), Some(close)) =
+            (day_opt, open_opt, high_opt, low_opt, close_opt)
+        else {
             continue;
         };
+        if open <= 0.0 || close <= 0.0 {
+            continue;
+        }
         let Some(date) = NaiveDate::from_num_days_from_ce_opt(days + epoch_offset) else {
             continue;
         };
         let datetime = date
             .and_hms_opt(0, 0, 0)
             .expect("midnight datetime for OHLCV date conversion");
-
-        let open = opens.get(i).unwrap_or(0.0);
-        let high = highs.get(i).unwrap_or(0.0);
-        let low = lows.get(i).unwrap_or(0.0);
-        let close = closes.get(i).unwrap_or(0.0);
-
-        if open <= 0.0 || close <= 0.0 {
-            continue;
-        }
 
         bars.push(Bar {
             datetime,
