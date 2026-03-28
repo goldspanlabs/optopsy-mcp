@@ -754,11 +754,20 @@ impl BarContext {
     ///
     /// Called from Rhai as `ctx.plot_with("my_rsi", value, "subchart")`.
     pub fn plot_with(&mut self, name: String, value: f64, display: String) {
-        {
-            let mut store = self.custom_series.lock().unwrap_or_else(|e| e.into_inner());
-            store.display_types.entry(name.clone()).or_insert(display);
+        let mut store = self.custom_series.lock().unwrap_or_else(|e| e.into_inner());
+        // Reject new series beyond the cap to prevent memory DoS
+        if !store.series.contains_key(&name) && store.series.len() >= MAX_CUSTOM_SERIES {
+            return;
         }
-        self.plot(name, value);
+        store.display_types.entry(name.clone()).or_insert(display);
+        let num_bars = store.num_bars;
+        let series = store
+            .series
+            .entry(name)
+            .or_insert_with(|| vec![None; num_bars]);
+        if self.bar_idx < series.len() {
+            series[self.bar_idx] = if value.is_finite() { Some(value) } else { None };
+        }
     }
 }
 

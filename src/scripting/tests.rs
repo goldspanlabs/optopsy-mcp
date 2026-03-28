@@ -1462,23 +1462,26 @@ mod tests {
     fn test_plot_non_finite_values_become_none() {
         let bars = make_bars(&[100.0, 110.0, 120.0]);
 
+        // NaN at bar 0
         let mut ctx = make_ctx(&bars, 0);
         ctx.plot("s".to_string(), f64::NAN);
 
-        let mut ctx = make_ctx(&bars, 1);
-        ctx.custom_series = ctx.custom_series.clone();
-        // Use a fresh context sharing the same store
-        let store_arc = {
-            let bars2 = make_bars(&[100.0, 110.0, 120.0]);
-            let mut ctx2 = make_ctx(&bars2, 0);
-            ctx2.plot("inf_test".to_string(), f64::INFINITY);
-            ctx2.bar_idx = 1;
-            ctx2.plot("inf_test".to_string(), f64::NEG_INFINITY);
-            ctx2.bar_idx = 2;
-            ctx2.plot("inf_test".to_string(), f64::NAN);
-            ctx2.custom_series.clone()
-        };
-        let store = store_arc.lock().unwrap();
+        // Verify NaN was stored as None
+        {
+            let store = ctx.custom_series.lock().unwrap();
+            let series = store.series.get("s").unwrap();
+            assert_eq!(series[0], None, "NaN should become None");
+        }
+
+        // +Inf, -Inf, NaN across 3 bars
+        let mut ctx2 = make_ctx(&bars, 0);
+        ctx2.plot("inf_test".to_string(), f64::INFINITY);
+        ctx2.bar_idx = 1;
+        ctx2.plot("inf_test".to_string(), f64::NEG_INFINITY);
+        ctx2.bar_idx = 2;
+        ctx2.plot("inf_test".to_string(), f64::NAN);
+
+        let store = ctx2.custom_series.lock().unwrap();
         let series = store.series.get("inf_test").unwrap();
         assert_eq!(series[0], None); // +inf → None
         assert_eq!(series[1], None); // -inf → None
