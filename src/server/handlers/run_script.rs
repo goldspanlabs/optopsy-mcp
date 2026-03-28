@@ -37,11 +37,12 @@ pub async fn execute(server: &OptopsyServer, params: RunScriptParams) -> Result<
         result,
         metadata: _,
         indicator_data,
+        custom_series,
         ..
     } = crate::scripting::engine::run_script_backtest(&source, &effective_params, &loader).await?;
 
-    // Convert raw indicator arrays to compact IndicatorData format
-    let formatted_indicators = format_indicator_data(&indicator_data);
+    // Convert raw indicator arrays and custom series to compact IndicatorData format
+    let formatted_indicators = format_indicator_data(&indicator_data, &custom_series);
 
     Ok(RunScriptResponse {
         script_meta,

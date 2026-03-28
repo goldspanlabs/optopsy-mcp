@@ -1,7 +1,7 @@
 //! BarContext — the `ctx` object exposed to Rhai scripts.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike};
 use rhai::Dynamic;
@@ -10,6 +10,27 @@ use super::config::{CrossSymbolBar, OhlcvBar, ScriptConfig};
 use super::position::ScriptPosition;
 
 use crate::scripting::indicators::IndicatorStore;
+
+// ---------------------------------------------------------------------------
+// Custom series store — collects script-emitted plot data during simulation
+// ---------------------------------------------------------------------------
+
+/// Shared store for custom indicator series emitted by scripts via `ctx.plot()`.
+///
+/// Thread-safe via `Mutex` (no contention since Rhai is single-threaded).
+/// Pre-allocates each series to `num_bars` length on first write so indexing
+/// by `bar_idx` is always valid.
+pub struct CustomSeriesStore {
+    /// series_name → values indexed by bar_idx (`None` = not plotted on that bar).
+    pub series: HashMap<String, Vec<Option<f64>>>,
+    /// series_name → display type hint ("overlay" or "subchart").
+    pub display_types: HashMap<String, String>,
+    /// Total number of bars (used to pre-allocate series vectors).
+    pub num_bars: usize,
+}
+
+/// Maximum number of distinct custom series a script may emit.
+pub const MAX_CUSTOM_SERIES: usize = 50;
 
 // ---------------------------------------------------------------------------
 // BarContext — the `ctx` object exposed to Rhai scripts
@@ -50,6 +71,9 @@ pub struct BarContext {
 
     // Closed trade P&L history (for Kelly sizing)
     pub pnl_history: Arc<Vec<f64>>,
+
+    // Custom series emitted by scripts via ctx.plot()
+    pub custom_series: Arc<Mutex<CustomSeriesStore>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -703,6 +727,47 @@ impl BarContext {
     /// Total exposure = sum of abs(entry_cost) across all open positions.
     pub fn get_total_exposure(&mut self) -> f64 {
         self.positions.iter().map(|p| p.entry_cost.abs()).sum()
+    }
+
+    // --- Custom series plotting ---
+
+    /// Emit a custom value for charting. Defaults to overlay display.
+    ///
+    /// Called from Rhai as `ctx.plot("entry_threshold", sma * 1.04)`.
+    pub fn plot(&mut self, name: String, value: f64) {
+        let mut store = self.custom_series.lock().unwrap_or_else(|e| e.into_inner());
+        // Reject new series beyond the cap to prevent memory DoS
+        if !store.series.contains_key(&name) && store.series.len() >= MAX_CUSTOM_SERIES {
+            return;
+        }
+        let num_bars = store.num_bars;
+        let series = store
+            .series
+            .entry(name)
+            .or_insert_with(|| vec![None; num_bars]);
+        if self.bar_idx < series.len() {
+            series[self.bar_idx] = if value.is_finite() { Some(value) } else { None };
+        }
+    }
+
+    /// Emit a custom value with an explicit display type ("overlay" or "subchart").
+    ///
+    /// Called from Rhai as `ctx.plot_with("my_rsi", value, "subchart")`.
+    pub fn plot_with(&mut self, name: String, value: f64, display: String) {
+        let mut store = self.custom_series.lock().unwrap_or_else(|e| e.into_inner());
+        // Reject new series beyond the cap to prevent memory DoS
+        if !store.series.contains_key(&name) && store.series.len() >= MAX_CUSTOM_SERIES {
+            return;
+        }
+        store.display_types.entry(name.clone()).or_insert(display);
+        let num_bars = store.num_bars;
+        let series = store
+            .series
+            .entry(name)
+            .or_insert_with(|| vec![None; num_bars]);
+        if self.bar_idx < series.len() {
+            series[self.bar_idx] = if value.is_finite() { Some(value) } else { None };
+        }
     }
 }
 

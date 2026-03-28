@@ -165,6 +165,10 @@ fn register_bar_context(engine: &mut Engine) {
     // Cross-symbol data
     engine.register_fn("price_of", BarContext::price_of);
     engine.register_fn("price_of_col", BarContext::price_of_col);
+
+    // Custom series plotting
+    engine.register_fn("plot", BarContext::plot);
+    engine.register_fn("plot_with", BarContext::plot_with);
 }
 
 /// Register `ScriptPosition` as a Rhai custom type with getters.

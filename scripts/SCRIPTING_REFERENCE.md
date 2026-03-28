@@ -252,6 +252,34 @@ if sma50 == () || rsi == () { return []; }
 if !ctx.indicators_ready(["sma:50", "rsi:14"]) { return []; }
 ```
 
+### Custom Series Plotting
+
+Emit custom computed values for charting alongside pre-computed indicators. Custom series are included in the `indicator_data` response and aligned to the equity curve by bar index.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `ctx.plot(name, value)` | — | Emit a value for a named series (defaults to price overlay) |
+| `ctx.plot_with(name, value, display)` | — | Emit with explicit display type: `"overlay"` or `"subchart"` |
+
+```rhai
+fn on_bar(ctx) {
+    let sma = ctx.sma(200);
+    if sma == () { return []; }
+
+    // Plot custom threshold bands on the price chart
+    ctx.plot("Entry Threshold", sma * 1.04);
+    ctx.plot("Exit Threshold", sma * 0.97);
+
+    // Plot a custom oscillator in a subchart
+    let spread = ctx.close - sma;
+    ctx.plot_with("SMA Spread", spread, "subchart");
+
+    []
+}
+```
+
+Custom series appear in the response `indicator_data` array with `key: "custom:<name>"`. Bars where `plot()` is not called are serialized as `null`.
+
 ### Position Sizing Helpers
 
 Compute share quantities dynamically based on equity, risk, volatility, or trade history. All return an `i64` share count (0 if inputs are invalid or insufficient history).

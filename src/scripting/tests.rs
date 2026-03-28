@@ -654,6 +654,13 @@ mod tests {
             options_by_date: None,
             config,
             pnl_history: Arc::new(vec![]),
+            custom_series: Arc::new(std::sync::Mutex::new(
+                crate::scripting::types::CustomSeriesStore {
+                    series: HashMap::new(),
+                    display_types: HashMap::new(),
+                    num_bars: bars.len(),
+                },
+            )),
         }
     }
 
@@ -1430,5 +1437,109 @@ mod tests {
         let mut ctx = make_ctx_with_positions(&bars, 0, positions);
         // abs(9500) + abs(-5000) = 14500
         assert!((ctx.get_total_exposure() - 14500.0).abs() < 1e-10);
+    }
+
+    // -----------------------------------------------------------------------
+    // Custom series plotting tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_plot_records_value_at_correct_bar_idx() {
+        let bars = make_bars(&[100.0, 110.0, 120.0]);
+        let mut ctx = make_ctx(&bars, 1);
+
+        ctx.plot("test_series".to_string(), 42.0);
+
+        let store = ctx.custom_series.lock().unwrap();
+        let series = store.series.get("test_series").unwrap();
+        assert_eq!(series.len(), 3); // pre-allocated to num_bars
+        assert_eq!(series[0], None); // bar 0 not plotted
+        assert_eq!(series[1], Some(42.0)); // bar 1 plotted
+        assert_eq!(series[2], None); // bar 2 not plotted
+    }
+
+    #[test]
+    fn test_plot_non_finite_values_become_none() {
+        let bars = make_bars(&[100.0, 110.0, 120.0]);
+
+        // NaN at bar 0
+        let mut ctx = make_ctx(&bars, 0);
+        ctx.plot("s".to_string(), f64::NAN);
+
+        // Verify NaN was stored as None
+        {
+            let store = ctx.custom_series.lock().unwrap();
+            let series = store.series.get("s").unwrap();
+            assert_eq!(series[0], None, "NaN should become None");
+        }
+
+        // +Inf, -Inf, NaN across 3 bars
+        let mut ctx2 = make_ctx(&bars, 0);
+        ctx2.plot("inf_test".to_string(), f64::INFINITY);
+        ctx2.bar_idx = 1;
+        ctx2.plot("inf_test".to_string(), f64::NEG_INFINITY);
+        ctx2.bar_idx = 2;
+        ctx2.plot("inf_test".to_string(), f64::NAN);
+
+        let store = ctx2.custom_series.lock().unwrap();
+        let series = store.series.get("inf_test").unwrap();
+        assert_eq!(series[0], None); // +inf → None
+        assert_eq!(series[1], None); // -inf → None
+        assert_eq!(series[2], None); // NaN → None
+    }
+
+    #[test]
+    fn test_plot_with_sets_display_type() {
+        let bars = make_bars(&[100.0, 110.0, 120.0]);
+        let mut ctx = make_ctx(&bars, 0);
+
+        ctx.plot_with("my_osc".to_string(), 5.0, "subchart".to_string());
+
+        let store = ctx.custom_series.lock().unwrap();
+        assert_eq!(
+            store.display_types.get("my_osc").map(|s| s.as_str()),
+            Some("subchart")
+        );
+        assert_eq!(store.series.get("my_osc").unwrap()[0], Some(5.0));
+    }
+
+    #[test]
+    fn test_plot_max_series_limit() {
+        let bars = make_bars(&[100.0]);
+        let mut ctx = make_ctx(&bars, 0);
+
+        // Fill up to the max
+        for i in 0..crate::scripting::types::MAX_CUSTOM_SERIES {
+            ctx.plot(format!("series_{i}"), 1.0);
+        }
+
+        // One more should be silently rejected
+        ctx.plot("overflow".to_string(), 1.0);
+        let store = ctx.custom_series.lock().unwrap();
+        assert!(!store.series.contains_key("overflow"));
+        assert_eq!(
+            store.series.len(),
+            crate::scripting::types::MAX_CUSTOM_SERIES
+        );
+    }
+
+    #[test]
+    fn test_format_custom_series_in_indicator_data() {
+        use crate::tools::run_script::{format_indicator_data, DisplayType};
+
+        let raw = HashMap::new(); // no pre-computed indicators
+        let custom = crate::scripting::types::CustomSeriesStore {
+            series: HashMap::from([("my_band".to_string(), vec![Some(100.0), None, Some(102.0)])]),
+            display_types: HashMap::from([("my_band".to_string(), "subchart".to_string())]),
+            num_bars: 3,
+        };
+
+        let result = format_indicator_data(&raw, &custom);
+        assert_eq!(result.len(), 1);
+        let item = &result[0];
+        assert_eq!(item.key, "custom:my_band");
+        assert_eq!(item.name, "my_band");
+        assert!(matches!(item.display_type, DisplayType::Subchart));
+        assert_eq!(item.values, vec![Some(100.0), None, Some(102.0)]);
     }
 }

@@ -5,7 +5,7 @@
 //! while scripts define trading logic via `config()`, `on_bar()`, etc.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context, Result};
 use chrono::{NaiveDate, NaiveDateTime};
@@ -223,12 +223,19 @@ pub async fn run_script_backtest(
     let mut pnl_history_arc = Arc::new(Vec::<f64>::new());
     let mut pnl_dirty = false;
 
+    let custom_series = Arc::new(Mutex::new(CustomSeriesStore {
+        series: HashMap::new(),
+        display_types: HashMap::new(),
+        num_bars: price_history.len(),
+    }));
+
     let ctx_factory = BarContextFactory {
         indicator_store: Arc::clone(&indicator_store),
         price_history: Arc::clone(&price_history),
         cross_symbol_data: Arc::clone(&cross_symbol_data),
         config: Arc::clone(&config),
         options_by_date: options_by_date.clone(),
+        custom_series: Arc::clone(&custom_series),
     };
 
     for (bar_idx, bar) in price_history.iter().enumerate() {
@@ -797,6 +804,21 @@ pub async fn run_script_backtest(
         metadata,
         execution_time_ms: backtest_start.elapsed().as_millis() as u64,
         indicator_data: indicator_store.to_series_map(),
+        custom_series: {
+            // Drop the factory so its Arc reference is released
+            drop(ctx_factory);
+            match Arc::try_unwrap(custom_series) {
+                Ok(mutex) => mutex.into_inner().unwrap_or_else(|e| e.into_inner()),
+                Err(arc) => {
+                    let store = arc.lock().unwrap_or_else(|e| e.into_inner());
+                    CustomSeriesStore {
+                        series: store.series.clone(),
+                        display_types: store.display_types.clone(),
+                        num_bars: store.num_bars,
+                    }
+                }
+            }
+        },
     })
 }
 
@@ -1149,6 +1171,7 @@ struct BarContextFactory {
     cross_symbol_data: Arc<HashMap<String, Vec<CrossSymbolBar>>>,
     config: Arc<ScriptConfig>,
     options_by_date: Option<Arc<DatePartitionedOptions>>,
+    custom_series: Arc<Mutex<CustomSeriesStore>>,
 }
 
 impl BarContextFactory {
@@ -1178,6 +1201,7 @@ impl BarContextFactory {
             options_by_date: self.options_by_date.clone(),
             config: Arc::clone(&self.config),
             pnl_history: Arc::clone(pnl_history),
+            custom_series: Arc::clone(&self.custom_series),
         }
     }
 }
@@ -2065,6 +2089,8 @@ pub struct ScriptBacktestResult {
     /// (e.g., "sma:20", "rsi:14"). Each value is aligned to the bar index.
     /// The FE can plot these on the chart to show what the script used.
     pub indicator_data: HashMap<String, Vec<f64>>,
+    /// Script-emitted custom series via `ctx.plot()` / `ctx.plot_with()`.
+    pub custom_series: CustomSeriesStore,
 }
 
 /// A single indicator series for JSON serialization in the response.

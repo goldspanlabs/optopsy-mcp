@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::engine::types::BacktestResult;
 use crate::scripting::stdlib::ScriptMeta;
+use crate::scripting::types::CustomSeriesStore;
 
 /// Base directory for strategy scripts (relative to project root).
 const STRATEGIES_DIR: &str = "scripts/strategies";
@@ -89,23 +90,46 @@ pub struct IndicatorData {
     pub thresholds: Vec<f64>,
 }
 
-/// Convert raw indicator store data into compact `IndicatorData` format.
+/// Convert raw indicator store data and custom series into compact `IndicatorData` format.
 #[allow(clippy::implicit_hasher)]
 pub fn format_indicator_data(
     raw: &std::collections::HashMap<String, Vec<f64>>,
+    custom: &CustomSeriesStore,
 ) -> Vec<IndicatorData> {
-    raw.iter()
+    let mut result: Vec<IndicatorData> = raw
+        .iter()
         .map(|(decl, values)| IndicatorData {
             key: decl.clone(),
             name: indicator_display_name(decl),
             display_type: indicator_display_type(decl),
             values: values
                 .iter()
-                .map(|&v| if v.is_nan() { None } else { Some(v) })
+                .map(|&v| if v.is_finite() { Some(v) } else { None })
                 .collect(),
             thresholds: indicator_thresholds(decl),
         })
-        .collect()
+        .collect();
+
+    // Append script-emitted custom series
+    for (name, values) in &custom.series {
+        let display = custom
+            .display_types
+            .get(name)
+            .map_or(DisplayType::Overlay, |d| match d.as_str() {
+                "subchart" => DisplayType::Subchart,
+                _ => DisplayType::Overlay,
+            });
+
+        result.push(IndicatorData {
+            key: format!("custom:{name}"),
+            name: name.clone(),
+            display_type: display,
+            values: values.clone(),
+            thresholds: vec![],
+        });
+    }
+
+    result
 }
 
 /// Human-readable display name from declaration (e.g., "sma:20" → "SMA")
