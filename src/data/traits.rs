@@ -31,8 +31,8 @@ pub trait BacktestStore: Send + Sync {
         result_json: &str,
         execution_time_ms: i64,
         hypothesis: Option<&str>,
-        tags: Option<&Vec<String>>,
-        regime: Option<&Vec<String>>,
+        tags: Option<&[String]>,
+        regime: Option<&[String]>,
     ) -> Result<(String, String)>;
 
     /// Retrieve a full backtest detail by id.

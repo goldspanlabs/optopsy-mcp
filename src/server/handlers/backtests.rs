@@ -141,11 +141,14 @@ pub async fn create_backtest(
         .script_meta
         .as_ref()
         .and_then(|m| m.hypothesis.as_deref());
-    let tags = response.script_meta.as_ref().and_then(|m| m.tags.as_ref());
+    let tags = response
+        .script_meta
+        .as_ref()
+        .and_then(|m| m.tags.as_deref());
     let regime = response
         .script_meta
         .as_ref()
-        .and_then(|m| m.regime.as_ref());
+        .and_then(|m| m.regime.as_deref());
 
     let (id, created_at) = state
         .backtest_store
@@ -391,11 +394,14 @@ pub async fn create_backtest_stream(
                     .script_meta
                     .as_ref()
                     .and_then(|m| m.hypothesis.as_deref());
-                let tags = response.script_meta.as_ref().and_then(|m| m.tags.as_ref());
+                let tags = response
+                    .script_meta
+                    .as_ref()
+                    .and_then(|m| m.tags.as_deref());
                 let regime = response
                     .script_meta
                     .as_ref()
-                    .and_then(|m| m.regime.as_ref());
+                    .and_then(|m| m.regime.as_deref());
 
                 match state.backtest_store.insert(
                     &req.strategy,

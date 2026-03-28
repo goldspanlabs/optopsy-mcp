@@ -120,8 +120,8 @@ impl SqliteBacktestStore {
         result_json: &str,
         execution_time_ms: i64,
         hypothesis: Option<&str>,
-        tags: Option<&Vec<String>>,
-        regime: Option<&Vec<String>>,
+        tags: Option<&[String]>,
+        regime: Option<&[String]>,
     ) -> Result<(String, String)> {
         let id = uuid::Uuid::new_v4().to_string();
         let created_at = chrono::Utc::now().to_rfc3339();
@@ -423,8 +423,8 @@ impl super::traits::BacktestStore for SqliteBacktestStore {
         result_json: &str,
         execution_time_ms: i64,
         hypothesis: Option<&str>,
-        tags: Option<&Vec<String>>,
-        regime: Option<&Vec<String>>,
+        tags: Option<&[String]>,
+        regime: Option<&[String]>,
     ) -> Result<(String, String)> {
         self.insert(
             strategy_key,
@@ -770,8 +770,8 @@ mod tests {
                 "{}",
                 100,
                 Some("IBS reverts in uptrends"),
-                Some(&vec!["mean_reversion".to_string(), "options".to_string()]),
-                Some(&vec!["uptrend".to_string()]),
+                Some(&["mean_reversion".to_string(), "options".to_string()]),
+                Some(&["uptrend".to_string()]),
             )
             .unwrap();
 
@@ -811,7 +811,7 @@ mod tests {
                 "{}",
                 100,
                 None,
-                Some(&vec!["mean_reversion".to_string()]),
+                Some(&["mean_reversion".to_string()]),
                 None,
             )
             .unwrap();
@@ -826,7 +826,7 @@ mod tests {
                 "{}",
                 100,
                 None,
-                Some(&vec!["momentum".to_string()]),
+                Some(&["momentum".to_string()]),
                 None,
             )
             .unwrap();
@@ -859,7 +859,7 @@ mod tests {
                 100,
                 None,
                 None,
-                Some(&vec!["uptrend".to_string()]),
+                Some(&["uptrend".to_string()]),
             )
             .unwrap();
         store
@@ -874,7 +874,7 @@ mod tests {
                 100,
                 None,
                 None,
-                Some(&vec!["high_vol".to_string()]),
+                Some(&["high_vol".to_string()]),
             )
             .unwrap();
 

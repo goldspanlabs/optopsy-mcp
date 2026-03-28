@@ -117,7 +117,7 @@ impl SqliteStrategyStore {
             "SELECT id, name, description, category, hypothesis, tags, regime, source, created_at, updated_at
              FROM strategies WHERE id = ?1",
             rusqlite::params![id],
-            |row| Ok(row_to_strategy(row)),
+            row_to_strategy,
         )
         .optional()
         .context("Failed to query strategy")
@@ -146,7 +146,7 @@ impl SqliteStrategyStore {
             .context("Failed to prepare list query")?;
 
         let rows = stmt
-            .query_map([], |row| Ok(row_to_strategy(row)))
+            .query_map([], row_to_strategy)
             .context("Failed to query strategies")?
             .collect::<Result<Vec<_>, _>>()
             .context("Failed to collect strategies")?;
@@ -219,22 +219,22 @@ impl SqliteStrategyStore {
 }
 
 /// Map a rusqlite row to a `StrategyRow`.
-fn row_to_strategy(row: &rusqlite::Row) -> StrategyRow {
-    let tags_str: Option<String> = row.get(5).unwrap_or(None);
-    let regime_str: Option<String> = row.get(6).unwrap_or(None);
+fn row_to_strategy(row: &rusqlite::Row) -> rusqlite::Result<StrategyRow> {
+    let tags_str: Option<String> = row.get(5)?;
+    let regime_str: Option<String> = row.get(6)?;
 
-    StrategyRow {
-        id: row.get(0).unwrap_or_default(),
-        name: row.get(1).unwrap_or_default(),
-        description: row.get(2).unwrap_or(None),
-        category: row.get(3).unwrap_or(None),
-        hypothesis: row.get(4).unwrap_or(None),
+    Ok(StrategyRow {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        description: row.get(2)?,
+        category: row.get(3)?,
+        hypothesis: row.get(4)?,
         tags: tags_str.and_then(|s| serde_json::from_str(&s).ok()),
         regime: regime_str.and_then(|s| serde_json::from_str(&s).ok()),
-        source: row.get(7).unwrap_or_default(),
-        created_at: row.get(8).unwrap_or_default(),
-        updated_at: row.get(9).unwrap_or_default(),
-    }
+        source: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
+    })
 }
 
 impl super::traits::StrategyStore for SqliteStrategyStore {

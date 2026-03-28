@@ -76,14 +76,12 @@ async fn main() -> Result<()> {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        let db = Database::open(&db_path).expect("Failed to open database");
+        let db = Database::open(&db_path)?;
 
         let backtest_store: Arc<dyn optopsy_mcp::data::traits::BacktestStore> =
             Arc::new(db.backtests());
 
-        let seeded = db
-            .seed_strategies_if_empty(std::path::Path::new("scripts/strategies"))
-            .expect("Failed to seed strategies");
+        let seeded = db.seed_strategies_if_empty(std::path::Path::new("scripts/strategies"))?;
         if seeded > 0 {
             tracing::info!("Seeded {seeded} strategies from scripts/strategies/");
         }
@@ -192,9 +190,8 @@ async fn main() -> Result<()> {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        let db = Database::open(&db_path).expect("Failed to open database");
-        db.seed_strategies_if_empty(std::path::Path::new("scripts/strategies"))
-            .ok();
+        let db = Database::open(&db_path)?;
+        db.seed_strategies_if_empty(std::path::Path::new("scripts/strategies"))?;
         let strategy_store: Arc<dyn StrategyStore> = Arc::new(db.strategies());
 
         let server = server::OptopsyServer::with_strategy_store(cache, strategy_store);
