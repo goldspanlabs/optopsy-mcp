@@ -8,6 +8,7 @@ use garde::Validate;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::data::strategy_store::StrategyStore;
 use crate::engine::types::BacktestResult;
 use crate::scripting::stdlib::ScriptMeta;
 use crate::scripting::types::CustomSeriesStore;
@@ -206,10 +207,14 @@ fn indicator_thresholds(decl: &str) -> Vec<f64> {
 // Script resolution
 // ---------------------------------------------------------------------------
 
-/// Resolve the script source code.
-pub fn resolve_script_source(params: &RunScriptParams) -> Result<String> {
+/// Resolve the script source code, checking the strategy store first if available,
+/// then falling back to the filesystem.
+pub fn resolve_script_source(
+    params: &RunScriptParams,
+    strategy_store: Option<&StrategyStore>,
+) -> Result<String> {
     match (&params.strategy, &params.script) {
-        (Some(name), _) => load_strategy_file(name),
+        (Some(name), _) => load_strategy(name, strategy_store),
         (None, Some(script)) => Ok(script.clone()),
         (None, None) => {
             anyhow::bail!(
@@ -219,12 +224,25 @@ pub fn resolve_script_source(params: &RunScriptParams) -> Result<String> {
     }
 }
 
-/// Load a strategy script from `scripts/strategies/{name}.rhai`.
-fn load_strategy_file(name: &str) -> Result<String> {
+/// Load a strategy by name: try the DB store first, then fall back to filesystem.
+fn load_strategy(name: &str, strategy_store: Option<&StrategyStore>) -> Result<String> {
     if name.contains('/') || name.contains('\\') || name.contains("..") || name.is_empty() {
         anyhow::bail!("Invalid strategy name: '{name}'. Must be a simple filename.");
     }
 
+    // Try the database first
+    if let Some(store) = strategy_store {
+        if let Some(source) = store.get_source(name)? {
+            return Ok(source);
+        }
+    }
+
+    // Fall back to filesystem
+    load_strategy_file(name)
+}
+
+/// Load a strategy script from `scripts/strategies/{name}.rhai`.
+fn load_strategy_file(name: &str) -> Result<String> {
     let path = PathBuf::from(STRATEGIES_DIR).join(format!("{name}.rhai"));
     std::fs::read_to_string(&path)
         .map_err(|e| anyhow::anyhow!("Strategy '{name}' not found at '{}': {e}", path.display()))
