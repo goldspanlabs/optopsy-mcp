@@ -54,6 +54,9 @@ pub struct BacktestDetail {
     pub id: String,
     pub created_at: String,
     pub strategy_key: String,
+    /// The params map used when the backtest was run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Value>,
     #[serde(flatten)]
     pub response: crate::tools::run_script::RunScriptResponse,
 }
@@ -282,7 +285,7 @@ impl BacktestStore {
         let conn = self.conn.lock().expect("mutex poisoned");
         let row = conn
             .query_row(
-                "SELECT id, strategy_key, result_json, created_at FROM backtests WHERE id = ?1",
+                "SELECT id, strategy_key, result_json, created_at, params FROM backtests WHERE id = ?1",
                 rusqlite::params![id],
                 |row| {
                     Ok((
@@ -290,23 +293,27 @@ impl BacktestStore {
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
                         row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
                     ))
                 },
             )
             .optional()
             .context("Failed to query backtest detail")?;
 
-        let Some((id, strategy_key, result_json_str, created_at)) = row else {
+        let Some((id, strategy_key, result_json_str, created_at, params_str)) = row else {
             return Ok(None);
         };
 
         let response: crate::tools::run_script::RunScriptResponse =
             serde_json::from_str(&result_json_str).context("Failed to deserialize result_json")?;
+        let params: Option<serde_json::Value> =
+            serde_json::from_str(&params_str).ok();
 
         Ok(Some(BacktestDetail {
             id,
             created_at,
             strategy_key,
+            params,
             response,
         }))
     }

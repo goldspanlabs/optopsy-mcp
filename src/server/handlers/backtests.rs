@@ -165,7 +165,8 @@ pub async fn create_backtest(
         Json(BacktestDetail {
             id,
             created_at,
-            strategy_key: req.strategy,
+            strategy_key: req.strategy.clone(),
+            params: Some(serde_json::to_value(&req.params).unwrap_or_default()),
             response,
         }),
     ))
