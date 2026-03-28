@@ -13,9 +13,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use crate::data::backtest_store::{
-    BacktestDetail, BacktestStore, BacktestSummary, MetricsRow, TradeRow,
-};
+use crate::data::backtest_store::{BacktestDetail, BacktestSummary, MetricsRow, TradeRow};
+use crate::data::traits::BacktestStore;
 use crate::server::OptopsyServer;
 use crate::tools::run_script::RunScriptParams;
 
@@ -32,7 +31,7 @@ fn sanitize(v: f64) -> f64 {
 #[derive(Clone)]
 pub struct AppState {
     pub server: OptopsyServer,
-    pub backtest_store: BacktestStore,
+    pub backtest_store: Arc<dyn BacktestStore>,
 }
 
 /// Request body for `POST /backtests`.
@@ -142,11 +141,14 @@ pub async fn create_backtest(
         .script_meta
         .as_ref()
         .and_then(|m| m.hypothesis.as_deref());
-    let tags = response.script_meta.as_ref().and_then(|m| m.tags.as_ref());
+    let tags = response
+        .script_meta
+        .as_ref()
+        .and_then(|m| m.tags.as_deref());
     let regime = response
         .script_meta
         .as_ref()
-        .and_then(|m| m.regime.as_ref());
+        .and_then(|m| m.regime.as_deref());
 
     let (id, created_at) = state
         .backtest_store
@@ -392,11 +394,14 @@ pub async fn create_backtest_stream(
                     .script_meta
                     .as_ref()
                     .and_then(|m| m.hypothesis.as_deref());
-                let tags = response.script_meta.as_ref().and_then(|m| m.tags.as_ref());
+                let tags = response
+                    .script_meta
+                    .as_ref()
+                    .and_then(|m| m.tags.as_deref());
                 let regime = response
                     .script_meta
                     .as_ref()
-                    .and_then(|m| m.regime.as_ref());
+                    .and_then(|m| m.regime.as_deref());
 
                 match state.backtest_store.insert(
                     &req.strategy,

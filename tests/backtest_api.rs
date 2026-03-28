@@ -2,7 +2,8 @@
 //!
 //! Exercises the full lifecycle: insert, list, `get_detail`, `get_trades`, and delete.
 
-use optopsy_mcp::data::backtest_store::{BacktestStore, MetricsRow, TradeRow};
+use optopsy_mcp::data::backtest_store::{MetricsRow, TradeRow};
+use optopsy_mcp::data::database::Database;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -79,7 +80,9 @@ fn sample_trades() -> Vec<TradeRow> {
 
 #[test]
 fn full_lifecycle_insert_list_get_delete() {
-    let store = BacktestStore::open_in_memory().expect("open_in_memory");
+    let store = Database::open_in_memory()
+        .expect("open_in_memory")
+        .backtests();
 
     let metrics = sample_metrics();
     let trades3 = sample_trades(); // 3 trades
@@ -206,7 +209,9 @@ fn full_lifecycle_insert_list_get_delete() {
 
 #[test]
 fn list_filters_combine_correctly() {
-    let store = BacktestStore::open_in_memory().expect("open_in_memory");
+    let store = Database::open_in_memory()
+        .expect("open_in_memory")
+        .backtests();
 
     let metrics = sample_metrics();
     let empty: Vec<TradeRow> = vec![];

@@ -6,13 +6,14 @@
 // float_cmp: only in tests where assert_eq! on f64 is intentional.
 #![cfg_attr(test, allow(clippy::float_cmp))]
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rmcp::ServiceExt;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{self, EnvFilter};
 
-use optopsy_mcp::data::backtest_store::BacktestStore;
+use optopsy_mcp::data::database::Database;
+use optopsy_mcp::data::traits::{self, StrategyStore};
 use optopsy_mcp::server::handlers::backtests::{self, AppState};
 use optopsy_mcp::{data, server};
 
@@ -50,6 +51,7 @@ async fn prices_handler(
 }
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
 
@@ -70,20 +72,42 @@ async fn main() -> Result<()> {
 
         let data_root = std::env::var("DATA_ROOT")
             .unwrap_or_else(|_| shellexpand::tilde("~/.optopsy/cache").to_string());
-        let db_path = std::path::PathBuf::from(&data_root).join("backtests.db");
+        let db_path = std::path::PathBuf::from(&data_root).join("optopsy.db");
         if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent).ok();
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create data directory: {}", parent.display())
+            })?;
         }
-        let backtest_store =
-            BacktestStore::open(&db_path).expect("Failed to open backtest database");
+        let db = Database::open(&db_path)?;
+
+        let backtest_store: Arc<dyn optopsy_mcp::data::traits::BacktestStore> =
+            Arc::new(db.backtests());
+
+        let strategy_store: Arc<dyn StrategyStore> = Arc::new(db.strategies());
+        let seeded = traits::seed_strategies_if_empty(
+            strategy_store.as_ref(),
+            std::path::Path::new("scripts/strategies"),
+        )?;
+        if seeded > 0 {
+            tracing::info!("Seeded {seeded} strategies from scripts/strategies/");
+        }
 
         let app_state = AppState {
-            server: server::OptopsyServer::new(cache.clone()),
+            server: server::OptopsyServer::with_strategy_store(
+                cache.clone(),
+                strategy_store.clone(),
+            ),
             backtest_store,
         };
 
+        let strategy_store_for_mcp = strategy_store.clone();
         let service = StreamableHttpService::new(
-            move || Ok(server::OptopsyServer::new(cache.clone())),
+            move || {
+                Ok(server::OptopsyServer::with_strategy_store(
+                    cache.clone(),
+                    strategy_store_for_mcp.clone(),
+                ))
+            },
             LocalSessionManager::default().into(),
             StreamableHttpServerConfig::default(),
         );
@@ -115,20 +139,29 @@ async fn main() -> Result<()> {
             )
             .with_state(app_state);
 
+        let strategy_store_for_routes = strategy_store.clone();
         let app = axum::Router::new()
             .route(
                 "/strategies",
-                axum::routing::get(|| async {
-                    let scripts =
-                        tokio::task::spawn_blocking(optopsy_mcp::scripting::stdlib::list_scripts)
-                            .await
-                            .unwrap_or_default();
-                    axum::Json(scripts)
+                axum::routing::get({
+                    let store = strategy_store_for_routes.clone();
+                    move || async move {
+                        let store = store.clone();
+                        let scripts = tokio::task::spawn_blocking(move || {
+                            store.list_scripts().unwrap_or_default()
+                        })
+                        .await
+                        .unwrap_or_default();
+                        axum::Json(scripts)
+                    }
                 }),
             )
             .route(
                 "/profiles",
-                axum::routing::get(optopsy_mcp::server::handlers::profiles::list_profiles),
+                axum::routing::get(optopsy_mcp::server::handlers::profiles::list_profiles)
+                    .with_state(
+                        Some(strategy_store_for_routes.clone()) as Option<Arc<dyn StrategyStore>>
+                    ),
             )
             .route(
                 "/prices/{symbol}",
@@ -155,7 +188,23 @@ async fn main() -> Result<()> {
         // stdio mode — used for local development with Claude Desktop
         tracing::info!("Starting optopsy-mcp MCP server (stdio)");
 
-        let server = server::OptopsyServer::new(cache);
+        // Set up stores for stdio mode — single database file
+        let data_root = std::env::var("DATA_ROOT")
+            .unwrap_or_else(|_| shellexpand::tilde("~/.optopsy/cache").to_string());
+        let db_path = std::path::PathBuf::from(&data_root).join("optopsy.db");
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create data directory: {}", parent.display())
+            })?;
+        }
+        let db = Database::open(&db_path)?;
+        let strategy_store: Arc<dyn StrategyStore> = Arc::new(db.strategies());
+        traits::seed_strategies_if_empty(
+            strategy_store.as_ref(),
+            std::path::Path::new("scripts/strategies"),
+        )?;
+
+        let server = server::OptopsyServer::with_strategy_store(cache, strategy_store);
         let service = server.serve(rmcp::transport::stdio()).await?;
         service.waiting().await?;
     }

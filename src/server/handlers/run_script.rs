@@ -22,7 +22,8 @@ pub async fn execute_with_progress(
 ) -> Result<RunScriptResponse> {
     let start = std::time::Instant::now();
 
-    let source = crate::tools::run_script::resolve_script_source(&params)?;
+    let source =
+        crate::tools::run_script::resolve_script_source(&params, server.strategy_store.as_deref())?;
 
     // Parse script metadata from //! header
     let script_meta = params

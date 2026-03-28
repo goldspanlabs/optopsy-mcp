@@ -8,6 +8,7 @@ use garde::Validate;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::data::traits::StrategyStore;
 use crate::engine::types::BacktestResult;
 use crate::scripting::stdlib::ScriptMeta;
 use crate::scripting::types::CustomSeriesStore;
@@ -206,10 +207,13 @@ fn indicator_thresholds(decl: &str) -> Vec<f64> {
 // Script resolution
 // ---------------------------------------------------------------------------
 
-/// Resolve the script source code.
-pub fn resolve_script_source(params: &RunScriptParams) -> Result<String> {
+/// Resolve the script source code from the strategy store or inline source.
+pub fn resolve_script_source(
+    params: &RunScriptParams,
+    strategy_store: Option<&dyn StrategyStore>,
+) -> Result<String> {
     match (&params.strategy, &params.script) {
-        (Some(name), _) => load_strategy_file(name),
+        (Some(name), _) => load_strategy(name, strategy_store),
         (None, Some(script)) => Ok(script.clone()),
         (None, None) => {
             anyhow::bail!(
@@ -219,12 +223,25 @@ pub fn resolve_script_source(params: &RunScriptParams) -> Result<String> {
     }
 }
 
-/// Load a strategy script from `scripts/strategies/{name}.rhai`.
-fn load_strategy_file(name: &str) -> Result<String> {
-    if name.contains('/') || name.contains('\\') || name.contains("..") || name.is_empty() {
-        anyhow::bail!("Invalid strategy name: '{name}'. Must be a simple filename.");
+/// Load a strategy by name from the database, falling back to filesystem
+/// only when no store is available (e.g. tests without a DB).
+fn load_strategy(name: &str, strategy_store: Option<&dyn StrategyStore>) -> Result<String> {
+    crate::data::cache::validate_path_segment(name).map_err(|_| {
+        anyhow::anyhow!("Invalid strategy name: '{name}'. Must be a simple filename.")
+    })?;
+
+    if let Some(store) = strategy_store {
+        return store
+            .get_source(name)?
+            .ok_or_else(|| anyhow::anyhow!("Strategy '{name}' not found"));
     }
 
+    // Filesystem fallback for contexts without a store (e.g. tests)
+    load_strategy_file(name)
+}
+
+/// Load a strategy script from `scripts/strategies/{name}.rhai`.
+fn load_strategy_file(name: &str) -> Result<String> {
     let path = PathBuf::from(STRATEGIES_DIR).join(format!("{name}.rhai"));
     std::fs::read_to_string(&path)
         .map_err(|e| anyhow::anyhow!("Strategy '{name}' not found at '{}': {e}", path.display()))
