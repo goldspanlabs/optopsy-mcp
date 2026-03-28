@@ -5,6 +5,7 @@
 // Replicates the TradingView "SPY 200SMA +4% Entry -3% Exit" strategy.
 // Buys 100% of equity when price breaks 4% above the 200-day SMA.
 // Sells when price drops 3% below the 200-day SMA.
+// Plots the entry (+4%) and exit (-3%) threshold bands for charting.
 
 let entry_threshold = 0.04;  // +4% above SMA
 let exit_threshold  = 0.03;  // -3% below SMA
@@ -23,11 +24,16 @@ fn config() {
 }
 
 fn on_bar(ctx) {
-    if !ctx.indicators_ready(["sma:200"]) { return []; }
-    if ctx.has_positions() { return []; }
-
     let sma = ctx.sma(200);
+    if sma == () { return []; }
+
+    // Plot the threshold bands (overlay on price chart)
     let upper = sma * (1.0 + entry_threshold);
+    let lower = sma * (1.0 - exit_threshold);
+    ctx.plot("Entry Threshold (+4%)", upper);
+    ctx.plot("Exit Threshold (-3%)", lower);
+
+    if ctx.has_positions() { return []; }
 
     if ctx.close > upper {
         let qty = ctx.size_by_equity(1.0);

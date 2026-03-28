@@ -654,6 +654,13 @@ mod tests {
             options_by_date: None,
             config,
             pnl_history: Arc::new(vec![]),
+            custom_series: Arc::new(std::sync::Mutex::new(
+                crate::scripting::types::CustomSeriesStore {
+                    series: HashMap::new(),
+                    display_types: HashMap::new(),
+                    num_bars: bars.len(),
+                },
+            )),
         }
     }
 
