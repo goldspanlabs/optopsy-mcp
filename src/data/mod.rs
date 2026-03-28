@@ -7,6 +7,7 @@ pub mod backtest_store;
 pub mod cache;
 pub mod parquet;
 pub mod strategy_store;
+pub mod traits;
 
 use anyhow::Result;
 use chrono::NaiveDate;

@@ -21,7 +21,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::data::cache::{validate_path_segment, CachedStore};
-use crate::data::strategy_store::StrategyStore;
+use crate::data::traits::StrategyStore;
 use crate::tools;
 use crate::tools::response_types::{
     AggregatePricesResponse, BenchmarkAnalysisResponse, CointegrationResponse, CorrelateResponse,
@@ -46,8 +46,8 @@ pub struct OptopsyServer {
     pub data: Arc<RwLock<LoadedData>>,
     /// Shared data layer for local Parquet cache.
     pub cache: Arc<CachedStore>,
-    /// `SQLite` store for strategy scripts.
-    pub strategy_store: Option<Arc<StrategyStore>>,
+    /// Strategy script storage backend.
+    pub strategy_store: Option<Arc<dyn StrategyStore>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -65,7 +65,7 @@ impl OptopsyServer {
     /// Create a new server instance with a strategy store.
     pub fn with_strategy_store(
         cache: Arc<CachedStore>,
-        strategy_store: Arc<StrategyStore>,
+        strategy_store: Arc<dyn StrategyStore>,
     ) -> Self {
         Self {
             data: Arc::new(RwLock::new(HashMap::new())),

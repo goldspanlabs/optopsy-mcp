@@ -13,9 +13,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use crate::data::backtest_store::{
-    BacktestDetail, BacktestStore, BacktestSummary, MetricsRow, TradeRow,
-};
+use crate::data::backtest_store::{BacktestDetail, BacktestSummary, MetricsRow, TradeRow};
+use crate::data::traits::BacktestStore;
 use crate::server::OptopsyServer;
 use crate::tools::run_script::RunScriptParams;
 
@@ -32,7 +31,7 @@ fn sanitize(v: f64) -> f64 {
 #[derive(Clone)]
 pub struct AppState {
     pub server: OptopsyServer,
-    pub backtest_store: BacktestStore,
+    pub backtest_store: Arc<dyn BacktestStore>,
 }
 
 /// Request body for `POST /backtests`.

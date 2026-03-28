@@ -6,7 +6,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::data::strategy_store::StrategyStore;
+use crate::data::traits::StrategyStore;
 use crate::scripting::stdlib::{list_scripts, load_profiles_registry};
 
 /// A profile entry combining registry and script-level definitions.
@@ -19,7 +19,7 @@ pub struct ProfileInfo {
 
 /// `GET /profiles` — List all available parameter profiles.
 pub async fn list_profiles(
-    State(strategy_store): State<Option<Arc<StrategyStore>>>,
+    State(strategy_store): State<Option<Arc<dyn StrategyStore>>>,
 ) -> Json<Vec<ProfileInfo>> {
     let registry = tokio::task::spawn_blocking(load_profiles_registry)
         .await

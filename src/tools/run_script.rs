@@ -8,7 +8,7 @@ use garde::Validate;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::data::strategy_store::StrategyStore;
+use crate::data::traits::StrategyStore;
 use crate::engine::types::BacktestResult;
 use crate::scripting::stdlib::ScriptMeta;
 use crate::scripting::types::CustomSeriesStore;
@@ -211,7 +211,7 @@ fn indicator_thresholds(decl: &str) -> Vec<f64> {
 /// then falling back to the filesystem.
 pub fn resolve_script_source(
     params: &RunScriptParams,
-    strategy_store: Option<&StrategyStore>,
+    strategy_store: Option<&dyn StrategyStore>,
 ) -> Result<String> {
     match (&params.strategy, &params.script) {
         (Some(name), _) => load_strategy(name, strategy_store),
@@ -225,7 +225,7 @@ pub fn resolve_script_source(
 }
 
 /// Load a strategy by name: try the DB store first, then fall back to filesystem.
-fn load_strategy(name: &str, strategy_store: Option<&StrategyStore>) -> Result<String> {
+fn load_strategy(name: &str, strategy_store: Option<&dyn StrategyStore>) -> Result<String> {
     if name.contains('/') || name.contains('\\') || name.contains("..") || name.is_empty() {
         anyhow::bail!("Invalid strategy name: '{name}'. Must be a simple filename.");
     }

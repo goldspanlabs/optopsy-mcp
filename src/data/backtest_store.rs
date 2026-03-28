@@ -1,7 +1,8 @@
-//! SQLite-backed storage for backtest results.
+//! `SQLite`-backed storage for backtest results.
 //!
-//! Provides [`BacktestStore`] for persisting and querying backtest runs,
-//! their performance metrics, and individual trade records.
+//! Provides [`SqliteBacktestStore`] which implements the [`BacktestStore`](super::traits::BacktestStore)
+//! trait for persisting and querying backtest runs, their performance metrics,
+//! and individual trade records.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -83,16 +84,16 @@ pub struct BacktestSummary {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// BacktestStore
+// SqliteBacktestStore
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// Thread-safe `SQLite` store for backtest results.
 #[derive(Clone)]
-pub struct BacktestStore {
+pub struct SqliteBacktestStore {
     conn: Arc<Mutex<Connection>>,
 }
 
-impl BacktestStore {
+impl SqliteBacktestStore {
     /// Open (or create) a file-based `SQLite` database and initialise the schema.
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)
@@ -489,6 +490,63 @@ impl BacktestStore {
     }
 }
 
+impl super::traits::BacktestStore for SqliteBacktestStore {
+    fn insert(
+        &self,
+        strategy_key: &str,
+        symbol: &str,
+        capital: f64,
+        params: &Value,
+        metrics: &MetricsRow,
+        trades: &[TradeRow],
+        result_json: &str,
+        execution_time_ms: i64,
+        hypothesis: Option<&str>,
+        tags: Option<&Vec<String>>,
+        regime: Option<&Vec<String>>,
+    ) -> Result<(String, String)> {
+        self.insert(
+            strategy_key,
+            symbol,
+            capital,
+            params,
+            metrics,
+            trades,
+            result_json,
+            execution_time_ms,
+            hypothesis,
+            tags,
+            regime,
+        )
+    }
+
+    fn get_detail(&self, id: &str) -> Result<Option<BacktestDetail>> {
+        self.get_detail(id)
+    }
+
+    fn set_analysis(&self, id: &str, analysis: &str) -> Result<bool> {
+        self.set_analysis(id, analysis)
+    }
+
+    fn list(
+        &self,
+        strategy: Option<&str>,
+        symbol: Option<&str>,
+        tag: Option<&str>,
+        regime: Option<&str>,
+    ) -> Result<Vec<BacktestSummary>> {
+        self.list(strategy, symbol, tag, regime)
+    }
+
+    fn delete(&self, id: &str) -> Result<bool> {
+        self.delete(id)
+    }
+
+    fn get_trades(&self, backtest_id: &str) -> Result<Vec<TradeRow>> {
+        self.get_trades(backtest_id)
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Tests
 // ──────────────────────────────────────────────────────────────────────────────
@@ -549,7 +607,7 @@ mod tests {
 
     #[test]
     fn test_init_creates_tables() {
-        let store = BacktestStore::open_in_memory().expect("open_in_memory");
+        let store = SqliteBacktestStore::open_in_memory().expect("open_in_memory");
         let conn = store.conn.lock().expect("mutex");
 
         let tables: Vec<String> = {
@@ -569,7 +627,7 @@ mod tests {
 
     #[test]
     fn test_insert_and_get_detail() {
-        let store = BacktestStore::open_in_memory().expect("open_in_memory");
+        let store = SqliteBacktestStore::open_in_memory().expect("open_in_memory");
         let metrics = sample_metrics();
         let trades = sample_trades();
         let params = serde_json::json!({"dte": 45, "delta": 0.3});
@@ -604,7 +662,7 @@ mod tests {
 
     #[test]
     fn test_list_backtests() {
-        let store = BacktestStore::open_in_memory().expect("open_in_memory");
+        let store = SqliteBacktestStore::open_in_memory().expect("open_in_memory");
         let metrics = sample_metrics();
         let empty: Vec<TradeRow> = vec![];
         let p = serde_json::json!({});
@@ -697,7 +755,7 @@ mod tests {
 
     #[test]
     fn test_delete_backtest() {
-        let store = BacktestStore::open_in_memory().expect("open_in_memory");
+        let store = SqliteBacktestStore::open_in_memory().expect("open_in_memory");
         let metrics = sample_metrics();
         let empty: Vec<TradeRow> = vec![];
         let p = serde_json::json!({});
@@ -730,7 +788,7 @@ mod tests {
 
     #[test]
     fn test_get_trades_by_backtest() {
-        let store = BacktestStore::open_in_memory().expect("open_in_memory");
+        let store = SqliteBacktestStore::open_in_memory().expect("open_in_memory");
         let metrics = sample_metrics();
         let trades = sample_trades();
         let p = serde_json::json!({});
@@ -763,7 +821,7 @@ mod tests {
 
     #[test]
     fn test_insert_with_provenance() {
-        let store = BacktestStore::open_in_memory().expect("open_in_memory");
+        let store = SqliteBacktestStore::open_in_memory().expect("open_in_memory");
         let metrics = sample_metrics();
         let empty: Vec<TradeRow> = vec![];
         let p = serde_json::json!({});
@@ -802,7 +860,7 @@ mod tests {
 
     #[test]
     fn test_list_filter_by_tag() {
-        let store = BacktestStore::open_in_memory().expect("open_in_memory");
+        let store = SqliteBacktestStore::open_in_memory().expect("open_in_memory");
         let metrics = sample_metrics();
         let empty: Vec<TradeRow> = vec![];
         let p = serde_json::json!({});
@@ -847,7 +905,7 @@ mod tests {
 
     #[test]
     fn test_list_filter_by_regime() {
-        let store = BacktestStore::open_in_memory().expect("open_in_memory");
+        let store = SqliteBacktestStore::open_in_memory().expect("open_in_memory");
         let metrics = sample_metrics();
         let empty: Vec<TradeRow> = vec![];
         let p = serde_json::json!({});

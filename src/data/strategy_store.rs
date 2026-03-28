@@ -1,6 +1,7 @@
 //! SQLite-backed storage for strategy scripts.
 //!
-//! Provides [`StrategyStore`] for persisting and querying Rhai strategy scripts,
+//! Provides [`SqliteStrategyStore`] which implements the [`StrategyStore`](super::traits::StrategyStore)
+//! trait for persisting and querying Rhai strategy scripts,
 //! their metadata, and source code. Supports seeding built-in strategies from
 //! the `scripts/strategies/` directory on startup.
 
@@ -96,11 +97,11 @@ impl StrategyRow {
 
 /// Thread-safe `SQLite` store for strategy scripts.
 #[derive(Clone)]
-pub struct StrategyStore {
+pub struct SqliteStrategyStore {
     conn: Arc<Mutex<Connection>>,
 }
 
-impl StrategyStore {
+impl SqliteStrategyStore {
     /// Open (or create) a file-based `SQLite` database and initialise the schema.
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)
@@ -358,6 +359,36 @@ fn row_to_strategy(row: &rusqlite::Row) -> StrategyRow {
     }
 }
 
+impl super::traits::StrategyStore for SqliteStrategyStore {
+    fn get(&self, id: &str) -> Result<Option<StrategyRow>> {
+        self.get(id)
+    }
+
+    fn get_source(&self, id: &str) -> Result<Option<String>> {
+        self.get_source(id)
+    }
+
+    fn list(&self) -> Result<Vec<StrategyRow>> {
+        self.list()
+    }
+
+    fn list_scripts(&self) -> Result<Vec<ScriptMeta>> {
+        self.list_scripts()
+    }
+
+    fn upsert(&self, row: &StrategyRow) -> Result<()> {
+        self.upsert(row)
+    }
+
+    fn delete(&self, id: &str) -> Result<bool> {
+        self.delete(id)
+    }
+
+    fn seed_builtins(&self, scripts_dir: &Path) -> Result<usize> {
+        self.seed_builtins(scripts_dir)
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Tests
 // ──────────────────────────────────────────────────────────────────────────────
@@ -384,7 +415,7 @@ mod tests {
 
     #[test]
     fn test_init_creates_table() {
-        let store = StrategyStore::open_in_memory().expect("open_in_memory");
+        let store = SqliteStrategyStore::open_in_memory().expect("open_in_memory");
         let conn = store.conn.lock().expect("mutex");
         let tables: Vec<String> = {
             let mut stmt = conn
@@ -400,7 +431,7 @@ mod tests {
 
     #[test]
     fn test_upsert_and_get() {
-        let store = StrategyStore::open_in_memory().expect("open_in_memory");
+        let store = SqliteStrategyStore::open_in_memory().expect("open_in_memory");
         let row = sample_row("test_strat", "Test Strategy");
         store.upsert(&row).unwrap();
 
@@ -414,7 +445,7 @@ mod tests {
 
     #[test]
     fn test_get_source() {
-        let store = StrategyStore::open_in_memory().expect("open_in_memory");
+        let store = SqliteStrategyStore::open_in_memory().expect("open_in_memory");
         let row = sample_row("src_test", "Source Test");
         store.upsert(&row).unwrap();
 
@@ -425,7 +456,7 @@ mod tests {
 
     #[test]
     fn test_list() {
-        let store = StrategyStore::open_in_memory().expect("open_in_memory");
+        let store = SqliteStrategyStore::open_in_memory().expect("open_in_memory");
         store.upsert(&sample_row("b_strat", "B Strategy")).unwrap();
         store.upsert(&sample_row("a_strat", "A Strategy")).unwrap();
 
@@ -437,7 +468,7 @@ mod tests {
 
     #[test]
     fn test_delete() {
-        let store = StrategyStore::open_in_memory().expect("open_in_memory");
+        let store = SqliteStrategyStore::open_in_memory().expect("open_in_memory");
         store.upsert(&sample_row("del_test", "Delete Me")).unwrap();
 
         assert!(store.delete("del_test").unwrap());
@@ -447,7 +478,7 @@ mod tests {
 
     #[test]
     fn test_upsert_updates_existing() {
-        let store = StrategyStore::open_in_memory().expect("open_in_memory");
+        let store = SqliteStrategyStore::open_in_memory().expect("open_in_memory");
         let mut row = sample_row("update_test", "Original");
         store.upsert(&row).unwrap();
 
@@ -465,7 +496,7 @@ mod tests {
 
     #[test]
     fn test_seed_builtins_from_dir() {
-        let store = StrategyStore::open_in_memory().expect("open_in_memory");
+        let store = SqliteStrategyStore::open_in_memory().expect("open_in_memory");
 
         // Seed from actual scripts directory if it exists
         let scripts_dir = std::path::Path::new("scripts/strategies");
@@ -481,7 +512,7 @@ mod tests {
 
     #[test]
     fn test_seed_does_not_overwrite_user_scripts() {
-        let store = StrategyStore::open_in_memory().expect("open_in_memory");
+        let store = SqliteStrategyStore::open_in_memory().expect("open_in_memory");
 
         // Create a user script with the same id as a built-in would have
         let scripts_dir = std::path::Path::new("scripts/strategies");
@@ -518,7 +549,7 @@ mod tests {
 
     #[test]
     fn test_seed_nonexistent_dir() {
-        let store = StrategyStore::open_in_memory().expect("open_in_memory");
+        let store = SqliteStrategyStore::open_in_memory().expect("open_in_memory");
         let count = store
             .seed_builtins(std::path::Path::new("/nonexistent/path"))
             .unwrap();
