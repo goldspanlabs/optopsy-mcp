@@ -816,6 +816,7 @@ pub async fn run_script_backtest_with_progress(
 
     Ok(ScriptBacktestResult {
         result: BacktestResult {
+            symbol: Some(config.symbol.clone()),
             trade_count: trade_log.len(),
             total_pnl: trade_log.iter().map(|t| t.pnl).sum(),
             metrics,
@@ -1249,6 +1250,7 @@ fn resolve_option_legs(
     _config: &ScriptConfig,
 ) -> Vec<ResolvedLeg> {
     use crate::engine::filters;
+    use polars::prelude::*;
 
     let today_df = match options_by_date {
         Some(opts) => match opts.get(today) {
@@ -1267,15 +1269,36 @@ fn resolve_option_legs(
                 expiration,
                 bid,
                 ask,
-            } => Some(ResolvedLeg {
-                side: *side,
-                option_type: *option_type,
-                strike: *strike,
-                expiration: *expiration,
-                bid: *bid,
-                ask: *ask,
-                delta: 0.0,
-            }),
+            } => {
+                // Look up delta from the options chain for this strike/expiration
+                let opt_code = match option_type {
+                    crate::engine::types::OptionType::Call => "c",
+                    crate::engine::types::OptionType::Put => "p",
+                };
+                let delta = today_df
+                    .clone()
+                    .lazy()
+                    .filter(
+                        col("option_type")
+                            .eq(lit(opt_code))
+                            .and(col("strike").eq(lit(*strike)))
+                            .and(col("expiration").cast(DataType::Date).eq(lit(*expiration))),
+                    )
+                    .select([col("delta")])
+                    .collect()
+                    .ok()
+                    .and_then(|df| df.column("delta").ok()?.f64().ok()?.get(0))
+                    .unwrap_or(0.0);
+                Some(ResolvedLeg {
+                    side: *side,
+                    option_type: *option_type,
+                    strike: *strike,
+                    expiration: *expiration,
+                    bid: *bid,
+                    ask: *ask,
+                    delta,
+                })
+            }
             LegSpec::Unresolved {
                 side,
                 option_type,
@@ -1549,6 +1572,7 @@ fn build_script_trade_record(
                 entry_price: l.entry_price,
                 exit_price: Some(l.current_price),
                 qty: l.qty,
+                entry_delta: Some(l.delta),
                 is_stock: false,
             })
             .collect(),
@@ -1564,6 +1588,7 @@ fn build_script_trade_record(
             entry_price: *entry_price,
             exit_price: None,
             qty: *qty,
+            entry_delta: None,
             is_stock: true,
         }],
     };

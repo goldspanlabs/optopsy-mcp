@@ -23,6 +23,9 @@ pub struct BacktestQualityStats {
 /// Output of a single backtest run: trades, metrics, equity curve, and quality stats.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BacktestResult {
+    /// The symbol that was backtested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
     pub trade_count: usize,
     pub total_pnl: f64,
     pub metrics: PerformanceMetrics,
@@ -101,6 +104,9 @@ pub struct LegDetail {
     /// Fill price at exit (`None` if the option expired worthless or was never closed).
     pub exit_price: Option<f64>,
     pub qty: i32,
+    /// Delta at entry for option legs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_delta: Option<f64>,
     /// True for stock/equity legs (ignore `option_type`, strike, expiration for display).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_stock: bool,
