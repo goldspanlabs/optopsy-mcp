@@ -305,14 +305,14 @@ impl BacktestStore {
             .optional()
             .context("Failed to query backtest detail")?;
 
-        let Some((id, strategy_key, result_json_str, created_at, params_str, analysis)) = row else {
+        let Some((id, strategy_key, result_json_str, created_at, params_str, analysis)) = row
+        else {
             return Ok(None);
         };
 
         let response: crate::tools::run_script::RunScriptResponse =
             serde_json::from_str(&result_json_str).context("Failed to deserialize result_json")?;
-        let params: Option<serde_json::Value> =
-            serde_json::from_str(&params_str).ok();
+        let params: Option<serde_json::Value> = serde_json::from_str(&params_str).ok();
 
         Ok(Some(BacktestDetail {
             id,

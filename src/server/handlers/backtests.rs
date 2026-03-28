@@ -212,9 +212,12 @@ pub async fn set_backtest_analysis(
     Path(id): Path<String>,
     Json(body): Json<HashMap<String, String>>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    let analysis = body
-        .get("analysis")
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, "Missing 'analysis' field".to_string()))?;
+    let analysis = body.get("analysis").ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "Missing 'analysis' field".to_string(),
+        )
+    })?;
     let found = state
         .backtest_store
         .set_analysis(&id, analysis)
