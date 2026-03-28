@@ -207,8 +207,7 @@ fn indicator_thresholds(decl: &str) -> Vec<f64> {
 // Script resolution
 // ---------------------------------------------------------------------------
 
-/// Resolve the script source code, checking the strategy store first if available,
-/// then falling back to the filesystem.
+/// Resolve the script source code from the strategy store or inline source.
 pub fn resolve_script_source(
     params: &RunScriptParams,
     strategy_store: Option<&dyn StrategyStore>,
@@ -224,20 +223,20 @@ pub fn resolve_script_source(
     }
 }
 
-/// Load a strategy by name: try the DB store first, then fall back to filesystem.
+/// Load a strategy by name from the database, falling back to filesystem
+/// only when no store is available (e.g. tests without a DB).
 fn load_strategy(name: &str, strategy_store: Option<&dyn StrategyStore>) -> Result<String> {
     if name.contains('/') || name.contains('\\') || name.contains("..") || name.is_empty() {
         anyhow::bail!("Invalid strategy name: '{name}'. Must be a simple filename.");
     }
 
-    // Try the database first
     if let Some(store) = strategy_store {
-        if let Some(source) = store.get_source(name)? {
-            return Ok(source);
-        }
+        return store
+            .get_source(name)?
+            .ok_or_else(|| anyhow::anyhow!("Strategy '{name}' not found"));
     }
 
-    // Fall back to filesystem
+    // Filesystem fallback for contexts without a store (e.g. tests)
     load_strategy_file(name)
 }
 

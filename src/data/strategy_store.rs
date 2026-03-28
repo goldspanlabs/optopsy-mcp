@@ -1,11 +1,7 @@
-//! SQLite-backed storage for strategy scripts.
+//! `SQLite`-backed storage for strategy scripts.
 //!
 //! Provides [`SqliteStrategyStore`] which implements the [`StrategyStore`](super::traits::StrategyStore)
-//! trait for persisting and querying Rhai strategy scripts,
-//! their metadata, and source code. Supports seeding built-in strategies from
-//! the `scripts/strategies/` directory on startup.
-
-use std::path::Path;
+//! trait for persisting and querying Rhai strategy scripts and their metadata.
 
 use anyhow::{Context, Result};
 use rusqlite::OptionalExtension;
@@ -42,8 +38,6 @@ pub struct StrategyRow {
     pub regime: Option<Vec<String>>,
     /// Full Rhai script source code.
     pub source: String,
-    /// Whether this strategy was seeded from built-in files.
-    pub is_builtin: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -92,7 +86,7 @@ impl StrategyRow {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// StrategyStore
+// SqliteStrategyStore
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// `SQLite`-backed store for strategy scripts.
@@ -113,79 +107,6 @@ impl SqliteStrategyStore {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Seeding
-    // ──────────────────────────────────────────────────────────────────────────
-
-    /// Seed built-in strategies from `.rhai` files in the given directory.
-    ///
-    /// Uses `INSERT OR REPLACE` for rows with `is_builtin = 1`, so re-running
-    /// on startup is idempotent and updates built-in scripts without touching
-    /// user-created strategies.
-    ///
-    /// Returns the number of scripts seeded.
-    pub fn seed_builtins(&self, scripts_dir: &Path) -> Result<usize> {
-        let Ok(entries) = std::fs::read_dir(scripts_dir) else {
-            return Ok(0); // directory doesn't exist — skip silently
-        };
-
-        let now = chrono::Utc::now().to_rfc3339();
-        let conn = self.conn.lock().expect("mutex poisoned");
-        let mut count = 0;
-
-        for entry in entries.flatten() {
-            let filename = entry.file_name().to_string_lossy().to_string();
-            let Some(id) = filename.strip_suffix(".rhai") else {
-                continue;
-            };
-
-            let Ok(source) = std::fs::read_to_string(entry.path()) else {
-                continue;
-            };
-
-            let meta = parse_script_meta(id, &source);
-            let tags_json = meta
-                .tags
-                .as_ref()
-                .map(|t| serde_json::to_string(t).unwrap_or_default());
-            let regime_json = meta
-                .regime
-                .as_ref()
-                .map(|r| serde_json::to_string(r).unwrap_or_default());
-
-            conn.execute(
-                "INSERT INTO strategies (id, name, description, category, hypothesis, tags, regime, source, is_builtin, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9, ?10)
-                 ON CONFLICT(id) DO UPDATE SET
-                    name = excluded.name,
-                    description = excluded.description,
-                    category = excluded.category,
-                    hypothesis = excluded.hypothesis,
-                    tags = excluded.tags,
-                    regime = excluded.regime,
-                    source = excluded.source,
-                    updated_at = excluded.updated_at
-                 WHERE is_builtin = 1",
-                rusqlite::params![
-                    id,
-                    meta.name,
-                    meta.description,
-                    meta.category,
-                    meta.hypothesis,
-                    tags_json,
-                    regime_json,
-                    source,
-                    now,
-                    now,
-                ],
-            ).with_context(|| format!("Failed to seed strategy '{id}'"))?;
-
-            count += 1;
-        }
-
-        Ok(count)
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
     // CRUD
     // ──────────────────────────────────────────────────────────────────────────
 
@@ -193,7 +114,7 @@ impl SqliteStrategyStore {
     pub fn get(&self, id: &str) -> Result<Option<StrategyRow>> {
         let conn = self.conn.lock().expect("mutex poisoned");
         conn.query_row(
-            "SELECT id, name, description, category, hypothesis, tags, regime, source, is_builtin, created_at, updated_at
+            "SELECT id, name, description, category, hypothesis, tags, regime, source, created_at, updated_at
              FROM strategies WHERE id = ?1",
             rusqlite::params![id],
             |row| Ok(row_to_strategy(row)),
@@ -219,7 +140,7 @@ impl SqliteStrategyStore {
         let conn = self.conn.lock().expect("mutex poisoned");
         let mut stmt = conn
             .prepare(
-                "SELECT id, name, description, category, hypothesis, tags, regime, source, is_builtin, created_at, updated_at
+                "SELECT id, name, description, category, hypothesis, tags, regime, source, created_at, updated_at
                  FROM strategies ORDER BY name",
             )
             .context("Failed to prepare list query")?;
@@ -256,8 +177,8 @@ impl SqliteStrategyStore {
         let now = chrono::Utc::now().to_rfc3339();
 
         conn.execute(
-            "INSERT INTO strategies (id, name, description, category, hypothesis, tags, regime, source, is_builtin, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            "INSERT INTO strategies (id, name, description, category, hypothesis, tags, regime, source, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
              ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 description = excluded.description,
@@ -276,7 +197,6 @@ impl SqliteStrategyStore {
                 tags_json,
                 regime_json,
                 row.source,
-                i32::from(row.is_builtin),
                 now,
                 now,
             ],
@@ -312,9 +232,8 @@ fn row_to_strategy(row: &rusqlite::Row) -> StrategyRow {
         tags: tags_str.and_then(|s| serde_json::from_str(&s).ok()),
         regime: regime_str.and_then(|s| serde_json::from_str(&s).ok()),
         source: row.get(7).unwrap_or_default(),
-        is_builtin: row.get::<_, i32>(8).unwrap_or(0) != 0,
-        created_at: row.get(9).unwrap_or_default(),
-        updated_at: row.get(10).unwrap_or_default(),
+        created_at: row.get(8).unwrap_or_default(),
+        updated_at: row.get(9).unwrap_or_default(),
     }
 }
 
@@ -342,10 +261,6 @@ impl super::traits::StrategyStore for SqliteStrategyStore {
     fn delete(&self, id: &str) -> Result<bool> {
         self.delete(id)
     }
-
-    fn seed_builtins(&self, scripts_dir: &Path) -> Result<usize> {
-        self.seed_builtins(scripts_dir)
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -366,28 +281,9 @@ mod tests {
             tags: Some(vec!["test".to_string()]),
             regime: None,
             source: "fn config() { #{} }".to_string(),
-            is_builtin: false,
             created_at: String::new(),
             updated_at: String::new(),
         }
-    }
-
-    #[test]
-    fn test_init_creates_table() {
-        let store = crate::data::database::Database::open_in_memory()
-            .expect("open_in_memory")
-            .strategies();
-        let conn = store.conn.lock().expect("mutex");
-        let tables: Vec<String> = {
-            let mut stmt = conn
-                .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-                .unwrap();
-            stmt.query_map([], |row| row.get(0))
-                .unwrap()
-                .map(|r| r.unwrap())
-                .collect()
-        };
-        assert!(tables.contains(&"strategies".to_string()));
     }
 
     #[test]
@@ -403,7 +299,6 @@ mod tests {
         assert_eq!(fetched.name, "Test Strategy");
         assert_eq!(fetched.category.as_deref(), Some("stock"));
         assert_eq!(fetched.tags, Some(vec!["test".to_string()]));
-        assert!(!fetched.is_builtin);
     }
 
     #[test]
@@ -442,7 +337,7 @@ mod tests {
 
         assert!(store.delete("del_test").unwrap());
         assert!(store.get("del_test").unwrap().is_none());
-        assert!(!store.delete("del_test").unwrap()); // already gone
+        assert!(!store.delete("del_test").unwrap());
     }
 
     #[test]
@@ -460,76 +355,6 @@ mod tests {
         let fetched = store.get("update_test").unwrap().expect("should exist");
         assert_eq!(fetched.name, "Updated");
         assert!(fetched.source.contains("updated"));
-
-        // Should still be only one row
         assert_eq!(store.list().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn test_seed_builtins_from_dir() {
-        let store = crate::data::database::Database::open_in_memory()
-            .expect("open_in_memory")
-            .strategies();
-
-        // Seed from actual scripts directory if it exists
-        let scripts_dir = std::path::Path::new("scripts/strategies");
-        if scripts_dir.exists() {
-            let count = store.seed_builtins(scripts_dir).unwrap();
-            assert!(count > 0, "Should seed at least one built-in script");
-
-            let list = store.list().unwrap();
-            assert_eq!(list.len(), count);
-            assert!(list.iter().all(|r| r.is_builtin));
-        }
-    }
-
-    #[test]
-    fn test_seed_does_not_overwrite_user_scripts() {
-        let store = crate::data::database::Database::open_in_memory()
-            .expect("open_in_memory")
-            .strategies();
-
-        // Create a user script with the same id as a built-in would have
-        let scripts_dir = std::path::Path::new("scripts/strategies");
-        if !scripts_dir.exists() {
-            return;
-        }
-
-        // First seed builtins
-        store.seed_builtins(scripts_dir).unwrap();
-
-        // Simulate user modifying a built-in by flipping is_builtin to 0
-        {
-            let conn = store.conn.lock().expect("mutex");
-            conn.execute(
-                "UPDATE strategies SET is_builtin = 0, source = 'user modified' WHERE rowid = 1",
-                [],
-            )
-            .unwrap();
-        }
-
-        // Re-seed — should NOT overwrite the user's version
-        store.seed_builtins(scripts_dir).unwrap();
-
-        let conn = store.conn.lock().expect("mutex");
-        let source: String = conn
-            .query_row(
-                "SELECT source FROM strategies WHERE is_builtin = 0 LIMIT 1",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(source, "user modified");
-    }
-
-    #[test]
-    fn test_seed_nonexistent_dir() {
-        let store = crate::data::database::Database::open_in_memory()
-            .expect("open_in_memory")
-            .strategies();
-        let count = store
-            .seed_builtins(std::path::Path::new("/nonexistent/path"))
-            .unwrap();
-        assert_eq!(count, 0);
     }
 }

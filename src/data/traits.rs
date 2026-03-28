@@ -5,8 +5,6 @@
 //! but alternative backends (e.g. Postgres) can be swapped in by implementing
 //! these traits.
 
-use std::path::Path;
-
 use anyhow::Result;
 use serde_json::Value;
 
@@ -82,7 +80,4 @@ pub trait StrategyStore: Send + Sync {
 
     /// Delete a strategy by id. Returns `true` if a row was deleted.
     fn delete(&self, id: &str) -> Result<bool>;
-
-    /// Seed built-in strategies from `.rhai` files in the given directory.
-    fn seed_builtins(&self, scripts_dir: &Path) -> Result<usize>;
 }

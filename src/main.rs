@@ -81,12 +81,13 @@ async fn main() -> Result<()> {
         let backtest_store: Arc<dyn optopsy_mcp::data::traits::BacktestStore> =
             Arc::new(db.backtests());
 
-        let strategies = db.strategies();
-        let seeded = strategies
-            .seed_builtins(std::path::Path::new("scripts/strategies"))
-            .expect("Failed to seed built-in strategies");
-        tracing::info!("Seeded {seeded} built-in strategies");
-        let strategy_store: Arc<dyn StrategyStore> = Arc::new(strategies);
+        let seeded = db
+            .seed_strategies_if_empty(std::path::Path::new("scripts/strategies"))
+            .expect("Failed to seed strategies");
+        if seeded > 0 {
+            tracing::info!("Seeded {seeded} strategies from scripts/strategies/");
+        }
+        let strategy_store: Arc<dyn StrategyStore> = Arc::new(db.strategies());
 
         let app_state = AppState {
             server: server::OptopsyServer::with_strategy_store(
@@ -192,11 +193,9 @@ async fn main() -> Result<()> {
             std::fs::create_dir_all(parent).ok();
         }
         let db = Database::open(&db_path).expect("Failed to open database");
-        let strategies = db.strategies();
-        strategies
-            .seed_builtins(std::path::Path::new("scripts/strategies"))
+        db.seed_strategies_if_empty(std::path::Path::new("scripts/strategies"))
             .ok();
-        let strategy_store: Arc<dyn StrategyStore> = Arc::new(strategies);
+        let strategy_store: Arc<dyn StrategyStore> = Arc::new(db.strategies());
 
         let server = server::OptopsyServer::with_strategy_store(cache, strategy_store);
         let service = server.serve(rmcp::transport::stdio()).await?;

@@ -1,9 +1,7 @@
-//! Shared `SQLite` database connection and schema management.
+//! Shared `SQLite` database connection, schema management, and one-time migrations.
 //!
-//! [`Database`] owns a single connection to the `SQLite` database file and runs
-//! all schema migrations on open. Both [`SqliteBacktestStore`](super::backtest_store::SqliteBacktestStore)
-//! and [`SqliteStrategyStore`](super::strategy_store::SqliteStrategyStore) borrow
-//! the shared connection via [`Database::connection()`].
+//! [`Database`] owns a single connection to the `SQLite` database file, runs all
+//! schema migrations on open, and provides factory methods for creating stores.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -11,13 +9,16 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 
+use crate::scripting::stdlib::parse_script_meta;
+
 /// Shared connection handle used by all `SQLite`-backed stores.
 pub type DbConnection = Arc<Mutex<Connection>>;
 
 /// Manages a single `SQLite` database connection and schema lifecycle.
 ///
-/// Construct via [`Database::open`] or [`Database::open_in_memory`], then pass
-/// [`Database::connection()`] to each store that needs DB access.
+/// Construct via [`Database::open`] or [`Database::open_in_memory`], then use
+/// [`backtests()`](Database::backtests) and [`strategies()`](Database::strategies)
+/// to create store instances.
 #[derive(Clone)]
 pub struct Database {
     conn: DbConnection,
@@ -56,6 +57,70 @@ impl Database {
     /// backed by this database's connection.
     pub fn strategies(&self) -> super::strategy_store::SqliteStrategyStore {
         super::strategy_store::SqliteStrategyStore::new(self.conn.clone())
+    }
+
+    /// One-time migration: seed strategies from `.rhai` files if the table is empty.
+    ///
+    /// Call this on startup. If the `strategies` table already has rows, this is
+    /// a no-op. Returns the number of strategies seeded (0 if table was non-empty
+    /// or the scripts directory doesn't exist).
+    pub fn seed_strategies_if_empty(&self, scripts_dir: &Path) -> Result<usize> {
+        let conn = self.conn.lock().expect("mutex poisoned");
+
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM strategies", [], |row| row.get(0))?;
+        if count > 0 {
+            return Ok(0);
+        }
+
+        let Ok(entries) = std::fs::read_dir(scripts_dir) else {
+            return Ok(0);
+        };
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut seeded = 0;
+
+        for entry in entries.flatten() {
+            let filename = entry.file_name().to_string_lossy().to_string();
+            let Some(id) = filename.strip_suffix(".rhai") else {
+                continue;
+            };
+
+            let Ok(source) = std::fs::read_to_string(entry.path()) else {
+                continue;
+            };
+
+            let meta = parse_script_meta(id, &source);
+            let tags_json = meta
+                .tags
+                .as_ref()
+                .map(|t| serde_json::to_string(t).unwrap_or_default());
+            let regime_json = meta
+                .regime
+                .as_ref()
+                .map(|r| serde_json::to_string(r).unwrap_or_default());
+
+            conn.execute(
+                "INSERT INTO strategies (id, name, description, category, hypothesis, tags, regime, source, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                rusqlite::params![
+                    id,
+                    meta.name,
+                    meta.description,
+                    meta.category,
+                    meta.hypothesis,
+                    tags_json,
+                    regime_json,
+                    source,
+                    now,
+                    now,
+                ],
+            )
+            .with_context(|| format!("Failed to seed strategy '{id}'"))?;
+
+            seeded += 1;
+        }
+
+        Ok(seeded)
     }
 
     /// Create all tables and indices if they do not already exist.
@@ -130,7 +195,6 @@ impl Database {
                 tags            TEXT,
                 regime          TEXT,
                 source          TEXT NOT NULL,
-                is_builtin      INTEGER NOT NULL DEFAULT 0,
                 created_at      TEXT NOT NULL,
                 updated_at      TEXT NOT NULL
             );
@@ -172,7 +236,27 @@ mod tests {
         let db = Database::open_in_memory().expect("open_in_memory");
         let backtests = db.backtests();
         let strategies = db.strategies();
-        // Both stores hold the same underlying Arc
         assert!(Arc::ptr_eq(&backtests.conn, &strategies.conn));
+    }
+
+    #[test]
+    fn test_seed_only_runs_when_empty() {
+        let db = Database::open_in_memory().expect("open_in_memory");
+        let scripts_dir = std::path::Path::new("scripts/strategies");
+        if !scripts_dir.exists() {
+            return;
+        }
+
+        // First seed populates
+        let count = db.seed_strategies_if_empty(scripts_dir).unwrap();
+        assert!(count > 0);
+
+        // Second seed is a no-op
+        let count2 = db.seed_strategies_if_empty(scripts_dir).unwrap();
+        assert_eq!(count2, 0);
+
+        // Table still has the original rows
+        let strategies = db.strategies();
+        assert_eq!(strategies.list().unwrap().len(), count);
     }
 }
