@@ -15,6 +15,7 @@ use tracing_subscriber::{self, EnvFilter};
 use optopsy_mcp::data::database::Database;
 use optopsy_mcp::data::traits::{self, StrategyStore};
 use optopsy_mcp::server::handlers::backtests::{self, AppState};
+use optopsy_mcp::server::handlers::chat as chat_handlers;
 use optopsy_mcp::{data, server};
 
 /// Query parameters for the `/prices/{symbol}` REST endpoint.
@@ -92,12 +93,15 @@ async fn main() -> Result<()> {
             tracing::info!("Seeded {seeded} strategies from scripts/strategies/");
         }
 
+        let chat_store: Arc<dyn optopsy_mcp::data::traits::ChatStore> = Arc::new(db.chat());
+
         let app_state = AppState {
             server: server::OptopsyServer::with_strategy_store(
                 cache.clone(),
                 strategy_store.clone(),
             ),
             backtest_store,
+            chat_store,
         };
 
         let strategy_store_for_mcp = strategy_store.clone();
@@ -137,6 +141,35 @@ async fn main() -> Result<()> {
                 "/walk-forward",
                 axum::routing::post(optopsy_mcp::server::handlers::walk_forward::run_walk_forward),
             )
+            .with_state(app_state.clone());
+
+        let chat_routes = axum::Router::new()
+            .route(
+                "/threads",
+                axum::routing::get(chat_handlers::list_threads).post(chat_handlers::create_thread),
+            )
+            .route(
+                "/threads/{id}",
+                axum::routing::get(chat_handlers::get_thread)
+                    .patch(chat_handlers::update_thread)
+                    .delete(chat_handlers::delete_thread),
+            )
+            .route(
+                "/threads/{id}/messages",
+                axum::routing::get(chat_handlers::get_messages)
+                    .post(chat_handlers::upsert_message)
+                    .delete(chat_handlers::delete_messages),
+            )
+            .route(
+                "/threads/{id}/results",
+                axum::routing::get(chat_handlers::get_results)
+                    .put(chat_handlers::replace_results)
+                    .post(chat_handlers::replace_results),
+            )
+            .route(
+                "/threads/{id}/results/{key}",
+                axum::routing::delete(chat_handlers::delete_result),
+            )
             .with_state(app_state);
 
         let strategy_store_for_routes = strategy_store.clone();
@@ -171,6 +204,7 @@ async fn main() -> Result<()> {
                 }),
             )
             .merge(backtest_routes)
+            .merge(chat_routes)
             .nest_service("/mcp", service)
             .route("/health", axum::routing::get(|| async { "ok" }))
             .layer(CorsLayer::permissive());

@@ -88,6 +88,94 @@ pub trait StrategyStore: Send + Sync {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// ChatStore trait
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// A thread row stored in the database.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ThreadRow {
+    pub id: String,
+    pub title: Option<String>,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// A message row stored in the database.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MessageRow {
+    pub id: String,
+    pub thread_id: String,
+    pub parent_id: Option<String>,
+    pub format: String,
+    pub content: String,
+    pub created_at: String,
+}
+
+/// A result row stored in the database.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ResultRow {
+    pub id: i64,
+    pub thread_id: String,
+    pub key: String,
+    #[serde(rename = "type")]
+    pub result_type: String,
+    pub label: String,
+    pub tool_call_id: Option<String>,
+    pub params: String,
+    pub data: Option<String>,
+    pub created_at: String,
+}
+
+/// Input for upserting a result (no id or `created_at` — DB assigns those).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ResultInput {
+    pub key: String,
+    #[serde(rename = "type")]
+    pub result_type: String,
+    pub label: String,
+    pub tool_call_id: Option<String>,
+    pub params: String,
+    pub data: Option<String>,
+}
+
+/// Storage backend for chat threads, messages, and results.
+pub trait ChatStore: Send + Sync {
+    /// List all threads, ordered by most recently updated.
+    fn list_threads(&self) -> Result<Vec<ThreadRow>>;
+
+    /// Get a single thread by id.
+    fn get_thread(&self, id: &str) -> Result<Option<ThreadRow>>;
+
+    /// Create a new thread with the given id. Returns the created row.
+    fn create_thread(&self, id: &str) -> Result<ThreadRow>;
+
+    /// Update a thread's title and/or status.
+    fn update_thread(&self, id: &str, title: Option<&str>, status: Option<&str>) -> Result<bool>;
+
+    /// Delete a thread (cascades to messages and results).
+    fn delete_thread(&self, id: &str) -> Result<bool>;
+
+    /// Get messages for a thread with pagination.
+    fn get_messages(&self, thread_id: &str, limit: i64, offset: i64) -> Result<Vec<MessageRow>>;
+
+    /// Insert or update a message.
+    fn upsert_message(&self, msg: &MessageRow) -> Result<()>;
+
+    /// Delete all messages for a thread.
+    fn delete_messages(&self, thread_id: &str) -> Result<bool>;
+
+    /// Get all results for a thread.
+    fn get_results(&self, thread_id: &str) -> Result<Vec<ResultRow>>;
+
+    /// Replace all results for a thread (delete existing, insert new).
+    fn replace_all_results(&self, thread_id: &str, results: &[ResultInput]) -> Result<()>;
+
+    /// Delete a single result by `thread_id` and key.
+    fn delete_result(&self, thread_id: &str, key: &str) -> Result<bool>;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Backend-agnostic seeding
 // ──────────────────────────────────────────────────────────────────────────────
 

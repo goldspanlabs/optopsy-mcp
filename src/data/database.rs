@@ -57,7 +57,14 @@ impl Database {
         super::strategy_store::SqliteStrategyStore::new(self.conn.clone())
     }
 
+    /// Create a [`SqliteChatStore`](super::chat_store::SqliteChatStore)
+    /// backed by this database's connection.
+    pub fn chat(&self) -> super::chat_store::SqliteChatStore {
+        super::chat_store::SqliteChatStore::new(self.conn.clone())
+    }
+
     /// Create all tables and indices if they do not already exist.
+    #[allow(clippy::too_many_lines)]
     fn init_schema(&self) -> Result<()> {
         let conn = self.conn.lock().expect("mutex poisoned");
         conn.execute_batch(
@@ -135,6 +142,48 @@ impl Database {
 
             CREATE INDEX IF NOT EXISTS idx_strategies_category
                 ON strategies(category);
+
+            -- Threads
+            CREATE TABLE IF NOT EXISTS threads (
+                id          TEXT PRIMARY KEY,
+                title       TEXT,
+                status      TEXT NOT NULL DEFAULT 'regular',
+                created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+            );
+
+            -- Messages
+            CREATE TABLE IF NOT EXISTS messages (
+                id          TEXT PRIMARY KEY,
+                thread_id   TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+                parent_id   TEXT,
+                format      TEXT NOT NULL DEFAULT 'aui/v0',
+                content     TEXT NOT NULL,
+                created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_messages_thread_id
+                ON messages(thread_id);
+
+            -- Results
+            CREATE TABLE IF NOT EXISTS results (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                thread_id       TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+                key             TEXT NOT NULL,
+                type            TEXT NOT NULL,
+                label           TEXT NOT NULL,
+                tool_call_id    TEXT,
+                params          TEXT NOT NULL DEFAULT '{}',
+                data            TEXT,
+                created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                UNIQUE(thread_id, key)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_results_thread_id
+                ON results(thread_id);
+
+            CREATE INDEX IF NOT EXISTS idx_results_tool_call_id
+                ON results(tool_call_id);
             ",
         )
         .context("Failed to initialise database schema")?;
@@ -163,6 +212,9 @@ mod tests {
         assert!(tables.contains(&"backtest_metrics".to_string()));
         assert!(tables.contains(&"trades".to_string()));
         assert!(tables.contains(&"strategies".to_string()));
+        assert!(tables.contains(&"threads".to_string()));
+        assert!(tables.contains(&"messages".to_string()));
+        assert!(tables.contains(&"results".to_string()));
     }
 
     #[test]

@@ -32,6 +32,7 @@ fn sanitize(v: f64) -> f64 {
 pub struct AppState {
     pub server: OptopsyServer,
     pub backtest_store: Arc<dyn BacktestStore>,
+    pub chat_store: Arc<dyn crate::data::traits::ChatStore>,
 }
 
 /// Request body for `POST /backtests`.
