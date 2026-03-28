@@ -374,18 +374,11 @@ pub async fn run_script_backtest_with_progress(
                     );
                 }
 
-                // Add to trade log — option legs always "expire"; the ITM classification
-                // (assignment/called_away) applies to the resulting stock position, not the option.
-                let option_exit = if matches!(exit_reason.as_str(), "assignment" | "called_away") {
-                    "expiration"
-                } else {
-                    &exit_reason
-                };
                 trade_log.push(build_script_trade_record(
                     &closed_pos,
                     bar.datetime,
                     pnl,
-                    option_exit,
+                    &exit_reason,
                 ));
                 pnl_history.push(pnl);
                 pnl_dirty = true;
