@@ -9,8 +9,6 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 
-use crate::scripting::stdlib::parse_script_meta;
-
 /// Shared connection handle used by all `SQLite`-backed stores.
 pub type DbConnection = Arc<Mutex<Connection>>;
 
@@ -57,95 +55,6 @@ impl Database {
     /// backed by this database's connection.
     pub fn strategies(&self) -> super::strategy_store::SqliteStrategyStore {
         super::strategy_store::SqliteStrategyStore::new(self.conn.clone())
-    }
-
-    /// One-time migration: seed strategies from `.rhai` files if the table is empty.
-    ///
-    /// Call this on startup. If the `strategies` table already has rows, this is
-    /// a no-op. Returns the number of strategies seeded (0 if table was non-empty
-    /// or the scripts directory doesn't exist).
-    pub fn seed_strategies_if_empty(&self, scripts_dir: &Path) -> Result<usize> {
-        struct SeedRow {
-            id: String,
-            name: String,
-            description: Option<String>,
-            category: Option<String>,
-            hypothesis: Option<String>,
-            tags_json: Option<String>,
-            regime_json: Option<String>,
-            source: String,
-        }
-
-        // Check if table already has rows (short lock)
-        {
-            let conn = self.conn.lock().expect("mutex poisoned");
-            let count: i64 =
-                conn.query_row("SELECT COUNT(*) FROM strategies", [], |row| row.get(0))?;
-            if count > 0 {
-                return Ok(0);
-            }
-        }
-
-        // Read and parse all script files without holding the lock
-        let Ok(entries) = std::fs::read_dir(scripts_dir) else {
-            return Ok(0);
-        };
-
-        let now = chrono::Utc::now().to_rfc3339();
-
-        let rows: Vec<SeedRow> = entries
-            .flatten()
-            .filter_map(|entry| {
-                let filename = entry.file_name().to_string_lossy().to_string();
-                let id = filename.strip_suffix(".rhai")?.to_string();
-                let source = std::fs::read_to_string(entry.path()).ok()?;
-                let meta = parse_script_meta(&id, &source);
-                Some(SeedRow {
-                    id,
-                    name: meta.name,
-                    description: meta.description,
-                    category: meta.category,
-                    hypothesis: meta.hypothesis,
-                    tags_json: meta
-                        .tags
-                        .as_ref()
-                        .map(|t| serde_json::to_string(t).unwrap_or_default()),
-                    regime_json: meta
-                        .regime
-                        .as_ref()
-                        .map(|r| serde_json::to_string(r).unwrap_or_default()),
-                    source,
-                })
-            })
-            .collect();
-
-        if rows.is_empty() {
-            return Ok(0);
-        }
-
-        // Lock once and insert all rows
-        let conn = self.conn.lock().expect("mutex poisoned");
-        for row in &rows {
-            conn.execute(
-                "INSERT INTO strategies (id, name, description, category, hypothesis, tags, regime, source, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                rusqlite::params![
-                    row.id,
-                    row.name,
-                    row.description,
-                    row.category,
-                    row.hypothesis,
-                    row.tags_json,
-                    row.regime_json,
-                    row.source,
-                    now,
-                    now,
-                ],
-            )
-            .with_context(|| format!("Failed to seed strategy '{}'", row.id))?;
-        }
-
-        Ok(rows.len())
     }
 
     /// Create all tables and indices if they do not already exist.
@@ -279,17 +188,18 @@ mod tests {
         .unwrap();
 
         let db = Database::open_in_memory().expect("open_in_memory");
+        let strategies = db.strategies();
 
         // First seed populates
-        let count = db.seed_strategies_if_empty(dir.path()).unwrap();
+        let count = crate::data::traits::seed_strategies_if_empty(&strategies, dir.path()).unwrap();
         assert_eq!(count, 2);
 
         // Second seed is a no-op
-        let count2 = db.seed_strategies_if_empty(dir.path()).unwrap();
+        let count2 =
+            crate::data::traits::seed_strategies_if_empty(&strategies, dir.path()).unwrap();
         assert_eq!(count2, 0);
 
         // Table still has the original rows
-        let strategies = db.strategies();
         assert_eq!(strategies.list().unwrap().len(), 2);
     }
 }

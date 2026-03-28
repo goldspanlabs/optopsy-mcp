@@ -5,12 +5,14 @@
 //! but alternative backends (e.g. Postgres) can be swapped in by implementing
 //! these traits.
 
+use std::path::Path;
+
 use anyhow::Result;
 use serde_json::Value;
 
 use super::backtest_store::{BacktestDetail, BacktestSummary, MetricsRow, TradeRow};
 use super::strategy_store::StrategyRow;
-use crate::scripting::stdlib::ScriptMeta;
+use crate::scripting::stdlib::{parse_script_meta, ScriptMeta};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // BacktestStore trait
@@ -80,4 +82,51 @@ pub trait StrategyStore: Send + Sync {
 
     /// Delete a strategy by id. Returns `true` if a row was deleted.
     fn delete(&self, id: &str) -> Result<bool>;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Backend-agnostic seeding
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// One-time migration: seed strategies from `.rhai` files if the store is empty.
+///
+/// Works with any `StrategyStore` backend (`SQLite`, Postgres, etc.). Call on
+/// startup — if the store already has strategies, this is a no-op. Returns
+/// the number of strategies seeded.
+pub fn seed_strategies_if_empty(store: &dyn StrategyStore, scripts_dir: &Path) -> Result<usize> {
+    if !store.list()?.is_empty() {
+        return Ok(0);
+    }
+
+    let Ok(entries) = std::fs::read_dir(scripts_dir) else {
+        return Ok(0);
+    };
+
+    let mut seeded = 0;
+    for entry in entries.flatten() {
+        let filename = entry.file_name().to_string_lossy().to_string();
+        let Some(id) = filename.strip_suffix(".rhai") else {
+            continue;
+        };
+        let Ok(source) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
+
+        let meta = parse_script_meta(id, &source);
+        store.upsert(&StrategyRow {
+            id: id.to_string(),
+            name: meta.name,
+            description: meta.description,
+            category: meta.category,
+            hypothesis: meta.hypothesis,
+            tags: meta.tags,
+            regime: meta.regime,
+            source,
+            created_at: String::new(),
+            updated_at: String::new(),
+        })?;
+        seeded += 1;
+    }
+
+    Ok(seeded)
 }

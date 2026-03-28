@@ -13,7 +13,7 @@ use tower_http::cors::CorsLayer;
 use tracing_subscriber::{self, EnvFilter};
 
 use optopsy_mcp::data::database::Database;
-use optopsy_mcp::data::traits::StrategyStore;
+use optopsy_mcp::data::traits::{self, StrategyStore};
 use optopsy_mcp::server::handlers::backtests::{self, AppState};
 use optopsy_mcp::{data, server};
 
@@ -83,11 +83,14 @@ async fn main() -> Result<()> {
         let backtest_store: Arc<dyn optopsy_mcp::data::traits::BacktestStore> =
             Arc::new(db.backtests());
 
-        let seeded = db.seed_strategies_if_empty(std::path::Path::new("scripts/strategies"))?;
+        let strategy_store: Arc<dyn StrategyStore> = Arc::new(db.strategies());
+        let seeded = traits::seed_strategies_if_empty(
+            strategy_store.as_ref(),
+            std::path::Path::new("scripts/strategies"),
+        )?;
         if seeded > 0 {
             tracing::info!("Seeded {seeded} strategies from scripts/strategies/");
         }
-        let strategy_store: Arc<dyn StrategyStore> = Arc::new(db.strategies());
 
         let app_state = AppState {
             server: server::OptopsyServer::with_strategy_store(
@@ -195,8 +198,11 @@ async fn main() -> Result<()> {
             })?;
         }
         let db = Database::open(&db_path)?;
-        db.seed_strategies_if_empty(std::path::Path::new("scripts/strategies"))?;
         let strategy_store: Arc<dyn StrategyStore> = Arc::new(db.strategies());
+        traits::seed_strategies_if_empty(
+            strategy_store.as_ref(),
+            std::path::Path::new("scripts/strategies"),
+        )?;
 
         let server = server::OptopsyServer::with_strategy_store(cache, strategy_store);
         let service = server.serve(rmcp::transport::stdio()).await?;
