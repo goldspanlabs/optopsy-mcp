@@ -6,6 +6,7 @@
 pub mod handlers;
 mod params;
 mod sanitize;
+pub mod state;
 
 pub use params::{AggMetric, CorrelateMode, FactorProxies, GroupBy, RegimeMethod, RollingMetric};
 

@@ -8,7 +8,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use super::backtests::AppState;
+use crate::server::state::AppState;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Request / query types

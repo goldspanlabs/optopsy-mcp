@@ -12,11 +12,11 @@ use axum::{
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::backtests::AppState;
 use crate::data::cache::validate_path_segment;
 use crate::data::strategy_store::StrategyRow;
 use crate::data::traits::StrategyStore;
 use crate::scripting::engine::ValidationResult;
+use crate::server::state::AppState;
 
 /// Request body for `POST /strategies` and `PUT /strategies/{id}`.
 #[derive(Debug, Deserialize)]

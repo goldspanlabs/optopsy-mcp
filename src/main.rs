@@ -14,9 +14,8 @@ use tracing_subscriber::{self, EnvFilter};
 
 use optopsy_mcp::data::database::Database;
 use optopsy_mcp::data::traits::{self, StrategyStore};
-use optopsy_mcp::server::handlers::backtests::{self, AppState};
-use optopsy_mcp::server::handlers::chat as chat_handlers;
-use optopsy_mcp::server::handlers::strategies;
+use optopsy_mcp::server::handlers::{backtests, chat as chat_handlers, profiles, strategies};
+use optopsy_mcp::server::state::AppState;
 use optopsy_mcp::{data, server};
 
 /// Query parameters for the `/prices/{symbol}` REST endpoint.
@@ -196,14 +195,10 @@ async fn main() -> Result<()> {
                 "/threads/{id}/results/{key}",
                 axum::routing::delete(chat_handlers::delete_result),
             )
-            .with_state(app_state);
+            .with_state(app_state.clone());
 
-        let app = axum::Router::new()
-            .route(
-                "/profiles",
-                axum::routing::get(optopsy_mcp::server::handlers::profiles::list_profiles)
-                    .with_state(Some(strategy_store.clone()) as Option<Arc<dyn StrategyStore>>),
-            )
+        let misc_routes = axum::Router::new()
+            .route("/profiles", axum::routing::get(profiles::list_profiles))
             .route(
                 "/prices/{symbol}",
                 axum::routing::get({
@@ -211,11 +206,15 @@ async fn main() -> Result<()> {
                     move |path, query| prices_handler(cache.clone(), path, query)
                 }),
             )
+            .route("/health", axum::routing::get(|| async { "ok" }))
+            .with_state(app_state);
+
+        let app = axum::Router::new()
             .merge(backtest_routes)
             .merge(strategy_routes)
             .merge(chat_routes)
+            .merge(misc_routes)
             .nest_service("/mcp", service)
-            .route("/health", axum::routing::get(|| async { "ok" }))
             .layer(CorsLayer::permissive());
 
         let addr = format!("0.0.0.0:{port}");

@@ -14,8 +14,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::data::backtest_store::{BacktestDetail, BacktestSummary, MetricsRow, TradeRow};
-use crate::data::traits::BacktestStore;
-use crate::server::OptopsyServer;
+use crate::server::state::AppState;
 use crate::tools::run_script::RunScriptParams;
 
 /// Replace NaN/Infinity with 0.0 to prevent JSON serialization errors.
@@ -25,14 +24,6 @@ fn sanitize(v: f64) -> f64 {
     } else {
         0.0
     }
-}
-
-/// Shared application state for backtest REST routes.
-#[derive(Clone)]
-pub struct AppState {
-    pub server: OptopsyServer,
-    pub backtest_store: Arc<dyn BacktestStore>,
-    pub chat_store: Arc<dyn crate::data::traits::ChatStore>,
 }
 
 /// Request body for `POST /backtests`.

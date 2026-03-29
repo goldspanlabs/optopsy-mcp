@@ -4,10 +4,9 @@ use axum::extract::State;
 use axum::Json;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::sync::Arc;
 
-use crate::data::traits::StrategyStore;
 use crate::scripting::stdlib::{list_scripts, load_profiles_registry};
+use crate::server::state::AppState;
 
 /// A profile entry combining registry and script-level definitions.
 #[derive(Debug, Serialize)]
@@ -18,14 +17,12 @@ pub struct ProfileInfo {
 }
 
 /// `GET /profiles` — List all available parameter profiles.
-pub async fn list_profiles(
-    State(strategy_store): State<Option<Arc<dyn StrategyStore>>>,
-) -> Json<Vec<ProfileInfo>> {
+pub async fn list_profiles(State(state): State<AppState>) -> Json<Vec<ProfileInfo>> {
     let registry = tokio::task::spawn_blocking(load_profiles_registry)
         .await
         .unwrap_or_default();
 
-    let scripts = if let Some(store) = strategy_store {
+    let scripts = if let Some(store) = state.server.strategy_store.clone() {
         tokio::task::spawn_blocking(move || store.list_scripts().unwrap_or_default())
             .await
             .unwrap_or_default()

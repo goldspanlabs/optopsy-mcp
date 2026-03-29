@@ -6,7 +6,7 @@ use crate::engine::walk_forward::{WalkForwardParams, WalkForwardResponse};
 use crate::scripting::engine::CachingDataLoader;
 use std::sync::Arc;
 
-use super::backtests::AppState;
+use crate::server::state::AppState;
 
 /// `POST /walk-forward` — Run walk-forward optimization for a strategy.
 pub async fn run_walk_forward(
