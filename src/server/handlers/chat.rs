@@ -17,6 +17,8 @@ use crate::server::state::AppState;
 #[derive(Debug, Deserialize)]
 pub struct CreateThreadBody {
     pub id: String,
+    #[serde(default)]
+    pub strategy_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -107,10 +109,16 @@ pub async fn create_thread(
     Json(body): Json<CreateThreadBody>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, String)> {
     let store = state.chat_store.clone();
-    let thread = tokio::task::spawn_blocking(move || store.create_thread(&body.id))
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let thread = tokio::task::spawn_blocking(move || {
+        if let Some(ref sid) = body.strategy_id {
+            store.create_strategy_thread(&body.id, sid)
+        } else {
+            store.create_thread(&body.id)
+        }
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok((
         StatusCode::CREATED,
