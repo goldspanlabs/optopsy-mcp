@@ -109,8 +109,8 @@ pub async fn create_backtest(
             };
             TradeRow {
                 trade_id: t.trade_id as i64,
-                entry_datetime: t.entry_datetime.to_string(),
-                exit_datetime: t.exit_datetime.to_string(),
+                entry_datetime: t.entry_datetime.and_utc().timestamp().to_string(),
+                exit_datetime: t.exit_datetime.and_utc().timestamp().to_string(),
                 entry_cost: sanitize(t.entry_cost),
                 exit_proceeds: sanitize(t.exit_proceeds),
                 pnl: sanitize(t.pnl),
@@ -369,8 +369,8 @@ pub async fn create_backtest_stream(
                         };
                         TradeRow {
                             trade_id: t.trade_id as i64,
-                            entry_datetime: t.entry_datetime.to_string(),
-                            exit_datetime: t.exit_datetime.to_string(),
+                            entry_datetime: t.entry_datetime.and_utc().timestamp().to_string(),
+                            exit_datetime: t.exit_datetime.and_utc().timestamp().to_string(),
                             entry_cost: sanitize(t.entry_cost),
                             exit_proceeds: sanitize(t.exit_proceeds),
                             pnl: sanitize(t.pnl),

@@ -4,6 +4,7 @@
 //! simulation result types, trade records, and enum variants for sides,
 //! option types, slippage models, exit types, and trade selectors.
 
+pub mod epoch_serde;
 mod enums;
 mod hypothesis;
 mod interval;

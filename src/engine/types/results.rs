@@ -86,6 +86,8 @@ pub struct PerformanceMetrics {
 /// Single point on the equity curve representing portfolio value at a moment in time.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EquityPoint {
+    #[serde(with = "super::epoch_serde")]
+    #[schemars(with = "i64")]
     pub datetime: NaiveDateTime,
     pub equity: f64,
     /// Unrealized P&L from open positions at this bar.
@@ -116,7 +118,11 @@ pub struct LegDetail {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TradeRecord {
     pub trade_id: usize,
+    #[serde(with = "super::epoch_serde")]
+    #[schemars(with = "i64")]
     pub entry_datetime: NaiveDateTime,
+    #[serde(with = "super::epoch_serde")]
+    #[schemars(with = "i64")]
     pub exit_datetime: NaiveDateTime,
     /// Signed entry cost: negative for credits received, positive for debits paid.
     pub entry_cost: f64,
