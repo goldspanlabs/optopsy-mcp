@@ -96,6 +96,30 @@ impl Interval {
     }
 }
 
+impl std::fmt::Display for Interval {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Daily => write!(f, "daily"),
+            Self::Intraday(intra) => write!(f, "{intra}"),
+        }
+    }
+}
+
+impl std::fmt::Display for IntradayInterval {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Min1 => write!(f, "1m"),
+            Self::Min5 => write!(f, "5m"),
+            Self::Min10 => write!(f, "10m"),
+            Self::Min15 => write!(f, "15m"),
+            Self::Min30 => write!(f, "30m"),
+            Self::Hour1 => write!(f, "1h"),
+            Self::Hour2 => write!(f, "2h"),
+            Self::Hour4 => write!(f, "4h"),
+        }
+    }
+}
+
 /// A loosely-typed value for script-readable defaults.
 #[derive(Debug, Clone)]
 pub enum ScriptValue {
