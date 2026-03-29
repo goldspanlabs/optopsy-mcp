@@ -158,7 +158,29 @@ pub fn validate_script(
         });
     }
 
-    // 1. Build engine and compile
+    // 1. Check for missing required extern params before compilation/config
+    let mut missing_required = false;
+    for ep in &extern_params {
+        if ep.default.is_none() && !params.contains_key(&ep.name) {
+            diagnostics.push(ValidationDiagnostic {
+                level: DiagnosticLevel::Error,
+                message: format!("Required parameter '{}' is not provided", ep.name),
+            });
+            missing_required = true;
+        }
+    }
+
+    if missing_required {
+        return ValidationResult {
+            valid: false,
+            diagnostics,
+            callbacks,
+            config: None,
+            params: extern_params,
+        };
+    }
+
+    // 2. Build engine and compile
     let mut engine = build_engine();
 
     let params_clone = params.clone();
@@ -330,17 +352,7 @@ pub fn validate_script(
         }
     }
 
-    // 5. Check for missing required extern params
-    for ep in &extern_params {
-        if ep.default.is_none() && !params.contains_key(&ep.name) {
-            diagnostics.push(ValidationDiagnostic {
-                level: DiagnosticLevel::Error,
-                message: format!("Required parameter '{}' is not provided", ep.name),
-            });
-        }
-    }
-
-    // 6. Check for common issues
+    // 5. Check for common issues
     if config.needs_options && !callbacks.contains(&"on_exit_check".to_string()) {
         diagnostics.push(ValidationDiagnostic {
             level: DiagnosticLevel::Warning,

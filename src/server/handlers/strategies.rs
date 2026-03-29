@@ -104,15 +104,14 @@ pub async fn create_strategy(
 
     let store = clone_store(&state)?;
     let row_id = row.id.clone();
-    let row_clone = row;
-    let store2 = store.clone();
-    tokio::task::spawn_blocking(move || store.upsert(&row_clone))
+    let store_for_fetch = store.clone();
+    tokio::task::spawn_blocking(move || store.upsert(&row))
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Re-fetch to get server-set timestamps
-    let created = tokio::task::spawn_blocking(move || store2.get(&row_id))
+    let created = tokio::task::spawn_blocking(move || store_for_fetch.get(&row_id))
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
@@ -158,14 +157,14 @@ pub async fn update_strategy(
     };
 
     let store = clone_store(&state)?;
-    let store2 = store.clone();
-    let id_clone = id.clone();
+    let store_for_fetch = store.clone();
+    let id_for_fetch = id.clone();
     tokio::task::spawn_blocking(move || store.upsert(&row))
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let updated = tokio::task::spawn_blocking(move || store2.get(&id_clone))
+    let updated = tokio::task::spawn_blocking(move || store_for_fetch.get(&id_for_fetch))
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
@@ -236,7 +235,7 @@ pub async fn validate_script(Json(req): Json<ValidateScriptRequest>) -> Json<Val
         valid: false,
         diagnostics: vec![crate::scripting::engine::ValidationDiagnostic {
             level: crate::scripting::engine::DiagnosticLevel::Error,
-            message: format!("Validation task panicked: {e}"),
+            message: format!("Validation task failed: {e}"),
         }],
         callbacks: vec![],
         config: None,
@@ -269,7 +268,7 @@ pub async fn validate_stored_strategy(
     .map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Validation panicked: {e}"),
+            format!("Validation task failed: {e}"),
         )
     })?;
 
