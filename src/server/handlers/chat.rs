@@ -75,15 +75,28 @@ pub struct ReplaceResultsBody {
 // Thread handlers
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// `GET /threads` — List all threads.
+/// Query parameters for `GET /threads`.
+#[derive(Debug, Deserialize, Default)]
+pub struct ListThreadsQuery {
+    pub strategy_id: Option<String>,
+}
+
+/// `GET /threads` — List all threads, optionally filtered by `strategy_id`.
 pub async fn list_threads(
     State(state): State<AppState>,
+    Query(query): Query<ListThreadsQuery>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let store = state.chat_store.clone();
-    let threads = tokio::task::spawn_blocking(move || store.list_threads())
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let threads = tokio::task::spawn_blocking(move || {
+        if let Some(ref sid) = query.strategy_id {
+            store.list_threads_for_strategy(sid)
+        } else {
+            store.list_threads()
+        }
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(json!({ "threads": threads })))
 }

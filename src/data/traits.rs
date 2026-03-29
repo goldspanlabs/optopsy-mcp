@@ -89,9 +89,6 @@ pub trait StrategyStore: Send + Sync {
 
     /// Delete a strategy by id. Returns `true` if a row was deleted.
     fn delete(&self, id: &str) -> Result<bool>;
-
-    /// Set the associated chat thread ID for a strategy.
-    fn set_thread_id(&self, id: &str, thread_id: &str) -> Result<()>;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -102,6 +99,7 @@ pub trait StrategyStore: Send + Sync {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ThreadRow {
     pub id: String,
+    pub strategy_id: Option<String>,
     pub title: Option<String>,
     pub status: String,
     pub created_at: String,
@@ -151,11 +149,17 @@ pub trait ChatStore: Send + Sync {
     /// List all threads, ordered by most recently updated.
     fn list_threads(&self) -> Result<Vec<ThreadRow>>;
 
+    /// List threads for a strategy, ordered by most recently updated.
+    fn list_threads_for_strategy(&self, strategy_id: &str) -> Result<Vec<ThreadRow>>;
+
     /// Get a single thread by id.
     fn get_thread(&self, id: &str) -> Result<Option<ThreadRow>>;
 
     /// Create a new thread with the given id. Returns the created row.
     fn create_thread(&self, id: &str) -> Result<ThreadRow>;
+
+    /// Create a thread associated with a strategy.
+    fn create_strategy_thread(&self, id: &str, strategy_id: &str) -> Result<ThreadRow>;
 
     /// Update a thread's title and/or status.
     fn update_thread(&self, id: &str, title: Option<&str>, status: Option<&str>) -> Result<bool>;
@@ -220,7 +224,6 @@ pub fn seed_strategies_if_empty(store: &dyn StrategyStore, scripts_dir: &Path) -
             tags: meta.tags,
             regime: meta.regime,
             source,
-            thread_id: None,
             created_at: String::new(),
             updated_at: String::new(),
         })?;

@@ -147,11 +147,15 @@ impl Database {
             -- Threads
             CREATE TABLE IF NOT EXISTS threads (
                 id          TEXT PRIMARY KEY,
+                strategy_id TEXT,
                 title       TEXT,
                 status      TEXT NOT NULL DEFAULT 'regular',
                 created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
                 updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
             );
+
+            CREATE INDEX IF NOT EXISTS idx_threads_strategy_id
+                ON threads(strategy_id);
 
             -- Messages
             CREATE TABLE IF NOT EXISTS messages (
@@ -203,6 +207,26 @@ impl Database {
             .collect::<std::result::Result<Vec<_>, _>>()?;
         if !cols.iter().any(|c| c == "thread_id") {
             conn.execute_batch("ALTER TABLE strategies ADD COLUMN thread_id TEXT")?;
+        }
+
+        // Add strategy_id to threads if missing
+        let thread_cols: Vec<String> = conn
+            .prepare("PRAGMA table_info(threads)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        if !thread_cols.iter().any(|c| c == "strategy_id") {
+            conn.execute_batch("ALTER TABLE threads ADD COLUMN strategy_id TEXT")?;
+            // Migrate existing data: for each strategy with a thread_id, set that thread's strategy_id
+            conn.execute_batch(
+                "UPDATE threads SET strategy_id = (
+                    SELECT s.id FROM strategies s WHERE s.thread_id = threads.id
+                ) WHERE EXISTS (
+                    SELECT 1 FROM strategies s WHERE s.thread_id = threads.id
+                )",
+            )?;
+            conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_threads_strategy_id ON threads(strategy_id)",
+            )?;
         }
 
         // Migrate slug-based strategy IDs to UUIDs

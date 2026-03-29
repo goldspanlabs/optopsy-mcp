@@ -45,7 +45,7 @@ impl ChatStore for SqliteChatStore {
         let conn = self.conn.lock().expect("mutex poisoned");
         let mut stmt = conn
             .prepare(
-                "SELECT id, title, status, created_at, updated_at
+                "SELECT id, strategy_id, title, status, created_at, updated_at
                  FROM threads ORDER BY updated_at DESC",
             )
             .context("Failed to prepare list_threads query")?;
@@ -59,10 +59,29 @@ impl ChatStore for SqliteChatStore {
         Ok(rows)
     }
 
+    fn list_threads_for_strategy(&self, strategy_id: &str) -> Result<Vec<ThreadRow>> {
+        let conn = self.conn.lock().expect("mutex poisoned");
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, strategy_id, title, status, created_at, updated_at
+                 FROM threads WHERE strategy_id = ?1
+                 ORDER BY updated_at DESC",
+            )
+            .context("Failed to prepare list_threads_for_strategy query")?;
+
+        let rows = stmt
+            .query_map(rusqlite::params![strategy_id], row_to_thread)
+            .context("Failed to query threads for strategy")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("Failed to collect threads for strategy")?;
+
+        Ok(rows)
+    }
+
     fn get_thread(&self, id: &str) -> Result<Option<ThreadRow>> {
         let conn = self.conn.lock().expect("mutex poisoned");
         conn.query_row(
-            "SELECT id, title, status, created_at, updated_at
+            "SELECT id, strategy_id, title, status, created_at, updated_at
              FROM threads WHERE id = ?1",
             rusqlite::params![id],
             row_to_thread,
@@ -83,12 +102,32 @@ impl ChatStore for SqliteChatStore {
         .context("Failed to insert thread")?;
 
         conn.query_row(
-            "SELECT id, title, status, created_at, updated_at
+            "SELECT id, strategy_id, title, status, created_at, updated_at
              FROM threads WHERE id = ?1",
             rusqlite::params![id],
             row_to_thread,
         )
         .context("Failed to select created thread")
+    }
+
+    fn create_strategy_thread(&self, id: &str, strategy_id: &str) -> Result<ThreadRow> {
+        let conn = self.conn.lock().expect("mutex poisoned");
+        conn.execute(
+            &format!(
+                "INSERT OR IGNORE INTO threads (id, strategy_id, created_at, updated_at)
+                 VALUES (?1, ?2, {SQL_NOW}, {SQL_NOW})"
+            ),
+            rusqlite::params![id, strategy_id],
+        )
+        .context("Failed to insert strategy thread")?;
+
+        conn.query_row(
+            "SELECT id, strategy_id, title, status, created_at, updated_at
+             FROM threads WHERE id = ?1",
+            rusqlite::params![id],
+            row_to_thread,
+        )
+        .context("Failed to select created strategy thread")
     }
 
     fn update_thread(&self, id: &str, title: Option<&str>, status: Option<&str>) -> Result<bool> {
@@ -284,10 +323,11 @@ impl ChatStore for SqliteChatStore {
 fn row_to_thread(row: &rusqlite::Row) -> rusqlite::Result<ThreadRow> {
     Ok(ThreadRow {
         id: row.get(0)?,
-        title: row.get(1)?,
-        status: row.get(2)?,
-        created_at: row.get(3)?,
-        updated_at: row.get(4)?,
+        strategy_id: row.get(1)?,
+        title: row.get(2)?,
+        status: row.get(3)?,
+        created_at: row.get(4)?,
+        updated_at: row.get(5)?,
     })
 }
 

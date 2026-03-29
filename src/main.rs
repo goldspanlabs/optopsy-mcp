@@ -163,10 +163,6 @@ async fn main() -> Result<()> {
                 axum::routing::get(strategies::get_strategy_source),
             )
             .route(
-                "/strategies/{id}/thread",
-                axum::routing::patch(strategies::set_thread_id),
-            )
-            .route(
                 "/strategies/{id}/validate",
                 axum::routing::post(strategies::validate_stored_strategy),
             )
