@@ -204,6 +204,26 @@ impl Database {
         if !cols.iter().any(|c| c == "thread_id") {
             conn.execute_batch("ALTER TABLE strategies ADD COLUMN thread_id TEXT")?;
         }
+
+        // Migrate slug-based strategy IDs to UUIDs
+        // UUIDs are 36 chars; slugs are shorter
+        let slug_strategies: Vec<String> = conn
+            .prepare("SELECT id FROM strategies WHERE length(id) < 36")?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        for old_id in &slug_strategies {
+            let new_id = uuid::Uuid::new_v4().to_string();
+            conn.execute(
+                "UPDATE strategies SET id = ?1 WHERE id = ?2",
+                rusqlite::params![new_id, old_id],
+            )?;
+            conn.execute(
+                "UPDATE backtests SET strategy_key = ?1 WHERE strategy_key = ?2",
+                rusqlite::params![new_id, old_id],
+            )?;
+        }
+
         Ok(())
     }
 }

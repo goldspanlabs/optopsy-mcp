@@ -563,6 +563,7 @@ impl OptopsyServer {
                     .map_err(|e| validation_err("run_script", e))?;
                 handlers::run_script::execute(self, params)
                     .await
+                    .map(|r| r.response)
                     .map_err(tool_err)
             }
             .await,

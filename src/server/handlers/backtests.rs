@@ -61,9 +61,13 @@ pub async fn create_backtest(
         profile: req.profile.clone(),
     };
 
-    let response = crate::server::handlers::run_script::execute(&state.server, run_params)
+    let exec_result = crate::server::handlers::run_script::execute(&state.server, run_params)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let strategy_key = exec_result
+        .resolved_strategy_id
+        .unwrap_or_else(|| req.strategy.clone());
+    let response = exec_result.response;
 
     // Extract SYMBOL and CAPITAL from params
     let symbol = req
@@ -145,7 +149,7 @@ pub async fn create_backtest(
     let (id, created_at) = state
         .backtest_store
         .insert(
-            &req.strategy,
+            &strategy_key,
             &symbol,
             capital,
             &params_value,
@@ -164,7 +168,7 @@ pub async fn create_backtest(
         Json(BacktestDetail {
             id,
             created_at,
-            strategy_key: req.strategy.clone(),
+            strategy_key,
             params: Some(serde_json::to_value(&req.params).unwrap_or_default()),
             analysis: None,
             response,
@@ -320,7 +324,11 @@ pub async fn create_backtest_stream(
         ticker.abort();
 
         match result {
-            Ok(response) => {
+            Ok(exec_result) => {
+                let strategy_key = exec_result
+                    .resolved_strategy_id
+                    .unwrap_or_else(|| req.strategy.clone());
+                let response = exec_result.response;
                 // Persist to DB (same as create_backtest)
                 let symbol = req
                     .params
@@ -396,7 +404,7 @@ pub async fn create_backtest_stream(
                     .and_then(|m| m.regime.as_deref());
 
                 match state.backtest_store.insert(
-                    &req.strategy,
+                    &strategy_key,
                     &symbol,
                     capital,
                     &params_value,
@@ -412,7 +420,7 @@ pub async fn create_backtest_stream(
                         let detail = BacktestDetail {
                             id,
                             created_at,
-                            strategy_key: req.strategy.clone(),
+                            strategy_key,
                             params: Some(serde_json::to_value(&req.params).unwrap_or_default()),
                             analysis: None,
                             response,

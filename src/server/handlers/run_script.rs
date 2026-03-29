@@ -9,8 +9,15 @@ use crate::scripting::stdlib::parse_script_meta;
 use crate::server::OptopsyServer;
 use crate::tools::run_script::{format_indicator_data, RunScriptParams, RunScriptResponse};
 
+/// Result of executing a script: the response plus the resolved strategy ID (if any).
+pub struct ExecuteResult {
+    pub response: RunScriptResponse,
+    /// The resolved strategy UUID, or `None` for inline scripts.
+    pub resolved_strategy_id: Option<String>,
+}
+
 /// Execute a Rhai backtest script.
-pub async fn execute(server: &OptopsyServer, params: RunScriptParams) -> Result<RunScriptResponse> {
+pub async fn execute(server: &OptopsyServer, params: RunScriptParams) -> Result<ExecuteResult> {
     execute_with_progress(server, params, None).await
 }
 
@@ -19,16 +26,16 @@ pub async fn execute_with_progress(
     server: &OptopsyServer,
     params: RunScriptParams,
     progress: Option<ProgressCallback>,
-) -> Result<RunScriptResponse> {
+) -> Result<ExecuteResult> {
     let start = std::time::Instant::now();
 
-    let source =
+    let (resolved_id, source) =
         crate::tools::run_script::resolve_script_source(&params, server.strategy_store.as_deref())?;
 
     // Parse script metadata from //! header
-    let script_meta = params
-        .strategy
+    let script_meta = resolved_id
         .as_deref()
+        .or(params.strategy.as_deref())
         .map(|id| parse_script_meta(id, &source));
 
     let loader = CachingDataLoader::new(Arc::clone(&server.cache));
@@ -60,10 +67,13 @@ pub async fn execute_with_progress(
     // Convert raw indicator arrays and custom series to compact IndicatorData format
     let formatted_indicators = format_indicator_data(&indicator_data, &custom_series);
 
-    Ok(RunScriptResponse {
-        script_meta,
-        result,
-        indicator_data: formatted_indicators,
-        execution_time_ms: start.elapsed().as_millis() as u64,
+    Ok(ExecuteResult {
+        response: RunScriptResponse {
+            script_meta,
+            result,
+            indicator_data: formatted_indicators,
+            execution_time_ms: start.elapsed().as_millis() as u64,
+        },
+        resolved_strategy_id: resolved_id,
     })
 }

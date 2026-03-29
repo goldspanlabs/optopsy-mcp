@@ -71,6 +71,10 @@ pub trait StrategyStore: Send + Sync {
     /// Get just the source code for a strategy (hot path for `run_script`).
     fn get_source(&self, id: &str) -> Result<Option<String>>;
 
+    /// Get a strategy's source by display name (case-insensitive).
+    /// Returns `Option<(id, source)>` — the resolved UUID and source code.
+    fn get_source_by_name(&self, name: &str) -> Result<Option<(String, String)>>;
+
     /// Return the number of strategies in the store.
     fn count(&self) -> Result<usize>;
 
@@ -208,7 +212,7 @@ pub fn seed_strategies_if_empty(store: &dyn StrategyStore, scripts_dir: &Path) -
 
         let meta = parse_script_meta(id, &source);
         store.upsert(&StrategyRow {
-            id: id.to_string(),
+            id: uuid::Uuid::new_v4().to_string(),
             name: meta.name,
             description: meta.description,
             category: meta.category,

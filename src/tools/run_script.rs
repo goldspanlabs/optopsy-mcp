@@ -208,13 +208,19 @@ fn indicator_thresholds(decl: &str) -> Vec<f64> {
 // ---------------------------------------------------------------------------
 
 /// Resolve the script source code from the strategy store or inline source.
+///
+/// Returns `(Option<strategy_id>, source)` — the resolved strategy UUID (None
+/// for inline scripts) and the script source code.
 pub fn resolve_script_source(
     params: &RunScriptParams,
     strategy_store: Option<&dyn StrategyStore>,
-) -> Result<String> {
+) -> Result<(Option<String>, String)> {
     match (&params.strategy, &params.script) {
-        (Some(name), _) => load_strategy(name, strategy_store),
-        (None, Some(script)) => Ok(script.clone()),
+        (Some(name_or_id), _) => {
+            let (id, source) = load_strategy(name_or_id, strategy_store)?;
+            Ok((Some(id), source))
+        }
+        (None, Some(script)) => Ok((None, script.clone())),
         (None, None) => {
             anyhow::bail!(
                 "Either 'strategy' (script filename) or 'script' (inline source) is required"
@@ -223,21 +229,29 @@ pub fn resolve_script_source(
     }
 }
 
-/// Load a strategy by name from the database, falling back to filesystem
-/// only when no store is available (e.g. tests without a DB).
-fn load_strategy(name: &str, strategy_store: Option<&dyn StrategyStore>) -> Result<String> {
-    crate::data::cache::validate_path_segment(name).map_err(|_| {
-        anyhow::anyhow!("Invalid strategy name: '{name}'. Must be a simple filename.")
-    })?;
-
+/// Load a strategy by ID or display name from the database, falling back to
+/// filesystem only when no store is available (e.g. tests without a DB).
+///
+/// Returns `(resolved_id, source)`.
+fn load_strategy(
+    name_or_id: &str,
+    strategy_store: Option<&dyn StrategyStore>,
+) -> Result<(String, String)> {
     if let Some(store) = strategy_store {
-        return store
-            .get_source(name)?
-            .ok_or_else(|| anyhow::anyhow!("Strategy '{name}' not found"));
+        // Try exact ID match first
+        if let Some(source) = store.get_source(name_or_id)? {
+            return Ok((name_or_id.to_string(), source));
+        }
+        // Fall back to case-insensitive name match (so Claude can reference by name)
+        if let Some((id, source)) = store.get_source_by_name(name_or_id)? {
+            return Ok((id, source));
+        }
+        anyhow::bail!("Strategy '{name_or_id}' not found");
     }
 
     // Filesystem fallback for contexts without a store (e.g. tests)
-    load_strategy_file(name)
+    let source = load_strategy_file(name_or_id)?;
+    Ok((name_or_id.to_string(), source))
 }
 
 /// Load a strategy script from `scripts/strategies/{name}.rhai`.

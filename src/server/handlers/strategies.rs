@@ -12,11 +12,18 @@ use axum::{
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::data::cache::validate_path_segment;
 use crate::data::strategy_store::StrategyRow;
 use crate::data::traits::StrategyStore;
 use crate::scripting::engine::ValidationResult;
 use crate::server::state::AppState;
+
+/// Validate a strategy ID — allows UUIDs (which contain hyphens).
+fn validate_strategy_id(id: &str) -> Result<(), String> {
+    if id.is_empty() || id.contains("..") || id.contains('/') || id.contains('\\') {
+        return Err(format!("Invalid strategy ID: '{id}'"));
+    }
+    Ok(())
+}
 
 /// Request body for `POST /strategies` and `PUT /strategies/{id}`.
 #[derive(Debug, Deserialize)]
@@ -64,8 +71,7 @@ pub async fn get_strategy(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<StrategyRow>, (StatusCode, String)> {
-    validate_path_segment(&id)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid id: {e}")))?;
+    validate_strategy_id(&id).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     let store = clone_store(&state)?;
     let row = tokio::task::spawn_blocking(move || store.get(&id))
         .await
@@ -84,8 +90,7 @@ pub async fn create_strategy(
 ) -> Result<(StatusCode, Json<StrategyRow>), (StatusCode, String)> {
     let id = match req.id {
         Some(id) => {
-            validate_path_segment(&id)
-                .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid id: {e}")))?;
+            validate_strategy_id(&id).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
             id
         }
         None => uuid::Uuid::new_v4().to_string(),
@@ -133,8 +138,7 @@ pub async fn update_strategy(
     Path(id): Path<String>,
     Json(req): Json<UpsertStrategyRequest>,
 ) -> Result<Json<StrategyRow>, (StatusCode, String)> {
-    validate_path_segment(&id)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid id: {e}")))?;
+    validate_strategy_id(&id).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
     // Reject mismatched body id
     if let Some(ref body_id) = req.id {
@@ -186,8 +190,7 @@ pub async fn delete_strategy(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    validate_path_segment(&id)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid id: {e}")))?;
+    validate_strategy_id(&id).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     let store = clone_store(&state)?;
     let deleted = tokio::task::spawn_blocking(move || store.delete(&id))
         .await
@@ -206,8 +209,7 @@ pub async fn set_thread_id(
     Path(id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    validate_path_segment(&id)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid id: {e}")))?;
+    validate_strategy_id(&id).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     let thread_id = body
         .get("thread_id")
         .and_then(|v| v.as_str())
@@ -226,8 +228,7 @@ pub async fn get_strategy_source(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Response, (StatusCode, String)> {
-    validate_path_segment(&id)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid id: {e}")))?;
+    validate_strategy_id(&id).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     let store = clone_store(&state)?;
     let source = tokio::task::spawn_blocking(move || store.get_source(&id))
         .await
@@ -276,8 +277,7 @@ pub async fn validate_stored_strategy(
     Path(id): Path<String>,
     body: Option<Json<HashMap<String, Value>>>,
 ) -> Result<Json<ValidationResult>, (StatusCode, String)> {
-    validate_path_segment(&id)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid id: {e}")))?;
+    validate_strategy_id(&id).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     let store = clone_store(&state)?;
     let source = tokio::task::spawn_blocking(move || store.get_source(&id))
         .await

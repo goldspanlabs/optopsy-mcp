@@ -147,6 +147,19 @@ impl SqliteStrategyStore {
         .context("Failed to query strategy source")
     }
 
+    /// Get a strategy's source by display name (case-insensitive).
+    /// Returns `Option<(id, source)>` — the resolved UUID and source code.
+    pub fn get_source_by_name(&self, name: &str) -> Result<Option<(String, String)>> {
+        let conn = self.conn.lock().expect("mutex poisoned");
+        conn.query_row(
+            "SELECT id, source FROM strategies WHERE LOWER(name) = LOWER(?1)",
+            rusqlite::params![name],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .context("Failed to query strategy by name")
+    }
+
     /// List all strategies, ordered by name.
     pub fn list(&self) -> Result<Vec<StrategyRow>> {
         let conn = self.conn.lock().expect("mutex poisoned");
@@ -262,6 +275,10 @@ impl super::traits::StrategyStore for SqliteStrategyStore {
 
     fn get_source(&self, id: &str) -> Result<Option<String>> {
         SqliteStrategyStore::get_source(self, id)
+    }
+
+    fn get_source_by_name(&self, name: &str) -> Result<Option<(String, String)>> {
+        SqliteStrategyStore::get_source_by_name(self, name)
     }
 
     fn count(&self) -> Result<usize> {
