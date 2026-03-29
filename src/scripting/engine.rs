@@ -285,8 +285,25 @@ pub fn validate_script(
     }
 
     // 3. Initialize scope and call config()
+    // Merge defaults into params so validation works without caller-provided values.
+    // Universal params (SYMBOL, CAPITAL) are always needed but not declared via extern().
+    // Extern params with defaults are also merged.
+    let mut merged_params = params.clone();
+    merged_params
+        .entry("SYMBOL".to_string())
+        .or_insert_with(|| serde_json::json!("SPY"));
+    merged_params
+        .entry("CAPITAL".to_string())
+        .or_insert_with(|| serde_json::json!(100_000.0));
+    for ep in &extern_params {
+        if !merged_params.contains_key(&ep.name) {
+            if let Some(default) = &ep.default {
+                merged_params.insert(ep.name.clone(), default.clone());
+            }
+        }
+    }
     let mut scope = Scope::new();
-    super::stdlib::inject_params_map(&mut scope, params);
+    super::stdlib::inject_params_map(&mut scope, &merged_params);
 
     if let Err(e) = engine.eval_ast_with_scope::<Dynamic>(&mut scope, &ast) {
         diagnostics.push(ValidationDiagnostic {
