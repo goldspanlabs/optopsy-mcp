@@ -146,12 +146,15 @@ pub fn validate_script(
     // Extract extern params (uses its own engine instance)
     let extern_params = super::stdlib::extract_extern_params(script_source);
 
-    // Extract metadata from doc comments
-    let meta = super::stdlib::parse_script_meta("_validate", script_source);
-    if meta.name == "_validate" {
+    // Check for //! name: header in source
+    if !script_source
+        .lines()
+        .any(|l| l.trim_start().starts_with("//! name:"))
+    {
         diagnostics.push(ValidationDiagnostic {
             level: DiagnosticLevel::Warning,
-            message: "Missing //! name: header in script".to_string(),
+            message: "No `//! name:` header found; consider adding one for display in the UI"
+                .into(),
         });
     }
 
@@ -327,7 +330,17 @@ pub fn validate_script(
         }
     }
 
-    // 5. Check for common issues
+    // 5. Check for missing required extern params
+    for ep in &extern_params {
+        if ep.default.is_none() && !params.contains_key(&ep.name) {
+            diagnostics.push(ValidationDiagnostic {
+                level: DiagnosticLevel::Error,
+                message: format!("Required parameter '{}' is not provided", ep.name),
+            });
+        }
+    }
+
+    // 6. Check for common issues
     if config.needs_options && !callbacks.contains(&"on_exit_check".to_string()) {
         diagnostics.push(ValidationDiagnostic {
             level: DiagnosticLevel::Warning,
@@ -340,7 +353,7 @@ pub fn validate_script(
         capital: config.capital,
         start_date: config.start_date.map(|d| d.to_string()),
         end_date: config.end_date.map(|d| d.to_string()),
-        interval: format!("{:?}", config.interval),
+        interval: config.interval.to_string(),
         needs_ohlcv: config.needs_ohlcv,
         needs_options: config.needs_options,
         cross_symbols: config.cross_symbols,
