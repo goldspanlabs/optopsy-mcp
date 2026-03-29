@@ -109,6 +109,30 @@ fn strategy_list_scripts_includes_metadata() {
     assert_eq!(scripts[0].name, "Script Meta Test");
 }
 
+#[test]
+fn get_source_by_name_case_insensitive() {
+    let db = Database::open_in_memory().expect("open_in_memory");
+    let store = db.strategies();
+
+    store
+        .upsert(&sample_row("uuid-id-123", "My Cool Strategy"))
+        .unwrap();
+
+    // Exact match
+    let result = store.get_source_by_name("My Cool Strategy").unwrap();
+    assert!(result.is_some());
+    let (id, _source) = result.unwrap();
+    assert_eq!(id, "uuid-id-123");
+
+    // Case-insensitive
+    let result = store.get_source_by_name("my cool strategy").unwrap();
+    assert!(result.is_some());
+
+    // Not found
+    let result = store.get_source_by_name("Nonexistent").unwrap();
+    assert!(result.is_none());
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Validation tests
 // ──────────────────────────────────────────────────────────────────────────────

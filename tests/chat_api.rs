@@ -184,3 +184,54 @@ fn delete_single_result() {
     // Deleting again returns false
     assert!(!store.delete_result("t1", "k1").unwrap());
 }
+
+#[test]
+fn create_strategy_thread_and_list() {
+    let store = test_db();
+
+    // Create threads for a strategy
+    let t1 = store
+        .create_strategy_thread("thread-1", "strat-abc")
+        .unwrap();
+    assert_eq!(t1.strategy_id, Some("strat-abc".to_string()));
+
+    let t2 = store
+        .create_strategy_thread("thread-2", "strat-abc")
+        .unwrap();
+    assert_eq!(t2.strategy_id, Some("strat-abc".to_string()));
+
+    // Create a thread for a different strategy
+    store
+        .create_strategy_thread("thread-3", "strat-xyz")
+        .unwrap();
+
+    // Create a non-strategy thread
+    store.create_thread("thread-4").unwrap();
+
+    // List by strategy — should only return that strategy's threads
+    let abc_threads = store.list_threads_for_strategy("strat-abc").unwrap();
+    assert_eq!(abc_threads.len(), 2);
+    assert!(abc_threads
+        .iter()
+        .all(|t| t.strategy_id == Some("strat-abc".to_string())));
+
+    let xyz_threads = store.list_threads_for_strategy("strat-xyz").unwrap();
+    assert_eq!(xyz_threads.len(), 1);
+
+    // List all — should return all 4
+    let all = store.list_threads().unwrap();
+    assert_eq!(all.len(), 4);
+}
+
+#[test]
+fn strategy_thread_has_strategy_id_in_response() {
+    let store = test_db();
+    let thread = store.create_strategy_thread("t1", "my-strategy").unwrap();
+    assert_eq!(thread.id, "t1");
+    assert_eq!(thread.strategy_id, Some("my-strategy".to_string()));
+    assert_eq!(thread.status, "regular");
+
+    // Regular thread has no strategy_id
+    let plain = store.create_thread("t2").unwrap();
+    assert_eq!(plain.strategy_id, None);
+}
