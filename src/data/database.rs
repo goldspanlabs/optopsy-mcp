@@ -136,6 +136,7 @@ impl Database {
                 tags            TEXT,
                 regime          TEXT,
                 source          TEXT NOT NULL,
+                thread_id       TEXT,
                 created_at      TEXT NOT NULL,
                 updated_at      TEXT NOT NULL
             );
@@ -187,6 +188,22 @@ impl Database {
             ",
         )
         .context("Failed to initialise database schema")?;
+
+        // Migrations for existing databases
+        Self::migrate(&conn)?;
+        Ok(())
+    }
+
+    /// Run incremental migrations for columns added after initial schema.
+    fn migrate(conn: &Connection) -> Result<()> {
+        // Add thread_id to strategies if missing
+        let cols: Vec<String> = conn
+            .prepare("PRAGMA table_info(strategies)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        if !cols.iter().any(|c| c == "thread_id") {
+            conn.execute_batch("ALTER TABLE strategies ADD COLUMN thread_id TEXT")?;
+        }
         Ok(())
     }
 }

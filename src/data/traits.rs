@@ -85,6 +85,9 @@ pub trait StrategyStore: Send + Sync {
 
     /// Delete a strategy by id. Returns `true` if a row was deleted.
     fn delete(&self, id: &str) -> Result<bool>;
+
+    /// Set the associated chat thread ID for a strategy.
+    fn set_thread_id(&self, id: &str, thread_id: &str) -> Result<()>;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -213,6 +216,7 @@ pub fn seed_strategies_if_empty(store: &dyn StrategyStore, scripts_dir: &Path) -
             tags: meta.tags,
             regime: meta.regime,
             source,
+            thread_id: None,
             created_at: String::new(),
             updated_at: String::new(),
         })?;

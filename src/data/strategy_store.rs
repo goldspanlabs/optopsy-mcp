@@ -38,6 +38,9 @@ pub struct StrategyRow {
     pub regime: Option<Vec<String>>,
     /// Full Rhai script source code.
     pub source: String,
+    /// Associated chat thread ID for the editor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -114,7 +117,7 @@ impl SqliteStrategyStore {
     pub fn get(&self, id: &str) -> Result<Option<StrategyRow>> {
         let conn = self.conn.lock().expect("mutex poisoned");
         conn.query_row(
-            "SELECT id, name, description, category, hypothesis, tags, regime, source, created_at, updated_at
+            "SELECT id, name, description, category, hypothesis, tags, regime, source, thread_id, created_at, updated_at
              FROM strategies WHERE id = ?1",
             rusqlite::params![id],
             row_to_strategy,
@@ -149,7 +152,7 @@ impl SqliteStrategyStore {
         let conn = self.conn.lock().expect("mutex poisoned");
         let mut stmt = conn
             .prepare(
-                "SELECT id, name, description, category, hypothesis, tags, regime, source, created_at, updated_at
+                "SELECT id, name, description, category, hypothesis, tags, regime, source, thread_id, created_at, updated_at
                  FROM strategies ORDER BY name",
             )
             .context("Failed to prepare list query")?;
@@ -189,8 +192,8 @@ impl SqliteStrategyStore {
         let now = chrono::Utc::now().to_rfc3339();
 
         conn.execute(
-            "INSERT INTO strategies (id, name, description, category, hypothesis, tags, regime, source, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            "INSERT INTO strategies (id, name, description, category, hypothesis, tags, regime, source, thread_id, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 description = excluded.description,
@@ -199,6 +202,7 @@ impl SqliteStrategyStore {
                 tags = excluded.tags,
                 regime = excluded.regime,
                 source = excluded.source,
+                thread_id = COALESCE(excluded.thread_id, strategies.thread_id),
                 updated_at = excluded.updated_at",
             rusqlite::params![
                 row.id,
@@ -209,6 +213,7 @@ impl SqliteStrategyStore {
                 tags_json,
                 regime_json,
                 row.source,
+                row.thread_id,
                 now,
                 now,
             ],
@@ -244,8 +249,9 @@ fn row_to_strategy(row: &rusqlite::Row) -> rusqlite::Result<StrategyRow> {
         tags: tags_str.and_then(|s| serde_json::from_str(&s).ok()),
         regime: regime_str.and_then(|s| serde_json::from_str(&s).ok()),
         source: row.get(7)?,
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
+        thread_id: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
     })
 }
 
@@ -277,6 +283,16 @@ impl super::traits::StrategyStore for SqliteStrategyStore {
     fn delete(&self, id: &str) -> Result<bool> {
         SqliteStrategyStore::delete(self, id)
     }
+
+    fn set_thread_id(&self, id: &str, thread_id: &str) -> Result<()> {
+        let conn = self.conn.lock().expect("mutex poisoned");
+        conn.execute(
+            "UPDATE strategies SET thread_id = ?1 WHERE id = ?2",
+            rusqlite::params![thread_id, id],
+        )
+        .context("Failed to set thread_id")?;
+        Ok(())
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -297,6 +313,7 @@ mod tests {
             tags: Some(vec!["test".to_string()]),
             regime: None,
             source: "fn config() { #{} }".to_string(),
+            thread_id: None,
             created_at: String::new(),
             updated_at: String::new(),
         }

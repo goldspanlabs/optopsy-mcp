@@ -17,6 +17,7 @@ fn sample_row(id: &str, name: &str) -> StrategyRow {
         tags: Some(vec!["test".to_string(), "integration".to_string()]),
         regime: Some(vec!["bull".to_string()]),
         source: "fn config() { #{ name: \"test\" } }".to_string(),
+        thread_id: None,
         created_at: String::new(),
         updated_at: String::new(),
     }

@@ -76,18 +76,20 @@ pub async fn get_strategy(
 }
 
 /// `POST /strategies` — Create a new strategy.
+///
+/// If `id` is provided, it is used (for seeding/import). Otherwise a UUID is generated.
 pub async fn create_strategy(
     State(state): State<AppState>,
     Json(req): Json<UpsertStrategyRequest>,
 ) -> Result<(StatusCode, Json<StrategyRow>), (StatusCode, String)> {
-    let id = req.id.ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            "Field 'id' is required".to_string(),
-        )
-    })?;
-    validate_path_segment(&id)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid id: {e}")))?;
+    let id = match req.id {
+        Some(id) => {
+            validate_path_segment(&id)
+                .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid id: {e}")))?;
+            id
+        }
+        None => uuid::Uuid::new_v4().to_string(),
+    };
 
     let row = StrategyRow {
         id,
@@ -98,6 +100,7 @@ pub async fn create_strategy(
         tags: req.tags,
         regime: req.regime,
         source: req.source,
+        thread_id: None,
         created_at: String::new(),
         updated_at: String::new(),
     };
@@ -152,6 +155,7 @@ pub async fn update_strategy(
         tags: req.tags,
         regime: req.regime,
         source: req.source,
+        thread_id: None,
         created_at: String::new(),
         updated_at: String::new(),
     };
@@ -194,6 +198,27 @@ pub async fn delete_strategy(
     } else {
         Err((StatusCode::NOT_FOUND, "Strategy not found".to_string()))
     }
+}
+
+/// `PATCH /strategies/{id}/thread` — Set the chat thread ID for a strategy.
+pub async fn set_thread_id(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    validate_path_segment(&id)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid id: {e}")))?;
+    let thread_id = body
+        .get("thread_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "thread_id is required".to_string()))?
+        .to_string();
+    let store = clone_store(&state)?;
+    tokio::task::spawn_blocking(move || store.set_thread_id(&id, &thread_id))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 /// `GET /strategies/{id}/source` — Return raw Rhai source as text/plain.
