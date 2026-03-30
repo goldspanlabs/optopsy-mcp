@@ -139,9 +139,9 @@ pub async fn create_sweep(
     let cancellations = Arc::clone(&state.sweep_cancellations);
     let cancel_run_id = run_id.clone();
     let is_cancelled = move || {
-        cancellations.lock().map_or(false, |set| {
-            set.contains(&cancel_run_id) || set.contains("__cancel_all__")
-        })
+        cancellations
+            .lock()
+            .is_ok_and(|set| set.contains(&cancel_run_id) || set.contains("__cancel_all__"))
     };
 
     // Store run_id in state so the FE can reference it for cancellation
