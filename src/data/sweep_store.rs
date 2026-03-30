@@ -185,7 +185,10 @@ impl SqliteSweepStore {
                     .and_then(|v| v.get("best_sharpe").and_then(serde_json::Value::as_f64));
                 let combinations_run = result_json
                     .as_ref()
-                    .and_then(|v| v.get("combinations_run").and_then(serde_json::Value::as_i64))
+                    .and_then(|v| {
+                        v.get("combinations_run")
+                            .and_then(serde_json::Value::as_i64)
+                    })
                     .unwrap_or(0);
 
                 Ok(SweepSummary {
