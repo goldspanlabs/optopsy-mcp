@@ -182,7 +182,7 @@ impl SqliteSweepStore {
                 // Extract best_sharpe from the result JSON blob
                 let best_sharpe = serde_json::from_str::<serde_json::Value>(&result_json_str)
                     .ok()
-                    .and_then(|v| v.get("best_sharpe").and_then(|s| s.as_f64()));
+                    .and_then(|v| v.get("best_sharpe").and_then(serde_json::Value::as_f64));
 
                 Ok(SweepSummary {
                     id: row.get(0)?,

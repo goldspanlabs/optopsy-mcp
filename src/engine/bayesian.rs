@@ -16,7 +16,7 @@ use crate::tools::response_types::sweep::{SweepResponse, SweepResult};
 pub struct BayesianConfig {
     pub script_source: String,
     pub base_params: HashMap<String, Value>,
-    /// Each entry: (param_name, min, max).
+    /// Each entry: (`param_name`, min, max).
     pub continuous_params: Vec<(String, f64, f64)>,
     pub max_evaluations: usize,
     pub initial_samples: usize,
@@ -24,6 +24,7 @@ pub struct BayesianConfig {
 }
 
 /// Run Bayesian optimization with GP-EI.
+#[allow(clippy::too_many_lines)]
 pub async fn run_bayesian(
     config: &BayesianConfig,
     data_loader: &dyn DataLoader,
@@ -41,7 +42,7 @@ pub async fn run_bayesian(
     for _ in 0..config.initial_samples {
         let x = random_point(dim);
         let swept = decode_params(&x, &config.continuous_params);
-        match evaluate(
+        if let Ok(result) = evaluate(
             &config.script_source,
             &config.base_params,
             &swept,
@@ -49,7 +50,47 @@ pub async fn run_bayesian(
         )
         .await
         {
-            Ok(result) => {
+            let obj = extract_objective(&result, &config.objective);
+            if obj.is_finite() {
+                xs.push(x);
+                ys.push(obj);
+            }
+            if obj.is_finite() && obj > best_so_far {
+                best_so_far = obj;
+            }
+            convergence_trace.push(if best_so_far.is_finite() {
+                best_so_far
+            } else {
+                0.0
+            });
+            results.push(result);
+        } else {
+            failed += 1;
+            convergence_trace.push(if best_so_far.is_finite() {
+                best_so_far
+            } else {
+                0.0
+            });
+        }
+    }
+
+    // Phase 2: GP-EI loop
+    let remaining = config
+        .max_evaluations
+        .saturating_sub(config.initial_samples);
+    for _ in 0..remaining {
+        if xs.len() < 2 {
+            // Not enough data for GP, do another random sample
+            let x = random_point(dim);
+            let swept = decode_params(&x, &config.continuous_params);
+            if let Ok(result) = evaluate(
+                &config.script_source,
+                &config.base_params,
+                &swept,
+                data_loader,
+            )
+            .await
+            {
                 let obj = extract_objective(&result, &config.objective);
                 if obj.is_finite() {
                     xs.push(x);
@@ -64,59 +105,13 @@ pub async fn run_bayesian(
                     0.0
                 });
                 results.push(result);
-            }
-            Err(_) => {
+            } else {
                 failed += 1;
                 convergence_trace.push(if best_so_far.is_finite() {
                     best_so_far
                 } else {
                     0.0
                 });
-            }
-        }
-    }
-
-    // Phase 2: GP-EI loop
-    let remaining = config
-        .max_evaluations
-        .saturating_sub(config.initial_samples);
-    for _ in 0..remaining {
-        if xs.len() < 2 {
-            // Not enough data for GP, do another random sample
-            let x = random_point(dim);
-            let swept = decode_params(&x, &config.continuous_params);
-            match evaluate(
-                &config.script_source,
-                &config.base_params,
-                &swept,
-                data_loader,
-            )
-            .await
-            {
-                Ok(result) => {
-                    let obj = extract_objective(&result, &config.objective);
-                    if obj.is_finite() {
-                        xs.push(x);
-                        ys.push(obj);
-                    }
-                    if obj.is_finite() && obj > best_so_far {
-                        best_so_far = obj;
-                    }
-                    convergence_trace.push(if best_so_far.is_finite() {
-                        best_so_far
-                    } else {
-                        0.0
-                    });
-                    results.push(result);
-                }
-                Err(_) => {
-                    failed += 1;
-                    convergence_trace.push(if best_so_far.is_finite() {
-                        best_so_far
-                    } else {
-                        0.0
-                    });
-                }
             }
             continue;
         }
@@ -126,7 +121,7 @@ pub async fn run_bayesian(
         let next_x = maximize_ei(&gp, best_so_far, dim);
         let swept = decode_params(&next_x, &config.continuous_params);
 
-        match evaluate(
+        if let Ok(result) = evaluate(
             &config.script_source,
             &config.base_params,
             &swept,
@@ -134,30 +129,27 @@ pub async fn run_bayesian(
         )
         .await
         {
-            Ok(result) => {
-                let obj = extract_objective(&result, &config.objective);
-                if obj.is_finite() {
-                    xs.push(next_x);
-                    ys.push(obj);
-                }
-                if obj.is_finite() && obj > best_so_far {
-                    best_so_far = obj;
-                }
-                convergence_trace.push(if best_so_far.is_finite() {
-                    best_so_far
-                } else {
-                    0.0
-                });
-                results.push(result);
+            let obj = extract_objective(&result, &config.objective);
+            if obj.is_finite() {
+                xs.push(next_x);
+                ys.push(obj);
             }
-            Err(_) => {
-                failed += 1;
-                convergence_trace.push(if best_so_far.is_finite() {
-                    best_so_far
-                } else {
-                    0.0
-                });
+            if obj.is_finite() && obj > best_so_far {
+                best_so_far = obj;
             }
+            convergence_trace.push(if best_so_far.is_finite() {
+                best_so_far
+            } else {
+                0.0
+            });
+            results.push(result);
+        } else {
+            failed += 1;
+            convergence_trace.push(if best_so_far.is_finite() {
+                best_so_far
+            } else {
+                0.0
+            });
         }
     }
 
@@ -309,6 +301,7 @@ fn rbf_kernel(x1: &[f64], x2: &[f64], length_scale: f64, signal_var: f64) -> f64
 }
 
 /// Solve K * x = b via Cholesky factorization, with fallback to diagonal solve.
+#[allow(clippy::many_single_char_names)]
 fn cholesky_solve(k: &[f64], b: &[f64], n: usize) -> Vec<f64> {
     // Attempt Cholesky decomposition K = L * L^T
     if let Some(l) = cholesky_decompose(k, n) {

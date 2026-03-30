@@ -95,6 +95,7 @@ pub struct SweepDetail {
 
 /// Storage backend for sweep results.
 pub trait SweepStore: Send + Sync {
+    #[allow(clippy::too_many_arguments)]
     fn insert(
         &self,
         strategy_key: &str,

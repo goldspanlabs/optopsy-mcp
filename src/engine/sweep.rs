@@ -79,7 +79,6 @@ pub async fn run_grid_sweep(
 pub fn sort_by_objective(results: &mut [SweepResult], objective: &str) {
     results.sort_by(|a, b| {
         let (va, vb) = match objective {
-            "sharpe" => (a.sharpe, b.sharpe),
             "sortino" => (a.sortino, b.sortino),
             "calmar" => (a.calmar, b.calmar),
             "profit_factor" => (a.profit_factor, b.profit_factor),
@@ -91,7 +90,6 @@ pub fn sort_by_objective(results: &mut [SweepResult], objective: &str) {
 
 pub fn extract_objective(result: &SweepResult, objective: &str) -> f64 {
     match objective {
-        "sharpe" => result.sharpe,
         "sortino" => result.sortino,
         "calmar" => result.calmar,
         "profit_factor" => result.profit_factor,
@@ -99,6 +97,7 @@ pub fn extract_objective(result: &SweepResult, objective: &str) -> f64 {
     }
 }
 
+#[allow(clippy::implicit_hasher)]
 pub fn compute_sensitivity(
     results: &[SweepResult],
     param_grid: &HashMap<String, Vec<Value>>,
