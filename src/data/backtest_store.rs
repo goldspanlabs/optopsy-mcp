@@ -75,6 +75,8 @@ pub struct BacktestSummary {
     pub execution_time_ms: i64,
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub hypothesis: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<String>,
@@ -275,7 +277,7 @@ impl SqliteBacktestStore {
                     b.execution_time_ms, b.created_at,
                     m.sharpe, m.sortino, m.cagr, m.max_drawdown, m.win_rate,
                     m.profit_factor, m.total_pnl, m.trade_count, m.expectancy, m.var_95,
-                    b.hypothesis, b.tags, b.regime
+                    b.hypothesis, b.tags, b.regime, b.params
              FROM backtests b
              JOIN backtest_metrics m ON m.backtest_id = b.id",
         );
@@ -348,6 +350,10 @@ impl SqliteBacktestStore {
                         trade_count: row.get(13)?,
                         expectancy: row.get(14)?,
                         var_95: row.get(15)?,
+                    },
+                    params: {
+                        let s: Option<String> = row.get(19)?;
+                        s.and_then(|s| serde_json::from_str(&s).ok())
                     },
                     hypothesis: row.get(16)?,
                     tags: row.get(17)?,
