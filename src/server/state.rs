@@ -1,6 +1,7 @@
 //! Shared application state for all REST route handlers.
 
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 use crate::data::traits::{BacktestStore, ChatStore, SweepStore};
 use crate::server::OptopsyServer;
@@ -12,4 +13,6 @@ pub struct AppState {
     pub backtest_store: Arc<dyn BacktestStore>,
     pub chat_store: Arc<dyn ChatStore>,
     pub sweep_store: Arc<dyn SweepStore>,
+    /// Set of sweep run IDs that have been requested to cancel.
+    pub sweep_cancellations: Arc<Mutex<HashSet<String>>>,
 }

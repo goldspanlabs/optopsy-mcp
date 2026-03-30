@@ -22,6 +22,7 @@ pub struct GridSweepConfig {
 pub async fn run_grid_sweep(
     config: &GridSweepConfig,
     data_loader: &dyn DataLoader,
+    is_cancelled: impl Fn() -> bool,
 ) -> Result<SweepResponse> {
     let start = Instant::now();
     let combos = cartesian_product(&config.param_grid);
@@ -30,6 +31,9 @@ pub async fn run_grid_sweep(
     let mut failed = 0usize;
 
     for combo in &combos {
+        if is_cancelled() {
+            break;
+        }
         let mut run_params = config.base_params.clone();
         run_params.extend(combo.clone());
 

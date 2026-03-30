@@ -8,7 +8,7 @@ use anyhow::Result;
 use rand::Rng;
 use serde_json::Value;
 
-use crate::engine::sweep::{extract_objective, sort_by_objective};
+use crate::engine::sweep::{compute_sensitivity, extract_objective, sort_by_objective};
 use crate::scripting::engine::{run_script_backtest, DataLoader};
 use crate::tools::response_types::sweep::{SweepResponse, SweepResult};
 
@@ -28,6 +28,7 @@ pub struct BayesianConfig {
 pub async fn run_bayesian(
     config: &BayesianConfig,
     data_loader: &dyn DataLoader,
+    is_cancelled: impl Fn() -> bool,
 ) -> Result<SweepResponse> {
     let start = Instant::now();
     let dim = config.continuous_params.len();
@@ -38,11 +39,77 @@ pub async fn run_bayesian(
     let mut convergence_trace: Vec<f64> = Vec::new();
     let mut best_so_far = f64::NEG_INFINITY;
 
-    // Phase 1: Random initial samples
-    for _ in 0..config.initial_samples {
-        let x = random_point(dim);
+    // Cache evaluated parameter combos to avoid re-running identical backtests.
+    // Key: sorted JSON representation of decoded params.
+    let mut eval_cache: HashMap<String, (SweepResult, f64)> = HashMap::new();
+
+    /// Build a deterministic cache key from decoded parameters.
+    fn cache_key(swept: &HashMap<String, Value>) -> String {
+        let mut pairs: Vec<_> = swept.iter().collect();
+        pairs.sort_by_key(|(k, _)| (*k).clone());
+        pairs
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("|")
+    }
+
+    /// Record an evaluation result (new or cached) into the optimizer state.
+    fn record(
+        obj: f64,
+        x: Vec<f64>,
+        xs: &mut Vec<Vec<f64>>,
+        ys: &mut Vec<f64>,
+        best_so_far: &mut f64,
+        convergence_trace: &mut Vec<f64>,
+    ) {
+        if obj.is_finite() {
+            xs.push(x);
+            ys.push(obj);
+            if obj > *best_so_far {
+                *best_so_far = obj;
+            }
+        }
+        convergence_trace.push(if best_so_far.is_finite() {
+            *best_so_far
+        } else {
+            0.0
+        });
+    }
+
+    /// Try cache, otherwise evaluate and cache the result.
+    async fn eval_or_cache(
+        x: Vec<f64>,
+        config: &BayesianConfig,
+        data_loader: &dyn DataLoader,
+        eval_cache: &mut HashMap<String, (SweepResult, f64)>,
+        xs: &mut Vec<Vec<f64>>,
+        ys: &mut Vec<f64>,
+        results: &mut Vec<SweepResult>,
+        failed: &mut usize,
+        best_so_far: &mut f64,
+        convergence_trace: &mut Vec<f64>,
+    ) {
         let swept = decode_params(&x, &config.continuous_params);
-        if let Ok(result) = evaluate(
+        let key = cache_key(&swept);
+
+        if let Some((cached_result, cached_obj)) = eval_cache.get(&key) {
+            // Reuse cached result — do NOT add to xs/ys (the GP already has
+            // this point; duplicates bloat the kernel matrix to O(N³)).
+            let obj = *cached_obj;
+            if obj.is_finite() && obj > *best_so_far {
+                *best_so_far = obj;
+            }
+            convergence_trace.push(if best_so_far.is_finite() {
+                *best_so_far
+            } else {
+                0.0
+            });
+            results.push(cached_result.clone());
+            return;
+        }
+
+        match evaluate(
             &config.script_source,
             &config.base_params,
             &swept,
@@ -50,28 +117,42 @@ pub async fn run_bayesian(
         )
         .await
         {
-            let obj = extract_objective(&result, &config.objective);
-            if obj.is_finite() {
-                xs.push(x);
-                ys.push(obj);
+            Ok(result) => {
+                let obj = extract_objective(&result, &config.objective);
+                eval_cache.insert(key, (result.clone(), obj));
+                record(obj, x, xs, ys, best_so_far, convergence_trace);
+                results.push(result);
             }
-            if obj.is_finite() && obj > best_so_far {
-                best_so_far = obj;
+            Err(_) => {
+                *failed += 1;
+                convergence_trace.push(if best_so_far.is_finite() {
+                    *best_so_far
+                } else {
+                    0.0
+                });
             }
-            convergence_trace.push(if best_so_far.is_finite() {
-                best_so_far
-            } else {
-                0.0
-            });
-            results.push(result);
-        } else {
-            failed += 1;
-            convergence_trace.push(if best_so_far.is_finite() {
-                best_so_far
-            } else {
-                0.0
-            });
         }
+    }
+
+    // Phase 1: Random initial samples
+    for _ in 0..config.initial_samples {
+        if is_cancelled() {
+            break;
+        }
+        let x = random_point(dim);
+        eval_or_cache(
+            x,
+            config,
+            data_loader,
+            &mut eval_cache,
+            &mut xs,
+            &mut ys,
+            &mut results,
+            &mut failed,
+            &mut best_so_far,
+            &mut convergence_trace,
+        )
+        .await;
     }
 
     // Phase 2: GP-EI loop
@@ -79,85 +160,63 @@ pub async fn run_bayesian(
         .max_evaluations
         .saturating_sub(config.initial_samples);
     for _ in 0..remaining {
-        if xs.len() < 2 {
-            // Not enough data for GP, do another random sample
-            let x = random_point(dim);
-            let swept = decode_params(&x, &config.continuous_params);
-            if let Ok(result) = evaluate(
-                &config.script_source,
-                &config.base_params,
-                &swept,
-                data_loader,
-            )
-            .await
-            {
-                let obj = extract_objective(&result, &config.objective);
-                if obj.is_finite() {
-                    xs.push(x);
-                    ys.push(obj);
-                }
-                if obj.is_finite() && obj > best_so_far {
-                    best_so_far = obj;
-                }
-                convergence_trace.push(if best_so_far.is_finite() {
-                    best_so_far
-                } else {
-                    0.0
-                });
-                results.push(result);
-            } else {
-                failed += 1;
-                convergence_trace.push(if best_so_far.is_finite() {
-                    best_so_far
-                } else {
-                    0.0
-                });
-            }
-            continue;
+        if is_cancelled() {
+            break;
         }
-
-        // Fit GP and find next point via EI
-        let gp = GaussianProcess::fit(&xs, &ys);
-        let next_x = maximize_ei(&gp, best_so_far, dim);
-        let swept = decode_params(&next_x, &config.continuous_params);
-
-        if let Ok(result) = evaluate(
-            &config.script_source,
-            &config.base_params,
-            &swept,
-            data_loader,
-        )
-        .await
-        {
-            let obj = extract_objective(&result, &config.objective);
-            if obj.is_finite() {
-                xs.push(next_x);
-                ys.push(obj);
-            }
-            if obj.is_finite() && obj > best_so_far {
-                best_so_far = obj;
-            }
-            convergence_trace.push(if best_so_far.is_finite() {
-                best_so_far
-            } else {
-                0.0
-            });
-            results.push(result);
+        let x = if xs.len() < 2 {
+            random_point(dim)
         } else {
-            failed += 1;
-            convergence_trace.push(if best_so_far.is_finite() {
-                best_so_far
-            } else {
-                0.0
-            });
-        }
+            let gp = GaussianProcess::fit(&xs, &ys);
+            maximize_ei(&gp, best_so_far, dim)
+        };
+
+        eval_or_cache(
+            x,
+            config,
+            data_loader,
+            &mut eval_cache,
+            &mut xs,
+            &mut ys,
+            &mut results,
+            &mut failed,
+            &mut best_so_far,
+            &mut convergence_trace,
+        )
+        .await;
     }
 
     let total = config.max_evaluations;
+    // Deduplicate results — keep one entry per unique param combo
+    let mut seen_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+    results.retain(|r| {
+        let key = cache_key(&r.params);
+        seen_keys.insert(key)
+    });
     sort_by_objective(&mut results, &config.objective);
     for (i, r) in results.iter_mut().enumerate() {
         r.rank = i + 1;
     }
+
+    // Build param_grid from evaluated results for sensitivity computation
+    let mut param_grid: HashMap<String, Vec<Value>> = HashMap::new();
+    for r in &results {
+        for (k, v) in &r.params {
+            let vals = param_grid.entry(k.clone()).or_default();
+            if !vals.contains(v) {
+                vals.push(v.clone());
+            }
+        }
+    }
+    // Sort each param's values for consistent ordering
+    for vals in param_grid.values_mut() {
+        vals.sort_by(|a, b| {
+            a.as_f64()
+                .unwrap_or(0.0)
+                .partial_cmp(&b.as_f64().unwrap_or(0.0))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
+    let sensitivity = compute_sensitivity(&results, &param_grid, &config.objective);
 
     Ok(SweepResponse {
         mode: "bayesian".to_string(),
@@ -167,7 +226,7 @@ pub async fn run_bayesian(
         combinations_failed: failed,
         best_result: results.first().cloned(),
         ranked_results: results,
-        dimension_sensitivity: HashMap::new(),
+        dimension_sensitivity: sensitivity,
         convergence_trace: Some(convergence_trace),
         execution_time_ms: start.elapsed().as_millis() as u64,
     })

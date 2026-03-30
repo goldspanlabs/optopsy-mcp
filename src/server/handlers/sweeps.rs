@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+use uuid;
 
 use crate::data::traits::{SweepDetail, SweepSummary};
 use crate::engine::bayesian::{run_bayesian, BayesianConfig};
@@ -133,6 +134,18 @@ pub async fn create_sweep(
         .unwrap_or("UNKNOWN")
         .to_owned();
 
+    // Generate a run ID upfront so the cancel endpoint can target it
+    let run_id = uuid::Uuid::new_v4().to_string();
+    let cancellations = Arc::clone(&state.sweep_cancellations);
+    let cancel_run_id = run_id.clone();
+    let is_cancelled = move || {
+        cancellations.lock().map_or(false, |set| {
+            set.contains(&cancel_run_id) || set.contains("__cancel_all__")
+        })
+    };
+
+    // Store run_id in state so the FE can reference it for cancellation
+    // (we reuse the sweep_cancellations set — the ID is only meaningful while running)
     let sweep_response = match req.mode.as_str() {
         "grid" => {
             let param_grid = build_grid(&req.sweep_params);
@@ -142,7 +155,7 @@ pub async fn create_sweep(
                 param_grid,
                 objective: req.objective.clone(),
             };
-            run_grid_sweep(&config, &loader)
+            run_grid_sweep(&config, &loader, &is_cancelled)
                 .await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         }
@@ -161,7 +174,7 @@ pub async fn create_sweep(
                 initial_samples,
                 objective: req.objective.clone(),
             };
-            run_bayesian(&config, &loader)
+            run_bayesian(&config, &loader, &is_cancelled)
                 .await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         }
@@ -172,6 +185,12 @@ pub async fn create_sweep(
             ));
         }
     };
+
+    // Clean up cancellation flags
+    if let Ok(mut set) = state.sweep_cancellations.lock() {
+        set.remove(&run_id);
+        set.remove("__cancel_all__");
+    }
 
     let result_json = serde_json::to_string(&sweep_response)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -279,4 +298,13 @@ pub async fn set_sweep_analysis(
     } else {
         Err((StatusCode::NOT_FOUND, format!("Sweep '{id}' not found")))
     }
+}
+
+/// `POST /sweeps/cancel` — Cancel all running sweeps.
+#[allow(clippy::unused_async)]
+pub async fn cancel_sweeps(State(state): State<AppState>) -> StatusCode {
+    if let Ok(mut set) = state.sweep_cancellations.lock() {
+        set.insert("__cancel_all__".to_string());
+    }
+    StatusCode::NO_CONTENT
 }

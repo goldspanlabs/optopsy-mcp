@@ -106,6 +106,9 @@ async fn main() -> Result<()> {
             backtest_store,
             chat_store,
             sweep_store,
+            sweep_cancellations: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashSet::new(),
+            )),
         };
 
         let strategy_store_for_mcp = strategy_store.clone();
@@ -152,6 +155,7 @@ async fn main() -> Result<()> {
                 "/sweeps",
                 axum::routing::post(sweeps::create_sweep).get(sweeps::list_sweeps),
             )
+            .route("/sweeps/cancel", axum::routing::post(sweeps::cancel_sweeps))
             .route(
                 "/sweeps/{id}",
                 axum::routing::get(sweeps::get_sweep).delete(sweeps::delete_sweep),
