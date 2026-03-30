@@ -14,7 +14,9 @@ use tracing_subscriber::{self, EnvFilter};
 
 use optopsy_mcp::data::database::Database;
 use optopsy_mcp::data::traits::{self, StrategyStore};
-use optopsy_mcp::server::handlers::{backtests, chat as chat_handlers, profiles, strategies};
+use optopsy_mcp::server::handlers::{
+    backtests, chat as chat_handlers, profiles, strategies, sweeps,
+};
 use optopsy_mcp::server::state::AppState;
 use optopsy_mcp::{data, server};
 
@@ -94,6 +96,7 @@ async fn main() -> Result<()> {
         }
 
         let chat_store: Arc<dyn optopsy_mcp::data::traits::ChatStore> = Arc::new(db.chat());
+        let sweep_store: Arc<dyn optopsy_mcp::data::traits::SweepStore> = Arc::new(db.sweeps());
 
         let app_state = AppState {
             server: server::OptopsyServer::with_strategy_store(
@@ -102,6 +105,7 @@ async fn main() -> Result<()> {
             ),
             backtest_store,
             chat_store,
+            sweep_store,
         };
 
         let strategy_store_for_mcp = strategy_store.clone();
@@ -140,6 +144,21 @@ async fn main() -> Result<()> {
             .route(
                 "/walk-forward",
                 axum::routing::post(optopsy_mcp::server::handlers::walk_forward::run_walk_forward),
+            )
+            .with_state(app_state.clone());
+
+        let sweep_routes = axum::Router::new()
+            .route(
+                "/sweeps",
+                axum::routing::post(sweeps::create_sweep).get(sweeps::list_sweeps),
+            )
+            .route(
+                "/sweeps/{id}",
+                axum::routing::get(sweeps::get_sweep).delete(sweeps::delete_sweep),
+            )
+            .route(
+                "/sweeps/{id}/analysis",
+                axum::routing::patch(sweeps::set_sweep_analysis),
             )
             .with_state(app_state.clone());
 
@@ -211,6 +230,7 @@ async fn main() -> Result<()> {
 
         let app = axum::Router::new()
             .merge(backtest_routes)
+            .merge(sweep_routes)
             .merge(strategy_routes)
             .merge(chat_routes)
             .merge(misc_routes)

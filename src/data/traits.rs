@@ -60,6 +60,60 @@ pub trait BacktestStore: Send + Sync {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// SweepStore trait
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Summary of a sweep session for listing.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SweepSummary {
+    pub id: String,
+    pub strategy_key: String,
+    pub symbol: String,
+    pub mode: String,
+    pub objective: String,
+    pub combinations_total: i64,
+    pub execution_time_ms: i64,
+    pub best_sharpe: Option<f64>,
+    pub created_at: String,
+}
+
+/// Full sweep detail — config + result blob.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct SweepDetail {
+    pub id: String,
+    pub strategy_key: String,
+    pub symbol: String,
+    pub mode: String,
+    pub objective: String,
+    pub sweep_config: serde_json::Value,
+    pub result: serde_json::Value,
+    pub combinations_total: i64,
+    pub execution_time_ms: i64,
+    pub created_at: String,
+    pub analysis: Option<String>,
+}
+
+/// Storage backend for sweep results.
+pub trait SweepStore: Send + Sync {
+    fn insert(
+        &self,
+        strategy_key: &str,
+        symbol: &str,
+        mode: &str,
+        objective: &str,
+        sweep_config: &serde_json::Value,
+        result_json: &str,
+        combinations_total: i64,
+        execution_time_ms: i64,
+    ) -> Result<(String, String)>;
+
+    fn get_detail(&self, id: &str) -> Result<Option<SweepDetail>>;
+    fn list(&self, strategy_key: Option<&str>) -> Result<Vec<SweepSummary>>;
+    fn delete(&self, id: &str) -> Result<bool>;
+    fn set_analysis(&self, id: &str, analysis: &str) -> Result<bool>;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // StrategyStore trait
 // ──────────────────────────────────────────────────────────────────────────────
 

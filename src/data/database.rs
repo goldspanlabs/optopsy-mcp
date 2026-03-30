@@ -63,6 +63,17 @@ impl Database {
         super::chat_store::SqliteChatStore::new(self.conn.clone())
     }
 
+    /// Create a [`SqliteSweepStore`](super::sweep_store::SqliteSweepStore)
+    /// backed by this database's connection.
+    pub fn sweeps(&self) -> super::sweep_store::SqliteSweepStore {
+        super::sweep_store::SqliteSweepStore::new(self.conn.clone())
+    }
+
+    /// Return the shared database connection handle.
+    pub fn connection(&self) -> DbConnection {
+        self.conn.clone()
+    }
+
     /// Create all tables and indices if they do not already exist.
     #[allow(clippy::too_many_lines)]
     fn init_schema(&self) -> Result<()> {
@@ -125,6 +136,24 @@ impl Database {
 
             CREATE INDEX IF NOT EXISTS idx_trades_backtest_id
                 ON trades(backtest_id);
+
+            -- Sweeps
+            CREATE TABLE IF NOT EXISTS sweeps (
+                id                  TEXT PRIMARY KEY,
+                strategy_key        TEXT NOT NULL,
+                symbol              TEXT NOT NULL,
+                mode                TEXT NOT NULL,
+                objective           TEXT NOT NULL,
+                sweep_config        TEXT NOT NULL,
+                result_json         TEXT NOT NULL,
+                combinations_total  INTEGER NOT NULL,
+                execution_time_ms   INTEGER NOT NULL,
+                created_at          TEXT NOT NULL,
+                analysis            TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_sweeps_strategy
+                ON sweeps(strategy_key);
 
             -- Strategies
             CREATE TABLE IF NOT EXISTS strategies (

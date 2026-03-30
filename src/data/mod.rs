@@ -9,6 +9,7 @@ pub mod chat_store;
 pub mod database;
 pub mod parquet;
 pub mod strategy_store;
+pub mod sweep_store;
 pub mod traits;
 
 use anyhow::Result;

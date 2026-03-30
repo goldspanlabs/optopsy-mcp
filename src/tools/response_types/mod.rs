@@ -6,6 +6,7 @@ pub mod hypothesis;
 pub mod inputs;
 pub mod risk;
 pub mod stats;
+pub mod sweep;
 
 pub use common::*;
 pub use data::*;
