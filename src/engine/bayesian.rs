@@ -16,7 +16,7 @@ use crate::tools::response_types::sweep::{SweepResponse, SweepResult};
 pub struct BayesianConfig {
     pub script_source: String,
     pub base_params: HashMap<String, Value>,
-    /// Each entry: (`param_name`, min, max, is_int).
+    /// Each entry: (`param_name`, min, max, `is_int`).
     pub continuous_params: Vec<(String, f64, f64, bool)>,
     pub max_evaluations: usize,
     pub initial_samples: usize,
