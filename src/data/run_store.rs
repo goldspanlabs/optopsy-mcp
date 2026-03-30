@@ -234,8 +234,8 @@ impl RunStore for SqliteRunStore {
             let single_rows = stmt
                 .query_map([], |row| {
                     let params_str: String = row.get(5)?;
-                    let params: Value =
-                        serde_json::from_str(&params_str).unwrap_or(Value::Object(Default::default()));
+                    let params: Value = serde_json::from_str(&params_str)
+                        .unwrap_or(Value::Object(Default::default()));
                     Ok(RunRow::Single(RunSummary {
                         id: row.get(0)?,
                         sweep_id: row.get(1)?,
@@ -329,11 +329,11 @@ impl RunStore for SqliteRunStore {
                 rusqlite::params![id],
                 |row| {
                     let params_str: String = row.get(6)?;
-                    let params: Value =
-                        serde_json::from_str(&params_str).unwrap_or(Value::Object(Default::default()));
+                    let params: Value = serde_json::from_str(&params_str)
+                        .unwrap_or(Value::Object(Default::default()));
                     let result_json_str: Option<String> = row.get(17)?;
-                    let result_json: Option<Value> = result_json_str
-                        .and_then(|s| serde_json::from_str(&s).ok());
+                    let result_json: Option<Value> =
+                        result_json_str.and_then(|s| serde_json::from_str(&s).ok());
 
                     Ok(RunDetail {
                         id: row.get(0)?,
@@ -423,8 +423,8 @@ impl RunStore for SqliteRunStore {
                 rusqlite::params![id],
                 |row| {
                     let config_str: String = row.get(4)?;
-                    let sweep_config: Value =
-                        serde_json::from_str(&config_str).unwrap_or(Value::Object(Default::default()));
+                    let sweep_config: Value = serde_json::from_str(&config_str)
+                        .unwrap_or(Value::Object(Default::default()));
 
                     Ok(SweepDetail {
                         id: row.get(0)?,
@@ -638,7 +638,16 @@ mod tests {
         let config = serde_json::json!({"dte": [30, 45, 60]});
 
         let created_at = store
-            .insert_sweep(&sweep_id, None, "SPY", &config, "sharpe", "grid", 3, Some(5000))
+            .insert_sweep(
+                &sweep_id,
+                None,
+                "SPY",
+                &config,
+                "sharpe",
+                "grid",
+                3,
+                Some(5000),
+            )
             .expect("insert_sweep");
         assert!(!created_at.is_empty());
 
@@ -691,24 +700,69 @@ mod tests {
         let run_id = uuid::Uuid::new_v4().to_string();
         store
             .insert_run(
-                &run_id, None, None, "SPY", 10_000.0, &params, Some(0.05), Some(0.50),
-                Some(-0.10), Some(1.2), None, None, None, Some(5), None, None, "{}", Some(50),
-                None, None, None,
+                &run_id,
+                None,
+                None,
+                "SPY",
+                10_000.0,
+                &params,
+                Some(0.05),
+                Some(0.50),
+                Some(-0.10),
+                Some(1.2),
+                None,
+                None,
+                None,
+                Some(5),
+                None,
+                None,
+                "{}",
+                Some(50),
+                None,
+                None,
+                None,
             )
             .unwrap();
 
         // Insert a sweep with runs
         let sweep_id = uuid::Uuid::new_v4().to_string();
         store
-            .insert_sweep(&sweep_id, None, "QQQ", &params, "sharpe", "grid", 2, Some(100))
+            .insert_sweep(
+                &sweep_id,
+                None,
+                "QQQ",
+                &params,
+                "sharpe",
+                "grid",
+                2,
+                Some(100),
+            )
             .unwrap();
 
         let sweep_run_id = uuid::Uuid::new_v4().to_string();
         store
             .insert_run(
-                &sweep_run_id, Some(&sweep_id), None, "QQQ", 10_000.0, &params, Some(0.10),
-                Some(0.60), Some(-0.05), Some(2.0), None, None, None, Some(10), None, None, "{}",
-                Some(50), None, None, None,
+                &sweep_run_id,
+                Some(&sweep_id),
+                None,
+                "QQQ",
+                10_000.0,
+                &params,
+                Some(0.10),
+                Some(0.60),
+                Some(-0.05),
+                Some(2.0),
+                None,
+                None,
+                None,
+                Some(10),
+                None,
+                None,
+                "{}",
+                Some(50),
+                None,
+                None,
+                None,
             )
             .unwrap();
 
@@ -747,8 +801,27 @@ mod tests {
             .unwrap();
         store
             .insert_run(
-                &run_id, Some(&sweep_id), None, "SPY", 10_000.0, &params, None, None, None,
-                None, None, None, None, None, None, None, "{}", None, None, None, None,
+                &run_id,
+                Some(&sweep_id),
+                None,
+                "SPY",
+                10_000.0,
+                &params,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                "{}",
+                None,
+                None,
+                None,
+                None,
             )
             .unwrap();
 
@@ -789,7 +862,9 @@ mod tests {
             .insert_sweep(&sweep_id, None, "SPY", &params, "sharpe", "grid", 1, None)
             .unwrap();
 
-        assert!(store.set_sweep_analysis(&sweep_id, "Sweep analysis").unwrap());
+        assert!(store
+            .set_sweep_analysis(&sweep_id, "Sweep analysis")
+            .unwrap());
         let detail = store.get_sweep(&sweep_id).unwrap().expect("should exist");
         assert_eq!(detail.analysis.as_deref(), Some("Sweep analysis"));
     }

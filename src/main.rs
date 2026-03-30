@@ -15,7 +15,7 @@ use tracing_subscriber::{self, EnvFilter};
 use optopsy_mcp::data::database::Database;
 use optopsy_mcp::data::traits::{self, StrategyStore};
 use optopsy_mcp::server::handlers::{
-    backtests, chat as chat_handlers, profiles, strategies, sweeps,
+    backtests, chat as chat_handlers, profiles, runs, strategies, sweeps,
 };
 use optopsy_mcp::server::state::AppState;
 use optopsy_mcp::{data, server};
@@ -83,8 +83,7 @@ async fn main() -> Result<()> {
         }
         let db = Database::open(&db_path)?;
 
-        let backtest_store: Arc<dyn optopsy_mcp::data::traits::BacktestStore> =
-            Arc::new(db.backtests());
+        let run_store: Arc<dyn optopsy_mcp::data::traits::RunStore> = Arc::new(db.runs());
 
         let strategy_store: Arc<dyn StrategyStore> = Arc::new(db.strategies());
         let seeded = traits::seed_strategies_if_empty(
@@ -96,16 +95,14 @@ async fn main() -> Result<()> {
         }
 
         let chat_store: Arc<dyn optopsy_mcp::data::traits::ChatStore> = Arc::new(db.chat());
-        let sweep_store: Arc<dyn optopsy_mcp::data::traits::SweepStore> = Arc::new(db.sweeps());
 
         let app_state = AppState {
             server: server::OptopsyServer::with_strategy_store(
                 cache.clone(),
                 strategy_store.clone(),
             ),
-            backtest_store,
+            run_store,
             chat_store,
-            sweep_store,
             sweep_cancellations: std::sync::Arc::new(std::sync::Mutex::new(
                 std::collections::HashSet::new(),
             )),
@@ -234,6 +231,26 @@ async fn main() -> Result<()> {
                 }),
             )
             .route("/health", axum::routing::get(|| async { "ok" }))
+            .with_state(app_state.clone());
+
+        let run_routes = axum::Router::new()
+            .route("/runs", axum::routing::get(runs::list_runs))
+            .route(
+                "/runs/{id}",
+                axum::routing::get(runs::get_run).delete(runs::delete_run),
+            )
+            .route(
+                "/runs/{id}/analysis",
+                axum::routing::patch(runs::set_run_analysis),
+            )
+            .route(
+                "/runs/sweep/{sweepId}",
+                axum::routing::get(runs::get_sweep_detail).delete(runs::delete_sweep),
+            )
+            .route(
+                "/runs/sweep/{sweepId}/analysis",
+                axum::routing::patch(runs::set_sweep_analysis),
+            )
             .with_state(app_state);
 
         let app = axum::Router::new()
@@ -241,6 +258,7 @@ async fn main() -> Result<()> {
             .merge(sweep_routes)
             .merge(strategy_routes)
             .merge(chat_routes)
+            .merge(run_routes)
             .merge(misc_routes)
             .nest_service("/mcp", service)
             .layer(CorsLayer::permissive());

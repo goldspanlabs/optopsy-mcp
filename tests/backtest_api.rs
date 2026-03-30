@@ -1,28 +1,13 @@
-//! Integration tests for the `BacktestStore` REST API storage layer.
+//! Integration tests for the [`RunStore`] REST API storage layer.
 //!
-//! Exercises the full lifecycle: insert, list, `get_detail`, `get_trades`, and delete.
+//! Exercises the full lifecycle: `insert_run`, `insert_trades`, `list`, `get_run`, and `delete_run`.
 
-use optopsy_mcp::data::backtest_store::{MetricsRow, TradeRow};
 use optopsy_mcp::data::database::Database;
+use optopsy_mcp::data::traits::{RunStore, TradeRow};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────────
-
-fn sample_metrics() -> MetricsRow {
-    MetricsRow {
-        sharpe: 1.5,
-        sortino: 2.1,
-        cagr: 0.18,
-        max_drawdown: -0.10,
-        win_rate: 0.60,
-        profit_factor: 1.9,
-        total_pnl: 8_000.0,
-        trade_count: 30,
-        expectancy: 266.67,
-        var_95: -420.0,
-    }
-}
 
 fn sample_trades() -> Vec<TradeRow> {
     vec![
@@ -80,45 +65,68 @@ fn sample_trades() -> Vec<TradeRow> {
 
 #[test]
 fn full_lifecycle_insert_list_get_delete() {
-    let store = Database::open_in_memory()
-        .expect("open_in_memory")
-        .backtests();
+    let store = Database::open_in_memory().expect("open_in_memory").runs();
 
-    let metrics = sample_metrics();
     let trades3 = sample_trades(); // 3 trades
-    let trades1 = vec![sample_trades().remove(0)]; // 1 trade
 
     let params1 = serde_json::json!({"dte": 45, "delta": 0.30});
     let params2 = serde_json::json!({"dte": 30, "delta": 0.25});
 
-    // ── insert two backtests ──────────────────────────────────────────────────
+    let id1 = uuid::Uuid::new_v4().to_string();
+    let id2 = uuid::Uuid::new_v4().to_string();
 
-    let (id1, _) = store
-        .insert(
-            "bb_mean_reversion",
+    // ── insert two runs ──────────────────────────────────────────────────
+
+    store
+        .insert_run(
+            &id1,
+            None,
+            None,
             "SPY",
             100_000.0,
             &params1,
-            &metrics,
-            &trades3,
+            Some(8_000.0),
+            Some(0.60),
+            Some(-0.10),
+            Some(1.5),
+            Some(2.1),
+            Some(0.18),
+            Some(1.9),
+            Some(30),
+            Some(266.67),
+            Some(-420.0),
             "{}",
-            512,
+            Some(512),
             None,
             None,
             None,
         )
         .expect("insert id1");
 
-    let (id2, _) = store
-        .insert(
-            "ibs_mean_reversion",
+    store
+        .insert_trades(&id1, &trades3)
+        .expect("insert trades for id1");
+
+    store
+        .insert_run(
+            &id2,
+            None,
+            None,
             "QQQ",
             50_000.0,
             &params2,
-            &metrics,
-            &trades1,
+            Some(4_000.0),
+            Some(0.55),
+            Some(-0.08),
+            Some(1.2),
+            Some(1.8),
+            Some(0.12),
+            Some(1.6),
+            Some(15),
+            Some(200.0),
+            Some(-300.0),
             "{}",
-            256,
+            Some(256),
             None,
             None,
             None,
@@ -127,141 +135,114 @@ fn full_lifecycle_insert_list_get_delete() {
 
     assert_ne!(id1, id2, "UUIDs must be distinct");
 
-    // ── list all → 2 results ──────────────────────────────────────────────────
+    // ── list all → 2 single runs ─────────────────────────────────────────
 
-    let all = store.list(None, None, None, None).expect("list all");
-    assert_eq!(all.len(), 2, "expected 2 backtests after two inserts");
+    let response = store.list().expect("list all");
+    assert_eq!(response.overview.total_runs, 2, "expected 2 runs");
+    assert_eq!(response.rows.len(), 2, "expected 2 rows");
 
-    // ── list filtered by strategy → 1 result ─────────────────────────────────
+    // ── get_run for a nonexistent id returns None ────────────────────────
 
-    let filtered = store
-        .list(Some("bb_mean_reversion"), None, None, None)
-        .expect("list by strategy");
-    assert_eq!(filtered.len(), 1);
-    assert_eq!(filtered[0].strategy_key, "bb_mean_reversion");
-    assert_eq!(filtered[0].symbol, "SPY");
+    assert!(store.get_run("nonexistent").unwrap().is_none());
 
-    // ── get_detail for a nonexistent id returns None ──────────────────────────
+    // ── get_run for id1 — check trades ──────────────────────────────────
 
-    assert!(store.get_detail("nonexistent").unwrap().is_none());
-
-    // ── get_trades for id1 — check exit_type and group_label ─────────────────
-
-    let fetched_trades = store.get_trades(&id1).expect("get_trades id1");
-    assert_eq!(fetched_trades.len(), 3, "expected 3 trade rows for id1");
-
-    // Ordered by trade_id ASC
-    assert_eq!(fetched_trades[0].exit_type, "TakeProfit");
+    let detail = store.get_run(&id1).unwrap().expect("should exist");
+    assert_eq!(detail.symbol, "SPY");
+    assert_eq!(detail.trades.len(), 3, "expected 3 trade rows for id1");
+    assert_eq!(detail.trades[0].exit_type, "TakeProfit");
     assert_eq!(
-        fetched_trades[0].group_label,
+        detail.trades[0].group_label,
         Some("Cycle 1".to_string()),
         "first trade should carry group_label 'Cycle 1'"
     );
-    assert_eq!(fetched_trades[1].exit_type, "StopLoss");
+    assert_eq!(detail.trades[1].exit_type, "StopLoss");
     assert!(
-        fetched_trades[1].group_label.is_none(),
+        detail.trades[1].group_label.is_none(),
         "second trade should have no group_label"
     );
-    assert_eq!(fetched_trades[2].exit_type, "MaxHold");
+    assert_eq!(detail.trades[2].exit_type, "MaxHold");
 
-    // ── delete id1 ───────────────────────────────────────────────────────────
+    // ── delete id1 ──────────────────────────────────────────────────────
 
-    let deleted = store.delete(&id1).expect("delete id1");
+    let deleted = store.delete_run(&id1).expect("delete id1");
     assert!(deleted, "delete should return true for existing id");
 
-    // get_detail returns None after deletion
+    // get_run returns None after deletion
     assert!(
-        store
-            .get_detail(&id1)
-            .expect("get_detail after delete")
-            .is_none(),
+        store.get_run(&id1).expect("get_run after delete").is_none(),
         "id1 should not exist after deletion"
     );
 
-    // get_trades returns empty after deletion (CASCADE)
-    let orphan_trades = store.get_trades(&id1).expect("get_trades after delete");
-    assert!(
-        orphan_trades.is_empty(),
-        "trades should be cascade-deleted with their backtest"
-    );
-
     // second delete returns false
-    let second_delete = store.delete(&id1).expect("second delete");
+    let second_delete = store.delete_run(&id1).expect("second delete");
     assert!(!second_delete, "second delete should return false");
 
-    // ── id2 still intact ─────────────────────────────────────────────────────
+    // ── id2 still intact ────────────────────────────────────────────────
 
-    let remaining = store
-        .list(None, None, None, None)
-        .expect("list after delete");
-    assert_eq!(remaining.len(), 1, "only id2 should remain");
-    assert_eq!(remaining[0].strategy_key, "ibs_mean_reversion");
-    assert_eq!(remaining[0].symbol, "QQQ");
-
-    // get_trades for id2
-    let trades_id2 = store.get_trades(&id2).expect("get_trades id2");
-    assert_eq!(trades_id2.len(), 1, "id2 should still have its 1 trade");
+    let remaining = store.list().expect("list after delete");
+    assert_eq!(remaining.overview.total_runs, 1, "only id2 should remain");
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Test 2: list filter combinations
+// Test 2: sweep lifecycle
 // ──────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn list_filters_combine_correctly() {
-    let store = Database::open_in_memory()
-        .expect("open_in_memory")
-        .backtests();
+fn sweep_insert_and_cascade_delete() {
+    let store = Database::open_in_memory().expect("open_in_memory").runs();
 
-    let metrics = sample_metrics();
-    let empty: Vec<TradeRow> = vec![];
-    let p = serde_json::json!({});
+    let sweep_id = uuid::Uuid::new_v4().to_string();
+    let config = serde_json::json!({"mode": "grid", "sweep_params": []});
 
-    // Insert 3 backtests: (strat_a, SPY), (strat_a, QQQ), (strat_b, SPY)
     store
-        .insert(
-            "strat_a", "SPY", 10_000.0, &p, &metrics, &empty, "{}", 100, None, None, None,
+        .insert_sweep(
+            &sweep_id,
+            None,
+            "SPY",
+            &config,
+            "sharpe",
+            "grid",
+            3,
+            Some(1000),
         )
-        .expect("insert strat_a/SPY");
-    store
-        .insert(
-            "strat_a", "QQQ", 10_000.0, &p, &metrics, &empty, "{}", 100, None, None, None,
-        )
-        .expect("insert strat_a/QQQ");
-    store
-        .insert(
-            "strat_b", "SPY", 10_000.0, &p, &metrics, &empty, "{}", 100, None, None, None,
-        )
-        .expect("insert strat_b/SPY");
+        .expect("insert sweep");
 
-    // list(strat_a, SPY) = 1
-    assert_eq!(
+    // Insert runs for the sweep
+    for i in 0..3 {
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let params = serde_json::json!({"dte": 30 + i * 15});
         store
-            .list(Some("strat_a"), Some("SPY"), None, None)
-            .unwrap()
-            .len(),
-        1,
-        "strat_a + SPY should yield exactly 1"
-    );
+            .insert_run(
+                &run_id,
+                Some(&sweep_id),
+                None,
+                "SPY",
+                50_000.0,
+                &params,
+                Some(0.10 + f64::from(i) * 0.05),
+                Some(0.50),
+                Some(-0.10),
+                Some(1.0 + f64::from(i) * 0.5),
+                None,
+                None,
+                None,
+                Some(10),
+                None,
+                None,
+                "{}",
+                Some(100),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+    }
 
-    // list(strat_a, None) = 2
-    assert_eq!(
-        store.list(Some("strat_a"), None, None, None).unwrap().len(),
-        2,
-        "strat_a alone should yield 2"
-    );
+    let detail = store.get_sweep(&sweep_id).unwrap().expect("should exist");
+    assert_eq!(detail.runs.len(), 3);
 
-    // list(None, SPY) = 2
-    assert_eq!(
-        store.list(None, Some("SPY"), None, None).unwrap().len(),
-        2,
-        "SPY alone should yield 2"
-    );
-
-    // list(None, None) = 3
-    assert_eq!(
-        store.list(None, None, None, None).unwrap().len(),
-        3,
-        "no filters should yield all 3"
-    );
+    // Deleting sweep should cascade to runs
+    assert!(store.delete_sweep(&sweep_id).unwrap());
+    assert!(store.get_sweep(&sweep_id).unwrap().is_none());
 }

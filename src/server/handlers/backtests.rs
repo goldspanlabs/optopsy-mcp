@@ -1,4 +1,7 @@
 //! REST API handlers for backtest CRUD operations.
+//!
+//! These handlers provide backward compatibility with the `/backtests` endpoints
+//! while delegating to the unified `RunStore` internally.
 
 use axum::{
     extract::{Path, Query, State},
@@ -13,7 +16,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use crate::data::backtest_store::{BacktestDetail, BacktestSummary, MetricsRow, TradeRow};
+use crate::data::traits::{RunDetail, TradeRow};
 use crate::server::state::AppState;
 use crate::tools::run_script::RunScriptParams;
 
@@ -45,59 +48,12 @@ pub struct ListQuery {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Handlers
+// Helpers
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// `POST /backtests` — Run a strategy and persist the result.
-#[allow(clippy::too_many_lines)]
-pub async fn create_backtest(
-    State(state): State<AppState>,
-    Json(req): Json<CreateBacktestRequest>,
-) -> Result<(StatusCode, Json<BacktestDetail>), (StatusCode, String)> {
-    let run_params = RunScriptParams {
-        strategy: Some(req.strategy.clone()),
-        script: None,
-        params: req.params.clone(),
-        profile: req.profile.clone(),
-    };
-
-    let exec_result = crate::server::handlers::run_script::execute(&state.server, run_params)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let strategy_key = exec_result
-        .resolved_strategy_id
-        .unwrap_or_else(|| req.strategy.clone());
-    let response = exec_result.response;
-
-    // Extract SYMBOL and CAPITAL from params
-    let symbol = req
-        .params
-        .get("SYMBOL")
-        .and_then(Value::as_str)
-        .unwrap_or("UNKNOWN")
-        .to_owned();
-
-    let capital = req
-        .params
-        .get("CAPITAL")
-        .and_then(Value::as_f64)
-        .unwrap_or(0.0);
-
-    let m = &response.result.metrics;
-    let metrics = MetricsRow {
-        sharpe: sanitize(m.sharpe),
-        sortino: sanitize(m.sortino),
-        cagr: sanitize(m.cagr),
-        max_drawdown: sanitize(m.max_drawdown),
-        win_rate: sanitize(m.win_rate),
-        profit_factor: sanitize(m.profit_factor),
-        total_pnl: sanitize(response.result.total_pnl),
-        trade_count: response.result.trade_count as i64,
-        expectancy: sanitize(m.expectancy),
-        var_95: sanitize(m.var_95),
-    };
-
-    let trades: Vec<TradeRow> = response
+/// Build `TradeRow` vector from a `RunScriptResponse`.
+fn build_trades(response: &crate::tools::run_script::RunScriptResponse) -> Vec<TradeRow> {
+    response
         .result
         .trade_log
         .iter()
@@ -123,75 +79,160 @@ pub async fn create_backtest(
                 group_label: t.group.clone(),
             }
         })
-        .collect();
+        .collect()
+}
 
-    let params_value = serde_json::to_value(&req.params)
+/// Strip trades from a `RunScriptResponse` for storage (trades stored separately).
+fn strip_trades_from_result_json(response: &crate::tools::run_script::RunScriptResponse) -> String {
+    let mut value = serde_json::to_value(response).unwrap_or(Value::Object(serde_json::Map::default()));
+    if let Some(obj) = value.as_object_mut() {
+        if let Some(result) = obj.get_mut("result") {
+            if let Some(result_obj) = result.as_object_mut() {
+                result_obj.remove("trade_log");
+            }
+        }
+    }
+    serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned())
+}
+
+/// Insert a backtest result into the run store, returning `(id, created_at)`.
+fn persist_backtest(
+    state: &AppState,
+    strategy_key: &str,
+    symbol: &str,
+    capital: f64,
+    params: &HashMap<String, Value>,
+    response: &crate::tools::run_script::RunScriptResponse,
+) -> Result<(String, String), (StatusCode, String)> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let m = &response.result.metrics;
+    let trades = build_trades(response);
+    let result_json = strip_trades_from_result_json(response);
+    let params_value = serde_json::to_value(params)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Serialize the full response as the result_json blob
-    let result_json = serde_json::to_string(&response)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    // Extract provenance from script_meta
     let hypothesis = response
         .script_meta
         .as_ref()
         .and_then(|m| m.hypothesis.as_deref());
-    let tags = response
+    let tags_str = response
         .script_meta
         .as_ref()
-        .and_then(|m| m.tags.as_deref());
-    let regime = response
+        .and_then(|m| m.tags.as_ref())
+        .map(|t| t.join(","));
+    let regime_str = response
         .script_meta
         .as_ref()
-        .and_then(|m| m.regime.as_deref());
+        .and_then(|m| m.regime.as_ref())
+        .map(|r| r.join(","));
 
-    let (id, created_at) = state
-        .backtest_store
-        .insert(
-            &strategy_key,
-            &symbol,
+    let created_at = state
+        .run_store
+        .insert_run(
+            &id,
+            None, // no sweep
+            Some(strategy_key),
+            symbol,
             capital,
             &params_value,
-            &metrics,
-            &trades,
+            Some(sanitize(response.result.total_pnl)),
+            Some(sanitize(m.win_rate)),
+            Some(sanitize(m.max_drawdown)),
+            Some(sanitize(m.sharpe)),
+            Some(sanitize(m.sortino)),
+            Some(sanitize(m.cagr)),
+            Some(sanitize(m.profit_factor)),
+            Some(response.result.trade_count as i64),
+            Some(sanitize(m.expectancy)),
+            Some(sanitize(m.var_95)),
             &result_json,
-            response.execution_time_ms as i64,
+            Some(response.execution_time_ms as i64),
             hypothesis,
-            tags,
-            regime,
+            tags_str.as_deref(),
+            regime_str.as_deref(),
         )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    Ok((
-        StatusCode::CREATED,
-        Json(BacktestDetail {
-            id,
-            created_at,
-            strategy_key,
-            params: Some(serde_json::to_value(&req.params).unwrap_or_default()),
-            analysis: None,
-            response,
-        }),
-    ))
+    state
+        .run_store
+        .insert_trades(&id, &trades)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok((id, created_at))
 }
 
-/// `GET /backtests` — List backtest summaries, optionally filtered.
+// ──────────────────────────────────────────────────────────────────────────────
+// Handlers
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// `POST /backtests` — Run a strategy and persist the result.
+#[allow(clippy::too_many_lines)]
+pub async fn create_backtest(
+    State(state): State<AppState>,
+    Json(req): Json<CreateBacktestRequest>,
+) -> Result<(StatusCode, Json<RunDetail>), (StatusCode, String)> {
+    let run_params = RunScriptParams {
+        strategy: Some(req.strategy.clone()),
+        script: None,
+        params: req.params.clone(),
+        profile: req.profile.clone(),
+    };
+
+    let exec_result = crate::server::handlers::run_script::execute(&state.server, run_params)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let strategy_key = exec_result
+        .resolved_strategy_id
+        .unwrap_or_else(|| req.strategy.clone());
+    let response = exec_result.response;
+
+    let symbol = req
+        .params
+        .get("SYMBOL")
+        .and_then(Value::as_str)
+        .unwrap_or("UNKNOWN")
+        .to_owned();
+
+    let capital = req
+        .params
+        .get("CAPITAL")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
+
+    let (id, _created_at) = persist_backtest(
+        &state,
+        &strategy_key,
+        &symbol,
+        capital,
+        &req.params,
+        &response,
+    )?;
+
+    let detail = state
+        .run_store
+        .get_run(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Run inserted but not found".to_string(),
+            )
+        })?;
+
+    Ok((StatusCode::CREATED, Json(detail)))
+}
+
+/// `GET /backtests` — List backtest summaries (delegates to run store).
 #[allow(clippy::unused_async)]
 pub async fn list_backtests(
     State(state): State<AppState>,
-    Query(query): Query<ListQuery>,
-) -> Result<Json<Vec<BacktestSummary>>, (StatusCode, String)> {
-    let rows = state
-        .backtest_store
-        .list(
-            query.strategy.as_deref(),
-            query.symbol.as_deref(),
-            query.tag.as_deref(),
-            query.regime.as_deref(),
-        )
+    Query(_query): Query<ListQuery>,
+) -> Result<Json<crate::data::traits::RunsListResponse>, (StatusCode, String)> {
+    let response = state
+        .run_store
+        .list()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(Json(rows))
+    Ok(Json(response))
 }
 
 /// `GET /backtests/{id}` — Retrieve a full backtest detail by id.
@@ -199,10 +240,10 @@ pub async fn list_backtests(
 pub async fn get_backtest(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<BacktestDetail>, (StatusCode, String)> {
+) -> Result<Json<RunDetail>, (StatusCode, String)> {
     let detail = state
-        .backtest_store
-        .get_detail(&id)
+        .run_store
+        .get_run(&id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Backtest '{id}' not found")))?;
     Ok(Json(detail))
@@ -222,7 +263,7 @@ pub async fn set_backtest_analysis(
         )
     })?;
     let found = state
-        .backtest_store
+        .run_store
         .set_run_analysis(&id, analysis)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     if found {
@@ -238,11 +279,12 @@ pub async fn get_backtest_trades(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<TradeRow>>, (StatusCode, String)> {
-    let trades = state
-        .backtest_store
-        .get_trades(&id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(Json(trades))
+    let detail = state
+        .run_store
+        .get_run(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Backtest '{id}' not found")))?;
+    Ok(Json(detail.trades))
 }
 
 /// `DELETE /backtests/{id}` — Delete a backtest by id.
@@ -252,8 +294,8 @@ pub async fn delete_backtest(
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let deleted = state
-        .backtest_store
-        .delete(&id)
+        .run_store
+        .delete_run(&id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     if deleted {
         Ok(StatusCode::NO_CONTENT)
@@ -263,10 +305,6 @@ pub async fn delete_backtest(
 }
 
 /// `POST /backtests/stream` — Run a strategy with SSE progress updates.
-///
-/// Streams `event: progress` with `{ "current": N, "total": M }` during the
-/// simulation loop, then emits `event: result` with the full `BacktestDetail`
-/// JSON, and finally `event: done`.
 #[allow(clippy::unused_async, clippy::too_many_lines)]
 pub async fn create_backtest_stream(
     State(state): State<AppState>,
@@ -329,7 +367,7 @@ pub async fn create_backtest_stream(
                     .resolved_strategy_id
                     .unwrap_or_else(|| req.strategy.clone());
                 let response = exec_result.response;
-                // Persist to DB (same as create_backtest)
+
                 let symbol = req
                     .params
                     .get("SYMBOL")
@@ -343,97 +381,26 @@ pub async fn create_backtest_stream(
                     .and_then(Value::as_f64)
                     .unwrap_or(0.0);
 
-                let m = &response.result.metrics;
-                let metrics = MetricsRow {
-                    sharpe: sanitize(m.sharpe),
-                    sortino: sanitize(m.sortino),
-                    cagr: sanitize(m.cagr),
-                    max_drawdown: sanitize(m.max_drawdown),
-                    win_rate: sanitize(m.win_rate),
-                    profit_factor: sanitize(m.profit_factor),
-                    total_pnl: sanitize(response.result.total_pnl),
-                    trade_count: response.result.trade_count as i64,
-                    expectancy: sanitize(m.expectancy),
-                    var_95: sanitize(m.var_95),
-                };
-
-                let trades: Vec<TradeRow> = response
-                    .result
-                    .trade_log
-                    .iter()
-                    .map(|t| {
-                        let pnl_pct = if t.entry_cost.abs() > 0.0 {
-                            t.pnl / t.entry_cost.abs()
-                        } else {
-                            0.0
-                        };
-                        TradeRow {
-                            trade_id: t.trade_id as i64,
-                            entry_datetime: t.entry_datetime.and_utc().timestamp().to_string(),
-                            exit_datetime: t.exit_datetime.and_utc().timestamp().to_string(),
-                            entry_cost: sanitize(t.entry_cost),
-                            exit_proceeds: sanitize(t.exit_proceeds),
-                            pnl: sanitize(t.pnl),
-                            pnl_pct: sanitize(pnl_pct),
-                            days_held: t.days_held,
-                            exit_type: format!("{:?}", t.exit_type),
-                            legs: serde_json::to_string(&t.legs)
-                                .unwrap_or_else(|_| "[]".to_owned()),
-                            computed_quantity: t.computed_quantity,
-                            entry_equity: t.entry_equity.map(sanitize),
-                            group_label: t.group.clone(),
-                        }
-                    })
-                    .collect();
-
-                let params_value = serde_json::to_value(&req.params).unwrap_or_default();
-                let result_json =
-                    serde_json::to_string(&response).unwrap_or_else(|_| "{}".to_owned());
-
-                let hypothesis = response
-                    .script_meta
-                    .as_ref()
-                    .and_then(|m| m.hypothesis.as_deref());
-                let tags = response
-                    .script_meta
-                    .as_ref()
-                    .and_then(|m| m.tags.as_deref());
-                let regime = response
-                    .script_meta
-                    .as_ref()
-                    .and_then(|m| m.regime.as_deref());
-
-                match state.backtest_store.insert(
+                match persist_backtest(
+                    &state,
                     &strategy_key,
                     &symbol,
                     capital,
-                    &params_value,
-                    &metrics,
-                    &trades,
-                    &result_json,
-                    response.execution_time_ms as i64,
-                    hypothesis,
-                    tags,
-                    regime,
+                    &req.params,
+                    &response,
                 ) {
-                    Ok((id, created_at)) => {
-                        let detail = BacktestDetail {
-                            id,
-                            created_at,
-                            strategy_key,
-                            params: Some(serde_json::to_value(&req.params).unwrap_or_default()),
-                            analysis: None,
-                            response,
-                        };
-                        let json = serde_json::to_string(&detail).unwrap_or_default();
-                        let _ = tx.send(Event::default().event("result").data(json)).await;
+                    Ok((id, _)) => {
+                        if let Ok(Some(detail)) = state.run_store.get_run(&id) {
+                            let json = serde_json::to_string(&detail).unwrap_or_default();
+                            let _ = tx.send(Event::default().event("result").data(json)).await;
+                        }
                     }
-                    Err(e) => {
+                    Err((_status, msg)) => {
                         let _ = tx
                             .send(
                                 Event::default()
                                     .event("error")
-                                    .data(format!("DB insert failed: {e}")),
+                                    .data(format!("DB insert failed: {msg}")),
                             )
                             .await;
                     }

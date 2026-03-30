@@ -14,11 +14,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use uuid;
 
-use crate::data::traits::{SweepDetail, SweepSummary};
+use crate::data::traits::SweepDetail;
 use crate::engine::bayesian::{run_bayesian, BayesianConfig};
 use crate::engine::sweep::{run_grid_sweep, GridSweepConfig};
 use crate::scripting::engine::CachingDataLoader;
 use crate::server::state::AppState;
+use crate::tools::response_types::sweep::SweepResponse;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Request / query types
@@ -66,6 +67,15 @@ pub struct ListQuery {
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────────
+
+/// Replace NaN/Infinity with 0.0.
+fn sanitize(v: f64) -> f64 {
+    if v.is_finite() {
+        v
+    } else {
+        0.0
+    }
+}
 
 /// Build a Cartesian grid from sweep param definitions.
 /// Each param expands from `start` to `stop` (inclusive) by `step`.
@@ -117,6 +127,82 @@ fn resolve_strategy_source(
     ))
 }
 
+/// Insert sweep results into the run store.
+fn persist_sweep(
+    state: &AppState,
+    strategy_key: &str,
+    symbol: &str,
+    req: &CreateSweepRequest,
+    sweep_response: &SweepResponse,
+) -> Result<String, (StatusCode, String)> {
+    let sweep_id = uuid::Uuid::new_v4().to_string();
+
+    let sweep_config = serde_json::json!({
+        "mode": req.mode,
+        "objective": req.objective,
+        "sweep_params": req.sweep_params,
+    });
+
+    let combinations_total = sweep_response.combinations_total as i64;
+    let execution_time_ms = sweep_response.execution_time_ms as i64;
+
+    state
+        .run_store
+        .insert_sweep(
+            &sweep_id,
+            Some(strategy_key),
+            symbol,
+            &sweep_config,
+            &req.objective,
+            &req.mode,
+            combinations_total,
+            Some(execution_time_ms),
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Insert each ranked result as a run
+    let capital = req
+        .params
+        .get("CAPITAL")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
+
+    for result in &sweep_response.ranked_results {
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let params_value =
+            serde_json::to_value(&result.params).unwrap_or(Value::Object(Default::default()));
+
+        state
+            .run_store
+            .insert_run(
+                &run_id,
+                Some(&sweep_id),
+                Some(strategy_key),
+                symbol,
+                capital,
+                &params_value,
+                Some(sanitize(result.pnl)),
+                Some(sanitize(result.win_rate)),
+                Some(sanitize(result.max_dd)),
+                Some(sanitize(result.sharpe)),
+                Some(sanitize(result.sortino)),
+                None, // cagr not in SweepResult
+                Some(sanitize(result.profit_factor)),
+                Some(result.trades as i64),
+                None, // expectancy not in SweepResult
+                None, // var_95 not in SweepResult
+                "{}", // no full result_json per sweep run
+                None, // execution_time_ms per-run not available
+                None,
+                None,
+                None,
+            )
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    Ok(sweep_id)
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Handlers
 // ──────────────────────────────────────────────────────────────────────────────
@@ -147,8 +233,6 @@ pub async fn create_sweep(
             .is_ok_and(|set| set.contains(&cancel_run_id) || set.contains("__cancel_all__"))
     };
 
-    // Store run_id in state so the FE can reference it for cancellation
-    // (we reuse the sweep_cancellations set — the ID is only meaningful while running)
     let sweep_response = match req.mode.as_str() {
         "grid" => {
             let param_grid = build_grid(&req.sweep_params);
@@ -195,35 +279,11 @@ pub async fn create_sweep(
         set.remove("__cancel_all__");
     }
 
-    let result_json = serde_json::to_string(&sweep_response)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    let sweep_config = serde_json::json!({
-        "mode": req.mode,
-        "objective": req.objective,
-        "sweep_params": req.sweep_params,
-    });
-
-    let combinations_total = sweep_response.combinations_total as i64;
-    let execution_time_ms = sweep_response.execution_time_ms as i64;
-
-    let (id, _created_at) = state
-        .sweep_store
-        .insert(
-            &strategy_key,
-            &symbol,
-            &req.mode,
-            &req.objective,
-            &sweep_config,
-            &result_json,
-            combinations_total,
-            execution_time_ms,
-        )
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let sweep_id = persist_sweep(&state, &strategy_key, &symbol, &req, &sweep_response)?;
 
     let detail = state
-        .sweep_store
-        .get_detail(&id)
+        .run_store
+        .get_sweep(&sweep_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or_else(|| {
             (
@@ -239,13 +299,14 @@ pub async fn create_sweep(
 #[allow(clippy::unused_async)]
 pub async fn list_sweeps(
     State(state): State<AppState>,
-    Query(query): Query<ListQuery>,
-) -> Result<Json<Vec<SweepSummary>>, (StatusCode, String)> {
-    let rows = state
-        .sweep_store
-        .list(query.strategy.as_deref())
+    Query(_query): Query<ListQuery>,
+) -> Result<Json<crate::data::traits::RunsListResponse>, (StatusCode, String)> {
+    // Return the full list; filtering can be added later
+    let response = state
+        .run_store
+        .list()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(Json(rows))
+    Ok(Json(response))
 }
 
 /// `GET /sweeps/{id}` — Retrieve full sweep detail by id.
@@ -255,8 +316,8 @@ pub async fn get_sweep(
     Path(id): Path<String>,
 ) -> Result<Json<SweepDetail>, (StatusCode, String)> {
     let detail = state
-        .sweep_store
-        .get_detail(&id)
+        .run_store
+        .get_sweep(&id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Sweep '{id}' not found")))?;
     Ok(Json(detail))
@@ -269,8 +330,8 @@ pub async fn delete_sweep(
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let deleted = state
-        .sweep_store
-        .delete(&id)
+        .run_store
+        .delete_sweep(&id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     if deleted {
         Ok(StatusCode::NO_CONTENT)
@@ -293,7 +354,7 @@ pub async fn set_sweep_analysis(
         )
     })?;
     let found = state
-        .sweep_store
+        .run_store
         .set_sweep_analysis(&id, analysis)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     if found {
@@ -425,35 +486,15 @@ pub async fn create_sweep_stream(
 
         match sweep_result {
             Ok(sweep_response) => {
-                let result_json = serde_json::to_string(&sweep_response).unwrap_or_default();
-                let sweep_config = serde_json::json!({
-                    "mode": req.mode,
-                    "objective": req.objective,
-                    "sweep_params": req.sweep_params,
-                });
-                let combinations_total = sweep_response.combinations_total as i64;
-                let execution_time_ms = sweep_response.execution_time_ms as i64;
-
-                match state.sweep_store.insert(
-                    &strategy_key,
-                    &symbol,
-                    &req.mode,
-                    &req.objective,
-                    &sweep_config,
-                    &result_json,
-                    combinations_total,
-                    execution_time_ms,
-                ) {
-                    Ok((id, _)) => {
-                        if let Ok(Some(detail)) = state.sweep_store.get_detail(&id) {
+                match persist_sweep(&state, &strategy_key, &symbol, &req, &sweep_response) {
+                    Ok(sweep_id) => {
+                        if let Ok(Some(detail)) = state.run_store.get_sweep(&sweep_id) {
                             let json = serde_json::to_string(&detail).unwrap_or_default();
                             let _ = tx.send(Event::default().event("result").data(json)).await;
                         }
                     }
-                    Err(e) => {
-                        let _ = tx
-                            .send(Event::default().event("error").data(e.to_string()))
-                            .await;
+                    Err((_status, msg)) => {
+                        let _ = tx.send(Event::default().event("error").data(msg)).await;
                     }
                 }
             }
