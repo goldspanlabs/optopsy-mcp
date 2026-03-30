@@ -72,6 +72,7 @@ pub struct SweepSummary {
     pub mode: String,
     pub objective: String,
     pub combinations_total: i64,
+    pub combinations_run: i64,
     pub execution_time_ms: i64,
     pub best_sharpe: Option<f64>,
     pub created_at: String,

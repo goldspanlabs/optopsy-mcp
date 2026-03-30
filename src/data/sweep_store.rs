@@ -179,10 +179,14 @@ impl SqliteSweepStore {
         let rows = stmt
             .query_map(params_refs.as_slice(), |row| {
                 let result_json_str: String = row.get(5)?;
-                // Extract best_sharpe from the result JSON blob
-                let best_sharpe = serde_json::from_str::<serde_json::Value>(&result_json_str)
-                    .ok()
+                let result_json = serde_json::from_str::<serde_json::Value>(&result_json_str).ok();
+                let best_sharpe = result_json
+                    .as_ref()
                     .and_then(|v| v.get("best_sharpe").and_then(serde_json::Value::as_f64));
+                let combinations_run = result_json
+                    .as_ref()
+                    .and_then(|v| v.get("combinations_run").and_then(serde_json::Value::as_i64))
+                    .unwrap_or(0);
 
                 Ok(SweepSummary {
                     id: row.get(0)?,
@@ -191,6 +195,7 @@ impl SqliteSweepStore {
                     mode: row.get(3)?,
                     objective: row.get(4)?,
                     combinations_total: row.get(6)?,
+                    combinations_run,
                     execution_time_ms: row.get(7)?,
                     best_sharpe,
                     created_at: row.get(8)?,
