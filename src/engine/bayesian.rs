@@ -72,7 +72,11 @@ pub async fn run_bayesian(
             if cached_obj.is_finite() && *cached_obj > best_so_far {
                 best_so_far = *cached_obj;
             }
-            convergence_trace.push(if best_so_far.is_finite() { best_so_far } else { 0.0 });
+            convergence_trace.push(if best_so_far.is_finite() {
+                best_so_far
+            } else {
+                0.0
+            });
             results.push(cached_result.clone());
             continue;
         }
@@ -94,11 +98,19 @@ pub async fn run_bayesian(
                     best_so_far = obj;
                 }
             }
-            convergence_trace.push(if best_so_far.is_finite() { best_so_far } else { 0.0 });
+            convergence_trace.push(if best_so_far.is_finite() {
+                best_so_far
+            } else {
+                0.0
+            });
             results.push(result);
         } else {
             failed += 1;
-            convergence_trace.push(if best_so_far.is_finite() { best_so_far } else { 0.0 });
+            convergence_trace.push(if best_so_far.is_finite() {
+                best_so_far
+            } else {
+                0.0
+            });
         }
     }
 
