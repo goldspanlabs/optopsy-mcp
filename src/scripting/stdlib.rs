@@ -60,7 +60,17 @@ pub fn json_to_dynamic(value: &serde_json::Value) -> Dynamic {
                 Dynamic::UNIT
             }
         }
-        serde_json::Value::String(s) => Dynamic::from(s.clone()),
+        serde_json::Value::String(s) => {
+            // Coerce numeric strings to numbers — UI param dialogs send all
+            // values as strings, but scripts expect typed numbers.
+            if let Ok(i) = s.parse::<i64>() {
+                Dynamic::from(i)
+            } else if let Ok(f) = s.parse::<f64>() {
+                Dynamic::from(f)
+            } else {
+                Dynamic::from(s.clone())
+            }
+        }
         serde_json::Value::Array(arr) => {
             Dynamic::from(arr.iter().map(json_to_dynamic).collect::<Vec<Dynamic>>())
         }

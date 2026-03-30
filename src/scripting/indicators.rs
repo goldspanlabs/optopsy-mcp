@@ -112,12 +112,16 @@ impl IndicatorStore {
             return Ok(store);
         }
 
+        // Auto-expand multi-series indicator families so declaring any variant
+        // (e.g., "bbands_upper:20:20") automatically includes all siblings.
+        let expanded = expand_indicator_families(declarations);
+
         let closes: Vec<f64> = bars.iter().map(|b| b.close).collect();
         let highs: Vec<f64> = bars.iter().map(|b| b.high).collect();
         let lows: Vec<f64> = bars.iter().map(|b| b.low).collect();
         let volumes: Vec<f64> = bars.iter().map(|b| b.volume).collect();
 
-        for decl in declarations {
+        for decl in &expanded {
             let (name, params) = parse_indicator_declaration(decl)?;
 
             let key = IndicatorKey {
@@ -144,6 +148,91 @@ impl Default for IndicatorStore {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Expand multi-series indicator families so that declaring any single variant
+/// automatically includes all siblings (e.g., `bbands_upper:20:20` → also adds
+/// `bbands_mid:20` and `bbands_lower:20:20`).
+///
+/// Sibling declarations use only the params each variant needs — remaining
+/// defaults are filled in by `parse_indicator_declaration`.
+fn expand_indicator_families(declarations: &[String]) -> Vec<String> {
+    use std::collections::HashSet;
+
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut result: Vec<String> = Vec::new();
+
+    for decl in declarations {
+        let parts: Vec<&str> = decl.split(':').collect();
+        let name = parts[0].to_lowercase();
+
+        match name.as_str() {
+            // BBands: upper/lower use [period, std_mult*10], mid uses [period] only
+            "bbands_upper" | "bbands_mid" | "bbands_lower" => {
+                let period = parts.get(1).copied().unwrap_or("20");
+                let std_mult = parts.get(2).copied().unwrap_or("20");
+                for sibling in [
+                    format!("bbands_upper:{period}:{std_mult}"),
+                    format!("bbands_mid:{period}"),
+                    format!("bbands_lower:{period}:{std_mult}"),
+                ] {
+                    if seen.insert(sibling.clone()) {
+                        result.push(sibling);
+                    }
+                }
+            }
+            // MACD: all three share the same [fast, slow, signal] params
+            "macd_line" | "macd_signal" | "macd_hist" => {
+                let params_suffix = if parts.len() > 1 {
+                    format!(":{}", parts[1..].join(":"))
+                } else {
+                    String::new()
+                };
+                for prefix in ["macd_line", "macd_signal", "macd_hist"] {
+                    let sibling = format!("{prefix}{params_suffix}");
+                    if seen.insert(sibling.clone()) {
+                        result.push(sibling);
+                    }
+                }
+            }
+            // Keltner: both share the same params
+            "keltner_upper" | "keltner_lower" => {
+                let params_suffix = if parts.len() > 1 {
+                    format!(":{}", parts[1..].join(":"))
+                } else {
+                    String::new()
+                };
+                for prefix in ["keltner_upper", "keltner_lower"] {
+                    let sibling = format!("{prefix}{params_suffix}");
+                    if seen.insert(sibling.clone()) {
+                        result.push(sibling);
+                    }
+                }
+            }
+            // Donchian: all three share the same params
+            "donchian_upper" | "donchian_mid" | "donchian_lower" => {
+                let params_suffix = if parts.len() > 1 {
+                    format!(":{}", parts[1..].join(":"))
+                } else {
+                    String::new()
+                };
+                for prefix in ["donchian_upper", "donchian_mid", "donchian_lower"] {
+                    let sibling = format!("{prefix}{params_suffix}");
+                    if seen.insert(sibling.clone()) {
+                        result.push(sibling);
+                    }
+                }
+            }
+            // Non-family indicator — pass through as-is
+            _ => {
+                if seen.insert(decl.clone()) {
+                    result.push(decl.clone());
+                }
+            }
+        }
+    }
+
+    result
 }
 
 /// Parse a declaration like "sma:20" into ("sma", [20]).
