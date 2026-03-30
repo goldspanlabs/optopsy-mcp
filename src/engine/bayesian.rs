@@ -16,8 +16,8 @@ use crate::tools::response_types::sweep::{SweepResponse, SweepResult};
 pub struct BayesianConfig {
     pub script_source: String,
     pub base_params: HashMap<String, Value>,
-    /// Each entry: (`param_name`, min, max).
-    pub continuous_params: Vec<(String, f64, f64)>,
+    /// Each entry: (`param_name`, min, max, is_int).
+    pub continuous_params: Vec<(String, f64, f64, bool)>,
     pub max_evaluations: usize,
     pub initial_samples: usize,
     pub objective: String,
@@ -402,16 +402,15 @@ fn maximize_ei(gp: &GaussianProcess, best_y: f64, dim: usize) -> Vec<f64> {
 // ---------------------------------------------------------------------------
 
 /// Decode normalized [0,1]^dim values to actual parameter values.
-pub fn decode_params(x: &[f64], continuous: &[(String, f64, f64)]) -> HashMap<String, Value> {
+pub fn decode_params(x: &[f64], continuous: &[(String, f64, f64, bool)]) -> HashMap<String, Value> {
     x.iter()
         .zip(continuous)
-        .map(|(xi, (name, min, max))| {
+        .map(|(xi, (name, min, max, is_int))| {
             let val = min + xi * (max - min);
-            let rounded = (val * 10_000.0).round() / 10_000.0;
-            // Emit whole numbers as integers so Rhai string concat works
-            let json_val = if rounded.fract() == 0.0 && rounded.abs() < i64::MAX as f64 {
-                serde_json::json!(rounded as i64)
+            let json_val = if *is_int {
+                serde_json::json!(val.round() as i64)
             } else {
+                let rounded = (val * 10_000.0).round() / 10_000.0;
                 serde_json::json!(rounded)
             };
             (name.clone(), json_val)

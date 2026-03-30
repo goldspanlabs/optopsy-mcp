@@ -43,9 +43,15 @@ pub struct CreateSweepRequest {
 #[derive(Debug, Deserialize, Clone, serde::Serialize)]
 pub struct SweepParamDef {
     pub name: String,
+    #[serde(default = "default_param_type")]
+    pub param_type: String, // "int" or "float"
     pub start: f64,
     pub stop: f64,
     pub step: Option<f64>,
+}
+
+fn default_param_type() -> String {
+    "float".to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,14 +68,13 @@ pub struct ListQuery {
 fn build_grid(sweep_params: &[SweepParamDef]) -> HashMap<String, Vec<Value>> {
     let mut grid: HashMap<String, Vec<Value>> = HashMap::new();
     for sp in sweep_params {
-        let step = sp.step.unwrap_or(1.0);
+        let is_int = sp.param_type == "int";
+        let step = sp.step.unwrap_or(if is_int { 1.0 } else { 0.01 });
         let mut values = Vec::new();
         let mut v = sp.start;
         while v <= sp.stop + f64::EPSILON {
-            // Round to avoid float drift (4 decimal places)
             let rounded = (v * 10_000.0).round() / 10_000.0;
-            // Emit whole numbers as integers so Rhai string concat works (e.g. "sma:" + 20 → "sma:20")
-            if rounded.fract() == 0.0 && rounded.abs() < i64::MAX as f64 {
+            if is_int {
                 values.push(serde_json::json!(rounded as i64));
             } else {
                 values.push(serde_json::json!(rounded));
@@ -142,10 +147,10 @@ pub async fn create_sweep(
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         }
         "bayesian" => {
-            let continuous_params: Vec<(String, f64, f64)> = req
+            let continuous_params: Vec<(String, f64, f64, bool)> = req
                 .sweep_params
                 .iter()
-                .map(|sp| (sp.name.clone(), sp.start, sp.stop))
+                .map(|sp| (sp.name.clone(), sp.start, sp.stop, sp.param_type == "int"))
                 .collect();
             let initial_samples = (req.max_evaluations / 3).max(2);
             let config = BayesianConfig {

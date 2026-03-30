@@ -307,10 +307,10 @@ fn dynamic_to_json(val: &Dynamic) -> (Option<serde_json::Value>, String) {
         (None, "string".to_string()) // unit = required, type unknown — default to string
     } else if val.is_int() {
         let i = val.as_int().unwrap_or(0);
-        (Some(serde_json::json!(i)), "number".to_string())
+        (Some(serde_json::json!(i)), "int".to_string())
     } else if val.is_float() {
         let f = val.as_float().unwrap_or(0.0);
-        (Some(serde_json::json!(f)), "number".to_string())
+        (Some(serde_json::json!(f)), "float".to_string())
     } else if val.is_bool() {
         let b = val.as_bool().unwrap_or(false);
         (Some(serde_json::json!(b)), "bool".to_string())
