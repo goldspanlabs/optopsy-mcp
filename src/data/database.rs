@@ -15,7 +15,7 @@ pub type DbConnection = Arc<Mutex<Connection>>;
 /// Manages a single `SQLite` database connection and schema lifecycle.
 ///
 /// Construct via [`Database::open`] or [`Database::open_in_memory`], then use
-/// [`backtests()`](Database::backtests) and [`strategies()`](Database::strategies)
+/// [`runs()`](Database::runs) and [`strategies()`](Database::strategies)
 /// to create store instances.
 #[derive(Clone)]
 pub struct Database {
@@ -45,10 +45,10 @@ impl Database {
         Ok(db)
     }
 
-    /// Create a [`SqliteBacktestStore`](super::backtest_store::SqliteBacktestStore)
+    /// Create a [`SqliteRunStore`](super::run_store::SqliteRunStore)
     /// backed by this database's connection.
-    pub fn backtests(&self) -> super::backtest_store::SqliteBacktestStore {
-        super::backtest_store::SqliteBacktestStore::new(self.conn.clone())
+    pub fn runs(&self) -> super::run_store::SqliteRunStore {
+        super::run_store::SqliteRunStore::new(self.conn.clone())
     }
 
     /// Create a [`SqliteStrategyStore`](super::strategy_store::SqliteStrategyStore)
@@ -61,12 +61,6 @@ impl Database {
     /// backed by this database's connection.
     pub fn chat(&self) -> super::chat_store::SqliteChatStore {
         super::chat_store::SqliteChatStore::new(self.conn.clone())
-    }
-
-    /// Create a [`SqliteSweepStore`](super::sweep_store::SqliteSweepStore)
-    /// backed by this database's connection.
-    pub fn sweeps(&self) -> super::sweep_store::SqliteSweepStore {
-        super::sweep_store::SqliteSweepStore::new(self.conn.clone())
     }
 
     /// Return the shared database connection handle.
@@ -83,77 +77,73 @@ impl Database {
             PRAGMA journal_mode = WAL;
             PRAGMA foreign_keys = ON;
 
-            -- Backtests
-            CREATE TABLE IF NOT EXISTS backtests (
-                id                  TEXT PRIMARY KEY,
-                strategy_key        TEXT NOT NULL,
-                symbol              TEXT NOT NULL,
-                capital             REAL NOT NULL,
-                params              TEXT NOT NULL,
-                result_json         TEXT NOT NULL DEFAULT '{}',
-                execution_time_ms   INTEGER NOT NULL,
-                created_at          TEXT NOT NULL,
-                hypothesis          TEXT,
-                tags                TEXT,
-                regime              TEXT,
-                analysis            TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS backtest_metrics (
-                backtest_id     TEXT PRIMARY KEY REFERENCES backtests(id) ON DELETE CASCADE,
-                sharpe          REAL,
-                sortino         REAL,
-                cagr            REAL,
-                max_drawdown    REAL,
-                win_rate        REAL,
-                profit_factor   REAL,
-                total_pnl       REAL,
-                trade_count     INTEGER,
-                expectancy      REAL,
-                var_95          REAL
-            );
-
-            CREATE TABLE IF NOT EXISTS trades (
-                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-                backtest_id         TEXT NOT NULL REFERENCES backtests(id) ON DELETE CASCADE,
-                trade_id            INTEGER NOT NULL,
-                entry_datetime      TEXT NOT NULL,
-                exit_datetime       TEXT NOT NULL,
-                entry_cost          REAL,
-                exit_proceeds       REAL,
-                pnl                 REAL,
-                pnl_pct             REAL,
-                days_held           INTEGER,
-                exit_type           TEXT,
-                legs                TEXT,
-                computed_quantity   INTEGER,
-                entry_equity        REAL,
-                group_label         TEXT
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_backtests_strategy_symbol
-                ON backtests(strategy_key, symbol);
-
-            CREATE INDEX IF NOT EXISTS idx_trades_backtest_id
-                ON trades(backtest_id);
-
-            -- Sweeps
+            -- Sweep sessions
             CREATE TABLE IF NOT EXISTS sweeps (
-                id                  TEXT PRIMARY KEY,
-                strategy_key        TEXT NOT NULL,
-                symbol              TEXT NOT NULL,
-                mode                TEXT NOT NULL,
-                objective           TEXT NOT NULL,
-                sweep_config        TEXT NOT NULL,
-                result_json         TEXT NOT NULL,
-                combinations_total  INTEGER NOT NULL,
-                execution_time_ms   INTEGER NOT NULL,
-                created_at          TEXT NOT NULL,
-                analysis            TEXT
+                id                TEXT PRIMARY KEY,
+                strategy_id       TEXT REFERENCES strategies(id),
+                symbol            TEXT NOT NULL,
+                sweep_config      TEXT NOT NULL CHECK(json_valid(sweep_config)),
+                objective         TEXT NOT NULL DEFAULT 'sharpe',
+                mode              TEXT NOT NULL DEFAULT 'grid',
+                combinations      INTEGER NOT NULL,
+                execution_time_ms INTEGER,
+                analysis          TEXT,
+                created_at        TEXT NOT NULL
             );
 
-            CREATE INDEX IF NOT EXISTS idx_sweeps_strategy
-                ON sweeps(strategy_key);
+            CREATE INDEX IF NOT EXISTS idx_sweeps_created ON sweeps(created_at DESC);
+
+            -- Runs (unified backtest results)
+            CREATE TABLE IF NOT EXISTS runs (
+                id                TEXT PRIMARY KEY,
+                sweep_id          TEXT REFERENCES sweeps(id) ON DELETE CASCADE,
+                strategy_id       TEXT REFERENCES strategies(id),
+                symbol            TEXT NOT NULL,
+                capital           REAL NOT NULL,
+                params            TEXT NOT NULL CHECK(json_valid(params)),
+                total_return      REAL,
+                win_rate          REAL,
+                max_drawdown      REAL,
+                sharpe            REAL,
+                sortino           REAL,
+                cagr              REAL,
+                profit_factor     REAL,
+                trade_count       INTEGER,
+                expectancy        REAL,
+                var_95            REAL,
+                result_json       TEXT CHECK(json_valid(result_json)),
+                execution_time_ms INTEGER,
+                analysis          TEXT,
+                hypothesis        TEXT,
+                tags              TEXT,
+                regime            TEXT,
+                created_at        TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_runs_sweep_id ON runs(sweep_id);
+            CREATE INDEX IF NOT EXISTS idx_runs_strategy ON runs(strategy_id);
+            CREATE INDEX IF NOT EXISTS idx_runs_created ON runs(created_at DESC);
+
+            -- Trades
+            CREATE TABLE IF NOT EXISTS trades (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id            TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+                trade_id          INTEGER NOT NULL,
+                entry_datetime    TEXT NOT NULL,
+                exit_datetime     TEXT NOT NULL,
+                entry_cost        REAL,
+                exit_proceeds     REAL,
+                pnl               REAL,
+                pnl_pct           REAL,
+                days_held         INTEGER,
+                exit_type         TEXT,
+                legs              TEXT,
+                computed_quantity INTEGER,
+                entry_equity      REAL,
+                group_label       TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_trades_run_id ON trades(run_id);
 
             -- Strategies
             CREATE TABLE IF NOT EXISTS strategies (
@@ -245,7 +235,6 @@ impl Database {
             .collect::<std::result::Result<Vec<_>, _>>()?;
         if !thread_cols.iter().any(|c| c == "strategy_id") {
             conn.execute_batch("ALTER TABLE threads ADD COLUMN strategy_id TEXT")?;
-            // Migrate existing data: for each strategy with a thread_id, set that thread's strategy_id
             conn.execute_batch(
                 "UPDATE threads SET strategy_id = (
                     SELECT s.id FROM strategies s WHERE s.thread_id = threads.id
@@ -255,25 +244,6 @@ impl Database {
             )?;
             conn.execute_batch(
                 "CREATE INDEX IF NOT EXISTS idx_threads_strategy_id ON threads(strategy_id)",
-            )?;
-        }
-
-        // Migrate slug-based strategy IDs to UUIDs
-        // UUIDs are 36 chars; slugs are shorter
-        let slug_strategies: Vec<String> = conn
-            .prepare("SELECT id FROM strategies WHERE length(id) < 36")?
-            .query_map([], |row| row.get::<_, String>(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-
-        for old_id in &slug_strategies {
-            let new_id = uuid::Uuid::new_v4().to_string();
-            conn.execute(
-                "UPDATE strategies SET id = ?1 WHERE id = ?2",
-                rusqlite::params![new_id, old_id],
-            )?;
-            conn.execute(
-                "UPDATE backtests SET strategy_key = ?1 WHERE strategy_key = ?2",
-                rusqlite::params![new_id, old_id],
             )?;
         }
 
@@ -298,8 +268,8 @@ mod tests {
             .map(|r| r.unwrap())
             .collect();
 
-        assert!(tables.contains(&"backtests".to_string()));
-        assert!(tables.contains(&"backtest_metrics".to_string()));
+        assert!(tables.contains(&"runs".to_string()));
+        assert!(tables.contains(&"sweeps".to_string()));
         assert!(tables.contains(&"trades".to_string()));
         assert!(tables.contains(&"strategies".to_string()));
         assert!(tables.contains(&"threads".to_string()));
@@ -310,9 +280,9 @@ mod tests {
     #[test]
     fn test_stores_share_connection() {
         let db = Database::open_in_memory().expect("open_in_memory");
-        let backtests = db.backtests();
+        let runs = db.runs();
         let strategies = db.strategies();
-        assert!(Arc::ptr_eq(&backtests.conn, &strategies.conn));
+        assert!(Arc::ptr_eq(&runs.conn, &strategies.conn));
     }
 
     #[test]

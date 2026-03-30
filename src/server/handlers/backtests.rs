@@ -223,7 +223,7 @@ pub async fn set_backtest_analysis(
     })?;
     let found = state
         .backtest_store
-        .set_analysis(&id, analysis)
+        .set_run_analysis(&id, analysis)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     if found {
         Ok(StatusCode::NO_CONTENT)

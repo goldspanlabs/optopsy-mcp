@@ -1,118 +1,210 @@
-//! Abstract storage traits for backtests and strategies.
+//! Abstract storage traits for runs, strategies, and chat.
 //!
 //! These traits decouple the application from a specific database backend.
-//! The default implementation uses `SQLite` (see `backtest_store` and `strategy_store`),
-//! but alternative backends (e.g. Postgres) can be swapped in by implementing
+//! The default implementation uses `SQLite` (see `run_store`, `strategy_store`,
+//! and `chat_store`), but alternative backends can be swapped in by implementing
 //! these traits.
 
 use std::path::Path;
 
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::backtest_store::{BacktestDetail, BacktestSummary, MetricsRow, TradeRow};
 use super::strategy_store::StrategyRow;
 use crate::scripting::stdlib::{parse_script_meta, ScriptMeta};
 
 // ──────────────────────────────────────────────────────────────────────────────
-// BacktestStore trait
+// RunStore types
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// Storage backend for backtest results, metrics, and trade records.
-pub trait BacktestStore: Send + Sync {
-    /// Insert a new backtest result. Returns `(id, created_at)`.
+/// A single trade record associated with a run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TradeRow {
+    pub trade_id: i64,
+    pub entry_datetime: String,
+    pub exit_datetime: String,
+    pub entry_cost: f64,
+    pub exit_proceeds: f64,
+    pub pnl: f64,
+    pub pnl_pct: f64,
+    pub days_held: i64,
+    pub exit_type: String,
+    pub legs: String,
+    pub computed_quantity: Option<i32>,
+    pub entry_equity: Option<f64>,
+    pub group_label: Option<String>,
+}
+
+/// Summary view of a run (no trades, no result_json).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunSummary {
+    pub id: String,
+    pub sweep_id: Option<String>,
+    pub strategy_id: Option<String>,
+    pub strategy_name: Option<String>,
+    pub symbol: String,
+    pub params: Value,
+    pub total_return: Option<f64>,
+    pub win_rate: Option<f64>,
+    pub max_drawdown: Option<f64>,
+    pub sharpe: Option<f64>,
+    pub trade_count: Option<i64>,
+    pub created_at: String,
+}
+
+/// Full run detail including trades and result blob.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunDetail {
+    pub id: String,
+    pub sweep_id: Option<String>,
+    pub strategy_id: Option<String>,
+    pub strategy_name: Option<String>,
+    pub symbol: String,
+    pub capital: f64,
+    pub params: Value,
+    pub total_return: Option<f64>,
+    pub win_rate: Option<f64>,
+    pub max_drawdown: Option<f64>,
+    pub sharpe: Option<f64>,
+    pub sortino: Option<f64>,
+    pub cagr: Option<f64>,
+    pub profit_factor: Option<f64>,
+    pub trade_count: Option<i64>,
+    pub expectancy: Option<f64>,
+    pub var_95: Option<f64>,
+    pub result_json: Option<Value>,
+    pub trades: Vec<TradeRow>,
+    pub execution_time_ms: Option<i64>,
+    pub analysis: Option<String>,
+    pub hypothesis: Option<String>,
+    pub tags: Option<String>,
+    pub regime: Option<String>,
+    pub created_at: String,
+}
+
+/// A row in the unified list — either a standalone run or a sweep group.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum RunRow {
+    #[serde(rename = "single")]
+    Single(RunSummary),
+    #[serde(rename = "sweep")]
+    Sweep {
+        sweep_id: String,
+        strategy_id: Option<String>,
+        strategy_name: Option<String>,
+        symbol: String,
+        combinations: i64,
+        best_return: Option<f64>,
+        best_sharpe: Option<f64>,
+        created_at: String,
+    },
+}
+
+/// Aggregate overview stats for the runs list header.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunsOverview {
+    pub total_runs: i64,
+    pub last_run_at: Option<String>,
+    pub best_return: Option<f64>,
+    pub avg_win_rate: Option<f64>,
+}
+
+/// Combined response for the runs list endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunsListResponse {
+    pub overview: RunsOverview,
+    pub rows: Vec<RunRow>,
+}
+
+/// Full sweep detail with its child runs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SweepDetail {
+    pub id: String,
+    pub strategy_id: Option<String>,
+    pub strategy_name: Option<String>,
+    pub symbol: String,
+    pub sweep_config: Value,
+    pub objective: String,
+    pub mode: String,
+    pub combinations: i64,
+    pub execution_time_ms: Option<i64>,
+    pub analysis: Option<String>,
+    pub created_at: String,
+    pub runs: Vec<RunSummary>,
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// RunStore trait
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Storage backend for unified backtest runs and sweep sessions.
+pub trait RunStore: Send + Sync {
+    /// Insert a new run. Returns `created_at` timestamp.
     #[allow(clippy::too_many_arguments)]
-    fn insert(
+    fn insert_run(
         &self,
-        strategy_key: &str,
+        id: &str,
+        sweep_id: Option<&str>,
+        strategy_id: Option<&str>,
         symbol: &str,
         capital: f64,
         params: &Value,
-        metrics: &MetricsRow,
-        trades: &[TradeRow],
+        total_return: Option<f64>,
+        win_rate: Option<f64>,
+        max_drawdown: Option<f64>,
+        sharpe: Option<f64>,
+        sortino: Option<f64>,
+        cagr: Option<f64>,
+        profit_factor: Option<f64>,
+        trade_count: Option<i64>,
+        expectancy: Option<f64>,
+        var_95: Option<f64>,
         result_json: &str,
-        execution_time_ms: i64,
+        execution_time_ms: Option<i64>,
         hypothesis: Option<&str>,
-        tags: Option<&[String]>,
-        regime: Option<&[String]>,
-    ) -> Result<(String, String)>;
-
-    /// Retrieve a full backtest detail by id.
-    fn get_detail(&self, id: &str) -> Result<Option<BacktestDetail>>;
-
-    /// Save AI-generated analysis text for a backtest.
-    fn set_analysis(&self, id: &str, analysis: &str) -> Result<bool>;
-
-    /// List backtest summaries with optional filters.
-    fn list(
-        &self,
-        strategy: Option<&str>,
-        symbol: Option<&str>,
-        tag: Option<&str>,
+        tags: Option<&str>,
         regime: Option<&str>,
-    ) -> Result<Vec<BacktestSummary>>;
+    ) -> Result<String>;
 
-    /// Delete a backtest by id. Returns `true` if a row was deleted.
-    fn delete(&self, id: &str) -> Result<bool>;
+    /// Insert trades for a run.
+    fn insert_trades(&self, run_id: &str, trades: &[TradeRow]) -> Result<()>;
 
-    /// Retrieve all trades for a given backtest.
-    fn get_trades(&self, backtest_id: &str) -> Result<Vec<TradeRow>>;
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// SweepStore trait
-// ──────────────────────────────────────────────────────────────────────────────
-
-/// Summary of a sweep session for listing.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SweepSummary {
-    pub id: String,
-    pub strategy_key: String,
-    pub symbol: String,
-    pub mode: String,
-    pub objective: String,
-    pub combinations_total: i64,
-    pub combinations_run: i64,
-    pub execution_time_ms: i64,
-    pub best_sharpe: Option<f64>,
-    pub created_at: String,
-}
-
-/// Full sweep detail — config + result blob.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct SweepDetail {
-    pub id: String,
-    pub strategy_key: String,
-    pub symbol: String,
-    pub mode: String,
-    pub objective: String,
-    pub sweep_config: serde_json::Value,
-    pub result: serde_json::Value,
-    pub combinations_total: i64,
-    pub execution_time_ms: i64,
-    pub created_at: String,
-    pub analysis: Option<String>,
-}
-
-/// Storage backend for sweep results.
-pub trait SweepStore: Send + Sync {
+    /// Insert a new sweep session. Returns `created_at` timestamp.
     #[allow(clippy::too_many_arguments)]
-    fn insert(
+    fn insert_sweep(
         &self,
-        strategy_key: &str,
+        id: &str,
+        strategy_id: Option<&str>,
         symbol: &str,
-        mode: &str,
+        sweep_config: &Value,
         objective: &str,
-        sweep_config: &serde_json::Value,
-        result_json: &str,
-        combinations_total: i64,
-        execution_time_ms: i64,
-    ) -> Result<(String, String)>;
+        mode: &str,
+        combinations: i64,
+        execution_time_ms: Option<i64>,
+    ) -> Result<String>;
 
-    fn get_detail(&self, id: &str) -> Result<Option<SweepDetail>>;
-    fn list(&self, strategy_key: Option<&str>) -> Result<Vec<SweepSummary>>;
-    fn delete(&self, id: &str) -> Result<bool>;
-    fn set_analysis(&self, id: &str, analysis: &str) -> Result<bool>;
+    /// List all runs and sweeps, newest first.
+    fn list(&self) -> Result<RunsListResponse>;
+
+    /// Get full detail for a single run by id.
+    fn get_run(&self, id: &str) -> Result<Option<RunDetail>>;
+
+    /// Get full detail for a sweep by id, including its child runs.
+    fn get_sweep(&self, id: &str) -> Result<Option<SweepDetail>>;
+
+    /// Delete a run by id. Returns `true` if a row was deleted.
+    fn delete_run(&self, id: &str) -> Result<bool>;
+
+    /// Delete a sweep and its runs (CASCADE). Returns `true` if a row was deleted.
+    fn delete_sweep(&self, id: &str) -> Result<bool>;
+
+    /// Save AI-generated analysis text for a run.
+    fn set_run_analysis(&self, id: &str, analysis: &str) -> Result<bool>;
+
+    /// Save AI-generated analysis text for a sweep.
+    fn set_sweep_analysis(&self, id: &str, analysis: &str) -> Result<bool>;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

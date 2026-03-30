@@ -294,7 +294,7 @@ pub async fn set_sweep_analysis(
     })?;
     let found = state
         .sweep_store
-        .set_analysis(&id, analysis)
+        .set_sweep_analysis(&id, analysis)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     if found {
         Ok(StatusCode::NO_CONTENT)
@@ -304,7 +304,7 @@ pub async fn set_sweep_analysis(
 }
 
 /// `POST /sweeps/stream` — Run a sweep with SSE progress updates.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::unused_async)]
 pub async fn create_sweep_stream(
     State(state): State<AppState>,
     Json(req): Json<CreateSweepRequest>,

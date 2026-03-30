@@ -3,13 +3,12 @@
 //! Provides a `DataStore` trait with a `CachedStore` implementation that uses
 //! local Parquet files (errors if data not found in cache).
 
-pub mod backtest_store;
 pub mod cache;
 pub mod chat_store;
 pub mod database;
 pub mod parquet;
+pub mod run_store;
 pub mod strategy_store;
-pub mod sweep_store;
 pub mod traits;
 
 use anyhow::Result;
