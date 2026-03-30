@@ -40,6 +40,7 @@ pub async fn run_bayesian(
     config: &BayesianConfig,
     data_loader: &dyn DataLoader,
     is_cancelled: impl Fn() -> bool,
+    on_progress: impl Fn(usize, usize),
 ) -> Result<SweepResponse> {
     let start = Instant::now();
     let dim = config.continuous_params.len();
@@ -56,6 +57,8 @@ pub async fn run_bayesian(
         if is_cancelled() {
             break;
         }
+
+        on_progress(i, config.max_evaluations);
 
         let x = if i < config.initial_samples || xs.len() < 2 {
             random_point(dim)

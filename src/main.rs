@@ -155,6 +155,10 @@ async fn main() -> Result<()> {
                 "/sweeps",
                 axum::routing::post(sweeps::create_sweep).get(sweeps::list_sweeps),
             )
+            .route(
+                "/sweeps/stream",
+                axum::routing::post(sweeps::create_sweep_stream),
+            )
             .route("/sweeps/cancel", axum::routing::post(sweeps::cancel_sweeps))
             .route(
                 "/sweeps/{id}",
