@@ -68,7 +68,12 @@ fn build_grid(sweep_params: &[SweepParamDef]) -> HashMap<String, Vec<Value>> {
         while v <= sp.stop + f64::EPSILON {
             // Round to avoid float drift (4 decimal places)
             let rounded = (v * 10_000.0).round() / 10_000.0;
-            values.push(serde_json::json!(rounded));
+            // Emit whole numbers as integers so Rhai string concat works (e.g. "sma:" + 20 → "sma:20")
+            if rounded.fract() == 0.0 && rounded.abs() < i64::MAX as f64 {
+                values.push(serde_json::json!(rounded as i64));
+            } else {
+                values.push(serde_json::json!(rounded));
+            }
             v += step;
         }
         grid.insert(sp.name.clone(), values);

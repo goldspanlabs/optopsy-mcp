@@ -408,7 +408,13 @@ pub fn decode_params(x: &[f64], continuous: &[(String, f64, f64)]) -> HashMap<St
         .map(|(xi, (name, min, max))| {
             let val = min + xi * (max - min);
             let rounded = (val * 10_000.0).round() / 10_000.0;
-            (name.clone(), serde_json::json!(rounded))
+            // Emit whole numbers as integers so Rhai string concat works
+            let json_val = if rounded.fract() == 0.0 && rounded.abs() < i64::MAX as f64 {
+                serde_json::json!(rounded as i64)
+            } else {
+                serde_json::json!(rounded)
+            };
+            (name.clone(), json_val)
         })
         .collect()
 }
