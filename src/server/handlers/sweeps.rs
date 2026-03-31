@@ -167,7 +167,8 @@ fn persist_sweep(
         let params_value =
             serde_json::to_value(&result.params).unwrap_or(Value::Object(Default::default()));
 
-        // Use full backtest result if available (grid sweep), otherwise empty
+        // Use full backtest result if available (grid sweep), otherwise empty.
+        // Inject script_meta + indicator_data so the FE detail page has full context.
         let full = sweep_response.full_results.get(i);
         let result_json = full
             .map(|r| {
@@ -175,9 +176,15 @@ fn persist_sweep(
                     serde_json::to_value(&r.result).unwrap_or(Value::Object(Default::default()));
                 if let Some(obj) = value.as_object_mut() {
                     obj.remove("trade_log");
-                    // Inject script_meta so the FE research tab has hypothesis/tags/regime
                     if let Ok(meta_val) = serde_json::to_value(script_meta) {
                         obj.insert("script_meta".to_string(), meta_val);
+                    }
+                    let indicators = crate::tools::run_script::format_indicator_data(
+                        &r.indicator_data,
+                        &r.custom_series,
+                    );
+                    if let Ok(ind_val) = serde_json::to_value(&indicators) {
+                        obj.insert("indicator_data".to_string(), ind_val);
                     }
                 }
                 serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned())
@@ -311,7 +318,14 @@ pub async fn create_sweep(
         set.remove("__cancel_all__");
     }
 
-    let sweep_id = persist_sweep(&state, &strategy_key, &symbol, &req, &sweep_response, &script_meta)?;
+    let sweep_id = persist_sweep(
+        &state,
+        &strategy_key,
+        &symbol,
+        &req,
+        &sweep_response,
+        &script_meta,
+    )?;
 
     let detail = state
         .run_store
@@ -412,7 +426,8 @@ pub async fn create_sweep_stream(
                 return;
             }
         };
-        let script_meta = crate::scripting::stdlib::parse_script_meta(&strategy_key, &script_source);
+        let script_meta =
+            crate::scripting::stdlib::parse_script_meta(&strategy_key, &script_source);
         let loader = CachingDataLoader::new(Arc::clone(&state.server.cache));
         let symbol = req
             .params
@@ -530,7 +545,14 @@ pub async fn create_sweep_stream(
                     sweep_response.combinations_run,
                     sweep_response.ranked_results.len()
                 );
-                match persist_sweep(&state, &strategy_key, &symbol, &req, &sweep_response, &script_meta) {
+                match persist_sweep(
+                    &state,
+                    &strategy_key,
+                    &symbol,
+                    &req,
+                    &sweep_response,
+                    &script_meta,
+                ) {
                     Ok(sweep_id) => {
                         if let Ok(Some(detail)) = state.run_store.get_sweep(&sweep_id) {
                             let json = serde_json::to_string(&detail).unwrap_or_default();
