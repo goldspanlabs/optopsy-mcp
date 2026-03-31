@@ -1,0 +1,904 @@
+//! DSL parser: converts indent-based natural-language trading scripts into an IR.
+//!
+//! The parser is line-oriented with Python-style indentation for block structure.
+//! Each line is classified by its leading keyword, and indented lines belong to
+//! the nearest preceding block header at a lower indent level.
+
+use super::error::DslError;
+
+// ---------------------------------------------------------------------------
+// Raw line representation
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+struct Line {
+    indent: usize,
+    content: String,
+    num: usize,
+}
+
+// ---------------------------------------------------------------------------
+// AST / IR types
+// ---------------------------------------------------------------------------
+
+/// A complete parsed DSL program.
+#[derive(Debug)]
+pub struct DslProgram {
+    pub strategy: Option<StrategyBlock>,
+    pub params: Vec<ParamDecl>,
+    pub states: Vec<StateDecl>,
+    pub on_bar: Option<Vec<Stmt>>,
+    pub on_exit_check: Option<Vec<Stmt>>,
+    pub on_position_opened: Option<Vec<Stmt>>,
+    pub on_position_closed: Option<Vec<Stmt>>,
+    pub on_end: Option<Vec<Stmt>>,
+}
+
+/// The `strategy` configuration block.
+#[derive(Debug)]
+pub struct StrategyBlock {
+    pub name: String,
+    pub symbol: String,
+    pub capital: String,
+    pub interval: String,
+    pub data_ohlcv: bool,
+    pub data_options: bool,
+    pub indicators: Vec<String>,
+    pub slippage: Option<String>,
+    pub expiration_filter: Option<String>,
+    pub max_positions: Option<i64>,
+    pub cross_symbols: Vec<String>,
+}
+
+/// A `param` declaration with default value and description.
+#[derive(Debug)]
+pub struct ParamDecl {
+    pub name: String,
+    pub default: String,
+    pub description: String,
+    pub choices: Vec<String>,
+}
+
+/// A `state` variable declaration with initial value.
+#[derive(Debug)]
+pub struct StateDecl {
+    pub name: String,
+    pub default: String,
+}
+
+/// A statement inside an event block.
+#[derive(Debug)]
+pub enum Stmt {
+    Require {
+        indicators: Vec<String>,
+        line: usize,
+    },
+    SkipWhen {
+        condition: String,
+        line: usize,
+    },
+    Set {
+        name: String,
+        expr: String,
+        line: usize,
+    },
+    When {
+        condition: String,
+        then_body: Vec<Stmt>,
+        else_body: Option<Vec<Stmt>>,
+        line: usize,
+    },
+    Buy {
+        qty_expr: String,
+        line: usize,
+    },
+    Sell {
+        qty_expr: String,
+        validated: bool,
+        line: usize,
+    },
+    HoldPosition {
+        line: usize,
+    },
+    ClosePosition {
+        reason: String,
+        line: usize,
+    },
+    ClosePositionById {
+        id_expr: String,
+        reason: String,
+        line: usize,
+    },
+    StopBacktest {
+        reason: String,
+        line: usize,
+    },
+    OpenStrategy {
+        call: String,
+        line: usize,
+    },
+    Plot {
+        name: String,
+        expr: String,
+        display: Option<String>,
+        line: usize,
+    },
+    AddTo {
+        expr: String,
+        name: String,
+        line: usize,
+    },
+    Return {
+        expr: String,
+        line: usize,
+    },
+    Raw {
+        code: String,
+        line: usize,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Public entry point
+// ---------------------------------------------------------------------------
+
+/// Parse a DSL source string into a `DslProgram`.
+pub fn parse(source: &str) -> Result<DslProgram, DslError> {
+    let lines = preprocess(source);
+
+    let mut program = DslProgram {
+        strategy: None,
+        params: vec![],
+        states: vec![],
+        on_bar: None,
+        on_exit_check: None,
+        on_position_opened: None,
+        on_position_closed: None,
+        on_end: None,
+    };
+
+    let mut i = 0;
+    while i < lines.len() {
+        let line = &lines[i];
+        if line.indent > 0 {
+            return Err(DslError::new(
+                line.num,
+                "unexpected indentation at top level",
+            ));
+        }
+
+        let content = &line.content;
+
+        if content.starts_with("strategy ") {
+            let (block, next) = parse_strategy_block(&lines, i)?;
+            if program.strategy.is_some() {
+                return Err(DslError::new(line.num, "duplicate strategy block"));
+            }
+            program.strategy = Some(block);
+            i = next;
+        } else if content.starts_with("param ") {
+            program.params.push(parse_param(line)?);
+            i += 1;
+        } else if content.starts_with("state ") {
+            program.states.push(parse_state(line)?);
+            i += 1;
+        } else if content == "on each bar" {
+            if program.on_bar.is_some() {
+                return Err(DslError::new(line.num, "duplicate 'on each bar' block"));
+            }
+            let (body, next) = parse_indented_body(&lines, i)?;
+            program.on_bar = Some(parse_statements(&body)?);
+            i = next;
+        } else if content == "on exit check" {
+            if program.on_exit_check.is_some() {
+                return Err(DslError::new(line.num, "duplicate 'on exit check' block"));
+            }
+            let (body, next) = parse_indented_body(&lines, i)?;
+            program.on_exit_check = Some(parse_statements(&body)?);
+            i = next;
+        } else if content == "on position opened" {
+            if program.on_position_opened.is_some() {
+                return Err(DslError::new(
+                    line.num,
+                    "duplicate 'on position opened' block",
+                ));
+            }
+            let (body, next) = parse_indented_body(&lines, i)?;
+            program.on_position_opened = Some(parse_statements(&body)?);
+            i = next;
+        } else if content == "on position closed" {
+            if program.on_position_closed.is_some() {
+                return Err(DslError::new(
+                    line.num,
+                    "duplicate 'on position closed' block",
+                ));
+            }
+            let (body, next) = parse_indented_body(&lines, i)?;
+            program.on_position_closed = Some(parse_statements(&body)?);
+            i = next;
+        } else if content == "on end" {
+            if program.on_end.is_some() {
+                return Err(DslError::new(line.num, "duplicate 'on end' block"));
+            }
+            let (body, next) = parse_indented_body(&lines, i)?;
+            program.on_end = Some(parse_statements(&body)?);
+            i = next;
+        } else {
+            return Err(DslError::new(
+                line.num,
+                format!("unrecognized top-level declaration: {content}"),
+            ));
+        }
+    }
+
+    if program.strategy.is_none() {
+        return Err(DslError::general("missing required 'strategy' block"));
+    }
+
+    Ok(program)
+}
+
+// ---------------------------------------------------------------------------
+// Preprocessing
+// ---------------------------------------------------------------------------
+
+fn preprocess(source: &str) -> Vec<Line> {
+    source
+        .lines()
+        .enumerate()
+        .filter_map(|(i, raw)| {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                None
+            } else {
+                let indent = raw.len() - raw.trim_start().len();
+                Some(Line {
+                    indent,
+                    content: trimmed.to_string(),
+                    num: i + 1,
+                })
+            }
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Strategy block parsing
+// ---------------------------------------------------------------------------
+
+fn parse_strategy_block(lines: &[Line], start: usize) -> Result<(StrategyBlock, usize), DslError> {
+    let header = &lines[start];
+    let name = extract_quoted_string(&header.content, "strategy ", header.num)?;
+
+    let mut block = StrategyBlock {
+        name,
+        symbol: "params.SYMBOL".to_string(),
+        capital: "params.CAPITAL".to_string(),
+        interval: "daily".to_string(),
+        data_ohlcv: true,
+        data_options: false,
+        indicators: vec![],
+        slippage: None,
+        expiration_filter: None,
+        max_positions: None,
+        cross_symbols: vec![],
+    };
+
+    let mut i = start + 1;
+    while i < lines.len() && lines[i].indent > header.indent {
+        let line = &lines[i];
+        let content = &line.content;
+
+        if let Some(rest) = content.strip_prefix("symbol ") {
+            block.symbol = rest.trim().to_string();
+        } else if let Some(rest) = content.strip_prefix("capital ") {
+            block.capital = rest.trim().to_string();
+        } else if let Some(rest) = content.strip_prefix("interval ") {
+            block.interval = rest.trim().to_string();
+        } else if let Some(rest) = content.strip_prefix("data ") {
+            let parts: Vec<&str> = rest.split(',').map(|s| s.trim()).collect();
+            block.data_ohlcv = parts.contains(&"ohlcv");
+            block.data_options = parts.contains(&"options");
+        } else if let Some(rest) = content.strip_prefix("indicators ") {
+            block.indicators = rest.split(',').map(|s| s.trim().to_string()).collect();
+        } else if let Some(rest) = content.strip_prefix("slippage ") {
+            block.slippage = Some(rest.trim().to_string());
+        } else if let Some(rest) = content.strip_prefix("expiration_filter ") {
+            block.expiration_filter = Some(rest.trim().to_string());
+        } else if let Some(rest) = content.strip_prefix("max_positions ") {
+            block.max_positions = Some(
+                rest.trim()
+                    .parse::<i64>()
+                    .map_err(|_| DslError::new(line.num, "max_positions must be an integer"))?,
+            );
+        } else if let Some(rest) = content.strip_prefix("cross_symbols ") {
+            block.cross_symbols = rest.split(',').map(|s| s.trim().to_string()).collect();
+        } else {
+            return Err(DslError::new(
+                line.num,
+                format!("unknown strategy property: {content}"),
+            ));
+        }
+
+        i += 1;
+    }
+
+    Ok((block, i))
+}
+
+// ---------------------------------------------------------------------------
+// Param and state declarations
+// ---------------------------------------------------------------------------
+
+fn parse_param(line: &Line) -> Result<ParamDecl, DslError> {
+    // param NAME = DEFAULT "description"
+    // param NAME = DEFAULT "description" choices VAL1, VAL2
+    let rest = line.content.strip_prefix("param ").unwrap();
+
+    let eq_pos = rest.find('=').ok_or_else(|| {
+        DslError::new(
+            line.num,
+            "param requires '=' (e.g., param NAME = 42 \"desc\")",
+        )
+    })?;
+
+    let name = rest[..eq_pos].trim().to_string();
+    let after_eq = rest[eq_pos + 1..].trim();
+
+    // Parse default value, which may itself be a quoted string
+    let (default, desc_start) = if let Some(after_open_quote) = after_eq.strip_prefix('"') {
+        // Quoted default: find closing quote
+        let close = after_open_quote
+            .find('"')
+            .ok_or_else(|| DslError::new(line.num, "unterminated default string"))?;
+        let val = after_eq[..close + 2].to_string(); // include quotes
+        (val, close + 2)
+    } else {
+        // Unquoted default: everything up to the first quote (description)
+        let quote_pos = after_eq
+            .find('"')
+            .ok_or_else(|| DslError::new(line.num, "param requires a quoted description"))?;
+        let val = after_eq[..quote_pos].trim().to_string();
+        (val, quote_pos)
+    };
+
+    // Parse the description string
+    let desc_region = after_eq[desc_start..].trim();
+    if !desc_region.starts_with('"') {
+        return Err(DslError::new(
+            line.num,
+            "param requires a quoted description after the default value",
+        ));
+    }
+    let desc_inner = &desc_region[1..];
+    let desc_end = desc_inner
+        .find('"')
+        .ok_or_else(|| DslError::new(line.num, "unterminated description string"))?;
+    let description = desc_inner[..desc_end].to_string();
+
+    // Check for choices after closing quote
+    let remainder = desc_inner[desc_end + 1..].trim();
+    let choices = if let Some(choices_str) = remainder.strip_prefix("choices ") {
+        choices_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect()
+    } else {
+        vec![]
+    };
+
+    if name.is_empty() || default.is_empty() {
+        return Err(DslError::new(
+            line.num,
+            "param requires NAME = DEFAULT \"description\"",
+        ));
+    }
+
+    Ok(ParamDecl {
+        name,
+        default,
+        description,
+        choices,
+    })
+}
+
+fn parse_state(line: &Line) -> Result<StateDecl, DslError> {
+    // state NAME = DEFAULT
+    let rest = line.content.strip_prefix("state ").unwrap();
+
+    let eq_pos = rest
+        .find('=')
+        .ok_or_else(|| DslError::new(line.num, "state requires '=' (e.g., state wins = 0)"))?;
+
+    let name = rest[..eq_pos].trim().to_string();
+    let default = rest[eq_pos + 1..].trim().to_string();
+
+    if name.is_empty() || default.is_empty() {
+        return Err(DslError::new(line.num, "state requires NAME = DEFAULT"));
+    }
+
+    Ok(StateDecl { name, default })
+}
+
+// ---------------------------------------------------------------------------
+// Indented body extraction
+// ---------------------------------------------------------------------------
+
+/// Extract all lines indented deeper than `lines[start]`, returning them and
+/// the index of the next line at the same or lower indent level.
+fn parse_indented_body(lines: &[Line], start: usize) -> Result<(Vec<Line>, usize), DslError> {
+    let base_indent = lines[start].indent;
+    let mut body = vec![];
+    let mut i = start + 1;
+
+    while i < lines.len() && lines[i].indent > base_indent {
+        body.push(lines[i].clone());
+        i += 1;
+    }
+
+    if body.is_empty() {
+        return Err(DslError::new(
+            lines[start].num,
+            "block has no indented body",
+        ));
+    }
+
+    Ok((body, i))
+}
+
+// ---------------------------------------------------------------------------
+// Statement parsing (recursive for when/otherwise nesting)
+// ---------------------------------------------------------------------------
+
+fn parse_statements(lines: &[Line]) -> Result<Vec<Stmt>, DslError> {
+    let mut stmts = vec![];
+    let mut i = 0;
+
+    while i < lines.len() {
+        let line = &lines[i];
+        let content = &line.content;
+
+        if let Some(rest) = content.strip_prefix("require ") {
+            stmts.push(Stmt::Require {
+                indicators: rest.split(',').map(|s| s.trim().to_string()).collect(),
+                line: line.num,
+            });
+            i += 1;
+        } else if let Some(rest) = content.strip_prefix("skip when ") {
+            stmts.push(Stmt::SkipWhen {
+                condition: rest.to_string(),
+                line: line.num,
+            });
+            i += 1;
+        } else if let Some(rest) = content.strip_prefix("set ") {
+            let (name, expr) = parse_set_statement(rest, line.num)?;
+            stmts.push(Stmt::Set {
+                name,
+                expr,
+                line: line.num,
+            });
+            i += 1;
+        } else if let Some(rest) = content.strip_prefix("when ") {
+            let (stmt, next) = parse_when_chain(lines, i, rest)?;
+            stmts.push(stmt);
+            i = next;
+        } else if content == "otherwise" {
+            // Stray otherwise without a preceding when — error
+            return Err(DslError::new(
+                line.num,
+                "'otherwise' without a preceding 'when'",
+            ));
+        } else if let Some(rest) = content.strip_prefix("buy ") {
+            let qty_expr = rest
+                .strip_suffix(" shares")
+                .unwrap_or(rest)
+                .trim()
+                .to_string();
+            stmts.push(Stmt::Buy {
+                qty_expr,
+                line: line.num,
+            });
+            i += 1;
+        } else if let Some(rest) = content.strip_prefix("sell ") {
+            let qty_expr = rest
+                .strip_suffix(" shares")
+                .unwrap_or(rest)
+                .trim()
+                .to_string();
+            stmts.push(Stmt::Sell {
+                qty_expr,
+                validated: true,
+                line: line.num,
+            });
+            i += 1;
+        } else if content == "hold position" {
+            stmts.push(Stmt::HoldPosition { line: line.num });
+            i += 1;
+        } else if let Some(rest) = content.strip_prefix("close position ") {
+            // close position ID "reason" or close position "reason"
+            if rest.starts_with('"') {
+                let reason = extract_quoted_value(rest, line.num)?;
+                stmts.push(Stmt::ClosePosition {
+                    reason,
+                    line: line.num,
+                });
+            } else {
+                // close position EXPR "reason"
+                let quote_pos = rest.find('"').ok_or_else(|| {
+                    DslError::new(line.num, "close position requires a quoted reason")
+                })?;
+                let id_expr = rest[..quote_pos].trim().to_string();
+                let reason = extract_quoted_value(&rest[quote_pos..], line.num)?;
+                stmts.push(Stmt::ClosePositionById {
+                    id_expr,
+                    reason,
+                    line: line.num,
+                });
+            }
+            i += 1;
+        } else if let Some(rest) = content.strip_prefix("stop backtest ") {
+            let reason = extract_quoted_value(rest, line.num)?;
+            stmts.push(Stmt::StopBacktest {
+                reason,
+                line: line.num,
+            });
+            i += 1;
+        } else if let Some(rest) = content.strip_prefix("open ") {
+            stmts.push(Stmt::OpenStrategy {
+                call: rest.to_string(),
+                line: line.num,
+            });
+            i += 1;
+        } else if let Some(rest) = content.strip_prefix("plot ") {
+            let (name, expr, display) = parse_plot(rest, line.num)?;
+            stmts.push(Stmt::Plot {
+                name,
+                expr,
+                display,
+                line: line.num,
+            });
+            i += 1;
+        } else if let Some(rest) = content.strip_prefix("add ") {
+            let (expr, name) = parse_add_to(rest, line.num)?;
+            stmts.push(Stmt::AddTo {
+                expr,
+                name,
+                line: line.num,
+            });
+            i += 1;
+        } else if let Some(rest) = content.strip_prefix("return ") {
+            stmts.push(Stmt::Return {
+                expr: rest.to_string(),
+                line: line.num,
+            });
+            i += 1;
+        } else if let Some(rest) = content.strip_prefix("raw ") {
+            stmts.push(Stmt::Raw {
+                code: rest.to_string(),
+                line: line.num,
+            });
+            i += 1;
+        } else {
+            return Err(DslError::new(
+                line.num,
+                format!("unrecognized statement: {content}"),
+            ));
+        }
+    }
+
+    Ok(stmts)
+}
+
+// ---------------------------------------------------------------------------
+// When / otherwise chain parsing
+// ---------------------------------------------------------------------------
+
+/// Parse a `when CONDITION then` block, consuming any subsequent `when`/`otherwise`
+/// siblings at the same indent level to form an if/else-if/else chain.
+fn parse_when_chain(
+    lines: &[Line],
+    start: usize,
+    first_cond: &str,
+) -> Result<(Stmt, usize), DslError> {
+    let base_indent = lines[start].indent;
+    let first_line_num = lines[start].num;
+
+    // The condition must end with " then"
+    let condition = first_cond
+        .strip_suffix(" then")
+        .ok_or_else(|| DslError::new(first_line_num, "when clause must end with 'then'"))?
+        .to_string();
+
+    // Collect the then-body (indented deeper)
+    let mut then_body_lines = vec![];
+    let mut i = start + 1;
+    while i < lines.len() && lines[i].indent > base_indent {
+        then_body_lines.push(lines[i].clone());
+        i += 1;
+    }
+
+    if then_body_lines.is_empty() {
+        return Err(DslError::new(
+            first_line_num,
+            "when block has no indented body",
+        ));
+    }
+
+    let then_body = parse_statements(&then_body_lines)?;
+
+    // Check for chained when/otherwise at same indent level
+    let else_body = if i < lines.len() && lines[i].indent == base_indent {
+        let next_content = &lines[i].content;
+
+        if next_content == "otherwise" {
+            // Collect otherwise body
+            let mut otherwise_lines = vec![];
+            let j_start = i;
+            i += 1;
+            while i < lines.len() && lines[i].indent > base_indent {
+                otherwise_lines.push(lines[i].clone());
+                i += 1;
+            }
+            if otherwise_lines.is_empty() {
+                return Err(DslError::new(
+                    lines[j_start].num,
+                    "otherwise block has no indented body",
+                ));
+            }
+            Some(parse_statements(&otherwise_lines)?)
+        } else if next_content.starts_with("when ") && next_content.ends_with(" then") {
+            // Chain: else-if via nested When
+            let rest = next_content.strip_prefix("when ").unwrap();
+            let (chained, next_i) = parse_when_chain(lines, i, rest)?;
+            i = next_i;
+            Some(vec![chained])
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    Ok((
+        Stmt::When {
+            condition,
+            then_body,
+            else_body,
+            line: first_line_num,
+        },
+        i,
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// Helpers for specific statement forms
+// ---------------------------------------------------------------------------
+
+/// Parse `set NAME to EXPR`
+fn parse_set_statement(rest: &str, line_num: usize) -> Result<(String, String), DslError> {
+    let to_pos = rest.find(" to ").ok_or_else(|| {
+        DslError::new(line_num, "set statement requires 'to' (e.g., set x to 42)")
+    })?;
+
+    let name = rest[..to_pos].trim().to_string();
+    let expr = rest[to_pos + 4..].trim().to_string();
+
+    if name.is_empty() || expr.is_empty() {
+        return Err(DslError::new(
+            line_num,
+            "set statement requires NAME to EXPR",
+        ));
+    }
+
+    Ok((name, expr))
+}
+
+/// Parse `"name" at EXPR` or `"name" at EXPR as subchart`
+fn parse_plot(rest: &str, line_num: usize) -> Result<(String, String, Option<String>), DslError> {
+    let name = extract_quoted_value(rest, line_num)?;
+    let after_name = rest[name.len() + 2..].trim(); // skip past "name"
+
+    let after_at = after_name.strip_prefix("at ").ok_or_else(|| {
+        DslError::new(
+            line_num,
+            "plot requires 'at' (e.g., plot \"SMA\" at sma(200))",
+        )
+    })?;
+
+    let (expr, display) = if let Some(as_pos) = after_at.rfind(" as ") {
+        let expr = after_at[..as_pos].trim().to_string();
+        let display = after_at[as_pos + 4..].trim().to_string();
+        (expr, Some(display))
+    } else {
+        (after_at.trim().to_string(), None)
+    };
+
+    Ok((name, expr, display))
+}
+
+/// Parse `EXPR to NAME`
+fn parse_add_to(rest: &str, line_num: usize) -> Result<(String, String), DslError> {
+    let to_pos = rest.rfind(" to ").ok_or_else(|| {
+        DslError::new(
+            line_num,
+            "add statement requires 'to' (e.g., add 1 to counter)",
+        )
+    })?;
+
+    let expr = rest[..to_pos].trim().to_string();
+    let name = rest[to_pos + 4..].trim().to_string();
+
+    if expr.is_empty() || name.is_empty() {
+        return Err(DslError::new(
+            line_num,
+            "add statement requires EXPR to NAME",
+        ));
+    }
+
+    Ok((expr, name))
+}
+
+/// Extract a `"quoted string"` value from the start of a string.
+fn extract_quoted_value(s: &str, line_num: usize) -> Result<String, DslError> {
+    let s = s.trim();
+    if !s.starts_with('"') {
+        return Err(DslError::new(line_num, "expected a quoted string"));
+    }
+
+    let end = s[1..]
+        .find('"')
+        .ok_or_else(|| DslError::new(line_num, "unterminated quoted string"))?;
+
+    Ok(s[1..=end].to_string())
+}
+
+/// Extract the quoted string after a prefix: `prefix "value"` → `value`
+fn extract_quoted_string(content: &str, prefix: &str, line_num: usize) -> Result<String, DslError> {
+    let rest = content
+        .strip_prefix(prefix)
+        .ok_or_else(|| DslError::new(line_num, format!("expected '{prefix}'")))?
+        .trim();
+
+    extract_quoted_value(rest, line_num)
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_preprocess_strips_comments_and_blanks() {
+        let source = "# comment\nstrategy \"Test\"\n\n  symbol AAPL\n  # another comment\n  interval daily\n";
+        let lines = preprocess(source);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].content, "strategy \"Test\"");
+        assert_eq!(lines[0].indent, 0);
+        assert_eq!(lines[1].content, "symbol AAPL");
+        assert!(lines[1].indent > 0);
+    }
+
+    #[test]
+    fn test_parse_param() {
+        let line = Line {
+            indent: 0,
+            content: "param THRESHOLD = 0.04 \"Entry threshold\"".to_string(),
+            num: 1,
+        };
+        let p = parse_param(&line).unwrap();
+        assert_eq!(p.name, "THRESHOLD");
+        assert_eq!(p.default, "0.04");
+        assert_eq!(p.description, "Entry threshold");
+        assert!(p.choices.is_empty());
+    }
+
+    #[test]
+    fn test_parse_param_with_choices() {
+        let line = Line {
+            indent: 0,
+            content: "param MODE = \"fast\" \"Execution mode\" choices fast, slow, balanced"
+                .to_string(),
+            num: 1,
+        };
+        let p = parse_param(&line).unwrap();
+        assert_eq!(p.name, "MODE");
+        assert_eq!(p.default, "\"fast\"");
+        assert_eq!(p.choices.len(), 3);
+    }
+
+    #[test]
+    fn test_parse_state() {
+        let line = Line {
+            indent: 0,
+            content: "state wins = 0".to_string(),
+            num: 1,
+        };
+        let s = parse_state(&line).unwrap();
+        assert_eq!(s.name, "wins");
+        assert_eq!(s.default, "0");
+    }
+
+    #[test]
+    fn test_parse_minimal_program() {
+        let source = r#"
+strategy "Test"
+  symbol AAPL
+  interval daily
+
+on each bar
+  skip when has positions
+  buy 100 shares
+"#;
+        let program = parse(source).unwrap();
+        assert!(program.strategy.is_some());
+        assert_eq!(program.strategy.as_ref().unwrap().name, "Test");
+        assert!(program.on_bar.is_some());
+        assert_eq!(program.on_bar.as_ref().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_parse_when_otherwise_chain() {
+        let source = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on exit check
+  when pos.pnl_pct > 0.50 then
+    close position "take_profit"
+  when pos.days_held > 30 then
+    close position "max_hold"
+  otherwise
+    hold position
+"#;
+        let program = parse(source).unwrap();
+        let stmts = program.on_exit_check.as_ref().unwrap();
+        assert_eq!(stmts.len(), 1); // single chained When
+
+        if let Stmt::When { else_body, .. } = &stmts[0] {
+            // The else_body should be a chained When
+            assert!(else_body.is_some());
+            let inner = else_body.as_ref().unwrap();
+            assert_eq!(inner.len(), 1);
+            if let Stmt::When {
+                else_body: inner_else,
+                ..
+            } = &inner[0]
+            {
+                // The inner else_body should be the otherwise
+                assert!(inner_else.is_some());
+            } else {
+                panic!("expected chained When");
+            }
+        } else {
+            panic!("expected When statement");
+        }
+    }
+
+    #[test]
+    fn test_rejects_missing_strategy() {
+        let source = "on each bar\n  buy 100 shares\n";
+        let err = parse(source).unwrap_err();
+        assert!(err.message.contains("missing required 'strategy' block"));
+    }
+
+    #[test]
+    fn test_rejects_duplicate_blocks() {
+        let source = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  buy 100 shares
+
+on each bar
+  sell 50 shares
+"#;
+        let err = parse(source).unwrap_err();
+        assert!(err.message.contains("duplicate"));
+    }
+}

@@ -1,0 +1,56 @@
+# Iron Condor Income Strategy
+# Sells iron condors in low-volatility regimes with RSI filtering.
+# Takes profit at 50% or exits on time decay.
+
+strategy "Iron Condor Income"
+  symbol SPY
+  capital CAPITAL
+  interval daily
+  data ohlcv, options
+  indicators rsi:14, atr:14, bbands_upper:20, bbands_lower:20, bbands_mid:20
+  slippage mid
+  expiration_filter monthly
+  max_positions 1
+
+param SHORT_PUT_DELTA = 0.20 "Short put delta target"
+param SHORT_CALL_DELTA = 0.20 "Short call delta target"
+param DTE = 45 "Target days to expiration"
+param PROFIT_TARGET = 0.50 "Take profit at this P&L percentage"
+param MAX_HOLD_DAYS = 35 "Maximum days to hold before closing"
+param MAX_CONSECUTIVE_LOSSES = 3 "Pause after this many losses"
+
+state wins = 0
+state losses = 0
+state consecutive_losses = 0
+
+on each bar
+  require rsi:14
+  skip when has positions
+  skip when consecutive_losses >= MAX_CONSECUTIVE_LOSSES
+
+  # Volatility regime check — only sell in calm markets
+  set bb_width to (bbands_upper(20) - bbands_lower(20)) / bbands_mid(20)
+  skip when bb_width > 0.08
+
+  # RSI filter — avoid extremes
+  skip when rsi(14) > 70 or rsi(14) < 30
+
+  open iron_condor(SHORT_PUT_DELTA, SHORT_CALL_DELTA, DTE)
+
+on exit check
+  when pos.pnl_pct > PROFIT_TARGET then
+    close position "take_profit"
+  when pos.days_held > MAX_HOLD_DAYS then
+    close position "time_decay"
+  when pos.pnl_pct < -2.0 then
+    close position "stop_loss"
+  otherwise
+    hold position
+
+on position closed
+  when pos.pnl > 0 then
+    add 1 to wins
+    set consecutive_losses to 0
+  otherwise
+    add 1 to losses
+    add 1 to consecutive_losses

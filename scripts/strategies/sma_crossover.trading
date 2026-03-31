@@ -1,0 +1,45 @@
+# SMA Crossover Strategy
+# Buys when price breaks above SMA, sells when it falls below.
+# Written in the natural-language Trading DSL.
+
+strategy "SMA Crossover"
+  symbol SYMBOL
+  capital CAPITAL
+  interval daily
+  data ohlcv
+  indicators sma:50, sma:200, rsi:14
+
+param ENTRY_THRESHOLD = 0.04 "Percentage above SMA to trigger entry"
+param EXIT_THRESHOLD = 0.03 "Percentage below SMA to trigger exit"
+param RSI_FLOOR = 30 "Minimum RSI to allow entry"
+
+state consecutive_losses = 0
+
+on each bar
+  require sma:50, sma:200
+  skip when has positions
+  skip when consecutive_losses >= 3
+  skip when rsi(14) < RSI_FLOOR
+
+  set upper to sma(200) * (1 + ENTRY_THRESHOLD)
+  plot "Entry Threshold" at upper
+
+  when close > upper and sma(50) > sma(200) then
+    buy size_by_equity(1.0) shares
+
+on exit check
+  set lower to sma(200) * (1 - EXIT_THRESHOLD)
+  plot "Exit Threshold" at lower
+
+  when close < lower then
+    close position "below_threshold"
+  when pos.days_held > 60 and pos.pnl_pct < 0 then
+    close position "max_hold_loss"
+  otherwise
+    hold position
+
+on position closed
+  when pos.pnl < 0 then
+    add 1 to consecutive_losses
+  otherwise
+    set consecutive_losses to 0

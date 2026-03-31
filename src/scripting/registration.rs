@@ -2,6 +2,7 @@
 
 use rhai::{Dynamic, Engine};
 
+use super::dsl;
 use super::helpers;
 use super::types::{BarContext, ScriptPosition};
 
@@ -40,6 +41,9 @@ pub fn build_engine() -> Engine {
     // Register high-level action helpers and strategy constructors
     register_action_helpers(&mut engine);
     register_strategy_helpers(&mut engine);
+
+    // Register DSL custom syntax (buy N shares, close position "reason", etc.)
+    dsl::register_dsl_syntax(&mut engine);
 
     engine
 }
