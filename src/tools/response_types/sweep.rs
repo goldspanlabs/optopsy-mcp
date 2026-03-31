@@ -1,4 +1,4 @@
-//! Response types for `parameter_sweep` and `bayesian_optimize`.
+//! Response types for `backtest` and `bayesian_optimize`.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

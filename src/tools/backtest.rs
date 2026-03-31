@@ -1,4 +1,4 @@
-//! MCP tool handler for `parameter_sweep` — run a parameter sweep and persist results.
+//! MCP tool handler for `backtest` — run a backtest or parameter sweep and persist results.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -38,9 +38,9 @@ fn default_max_evaluations() -> usize {
 // Params
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// Parameters for the `parameter_sweep` MCP tool.
+/// Parameters for the `backtest` MCP tool.
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
-pub struct ParameterSweepParams {
+pub struct BacktestToolParams {
     /// Strategy name (display name or ID from the strategy store).
     #[garde(length(min = 1))]
     pub strategy: String,
@@ -80,9 +80,9 @@ pub struct ParameterSweepParams {
 // Response
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// Response from the `parameter_sweep` tool.
+/// Response from the `backtest` tool.
 #[derive(Serialize, Deserialize, JsonSchema)]
-pub struct ParameterSweepResponse {
+pub struct BacktestToolResponse {
     /// Unique sweep ID for referencing the persisted results.
     pub sweep_id: String,
     /// Run IDs for each individual backtest within the sweep.
@@ -99,8 +99,8 @@ pub struct ParameterSweepResponse {
 /// Run a parameter sweep (or single backtest) and persist the results.
 pub async fn execute(
     server: &OptopsyServer,
-    params: ParameterSweepParams,
-) -> Result<ParameterSweepResponse, anyhow::Error> {
+    params: BacktestToolParams,
+) -> Result<BacktestToolResponse, anyhow::Error> {
     let run_store = server
         .run_store
         .as_ref()
@@ -197,7 +197,7 @@ pub async fn execute(
         .unwrap_or_default();
 
     // 9. Return response
-    Ok(ParameterSweepResponse {
+    Ok(BacktestToolResponse {
         sweep_id,
         run_ids,
         sweep: sweep_response,

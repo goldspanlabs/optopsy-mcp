@@ -542,8 +542,8 @@ impl OptopsyServer {
     /// to learn the available `ctx` methods, callbacks, helpers, and indicators.
     ///
     /// **No parameters needed** — returns the full scripting reference as text.
-    #[tool(name = "get_scripting_reference", annotations(read_only_hint = true))]
-    async fn get_scripting_reference(&self) -> Result<String, String> {
+    #[tool(name = "scripting_guide", annotations(read_only_hint = true))]
+    async fn scripting_guide(&self) -> Result<String, String> {
         std::fs::read_to_string("scripts/SCRIPTING_REFERENCE.md")
             .map_err(|e| format!("Failed to read scripting reference: {e}"))
     }
@@ -572,17 +572,17 @@ impl OptopsyServer {
     ///   ]
     /// }
     /// ```
-    #[tool(name = "parameter_sweep", annotations(read_only_hint = false))]
-    async fn parameter_sweep(
+    #[tool(name = "backtest", annotations(read_only_hint = false))]
+    async fn backtest(
         &self,
-        Parameters(params): Parameters<tools::parameter_sweep::ParameterSweepParams>,
-    ) -> SanitizedResult<tools::parameter_sweep::ParameterSweepResponse, String> {
+        Parameters(params): Parameters<tools::backtest::BacktestToolParams>,
+    ) -> SanitizedResult<tools::backtest::BacktestToolResponse, String> {
         SanitizedResult(
             async {
                 params
                     .validate()
-                    .map_err(|e| validation_err("parameter_sweep", e))?;
-                tools::parameter_sweep::execute(self, params)
+                    .map_err(|e| validation_err("backtest", e))?;
+                tools::backtest::execute(self, params)
                     .await
                     .map_err(tool_err)
             }
@@ -611,11 +611,11 @@ impl ServerHandler for OptopsyServer {
                 \n\n## WORKFLOW\
                 \n\
                 \n### 1. Run a Backtest\
-                \n  - **parameter_sweep** — Run a backtest or parameter sweep. Pass a saved strategy by display name.\
+                \n  - **backtest** — Run a backtest or parameter sweep. Pass a saved strategy by display name.\
                 \n    Omit `sweep_params` for a single backtest, or provide ranges for a grid/bayesian sweep.\
                 \n    Results are persisted to the runs database.\
                 \n  - OHLCV and options data is loaded from cache automatically.\
-                \n  - To compare parameters, use parameter_sweep with sweep_params.\
+                \n  - To compare parameters, use backtest with sweep_params.\
                 \n\
                 \n### 2. Discover Patterns (optional)\
                 \n  - generate_hypotheses({ symbols: [\"SPY\"] }) — scan for statistically significant patterns\

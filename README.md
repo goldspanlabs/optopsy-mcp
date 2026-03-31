@@ -56,7 +56,8 @@ Discover seasonality, regime shifts, and price patterns. Gate entries using HMM 
 | Tool | Description |
 |------|-------------|
 | **Backtesting** | |
-| `run_script` | Execute a Rhai backtest script (strategy file or inline) |
+| `backtest` | Run a single backtest or grid/bayesian parameter sweep over a Rhai strategy |
+| `scripting_guide` | Return the full Rhai scripting API reference |
 | **Statistics** | |
 | `aggregate_prices` | Time-based aggregation with significance testing |
 | `distribution` | Distribution analysis with normality testing |

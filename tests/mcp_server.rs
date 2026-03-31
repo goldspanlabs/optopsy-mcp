@@ -44,7 +44,7 @@ fn server_info_has_correct_metadata() {
     assert!(info.capabilities.tools.is_some());
     assert!(info.instructions.is_some());
     let instructions = info.instructions.unwrap();
-    assert!(instructions.contains("parameter_sweep"));
+    assert!(instructions.contains("backtest"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -67,8 +67,8 @@ async fn tool_router_lists_all_tools() {
 
     assert_eq!(tools.len(), 14, "Expected 14 tools, got: {tool_names:?}");
     for expected in [
-        "parameter_sweep",
-        "get_scripting_reference",
+        "backtest",
+        "scripting_guide",
         "aggregate_prices",
         "distribution",
         "correlate",

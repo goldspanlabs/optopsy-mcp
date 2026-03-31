@@ -33,7 +33,7 @@ fn is_valid_identifier(s: &str) -> bool {
 
 /// Rebuild the `params` map in an existing scope with new values.
 ///
-/// Used for `parameter_sweep` iterations where the AST is compiled once
+/// Used for `backtest` sweep iterations where the AST is compiled once
 /// and only scope values change per iteration.
 pub fn inject_into_scope(scope: &mut rhai::Scope, params: &HashMap<String, serde_json::Value>) {
     let mut map = rhai::Map::new();
