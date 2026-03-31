@@ -3,6 +3,7 @@ name = "optopsy-mcp"
 version = "0.1.0"
 edition = "2021"
 description = "Options backtesting engine exposed as an MCP server"
+default-run = "optopsy-mcp"
 
 [dependencies]
 rmcp = { version = "0.17", features = ["server", "transport-io", "transport-streamable-http-server", "macros"] }
@@ -34,6 +35,14 @@ futures = "0.3"
 tokio-stream = "0.1"
 toml = "0.8"
 refinery = { version = "0.9.0", features = ["rusqlite"] }
+
+zip = "2"
+rayon = "1.10"
+indicatif = "0.17"
+
+[[bin]]
+name = "convert-options"
+path = "src/bin/convert_options.rs"
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
