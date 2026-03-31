@@ -11,22 +11,15 @@ use super::database::DbConnection;
 use super::traits::{
     RunDetail, RunRow, RunStore, RunSummary, RunsListResponse, RunsOverview, SweepDetail, TradeRow,
 };
+use crate::server::sanitize::sanitize_opt;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// Replace NaN / Infinity with `None` for safe storage in SQLite.
-fn sanitize(v: f64) -> Option<f64> {
-    if v.is_finite() {
-        Some(v)
-    } else {
-        None
-    }
-}
-
-fn sanitize_opt(v: Option<f64>) -> Option<f64> {
-    v.and_then(sanitize)
+/// Flatten `Option<f64>` through `sanitize_opt`, converting NaN/Infinity to `None`.
+fn sanitize_option(v: Option<f64>) -> Option<f64> {
+    v.and_then(|x| sanitize_opt(x))
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -96,16 +89,16 @@ impl RunStore for SqliteRunStore {
                 symbol,
                 capital,
                 params_str,
-                sanitize_opt(total_return),
-                sanitize_opt(win_rate),
-                sanitize_opt(max_drawdown),
-                sanitize_opt(sharpe),
-                sanitize_opt(sortino),
-                sanitize_opt(cagr),
-                sanitize_opt(profit_factor),
+                sanitize_option(total_return),
+                sanitize_option(win_rate),
+                sanitize_option(max_drawdown),
+                sanitize_option(sharpe),
+                sanitize_option(sortino),
+                sanitize_option(cagr),
+                sanitize_option(profit_factor),
                 trade_count,
-                sanitize_opt(expectancy),
-                sanitize_opt(var_95),
+                sanitize_option(expectancy),
+                sanitize_option(var_95),
                 result_json,
                 execution_time_ms,
                 hypothesis,
@@ -281,7 +274,7 @@ impl RunStore for SqliteRunStore {
                             sw.symbol, sw.combinations,
                             MAX(r.total_return) as best_return,
                             MAX(r.win_rate) as best_win_rate,
-                            MAX(r.max_drawdown) as best_max_dd,
+                            MAX(r.max_drawdown) as best_max_drawdown,
                             MAX(r.sharpe) as best_sharpe,
                             MAX(r.sortino) as best_sortino,
                             MAX(r.cagr) as best_cagr,
@@ -306,7 +299,7 @@ impl RunStore for SqliteRunStore {
                         combinations: row.get(4)?,
                         best_return: row.get(5)?,
                         best_win_rate: row.get(6)?,
-                        best_max_dd: row.get(7)?,
+                        best_max_drawdown: row.get(7)?,
                         best_sharpe: row.get(8)?,
                         best_sortino: row.get(9)?,
                         best_cagr: row.get(10)?,

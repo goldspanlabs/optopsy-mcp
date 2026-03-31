@@ -51,7 +51,7 @@ pub async fn run_grid_sweep(
                     pnl: bt.result.total_pnl,
                     trades: bt.result.trade_count,
                     win_rate: m.win_rate,
-                    max_dd: m.max_drawdown,
+                    max_drawdown: m.max_drawdown,
                     profit_factor: m.profit_factor,
                     cagr: m.cagr,
                     calmar: m.calmar,

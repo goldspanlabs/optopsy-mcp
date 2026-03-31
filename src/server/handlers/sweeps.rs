@@ -18,6 +18,7 @@ use crate::data::traits::SweepDetail;
 use crate::engine::bayesian::{run_bayesian, BayesianConfig};
 use crate::engine::sweep::{run_grid_sweep, GridSweepConfig};
 use crate::scripting::engine::CachingDataLoader;
+use crate::server::sanitize::{sanitize, trade_row_from_record};
 use crate::server::state::AppState;
 use crate::tools::response_types::sweep::SweepResponse;
 
@@ -69,45 +70,6 @@ pub struct ListQuery {
 // ──────────────────────────────────────────────────────────────────────────────
 
 use crate::data::traits::TradeRow;
-use crate::scripting::engine::ScriptBacktestResult;
-
-/// Build `TradeRow` vector from a `ScriptBacktestResult`.
-fn build_sweep_trades(bt: &ScriptBacktestResult) -> Vec<TradeRow> {
-    bt.result
-        .trade_log
-        .iter()
-        .map(|t| TradeRow {
-            trade_id: t.trade_id as i64,
-            entry_datetime: t.entry_datetime.and_utc().timestamp(),
-            exit_datetime: t.exit_datetime.and_utc().timestamp(),
-            entry_cost: sanitize(t.entry_cost),
-            exit_proceeds: sanitize(t.exit_proceeds),
-            entry_amount: sanitize(t.entry_amount),
-            entry_label: format!("{:?}", t.entry_label),
-            exit_amount: sanitize(t.exit_amount),
-            exit_label: format!("{:?}", t.exit_label),
-            pnl: sanitize(t.pnl),
-            days_held: t.days_held,
-            exit_type: format!("{:?}", t.exit_type),
-            legs: serde_json::to_value(&t.legs).unwrap_or(Value::Array(vec![])),
-            computed_quantity: t.computed_quantity,
-            entry_equity: t.entry_equity.map(sanitize),
-            stock_entry_price: t.stock_entry_price.map(sanitize),
-            stock_exit_price: t.stock_exit_price.map(sanitize),
-            stock_pnl: t.stock_pnl.map(sanitize),
-            group: t.group.clone(),
-        })
-        .collect()
-}
-
-/// Replace NaN/Infinity with 0.0.
-fn sanitize(v: f64) -> f64 {
-    if v.is_finite() {
-        v
-    } else {
-        0.0
-    }
-}
 
 /// Build a Cartesian grid from sweep param definitions.
 /// Each param expands from `start` to `stop` (inclusive) by `step`.
@@ -208,8 +170,8 @@ fn persist_sweep(
         let full = sweep_response.full_results.get(i);
         let result_json = full
             .map(|r| {
-                let mut value = serde_json::to_value(&r.result)
-                    .unwrap_or(Value::Object(Default::default()));
+                let mut value =
+                    serde_json::to_value(&r.result).unwrap_or(Value::Object(Default::default()));
                 if let Some(obj) = value.as_object_mut() {
                     obj.remove("trade_log");
                 }
@@ -227,9 +189,13 @@ fn persist_sweep(
                 symbol,
                 capital,
                 &params_value,
-                Some(sanitize(if capital > 0.0 { result.pnl / capital * 100.0 } else { 0.0 })),
+                Some(sanitize(if capital > 0.0 {
+                    result.pnl / capital * 100.0
+                } else {
+                    0.0
+                })),
                 Some(sanitize(result.win_rate)),
-                Some(sanitize(result.max_dd)),
+                Some(sanitize(result.max_drawdown)),
                 Some(sanitize(result.sharpe)),
                 Some(sanitize(result.sortino)),
                 Some(sanitize(result.cagr)),
@@ -247,7 +213,12 @@ fn persist_sweep(
 
         // Store trades if full result is available
         if let Some(full_result) = full {
-            let trades = build_sweep_trades(full_result);
+            let trades: Vec<TradeRow> = full_result
+                .result
+                .trade_log
+                .iter()
+                .map(trade_row_from_record)
+                .collect();
             state
                 .run_store
                 .insert_trades(&run_id, &trades)
@@ -494,7 +465,12 @@ pub async fn create_sweep_stream(
         let sweep_result = match req.mode.as_str() {
             "grid" => {
                 let param_grid = build_grid(&req.sweep_params);
-                tracing::info!("Grid sweep: base_params={:?}, param_grid={:?}, sweep_params={:?}", req.params, param_grid, req.sweep_params);
+                tracing::info!(
+                    "Grid sweep: base_params={:?}, param_grid={:?}, sweep_params={:?}",
+                    req.params,
+                    param_grid,
+                    req.sweep_params
+                );
                 let config = GridSweepConfig {
                     script_source,
                     base_params: req.params.clone(),

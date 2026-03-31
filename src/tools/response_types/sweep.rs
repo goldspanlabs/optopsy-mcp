@@ -14,7 +14,7 @@ pub struct SweepResult {
     pub pnl: f64,
     pub trades: usize,
     pub win_rate: f64,
-    pub max_dd: f64,
+    pub max_drawdown: f64,
     pub profit_factor: f64,
     pub cagr: f64,
     pub calmar: f64,

@@ -17,17 +17,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::data::traits::{RunDetail, TradeRow};
+use crate::server::sanitize::{sanitize, trade_row_from_record};
 use crate::server::state::AppState;
 use crate::tools::run_script::RunScriptParams;
-
-/// Replace NaN/Infinity with 0.0 to prevent JSON serialization errors.
-pub(crate) fn sanitize(v: f64) -> f64 {
-    if v.is_finite() {
-        v
-    } else {
-        0.0
-    }
-}
 
 /// Request body for `POST /backtests`.
 #[derive(Debug, Deserialize)]
@@ -52,41 +44,19 @@ pub struct ListQuery {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// Build `TradeRow` vector from a `RunScriptResponse`.
-///
-/// Maps `TradeRecord` → `TradeRow` preserving the same field names so the
-/// REST API returns the identical JSON shape as the MCP tool response.
-pub(crate) fn build_trades(response: &crate::tools::run_script::RunScriptResponse) -> Vec<TradeRow> {
+fn build_trades(response: &crate::tools::run_script::RunScriptResponse) -> Vec<TradeRow> {
     response
         .result
         .trade_log
         .iter()
-        .map(|t| TradeRow {
-            trade_id: t.trade_id as i64,
-            entry_datetime: t.entry_datetime.and_utc().timestamp(),
-            exit_datetime: t.exit_datetime.and_utc().timestamp(),
-            entry_cost: sanitize(t.entry_cost),
-            exit_proceeds: sanitize(t.exit_proceeds),
-            entry_amount: sanitize(t.entry_amount),
-            entry_label: format!("{:?}", t.entry_label),
-            exit_amount: sanitize(t.exit_amount),
-            exit_label: format!("{:?}", t.exit_label),
-            pnl: sanitize(t.pnl),
-            days_held: t.days_held,
-            exit_type: format!("{:?}", t.exit_type),
-            legs: serde_json::to_value(&t.legs).unwrap_or(Value::Array(vec![])),
-            computed_quantity: t.computed_quantity,
-            entry_equity: t.entry_equity.map(sanitize),
-            stock_entry_price: t.stock_entry_price.map(sanitize),
-            stock_exit_price: t.stock_exit_price.map(sanitize),
-            stock_pnl: t.stock_pnl.map(sanitize),
-            group: t.group.clone(),
-        })
+        .map(trade_row_from_record)
         .collect()
 }
 
 /// Strip trades from a `RunScriptResponse` for storage (trades stored separately).
-pub(crate) fn strip_trades_from_result_json(response: &crate::tools::run_script::RunScriptResponse) -> String {
-    let mut value = serde_json::to_value(response).unwrap_or(Value::Object(serde_json::Map::default()));
+fn strip_trades_from_result_json(response: &crate::tools::run_script::RunScriptResponse) -> String {
+    let mut value =
+        serde_json::to_value(response).unwrap_or(Value::Object(serde_json::Map::default()));
     if let Some(obj) = value.as_object_mut() {
         if let Some(result) = obj.get_mut("result") {
             if let Some(result_obj) = result.as_object_mut() {
@@ -137,7 +107,11 @@ fn persist_backtest(
             symbol,
             capital,
             &params_value,
-            Some(sanitize(if capital > 0.0 { response.result.total_pnl / capital * 100.0 } else { 0.0 })),
+            Some(sanitize(if capital > 0.0 {
+                response.result.total_pnl / capital * 100.0
+            } else {
+                0.0
+            })),
             Some(sanitize(m.win_rate)),
             Some(sanitize(m.max_drawdown)),
             Some(sanitize(m.sharpe)),

@@ -4,6 +4,65 @@
 //! cannot sanitize after the fact. Instead we wrap the inner `Serialize` impl
 //! with `FiniteF64` which intercepts `serialize_f64` and maps non-finite values
 //! to `0.0` before they reach `serde_json`.
+//!
+//! Also provides standalone `sanitize()` / `sanitize_opt()` helpers and a shared
+//! `trade_row_from_record()` mapper used by both backtest and sweep handlers.
+
+use serde_json::Value;
+
+use crate::data::traits::TradeRow;
+use crate::engine::types::TradeRecord;
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Scalar sanitize helpers
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Replace NaN/Infinity with `0.0` to prevent JSON serialization errors.
+pub fn sanitize(v: f64) -> f64 {
+    if v.is_finite() {
+        v
+    } else {
+        0.0
+    }
+}
+
+/// Replace NaN/Infinity with `None` for safe storage in SQLite.
+pub fn sanitize_opt(v: f64) -> Option<f64> {
+    if v.is_finite() {
+        Some(v)
+    } else {
+        None
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// TradeRecord → TradeRow mapper
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Convert a single `TradeRecord` (engine output) into a `TradeRow` (REST/DB shape).
+pub fn trade_row_from_record(t: &TradeRecord) -> TradeRow {
+    TradeRow {
+        trade_id: t.trade_id as i64,
+        entry_datetime: t.entry_datetime.and_utc().timestamp(),
+        exit_datetime: t.exit_datetime.and_utc().timestamp(),
+        entry_cost: sanitize(t.entry_cost),
+        exit_proceeds: sanitize(t.exit_proceeds),
+        entry_amount: sanitize(t.entry_amount),
+        entry_label: format!("{:?}", t.entry_label),
+        exit_amount: sanitize(t.exit_amount),
+        exit_label: format!("{:?}", t.exit_label),
+        pnl: sanitize(t.pnl),
+        days_held: t.days_held,
+        exit_type: format!("{:?}", t.exit_type),
+        legs: serde_json::to_value(&t.legs).unwrap_or(Value::Array(vec![])),
+        computed_quantity: t.computed_quantity,
+        entry_equity: t.entry_equity.map(sanitize),
+        stock_entry_price: t.stock_entry_price.map(sanitize),
+        stock_exit_price: t.stock_exit_price.map(sanitize),
+        stock_pnl: t.stock_pnl.map(sanitize),
+        group: t.group.clone(),
+    }
+}
 
 /// Wrapper whose `Serialize` impl delegates to `T` but replaces any
 /// non-finite `f64` values (NaN, ±Infinity) with `0.0` during serialization.

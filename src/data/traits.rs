@@ -117,7 +117,7 @@ pub enum RunRow {
         combinations: i64,
         best_return: Option<f64>,
         best_win_rate: Option<f64>,
-        best_max_dd: Option<f64>,
+        best_max_drawdown: Option<f64>,
         best_sharpe: Option<f64>,
         best_sortino: Option<f64>,
         best_cagr: Option<f64>,
