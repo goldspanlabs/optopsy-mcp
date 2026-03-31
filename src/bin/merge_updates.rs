@@ -22,6 +22,8 @@
 
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+
+use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -399,20 +401,31 @@ fn main() -> Result<()> {
     let mut skipped = 0usize;
     let mut total_new_rows = 0usize;
 
-    for idx in 0..archive.len() {
+    let total_entries = archive.len();
+    let pb = ProgressBar::new(total_entries as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("[{elapsed_precise}] {bar:40} {pos}/{len} {msg}")
+            .unwrap(),
+    );
+
+    for idx in 0..total_entries {
         let entry = archive.by_index(idx)?;
         let name = entry.name().to_string();
         if !name.ends_with(".txt") {
+            pb.inc(1);
             continue;
         }
 
         let Some(symbol) = extract_symbol(&name, &suffix) else {
+            pb.inc(1);
             continue;
         };
 
         let parquet_path = data_dir.join(format!("{symbol}.parquet"));
         if !parquet_path.exists() {
             skipped += 1;
+            pb.inc(1);
             continue;
         }
 
@@ -424,11 +437,13 @@ fn main() -> Result<()> {
 
         if lines.is_empty() {
             skipped += 1;
+            pb.inc(1);
             continue;
         }
 
         let Ok(last_dt) = get_last_date(&parquet_path, date_col) else {
             skipped += 1;
+            pb.inc(1);
             continue;
         };
 
@@ -445,20 +460,16 @@ fn main() -> Result<()> {
             Ok(n) => {
                 updated += 1;
                 total_new_rows += n;
-                if updated <= 5 {
-                    println!("  {symbol}: +{n} rows");
-                }
+                pb.set_message(format!("{symbol}: +{n} rows"));
             }
             Err(e) => {
-                eprintln!("  {symbol}: ERROR {e}");
+                pb.suspend(|| eprintln!("  {symbol}: ERROR {e}"));
                 skipped += 1;
             }
         }
+        pb.inc(1);
     }
-
-    if updated > 5 {
-        println!("  ... and {} more", updated - 5);
-    }
+    pb.finish_with_message("done");
 
     println!(
         "\nTOTAL: {} symbols updated, +{} new rows, {} skipped",
