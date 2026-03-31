@@ -94,7 +94,6 @@ pub enum Stmt {
     },
     Sell {
         qty_expr: String,
-        validated: bool,
         line: usize,
     },
     HoldPosition {
@@ -507,7 +506,6 @@ fn parse_statements(lines: &[Line]) -> Result<Vec<Stmt>, DslError> {
                 .to_string();
             stmts.push(Stmt::Sell {
                 qty_expr,
-                validated: true,
                 line: line.num,
             });
             i += 1;

@@ -279,8 +279,13 @@ fn generate_stmts(
         match stmt {
             Stmt::Require { indicators, .. } => {
                 let ind_list: Vec<String> = indicators.iter().map(|i| format!("\"{i}\"")).collect();
+                let ret_val = match kind {
+                    CallbackKind::ActionArray => "return [];",
+                    CallbackKind::SingleAction => "return hold_position();",
+                    CallbackKind::SideEffect => "return;",
+                };
                 out.push_str(&format!(
-                    "{indent}if !ctx.indicators_ready([{}]) {{ return []; }}\n",
+                    "{indent}if !ctx.indicators_ready([{}]) {{ {ret_val} }}\n",
                     ind_list.join(", ")
                 ));
             }
@@ -359,37 +364,22 @@ fn generate_stmts(
                 }
             }
 
-            Stmt::Sell {
-                qty_expr,
-                validated,
-                ..
-            } => {
+            Stmt::Sell { qty_expr, .. } => {
                 let qty = rewrite_expr(qty_expr);
-                if *validated {
-                    // Emit position validation guard
-                    out.push_str(&format!("{indent}let __sell_qty = {qty};\n"));
-                    out.push_str(&format!("{indent}if __sell_qty > 0 {{\n"));
-                    match kind {
-                        CallbackKind::ActionArray => {
-                            out.push_str(&format!(
-                                "{indent}    __actions.push(sell_stock(__sell_qty));\n"
-                            ));
-                        }
-                        _ => {
-                            out.push_str(&format!("{indent}    sell_stock(__sell_qty);\n"));
-                        }
+                // Emit quantity validation guard
+                out.push_str(&format!("{indent}let __sell_qty = {qty};\n"));
+                out.push_str(&format!("{indent}if __sell_qty > 0 {{\n"));
+                match kind {
+                    CallbackKind::ActionArray => {
+                        out.push_str(&format!(
+                            "{indent}    __actions.push(sell_stock(__sell_qty));\n"
+                        ));
                     }
-                    out.push_str(&format!("{indent}}}\n"));
-                } else {
-                    match kind {
-                        CallbackKind::ActionArray => {
-                            out.push_str(&format!("{indent}__actions.push(sell_stock({qty}));\n"));
-                        }
-                        _ => {
-                            out.push_str(&format!("{indent}sell_stock({qty});\n"));
-                        }
+                    _ => {
+                        out.push_str(&format!("{indent}    sell_stock(__sell_qty);\n"));
                     }
                 }
+                out.push_str(&format!("{indent}}}\n"));
             }
 
             Stmt::HoldPosition { .. } => match kind {
@@ -442,7 +432,10 @@ fn generate_stmts(
                         "{indent}__actions.push(stop_backtest(\"{reason}\"));\n"
                     ));
                 }
-                _ => {
+                CallbackKind::SingleAction => {
+                    out.push_str(&format!("{indent}return stop_backtest(\"{reason}\");\n"));
+                }
+                CallbackKind::SideEffect => {
                     out.push_str(&format!("{indent}stop_backtest(\"{reason}\");\n"));
                 }
             },
@@ -629,18 +622,12 @@ const CTX_METHODS: &[&str] = &[
 /// - `no positions` → `!ctx.has_positions()`
 /// - `and` → `&&`, `or` → `||`
 pub fn rewrite_expr(expr: &str) -> String {
-    let mut s = expr.to_string();
-
-    // Natural-language boolean phrases (before word-level rewriting)
-    s = s.replace("has positions", "ctx.has_positions()");
-    s = s.replace("no positions", "!ctx.has_positions()");
-
-    let chars: Vec<char> = s.chars().collect();
-    let mut result = String::with_capacity(s.len() + 32);
+    let chars: Vec<char> = expr.chars().collect();
+    let mut result = String::with_capacity(expr.len() + 32);
     let mut i = 0;
 
     while i < chars.len() {
-        // Skip string literals
+        // Skip string literals (preserve contents verbatim)
         if chars[i] == '"' {
             result.push(chars[i]);
             i += 1;
@@ -667,27 +654,36 @@ pub fn rewrite_expr(expr: &str) -> String {
             while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
                 i += 1;
             }
-            let word = &s[start..i];
+            // Collect word from chars (safe for non-ASCII)
+            let word: String = chars[start..i].iter().collect();
 
             // Check if preceded by a dot (already qualified)
             let preceded_by_dot = start > 0 && chars[start - 1] == '.';
 
             if preceded_by_dot {
-                result.push_str(word);
+                result.push_str(&word);
+            } else if word == "has" && matches_word_at(&chars, i, "positions") {
+                // "has positions" → ctx.has_positions()
+                i += "positions".len() + 1; // skip space + "positions"
+                result.push_str("ctx.has_positions()");
+            } else if word == "no" && matches_word_at(&chars, i, "positions") {
+                // "no positions" → !ctx.has_positions()
+                i += "positions".len() + 1;
+                result.push_str("!ctx.has_positions()");
             } else if word == "and" {
                 result.push_str("&&");
             } else if word == "or" {
                 result.push_str("||");
             } else if word == "not" {
                 result.push('!');
-            } else if is_ctx_property(word) && !is_followed_by_paren(&chars, i) {
+            } else if is_ctx_property(&word) && !is_followed_by_paren(&chars, i) {
                 result.push_str("ctx.");
-                result.push_str(word);
-            } else if is_ctx_method(word) && is_followed_by_paren(&chars, i) {
+                result.push_str(&word);
+            } else if is_ctx_method(&word) && is_followed_by_paren(&chars, i) {
                 result.push_str("ctx.");
-                result.push_str(word);
+                result.push_str(&word);
             } else {
-                result.push_str(word);
+                result.push_str(&word);
             }
         } else {
             result.push(chars[i]);
@@ -712,6 +708,27 @@ fn is_followed_by_paren(chars: &[char], pos: usize) -> bool {
         j += 1;
     }
     j < chars.len() && chars[j] == '('
+}
+
+/// Check if `expected` word appears at `pos` (after optional whitespace).
+fn matches_word_at(chars: &[char], pos: usize, expected: &str) -> bool {
+    let mut j = pos;
+    // Skip whitespace
+    while j < chars.len() && chars[j] == ' ' {
+        j += 1;
+    }
+    let expected_chars: Vec<char> = expected.chars().collect();
+    if j + expected_chars.len() > chars.len() {
+        return false;
+    }
+    for (k, &ec) in expected_chars.iter().enumerate() {
+        if chars[j + k] != ec {
+            return false;
+        }
+    }
+    // Ensure it's a full word (not a prefix of a longer identifier)
+    let end = j + expected_chars.len();
+    end >= chars.len() || (!chars[end].is_alphanumeric() && chars[end] != '_')
 }
 
 // ---------------------------------------------------------------------------

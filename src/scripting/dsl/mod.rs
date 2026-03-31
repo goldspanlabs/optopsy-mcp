@@ -6,7 +6,7 @@
 //!    `.trading` scripts into valid Rhai source code that the existing engine can execute.
 //!
 //! 2. **Custom Syntax** (`syntax`): Registers inline Rhai syntactic sugar (e.g.,
-//!    `buy 100 shares`, `close position "reason"`) so that generated or hand-written
+//!    `buy 100 shares`, `exit_position "reason"`) so that generated or hand-written
 //!    Rhai scripts can use DSL-like patterns.
 //!
 //! # Quick Start
@@ -57,8 +57,7 @@ pub fn transpile(source: &str) -> Result<String, DslError> {
 
 /// Check if a source string looks like Trading DSL (vs. plain Rhai).
 ///
-/// Uses heuristics: presence of `strategy "` at line start, `on each bar`,
-/// or absence of `fn config()`.
+/// Checks whether the first non-comment, non-empty line starts with `strategy `.
 pub fn is_trading_dsl(source: &str) -> bool {
     let trimmed = source.trim();
     for line in trimmed.lines() {

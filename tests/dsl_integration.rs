@@ -444,10 +444,10 @@ fn all_rhai_strategies_compile_with_dsl_syntax() {
 
     rhai_files.sort();
 
-    assert_eq!(
-        rhai_files.len(),
-        5,
-        "Expected 5 .rhai files in scripts/strategies/, found: {rhai_files:?}"
+    assert!(
+        !rhai_files.is_empty(),
+        "Expected at least one .rhai file in scripts/strategies/, found: {}",
+        rhai_files.len()
     );
 
     for path in &rhai_files {

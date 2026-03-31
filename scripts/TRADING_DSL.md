@@ -151,9 +151,13 @@ Registered via `register_custom_syntax` for use in generated or hand-written Rha
 |---------|--------|--------|
 | `buy 100 shares` | `["buy", "$expr$", "shares"]` | `buy_stock(100)` action map |
 | `sell 50 shares` | `["sell", "$expr$", "shares"]` | `sell_stock(50)` action map |
-| `sell validated 50 shares of ctx` | `["sell", "validated", "$expr$", "shares", "of", "$expr$"]` | Position-validated sell |
-| `close position "reason"` | `["close", "position", "$expr$"]` | `close_position("reason")` |
+| `sell validated 50 shares` | `["sell", "validated", "$expr$", "shares"]` | Quantity-validated sell |
+| `exit_position "reason"` | `["exit_position", "$expr$"]` | `close_position("reason")` |
 | `hold` | `["hold"]` | `hold_position()` |
+
+Note: `close position` is NOT registered as custom syntax because `close`
+conflicts with `ctx.close` (the BarContext property). The transpiler handles
+`close position "reason"` by generating `close_position("reason")` directly.
 
 ## Validation Logic
 
@@ -169,15 +173,17 @@ if __sell_qty > 0 {
 }
 ```
 
-For runtime validation against actual portfolio holdings, use the custom syntax:
+For additional quantity-sign validation, use the custom syntax:
 
 ```rhai
 // In hand-written Rhai with DSL syntax enabled:
-sell validated 50 shares of ctx
+sell validated 50 shares
 ```
 
-This inspects `ctx.has_positions()` at runtime and returns `()` (no action)
-if no position exists to sell.
+This returns `()` (no action) if the quantity expression evaluates to zero
+or negative. Note: portfolio-level holding validation (preventing selling
+more shares than owned) is handled by the engine's execution layer, not
+the DSL.
 
 The engine layer (`engine.rs`) provides the final safety net — it validates
 all actions against the current portfolio state before execution.

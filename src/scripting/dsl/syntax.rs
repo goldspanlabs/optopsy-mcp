@@ -11,7 +11,7 @@
 //! |-----------------------------------|---------------------------|
 //! | `buy EXPR shares`                 | `buy_stock(EXPR)`         |
 //! | `sell EXPR shares`                | `sell_stock(EXPR)`        |
-//! | `sell validated EXPR shares`      | Validated sell with guard  |
+//! | `sell validated EXPR shares`      | Quantity-validated sell    |
 //! | `exit_position REASON`            | `close_position(REASON)`  |
 //! | `hold`                            | `hold_position()`         |
 
@@ -22,8 +22,11 @@ use rhai::{Dynamic, Engine, Position};
 /// Call this from `build_engine()` after registering types and functions.
 pub fn register_dsl_syntax(engine: &mut Engine) {
     register_buy_shares(engine);
-    register_sell_shares(engine);
+    // NOTE: `sell validated` must be registered BEFORE `sell` because the raw
+    // `sell` parser yields to `sell validated` by returning Ok(None) on the
+    // "validated" lookahead, allowing Rhai to fall back to fixed-token matches.
     register_sell_validated(engine);
+    register_sell_shares(engine);
     // NOTE: "close position" syntax is NOT registered because "close" conflicts
     // with ctx.close (a BarContext property). The transpiler handles this by
     // generating close_position("reason") calls directly in the Rhai output.
@@ -35,7 +38,6 @@ pub fn register_dsl_syntax(engine: &mut Engine) {
 fn register_buy_shares(engine: &mut Engine) {
     engine.register_custom_syntax_with_state_raw(
         "buy",
-        // Parser: buy $expr$ shares
         |symbols, look_ahead, _state| match symbols.len() {
             1 => Ok(Some("$expr$".into())),
             2 => {
@@ -70,7 +72,7 @@ fn register_buy_shares(engine: &mut Engine) {
             let mut map = rhai::Map::new();
             map.insert("action".into(), "open_stock".into());
             map.insert("side".into(), "long".into());
-            map.insert("quantity".into(), Dynamic::from(qty_int));
+            map.insert("qty".into(), Dynamic::from(qty_int));
             Ok(Dynamic::from_map(map))
         },
     );
@@ -83,16 +85,9 @@ fn register_sell_shares(engine: &mut Engine) {
         |symbols, look_ahead, _state| match symbols.len() {
             1 => {
                 if look_ahead == "validated" {
-                    // Let the sell_validated syntax handle this
-                    return Err(rhai::ParseError(
-                        Box::new(rhai::ParseErrorType::BadInput(
-                            rhai::LexError::ImproperSymbol(
-                                "sell".into(),
-                                "use 'sell validated' syntax instead".into(),
-                            ),
-                        )),
-                        Position::NONE,
-                    ));
+                    // Don't claim this token — let the `sell validated` fixed
+                    // syntax handle it by signaling no match here.
+                    return Ok(None);
                 }
                 Ok(Some("$expr$".into()))
             }
@@ -128,19 +123,20 @@ fn register_sell_shares(engine: &mut Engine) {
             let mut map = rhai::Map::new();
             map.insert("action".into(), "open_stock".into());
             map.insert("side".into(), "short".into());
-            map.insert("quantity".into(), Dynamic::from(qty_int));
+            map.insert("qty".into(), Dynamic::from(qty_int));
             Ok(Dynamic::from_map(map))
         },
     );
 }
 
-/// `sell validated EXPR shares` → Position-validated sell.
+/// `sell validated EXPR shares` → Quantity-sign validated sell.
 ///
-/// This is the primary validation mechanism for the "sell more than owned"
-/// problem. At runtime, it clamps the sell quantity to be positive and
-/// returns `()` (no action) if the quantity is zero or negative.
+/// Guards against zero/negative quantities produced by the expression.
+/// Returns `()` (no action) if the quantity is zero or negative.
 ///
-/// Example: `sell validated my_qty shares`
+/// Note: this does *not* validate against current portfolio holdings —
+/// that responsibility lives in the engine's execution layer which
+/// validates all actions against portfolio state before processing.
 fn register_sell_validated(engine: &mut Engine) {
     engine
         .register_custom_syntax(
@@ -164,7 +160,7 @@ fn register_sell_validated(engine: &mut Engine) {
                 let mut map = rhai::Map::new();
                 map.insert("action".into(), "open_stock".into());
                 map.insert("side".into(), "short".into());
-                map.insert("quantity".into(), Dynamic::from(requested));
+                map.insert("qty".into(), Dynamic::from(requested));
                 Ok(Dynamic::from_map(map))
             },
         )
@@ -225,7 +221,7 @@ mod tests {
             map.get("side").unwrap().clone().into_string().unwrap(),
             "long"
         );
-        assert_eq!(map.get("quantity").unwrap().as_int().unwrap(), 100);
+        assert_eq!(map.get("qty").unwrap().as_int().unwrap(), 100);
     }
 
     #[test]
@@ -283,6 +279,6 @@ mod tests {
 
         let result: Dynamic = engine.eval("sell validated 50 shares").unwrap();
         let map = result.cast::<rhai::Map>();
-        assert_eq!(map.get("quantity").unwrap().as_int().unwrap(), 50);
+        assert_eq!(map.get("qty").unwrap().as_int().unwrap(), 50);
     }
 }
