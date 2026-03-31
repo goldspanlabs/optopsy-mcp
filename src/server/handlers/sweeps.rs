@@ -1,7 +1,7 @@
 //! REST API handlers for sweep CRUD and execution.
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::State,
     http::StatusCode,
     response::sse::{Event, Sse},
     Json,
@@ -58,11 +58,6 @@ pub struct SweepParamDef {
 
 fn default_param_type() -> String {
     "float".to_string()
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ListQuery {
-    pub strategy: Option<String>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -340,75 +335,6 @@ pub async fn create_sweep(
         })?;
 
     Ok((StatusCode::CREATED, Json(detail)))
-}
-
-/// `GET /sweeps` — List sweep summaries, optionally filtered by strategy.
-#[allow(clippy::unused_async)]
-pub async fn list_sweeps(
-    State(state): State<AppState>,
-    Query(_query): Query<ListQuery>,
-) -> Result<Json<crate::data::traits::RunsListResponse>, (StatusCode, String)> {
-    // Return the full list; filtering can be added later
-    let response = state
-        .run_store
-        .list()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(Json(response))
-}
-
-/// `GET /sweeps/{id}` — Retrieve full sweep detail by id.
-#[allow(clippy::unused_async)]
-pub async fn get_sweep(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<SweepDetail>, (StatusCode, String)> {
-    let detail = state
-        .run_store
-        .get_sweep(&id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Sweep '{id}' not found")))?;
-    Ok(Json(detail))
-}
-
-/// `DELETE /sweeps/{id}` — Delete a sweep by id.
-#[allow(clippy::unused_async)]
-pub async fn delete_sweep(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    let deleted = state
-        .run_store
-        .delete_sweep(&id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    if deleted {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err((StatusCode::NOT_FOUND, format!("Sweep '{id}' not found")))
-    }
-}
-
-/// `PATCH /sweeps/{id}/analysis` — Save AI-generated analysis text.
-#[allow(clippy::unused_async, clippy::implicit_hasher)]
-pub async fn set_sweep_analysis(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(body): Json<HashMap<String, String>>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    let analysis = body.get("analysis").ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            "Missing 'analysis' field".to_string(),
-        )
-    })?;
-    let found = state
-        .run_store
-        .set_sweep_analysis(&id, analysis)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    if found {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err((StatusCode::NOT_FOUND, format!("Sweep '{id}' not found")))
-    }
 }
 
 /// `POST /sweeps/stream` — Run a sweep with SSE progress updates.

@@ -1,10 +1,7 @@
-//! REST API handlers for backtest CRUD operations.
-//!
-//! These handlers provide backward compatibility with the `/backtests` endpoints
-//! while delegating to the unified `RunStore` internally.
+//! REST API handlers for creating and streaming backtests.
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::State,
     http::StatusCode,
     response::sse::{Event, Sse},
     Json,
@@ -28,15 +25,6 @@ pub struct CreateBacktestRequest {
     pub params: HashMap<String, Value>,
     #[serde(default)]
     pub profile: Option<String>,
-}
-
-/// Query parameters for `GET /backtests`.
-#[derive(Debug, Deserialize)]
-pub struct ListQuery {
-    pub strategy: Option<String>,
-    pub symbol: Option<String>,
-    pub tag: Option<String>,
-    pub regime: Option<String>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -200,85 +188,6 @@ pub async fn create_backtest(
 
 /// `GET /backtests` — List backtest summaries (delegates to run store).
 #[allow(clippy::unused_async)]
-pub async fn list_backtests(
-    State(state): State<AppState>,
-    Query(_query): Query<ListQuery>,
-) -> Result<Json<crate::data::traits::RunsListResponse>, (StatusCode, String)> {
-    let response = state
-        .run_store
-        .list()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(Json(response))
-}
-
-/// `GET /backtests/{id}` — Retrieve a full backtest detail by id.
-#[allow(clippy::unused_async)]
-pub async fn get_backtest(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<RunDetail>, (StatusCode, String)> {
-    let detail = state
-        .run_store
-        .get_run(&id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Backtest '{id}' not found")))?;
-    Ok(Json(detail))
-}
-
-/// `PATCH /backtests/{id}/analysis` — Save AI-generated analysis text.
-#[allow(clippy::unused_async, clippy::implicit_hasher)]
-pub async fn set_backtest_analysis(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(body): Json<HashMap<String, String>>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    let analysis = body.get("analysis").ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            "Missing 'analysis' field".to_string(),
-        )
-    })?;
-    let found = state
-        .run_store
-        .set_run_analysis(&id, analysis)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    if found {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err((StatusCode::NOT_FOUND, format!("Backtest '{id}' not found")))
-    }
-}
-
-/// `GET /backtests/{id}/trades` — Retrieve trades for a backtest.
-#[allow(clippy::unused_async)]
-pub async fn get_backtest_trades(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<TradeRow>>, (StatusCode, String)> {
-    let detail = state
-        .run_store
-        .get_run(&id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Backtest '{id}' not found")))?;
-    Ok(Json(detail.trades))
-}
-
-/// `DELETE /backtests/{id}` — Delete a backtest by id.
-#[allow(clippy::unused_async)]
-pub async fn delete_backtest(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    let deleted = state
-        .run_store
-        .delete_run(&id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    if deleted {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err((StatusCode::NOT_FOUND, format!("Backtest '{id}' not found")))
-    }
-}
 
 /// `POST /backtests/stream` — Run a strategy with SSE progress updates.
 #[allow(clippy::unused_async, clippy::too_many_lines)]

@@ -120,53 +120,6 @@ async fn main() -> Result<()> {
             StreamableHttpServerConfig::default(),
         );
 
-        let backtest_routes = axum::Router::new()
-            .route(
-                "/backtests",
-                axum::routing::post(backtests::create_backtest).get(backtests::list_backtests),
-            )
-            .route(
-                "/backtests/{id}",
-                axum::routing::get(backtests::get_backtest).delete(backtests::delete_backtest),
-            )
-            .route(
-                "/backtests/{id}/trades",
-                axum::routing::get(backtests::get_backtest_trades),
-            )
-            .route(
-                "/backtests/{id}/analysis",
-                axum::routing::patch(backtests::set_backtest_analysis),
-            )
-            .route(
-                "/backtests/stream",
-                axum::routing::post(backtests::create_backtest_stream),
-            )
-            .route(
-                "/walk-forward",
-                axum::routing::post(optopsy_mcp::server::handlers::walk_forward::run_walk_forward),
-            )
-            .with_state(app_state.clone());
-
-        let sweep_routes = axum::Router::new()
-            .route(
-                "/sweeps",
-                axum::routing::post(sweeps::create_sweep).get(sweeps::list_sweeps),
-            )
-            .route(
-                "/sweeps/stream",
-                axum::routing::post(sweeps::create_sweep_stream),
-            )
-            .route("/sweeps/cancel", axum::routing::post(sweeps::cancel_sweeps))
-            .route(
-                "/sweeps/{id}",
-                axum::routing::get(sweeps::get_sweep).delete(sweeps::delete_sweep),
-            )
-            .route(
-                "/sweeps/{id}/analysis",
-                axum::routing::patch(sweeps::set_sweep_analysis),
-            )
-            .with_state(app_state.clone());
-
         let strategy_routes = axum::Router::new()
             .route(
                 "/strategies",
@@ -250,6 +203,19 @@ async fn main() -> Result<()> {
                 "/runs/{id}/analysis",
                 axum::routing::patch(runs::set_run_analysis),
             )
+            // Sweep routes under /runs/sweep
+            .route(
+                "/runs/sweep",
+                axum::routing::post(sweeps::create_sweep),
+            )
+            .route(
+                "/runs/sweep/stream",
+                axum::routing::post(sweeps::create_sweep_stream),
+            )
+            .route(
+                "/runs/sweep/cancel",
+                axum::routing::post(sweeps::cancel_sweeps),
+            )
             .route(
                 "/runs/sweep/{sweepId}",
                 axum::routing::get(runs::get_sweep_detail).delete(runs::delete_sweep),
@@ -258,11 +224,13 @@ async fn main() -> Result<()> {
                 "/runs/sweep/{sweepId}/analysis",
                 axum::routing::patch(runs::set_sweep_analysis),
             )
+            .route(
+                "/walk-forward",
+                axum::routing::post(optopsy_mcp::server::handlers::walk_forward::run_walk_forward),
+            )
             .with_state(app_state);
 
         let app = axum::Router::new()
-            .merge(backtest_routes)
-            .merge(sweep_routes)
             .merge(strategy_routes)
             .merge(chat_routes)
             .merge(run_routes)
