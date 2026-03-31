@@ -8,7 +8,10 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
+use refinery::embed_migrations;
 use rusqlite::Connection;
+
+embed_migrations!("migrations");
 
 /// Shared connection handle used by all `SQLite`-backed stores.
 pub type DbConnection = Arc<Mutex<Connection>>;
@@ -72,7 +75,7 @@ impl Database {
     /// Create all tables and indices if they do not already exist.
     #[allow(clippy::too_many_lines)]
     fn init_schema(&self) -> Result<()> {
-        let conn = self.conn.lock().expect("mutex poisoned");
+        let mut conn = self.conn.lock().expect("mutex poisoned");
         conn.execute_batch(
             "
             PRAGMA journal_mode = WAL;
@@ -219,20 +222,11 @@ impl Database {
         )
         .context("Failed to initialise database schema")?;
 
-        // ── Migrations ──────────────────────────────────────────────────
-        // Add source + thread_id columns (2026-03-31).
-        for stmt in &[
-            "ALTER TABLE runs ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'",
-            "ALTER TABLE runs ADD COLUMN thread_id TEXT",
-            "ALTER TABLE sweeps ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'",
-            "ALTER TABLE sweeps ADD COLUMN thread_id TEXT",
-        ] {
-            match conn.execute(stmt, []) {
-                Ok(_) => {}
-                Err(e) if e.to_string().contains("duplicate column") => {}
-                Err(e) => anyhow::bail!("Migration failed: {e}"),
-            }
-        }
+        // Run pending migrations (refinery tracks applied migrations in
+        // `refinery_schema_history` and only applies new ones).
+        migrations::runner()
+            .run(&mut *conn)
+            .context("Failed to run database migrations")?;
 
         Ok(())
     }

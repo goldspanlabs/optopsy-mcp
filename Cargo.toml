@@ -34,6 +34,7 @@ tower-http = { version = "0.6", features = ["cors"] }
 futures = "0.3"
 tokio-stream = "0.1"
 toml = "0.8"
+refinery = { version = "0.9.0", features = ["rusqlite"] }
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
