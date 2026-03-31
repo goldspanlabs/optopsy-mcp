@@ -51,35 +51,6 @@ Discover seasonality, regime shifts, and price patterns. Gate entries using HMM 
 "Detect volatility regimes in SPY and show when they shift"
 ```
 
-## REST API
-
-When running in HTTP mode (`PORT=8000 cargo run`), a REST API is available alongside the MCP endpoint for direct integration with frontends and agents.
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/backtests` | Run a strategy and persist the result |
-| `GET` | `/backtests` | List backtests with summary metrics (filterable by `strategy`, `symbol`) |
-| `GET` | `/backtests/{id}` | Full backtest result (same shape as MCP `run_script` response) |
-| `GET` | `/backtests/{id}/trades` | Trade log for a specific run |
-| `DELETE` | `/backtests/{id}` | Remove a backtest |
-| `GET` | `/strategies` | List available Rhai strategy scripts |
-| `GET` | `/prices/{symbol}` | Load OHLCV price data |
-
-```bash
-# Run a backtest
-curl -X POST http://localhost:8000/backtests \
-  -H 'Content-Type: application/json' \
-  -d '{"strategy":"bb_mean_reversion","params":{"SYMBOL":"SPY","CAPITAL":100000}}'
-
-# List all backtests
-curl http://localhost:8000/backtests
-
-# Filter by strategy
-curl "http://localhost:8000/backtests?strategy=bb_mean_reversion"
-```
-
-Backtest results are persisted to SQLite (`{DATA_ROOT}/backtests.db`) for retrieval and comparison.
-
 ## MCP Tools
 
 | Tool | Description |
@@ -109,6 +80,8 @@ cd optopsy-mcp
 cargo build --release
 ```
 
+### Claude Desktop (stdio)
+
 Add to your Claude Desktop config (`claude_desktop_config.json`):
 
 ```json
@@ -121,9 +94,25 @@ Add to your Claude Desktop config (`claude_desktop_config.json`):
 }
 ```
 
+### Claude Code
+
+```bash
+claude mcp add optopsy /path/to/optopsy-mcp/target/release/optopsy-mcp
+```
+
+### HTTP Mode (StreamableHTTP)
+
+For remote or multi-client setups, run as an HTTP server exposing MCP over StreamableHTTP at `/mcp`:
+
+```bash
+PORT=8000 cargo run --release
+```
+
+### Configuration
+
 Place your Parquet data files in `~/.optopsy/cache/` before your first session — see the [Data](#data) section below.
 
-To change the cache directory, set `DATA_ROOT` in the config:
+To change the cache directory, set `DATA_ROOT`:
 
 ```json
 {
@@ -230,6 +219,53 @@ The default cache directory is `~/.optopsy/cache/`. To use a different location,
 | `close` | Float64 | Close price |
 | `volume` | Int64/Float64 | Volume |
 
+<details>
+<summary><h2>REST API (optional)</h2></summary>
+
+When running in HTTP mode (`PORT=8000 cargo run`), a REST API is available alongside the MCP endpoint at `/mcp`. This is primarily used by optopsy-ui (private, unreleased) for backtest persistence and retrieval.
+
+| Group | Method | Endpoint | Description |
+|-------|--------|----------|-------------|
+| **Strategies** | `GET` | `/strategies` | List strategy scripts |
+| | `POST` | `/strategies` | Create a strategy |
+| | `GET` | `/strategies/{id}` | Get strategy details |
+| | `PUT` | `/strategies/{id}` | Update a strategy |
+| | `DELETE` | `/strategies/{id}` | Delete a strategy |
+| | `GET` | `/strategies/{id}/source` | Get strategy Rhai source |
+| | `POST` | `/strategies/{id}/validate` | Validate a stored strategy |
+| | `POST` | `/strategies/validate` | Validate inline Rhai source |
+| **Runs** | `GET` | `/runs` | List backtest runs |
+| | `POST` | `/runs` | Create a backtest run |
+| | `POST` | `/runs/stream` | Create a backtest run (SSE stream) |
+| | `GET` | `/runs/{id}` | Get run details |
+| | `DELETE` | `/runs/{id}` | Delete a run |
+| | `PATCH` | `/runs/{id}/analysis` | Set run analysis notes |
+| **Sweeps** | `POST` | `/runs/sweep` | Create a parameter sweep |
+| | `POST` | `/runs/sweep/stream` | Create a sweep (SSE stream) |
+| | `POST` | `/runs/sweep/cancel` | Cancel running sweeps |
+| | `GET` | `/runs/sweep/{sweepId}` | Get sweep details |
+| | `DELETE` | `/runs/sweep/{sweepId}` | Delete a sweep |
+| | `PATCH` | `/runs/sweep/{sweepId}/analysis` | Set sweep analysis notes |
+| **Walk-Forward** | `POST` | `/walk-forward` | Run walk-forward analysis |
+| **Threads** | `GET` | `/threads` | List chat threads |
+| | `POST` | `/threads` | Create a thread |
+| | `GET` | `/threads/{id}` | Get thread details |
+| | `PATCH` | `/threads/{id}` | Update a thread |
+| | `DELETE` | `/threads/{id}` | Delete a thread |
+| | `GET` | `/threads/{id}/messages` | Get thread messages |
+| | `POST` | `/threads/{id}/messages` | Upsert a message |
+| | `DELETE` | `/threads/{id}/messages` | Delete messages |
+| | `GET` | `/threads/{id}/results` | Get thread results |
+| | `PUT` | `/threads/{id}/results` | Replace thread results |
+| | `DELETE` | `/threads/{id}/results/{key}` | Delete a result |
+| **Misc** | `GET` | `/prices/{symbol}` | Load OHLCV price data |
+| | `GET` | `/profiles` | List profiles |
+| | `GET` | `/health` | Health check |
+
+Data is persisted to SQLite (`{DATA_ROOT}/optopsy.db`).
+
+</details>
+
 ## Development
 
 After cloning, configure git to use the project's shared hooks:
@@ -241,11 +277,12 @@ git config core.hooksPath .githooks
 This enables a **pre-push hook** that runs `cargo fmt --check`, `cargo clippy --all-targets`, `cargo build`, and `cargo test` before every push, matching the CI checks.
 
 ```bash
-cargo build                  # Build
+cargo build --release        # Build
 cargo test                   # Run all tests
 cargo clippy --all-targets   # Lint
 cargo fmt --check            # Check formatting
-PORT=8000 cargo run          # Run as HTTP server (optional)
+cargo run --release          # Run MCP server (stdio)
+PORT=8000 cargo run --release # Run MCP + REST over HTTP
 ```
 
 ## Tech Stack
