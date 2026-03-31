@@ -32,11 +32,11 @@ impl CachedStore {
     ///
     /// | Env Var | Default | Purpose |
     /// |---------|---------|---------|
-    /// | `DATA_ROOT` | `~/.optopsy/cache` | Local cache directory |
+    /// | `DATA_ROOT` | `data` (relative to CWD) | Local data directory |
     pub fn from_env() -> Result<Self> {
         let cache_dir = match std::env::var("DATA_ROOT") {
             Ok(val) => PathBuf::from(val),
-            Err(_) => dirs_default_cache(),
+            Err(_) => PathBuf::from("data"),
         };
 
         Ok(Self::new(cache_dir, "options".to_string()))
@@ -148,17 +148,6 @@ fn list_parquet_stems(dir: &std::path::Path) -> Result<Vec<String>> {
     }
     symbols.sort();
     Ok(symbols)
-}
-
-/// Default cache directory: `~/.optopsy/cache`
-fn dirs_default_cache() -> PathBuf {
-    const TEMPLATE: &str = "~/.optopsy/cache";
-    let expanded = shellexpand::tilde(TEMPLATE);
-    // If tilde was not expanded (no home directory available), fall back to a tmp-based path
-    if expanded.as_ref() == TEMPLATE {
-        return std::env::temp_dir().join("optopsy").join("cache");
-    }
-    PathBuf::from(expanded.as_ref())
 }
 
 /// Ensure a path segment (category or symbol) contains only safe characters.

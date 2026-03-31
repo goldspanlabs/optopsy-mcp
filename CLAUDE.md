@@ -101,7 +101,7 @@ Control runtime behavior and data sources:
 | Variable | Purpose | Default | Notes |
 |----------|---------|---------|-------|
 | `PORT` | HTTP service port; if unset, uses stdio | _(unset)_ | e.g., `PORT=8000 cargo run` |
-| `DATA_ROOT` | Local Parquet cache directory | `~/.optopsy/cache` | Created if missing; `~/` expanded via `shellexpand` |
+| `DATA_ROOT` | Local data directory (parquet cache + DB) | `data` (relative to CWD) | Created if missing |
 | `RUST_LOG` | Tracing filter | _(unset)_ | e.g., `RUST_LOG=optopsy_mcp=debug` |
 
 ## Architecture
@@ -147,7 +147,7 @@ Internal backtest engines used by the scripting layer and optimization tools:
 31 strategies across singles, spreads, butterflies, condors, iron, and calendar categories. Built using helpers (`call_leg`, `put_leg`, `strategy`) in `helpers.rs`. `all_strategies()` returns the full list; `find_strategy(name)` does linear scan. Multi-expiration strategies (calendar/diagonal) use `ExpirationCycle::Primary`/`Secondary` tags on legs.
 
 ### Data Layer (`src/data/`)
-`DataStore` trait with `CachedStore` as default — local Parquet cache only at `~/.optopsy/cache/{category}/{SYMBOL}.parquet`, errors if data not found. `ParquetStore` handles date column normalization: options files store `date` (Date) which is cast to `datetime` (Datetime) at 15:59:00 on load; OHLCV files already have a `datetime` (Datetime) column. Path segments validated against traversal attacks.
+`DataStore` trait with `CachedStore` as default — local Parquet cache only at `data/{category}/{SYMBOL}.parquet`, errors if data not found. `ParquetStore` handles date column normalization: options files store `date` (Date) which is cast to `datetime` (Datetime) at 15:59:00 on load; OHLCV files already have a `datetime` (Datetime) column. Path segments validated against traversal attacks.
 
 ### Signals (`src/signals/`)
 TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, trend, volatility, overlap, price, volume, plus combinators. Split across three focused modules: `spec.rs` (the `SignalSpec` enum with 40+ variants), `builders.rs` (`build_signal()` factory and per-category builders), and `registry.rs` (signal catalog metadata, `collect_cross_symbols`, re-exports). Signals are **fully wired** into both options and stock backtests via `entry_signal` and `exit_signal` params. For options (`BacktestParams`), signals are optional entry/exit filters. For stocks (`StockBacktestParams`), `entry_signal` is required — it drives when trades open. OHLCV data is loaded from the local Parquet cache when signals are used.

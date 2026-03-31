@@ -73,8 +73,7 @@ async fn main() -> Result<()> {
 
         let prices_cache = cache.clone();
 
-        let data_root = std::env::var("DATA_ROOT")
-            .unwrap_or_else(|_| shellexpand::tilde("~/.optopsy/cache").to_string());
+        let data_root = std::env::var("DATA_ROOT").unwrap_or_else(|_| "data".to_string());
         let db_path = std::path::PathBuf::from(&data_root).join("optopsy.db");
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
@@ -255,8 +254,7 @@ async fn main() -> Result<()> {
         tracing::info!("Starting optopsy-mcp MCP server (stdio)");
 
         // Set up stores for stdio mode — single database file
-        let data_root = std::env::var("DATA_ROOT")
-            .unwrap_or_else(|_| shellexpand::tilde("~/.optopsy/cache").to_string());
+        let data_root = std::env::var("DATA_ROOT").unwrap_or_else(|_| "data".to_string());
         let db_path = std::path::PathBuf::from(&data_root).join("optopsy.db");
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent).with_context(|| {

@@ -21,3 +21,6 @@ Thumbs.db
 
 # Documentation
 docs/
+
+# Local data (DB, parquet cache)
+/data/
