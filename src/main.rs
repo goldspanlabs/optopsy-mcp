@@ -97,9 +97,10 @@ async fn main() -> Result<()> {
         let chat_store: Arc<dyn optopsy_mcp::data::traits::ChatStore> = Arc::new(db.chat());
 
         let app_state = AppState {
-            server: server::OptopsyServer::with_strategy_store(
+            server: server::OptopsyServer::with_stores(
                 cache.clone(),
                 strategy_store.clone(),
+                run_store.clone(),
             ),
             run_store,
             chat_store,
@@ -109,11 +110,13 @@ async fn main() -> Result<()> {
         };
 
         let strategy_store_for_mcp = strategy_store.clone();
+        let run_store_for_mcp = app_state.run_store.clone();
         let service = StreamableHttpService::new(
             move || {
-                Ok(server::OptopsyServer::with_strategy_store(
+                Ok(server::OptopsyServer::with_stores(
                     cache.clone(),
                     strategy_store_for_mcp.clone(),
+                    run_store_for_mcp.clone(),
                 ))
             },
             LocalSessionManager::default().into(),
@@ -262,12 +265,13 @@ async fn main() -> Result<()> {
         }
         let db = Database::open(&db_path)?;
         let strategy_store: Arc<dyn StrategyStore> = Arc::new(db.strategies());
+        let run_store: Arc<dyn traits::RunStore> = Arc::new(db.runs());
         traits::seed_strategies_if_empty(
             strategy_store.as_ref(),
             std::path::Path::new("scripts/strategies"),
         )?;
 
-        let server = server::OptopsyServer::with_strategy_store(cache, strategy_store);
+        let server = server::OptopsyServer::with_stores(cache, strategy_store, run_store);
         let service = server.serve(rmcp::transport::stdio()).await?;
         service.waiting().await?;
     }

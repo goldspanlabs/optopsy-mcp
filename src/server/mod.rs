@@ -22,7 +22,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::data::cache::{validate_path_segment, CachedStore};
-use crate::data::traits::StrategyStore;
+use crate::data::traits::{RunStore, StrategyStore};
 use crate::tools;
 use crate::tools::response_types::{
     AggregatePricesResponse, BenchmarkAnalysisResponse, CointegrationResponse, CorrelateResponse,
@@ -49,6 +49,8 @@ pub struct OptopsyServer {
     pub cache: Arc<CachedStore>,
     /// Strategy script storage backend.
     pub strategy_store: Option<Arc<dyn StrategyStore>>,
+    /// Run/sweep persistence store (set in HTTP mode; `None` in stdio-only mode).
+    pub run_store: Option<Arc<dyn RunStore>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -59,6 +61,7 @@ impl OptopsyServer {
             data: Arc::new(RwLock::new(HashMap::new())),
             cache,
             strategy_store: None,
+            run_store: None,
             tool_router: Self::tool_router(),
         }
     }
@@ -72,6 +75,22 @@ impl OptopsyServer {
             data: Arc::new(RwLock::new(HashMap::new())),
             cache,
             strategy_store: Some(strategy_store),
+            run_store: None,
+            tool_router: Self::tool_router(),
+        }
+    }
+
+    /// Create a new server instance with strategy and run stores.
+    pub fn with_stores(
+        cache: Arc<CachedStore>,
+        strategy_store: Arc<dyn StrategyStore>,
+        run_store: Arc<dyn RunStore>,
+    ) -> Self {
+        Self {
+            data: Arc::new(RwLock::new(HashMap::new())),
+            cache,
+            strategy_store: Some(strategy_store),
+            run_store: Some(run_store),
             tool_router: Self::tool_router(),
         }
     }
@@ -529,20 +548,12 @@ impl OptopsyServer {
             .map_err(|e| format!("Failed to read scripting reference: {e}"))
     }
 
-    /// Run a Rhai backtest script — unified scripting interface for backtesting.
+    /// Run a backtest or parameter sweep. Pass a saved strategy by display name.
     ///
-    /// **When to use**: Execute custom backtest strategies defined as Rhai scripts.
-    /// Scripts define `config()`, `on_bar(ctx)`, and optional callbacks
-    /// (`on_exit_check`, `on_position_opened`, `on_position_closed`).
-    /// See `scripts/SCRIPTING_REFERENCE.md` for the full API.
+    /// Omit `sweep_params` for a single backtest, or provide ranges for a grid/bayesian sweep.
+    /// Results are persisted to the runs database.
     ///
-    /// **Primary mode**: Pass `strategy` with a script filename (without `.rhai`).
-    /// Scripts are loaded from `scripts/strategies/{name}.rhai`.
-    /// Write the `.rhai` file first, then reference it by name.
-    ///
-    /// **Fallback**: Pass `script` with inline Rhai source for quick one-off tests.
-    ///
-    /// **Example call**:
+    /// **Example (single backtest)**:
     /// ```json
     /// {
     ///   "strategy": "short_put",
@@ -550,20 +561,29 @@ impl OptopsyServer {
     /// }
     /// ```
     ///
-    /// **Output**: Trade log, equity curve, performance metrics (same format as other backtest tools)
-    #[tool(name = "run_script", annotations(read_only_hint = true))]
-    async fn run_script(
+    /// **Example (parameter sweep)**:
+    /// ```json
+    /// {
+    ///   "strategy": "short_put",
+    ///   "params": { "SYMBOL": "SPY", "CAPITAL": 50000 },
+    ///   "sweep_params": [
+    ///     { "name": "DELTA_TARGET", "start": 0.10, "stop": 0.40, "step": 0.05 },
+    ///     { "name": "DTE_TARGET", "param_type": "int", "start": 30, "stop": 60, "step": 5 }
+    ///   ]
+    /// }
+    /// ```
+    #[tool(name = "parameter_sweep", annotations(read_only_hint = false))]
+    async fn parameter_sweep(
         &self,
-        Parameters(params): Parameters<tools::run_script::RunScriptParams>,
-    ) -> SanitizedResult<tools::run_script::RunScriptResponse, String> {
+        Parameters(params): Parameters<tools::parameter_sweep::ParameterSweepParams>,
+    ) -> SanitizedResult<tools::parameter_sweep::ParameterSweepResponse, String> {
         SanitizedResult(
             async {
                 params
                     .validate()
-                    .map_err(|e| validation_err("run_script", e))?;
-                handlers::run_script::execute(self, params)
+                    .map_err(|e| validation_err("parameter_sweep", e))?;
+                tools::parameter_sweep::execute(self, params)
                     .await
-                    .map(|r| r.response)
                     .map_err(tool_err)
             }
             .await,
@@ -591,11 +611,11 @@ impl ServerHandler for OptopsyServer {
                 \n\n## WORKFLOW\
                 \n\
                 \n### 1. Run a Backtest\
-                \n  - **run_script** — Execute Rhai backtest scripts for options, stock, and wheel strategies.\
-                \n    Pass `strategy` (filename from scripts/strategies/) or `script` (inline Rhai source).\
-                \n    See scripts/SCRIPTING_REFERENCE.md for the full ctx API.\
+                \n  - **parameter_sweep** — Run a backtest or parameter sweep. Pass a saved strategy by display name.\
+                \n    Omit `sweep_params` for a single backtest, or provide ranges for a grid/bayesian sweep.\
+                \n    Results are persisted to the runs database.\
                 \n  - OHLCV and options data is loaded from cache automatically.\
-                \n  - To compare parameters, run run_script multiple times with different params.\
+                \n  - To compare parameters, use parameter_sweep with sweep_params.\
                 \n\
                 \n### 2. Discover Patterns (optional)\
                 \n  - generate_hypotheses({ symbols: [\"SPY\"] }) — scan for statistically significant patterns\

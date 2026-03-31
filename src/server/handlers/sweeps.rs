@@ -46,7 +46,7 @@ pub struct CreateSweepRequest {
     pub max_evaluations: usize,
 }
 
-#[derive(Debug, Deserialize, Clone, serde::Serialize)]
+#[derive(Debug, Deserialize, Clone, serde::Serialize, schemars::JsonSchema)]
 pub struct SweepParamDef {
     pub name: String,
     #[serde(default = "default_param_type")]
@@ -89,18 +89,11 @@ pub(crate) fn build_grid(sweep_params: &[SweepParamDef]) -> HashMap<String, Vec<
     grid
 }
 
-/// Resolve strategy source from the strategy store (try by id, then by name).
-pub(crate) fn resolve_strategy_source(
-    state: &AppState,
+/// Resolve strategy source from a strategy store (try by id, then by name).
+pub(crate) fn resolve_strategy_source_from_store(
+    store: &dyn crate::data::traits::StrategyStore,
     name_or_id: &str,
 ) -> Result<(String, String), (StatusCode, String)> {
-    let store = state.server.strategy_store.as_ref().ok_or_else(|| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Strategy store not configured".to_string(),
-        )
-    })?;
-
     // Try exact ID match
     if let Ok(Some(source)) = store.get_source(name_or_id) {
         return Ok((name_or_id.to_string(), source));
@@ -116,10 +109,24 @@ pub(crate) fn resolve_strategy_source(
     ))
 }
 
+/// Resolve strategy source from `AppState` (convenience wrapper).
+pub(crate) fn resolve_strategy_source(
+    state: &AppState,
+    name_or_id: &str,
+) -> Result<(String, String), (StatusCode, String)> {
+    let store = state.server.strategy_store.as_ref().ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Strategy store not configured".to_string(),
+        )
+    })?;
+    resolve_strategy_source_from_store(store.as_ref(), name_or_id)
+}
+
 /// Insert sweep results into the run store.
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
-pub(crate) fn persist_sweep(
-    state: &AppState,
+pub(crate) fn persist_sweep_to_store(
+    run_store: &dyn crate::data::traits::RunStore,
     strategy_key: &str,
     symbol: &str,
     req: &CreateSweepRequest,
@@ -139,8 +146,7 @@ pub(crate) fn persist_sweep(
     let combinations_total = sweep_response.combinations_total as i64;
     let execution_time_ms = sweep_response.execution_time_ms as i64;
 
-    state
-        .run_store
+    run_store
         .insert_sweep(
             &sweep_id,
             Some(strategy_key),
@@ -193,8 +199,7 @@ pub(crate) fn persist_sweep(
         );
         let m = full.map(|r| &r.result.metrics);
 
-        state
-            .run_store
+        run_store
             .insert_run(
                 &run_id,
                 Some(&sweep_id),
@@ -234,14 +239,37 @@ pub(crate) fn persist_sweep(
                 .iter()
                 .map(trade_row_from_record)
                 .collect();
-            state
-                .run_store
+            run_store
                 .insert_trades(&run_id, &trades)
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         }
     }
 
     Ok(sweep_id)
+}
+
+/// Convenience wrapper that extracts `run_store` from `AppState`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn persist_sweep(
+    state: &AppState,
+    strategy_key: &str,
+    symbol: &str,
+    req: &CreateSweepRequest,
+    sweep_response: &SweepResponse,
+    script_meta: &crate::scripting::stdlib::ScriptMeta,
+    source: &str,
+    thread_id: Option<&str>,
+) -> Result<String, (StatusCode, String)> {
+    persist_sweep_to_store(
+        state.run_store.as_ref(),
+        strategy_key,
+        symbol,
+        req,
+        sweep_response,
+        script_meta,
+        source,
+        thread_id,
+    )
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
