@@ -273,19 +273,27 @@ impl RunStore for SqliteRunStore {
                 .prepare(
                     "SELECT sw.id, sw.strategy_id, s.name as strategy_name,
                             sw.symbol, sw.combinations,
-                            MAX(r.total_return) as best_return,
-                            MAX(r.win_rate) as best_win_rate,
-                            MAX(r.max_drawdown) as best_max_drawdown,
-                            MAX(r.sharpe) as best_sharpe,
-                            MAX(r.sortino) as best_sortino,
-                            MAX(r.cagr) as best_cagr,
-                            MAX(r.profit_factor) as best_profit_factor,
-                            MAX(r.trade_count) as best_trade_count,
+                            br.total_return as best_return,
+                            br.win_rate as best_win_rate,
+                            br.max_drawdown as best_max_drawdown,
+                            br.sharpe as best_sharpe,
+                            br.sortino as best_sortino,
+                            br.cagr as best_cagr,
+                            br.profit_factor as best_profit_factor,
+                            br.trade_count as best_trade_count,
                             sw.created_at
                      FROM sweeps sw
                      LEFT JOIN strategies s ON s.id = sw.strategy_id
-                     LEFT JOIN runs r ON r.sweep_id = sw.id
-                     GROUP BY sw.id
+                     LEFT JOIN (
+                         SELECT r1.*
+                         FROM runs r1
+                         INNER JOIN (
+                             SELECT sweep_id, MAX(sharpe) as max_sharpe
+                             FROM runs
+                             WHERE sweep_id IS NOT NULL
+                             GROUP BY sweep_id
+                         ) r2 ON r1.sweep_id = r2.sweep_id AND r1.sharpe = r2.max_sharpe
+                     ) br ON br.sweep_id = sw.id
                      ORDER BY sw.created_at DESC",
                 )
                 .context("Failed to prepare sweep list query")?;
