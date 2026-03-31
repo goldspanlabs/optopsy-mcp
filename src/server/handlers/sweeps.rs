@@ -68,7 +68,7 @@ use crate::data::traits::TradeRow;
 
 /// Build a Cartesian grid from sweep param definitions.
 /// Each param expands from `start` to `stop` (inclusive) by `step`.
-fn build_grid(sweep_params: &[SweepParamDef]) -> HashMap<String, Vec<Value>> {
+pub(crate) fn build_grid(sweep_params: &[SweepParamDef]) -> HashMap<String, Vec<Value>> {
     let mut grid: HashMap<String, Vec<Value>> = HashMap::new();
     for sp in sweep_params {
         let is_int = sp.param_type == "int";
@@ -90,7 +90,7 @@ fn build_grid(sweep_params: &[SweepParamDef]) -> HashMap<String, Vec<Value>> {
 }
 
 /// Resolve strategy source from the strategy store (try by id, then by name).
-fn resolve_strategy_source(
+pub(crate) fn resolve_strategy_source(
     state: &AppState,
     name_or_id: &str,
 ) -> Result<(String, String), (StatusCode, String)> {
@@ -117,13 +117,16 @@ fn resolve_strategy_source(
 }
 
 /// Insert sweep results into the run store.
-fn persist_sweep(
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+pub(crate) fn persist_sweep(
     state: &AppState,
     strategy_key: &str,
     symbol: &str,
     req: &CreateSweepRequest,
     sweep_response: &SweepResponse,
     script_meta: &crate::scripting::stdlib::ScriptMeta,
+    source: &str,
+    thread_id: Option<&str>,
 ) -> Result<String, (StatusCode, String)> {
     let sweep_id = uuid::Uuid::new_v4().to_string();
 
@@ -147,6 +150,8 @@ fn persist_sweep(
             &req.mode,
             combinations_total,
             Some(execution_time_ms),
+            source,
+            thread_id,
         )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -216,6 +221,8 @@ fn persist_sweep(
                 script_meta.hypothesis.as_deref(),
                 script_meta.tags.as_ref().map(|t| t.join(",")).as_deref(),
                 script_meta.regime.as_ref().map(|r| r.join(",")).as_deref(),
+                source,
+                thread_id,
             )
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -321,6 +328,8 @@ pub async fn create_sweep(
         &req,
         &sweep_response,
         &script_meta,
+        "manual",
+        None,
     )?;
 
     let detail = state
@@ -479,6 +488,8 @@ pub async fn create_sweep_stream(
                     &req,
                     &sweep_response,
                     &script_meta,
+                    "manual",
+                    None,
                 ) {
                     Ok(sweep_id) => {
                         if let Ok(Some(detail)) = state.run_store.get_sweep(&sweep_id) {

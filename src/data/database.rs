@@ -219,6 +219,21 @@ impl Database {
         )
         .context("Failed to initialise database schema")?;
 
+        // ── Migrations ──────────────────────────────────────────────────
+        // Add source + thread_id columns (2026-03-31).
+        for stmt in &[
+            "ALTER TABLE runs ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'",
+            "ALTER TABLE runs ADD COLUMN thread_id TEXT",
+            "ALTER TABLE sweeps ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'",
+            "ALTER TABLE sweeps ADD COLUMN thread_id TEXT",
+        ] {
+            match conn.execute(stmt, []) {
+                Ok(_) => {}
+                Err(e) if e.to_string().contains("duplicate column") => {}
+                Err(e) => anyhow::bail!("Migration failed: {e}"),
+            }
+        }
+
         Ok(())
     }
 }

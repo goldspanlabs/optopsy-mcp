@@ -118,6 +118,8 @@ fn full_lifecycle_insert_list_get_delete() {
             None,
             None,
             None,
+            "manual",
+            None,
         )
         .expect("insert id1");
 
@@ -147,6 +149,8 @@ fn full_lifecycle_insert_list_get_delete() {
             Some(256),
             None,
             None,
+            None,
+            "manual",
             None,
         )
         .expect("insert id2");
@@ -223,6 +227,8 @@ fn sweep_insert_and_cascade_delete() {
             "grid",
             3,
             Some(1000),
+            "manual",
+            None,
         )
         .expect("insert sweep");
 
@@ -252,6 +258,8 @@ fn sweep_insert_and_cascade_delete() {
                 Some(100),
                 None,
                 None,
+                None,
+                "manual",
                 None,
             )
             .unwrap();

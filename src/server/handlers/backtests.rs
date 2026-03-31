@@ -56,13 +56,16 @@ fn strip_trades_from_result_json(response: &crate::tools::run_script::RunScriptR
 }
 
 /// Insert a backtest result into the run store, returning `(id, created_at)`.
-fn persist_backtest(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn persist_backtest(
     state: &AppState,
     strategy_key: &str,
     symbol: &str,
     capital: f64,
     params: &HashMap<String, Value>,
     response: &crate::tools::run_script::RunScriptResponse,
+    source: &str,
+    thread_id: Option<&str>,
 ) -> Result<(String, String), (StatusCode, String)> {
     let id = uuid::Uuid::new_v4().to_string();
     let m = &response.result.metrics;
@@ -114,6 +117,8 @@ fn persist_backtest(
             hypothesis,
             tags_str.as_deref(),
             regime_str.as_deref(),
+            source,
+            thread_id,
         )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -170,6 +175,8 @@ pub async fn create_backtest(
         capital,
         &req.params,
         &response,
+        "manual",
+        None,
     )?;
 
     let detail = state
@@ -185,9 +192,6 @@ pub async fn create_backtest(
 
     Ok((StatusCode::CREATED, Json(detail)))
 }
-
-/// `GET /backtests` — List backtest summaries (delegates to run store).
-#[allow(clippy::unused_async)]
 
 /// `POST /backtests/stream` — Run a strategy with SSE progress updates.
 #[allow(clippy::unused_async, clippy::too_many_lines)]
@@ -273,6 +277,8 @@ pub async fn create_backtest_stream(
                     capital,
                     &req.params,
                     &response,
+                    "manual",
+                    None,
                 ) {
                     Ok((id, _)) => {
                         if let Ok(Some(detail)) = state.run_store.get_run(&id) {

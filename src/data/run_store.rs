@@ -69,6 +69,8 @@ impl RunStore for SqliteRunStore {
         hypothesis: Option<&str>,
         tags: Option<&str>,
         regime: Option<&str>,
+        source: &str,
+        thread_id: Option<&str>,
     ) -> Result<String> {
         let created_at = chrono::Utc::now().to_rfc3339();
         let params_str = serde_json::to_string(params).context("Failed to serialize params")?;
@@ -79,9 +81,10 @@ impl RunStore for SqliteRunStore {
                 (id, sweep_id, strategy_id, symbol, capital, params,
                  total_return, win_rate, max_drawdown, sharpe, sortino, cagr,
                  profit_factor, trade_count, expectancy, var_95,
-                 result_json, execution_time_ms, hypothesis, tags, regime, created_at)
+                 result_json, execution_time_ms, hypothesis, tags, regime,
+                 source, thread_id, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                     ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+                     ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
             rusqlite::params![
                 id,
                 sweep_id,
@@ -104,6 +107,8 @@ impl RunStore for SqliteRunStore {
                 hypothesis,
                 tags,
                 regime,
+                source,
+                thread_id,
                 created_at,
             ],
         )
@@ -163,6 +168,8 @@ impl RunStore for SqliteRunStore {
         mode: &str,
         combinations: i64,
         execution_time_ms: Option<i64>,
+        source: &str,
+        thread_id: Option<&str>,
     ) -> Result<String> {
         let created_at = chrono::Utc::now().to_rfc3339();
         let sweep_config_str =
@@ -172,8 +179,8 @@ impl RunStore for SqliteRunStore {
         conn.execute(
             "INSERT INTO sweeps
                 (id, strategy_id, symbol, sweep_config, objective, mode,
-                 combinations, execution_time_ms, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                 combinations, execution_time_ms, source, thread_id, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             rusqlite::params![
                 id,
                 strategy_id,
@@ -183,6 +190,8 @@ impl RunStore for SqliteRunStore {
                 mode,
                 combinations,
                 execution_time_ms,
+                source,
+                thread_id,
                 created_at,
             ],
         )
@@ -229,7 +238,8 @@ impl RunStore for SqliteRunStore {
                 "SELECT r.id, r.sweep_id, r.strategy_id, s.name as strategy_name,
                         r.symbol, r.params, r.total_return, r.win_rate,
                         r.max_drawdown, r.sharpe, r.sortino, r.cagr,
-                        r.profit_factor, r.trade_count, r.tags, r.created_at
+                        r.profit_factor, r.trade_count, r.tags,
+                        r.source, r.thread_id, r.created_at
                  FROM runs r
                  LEFT JOIN strategies s ON s.id = r.strategy_id
                  WHERE r.sweep_id IS NULL AND LOWER(COALESCE(r.tags, '')) LIKE ?1
@@ -238,7 +248,8 @@ impl RunStore for SqliteRunStore {
                 "SELECT r.id, r.sweep_id, r.strategy_id, s.name as strategy_name,
                         r.symbol, r.params, r.total_return, r.win_rate,
                         r.max_drawdown, r.sharpe, r.sortino, r.cagr,
-                        r.profit_factor, r.trade_count, r.tags, r.created_at
+                        r.profit_factor, r.trade_count, r.tags,
+                        r.source, r.thread_id, r.created_at
                  FROM runs r
                  LEFT JOIN strategies s ON s.id = r.strategy_id
                  WHERE r.sweep_id IS NULL
@@ -268,7 +279,11 @@ impl RunStore for SqliteRunStore {
                     profit_factor: row.get(12)?,
                     trade_count: row.get(13)?,
                     tags: row.get(14)?,
-                    created_at: row.get(15)?,
+                    source: row
+                        .get::<_, Option<String>>(15)?
+                        .unwrap_or_else(|| "manual".to_string()),
+                    thread_id: row.get(16)?,
+                    created_at: row.get(17)?,
                 }))
             };
 
@@ -298,6 +313,7 @@ impl RunStore for SqliteRunStore {
                             br.cagr as best_cagr,
                             br.profit_factor as best_profit_factor,
                             br.trade_count as best_trade_count,
+                            sw.source, sw.thread_id,
                             sw.created_at
                      FROM sweeps sw
                      LEFT JOIN strategies s ON s.id = sw.strategy_id
@@ -331,7 +347,11 @@ impl RunStore for SqliteRunStore {
                         best_cagr: row.get(10)?,
                         best_profit_factor: row.get(11)?,
                         best_trade_count: row.get(12)?,
-                        created_at: row.get(13)?,
+                        source: row
+                            .get::<_, Option<String>>(13)?
+                            .unwrap_or_else(|| "manual".to_string()),
+                        thread_id: row.get(14)?,
+                        created_at: row.get(15)?,
                     })
                 })
                 .context("Failed to query sweep rows")?
@@ -357,6 +377,7 @@ impl RunStore for SqliteRunStore {
         Ok(RunsListResponse { overview, rows })
     }
 
+    #[allow(clippy::too_many_lines)]
     fn get_run(&self, id: &str) -> Result<Option<RunDetail>> {
         let conn = self.conn.lock().expect("mutex poisoned");
 
@@ -368,7 +389,7 @@ impl RunStore for SqliteRunStore {
                         r.sortino, r.cagr, r.profit_factor, r.trade_count,
                         r.expectancy, r.var_95, r.result_json,
                         r.execution_time_ms, r.analysis, r.hypothesis,
-                        r.tags, r.regime, r.created_at
+                        r.tags, r.regime, r.source, r.thread_id, r.created_at
                  FROM runs r
                  LEFT JOIN strategies s ON s.id = r.strategy_id
                  WHERE r.id = ?1",
@@ -406,7 +427,11 @@ impl RunStore for SqliteRunStore {
                         hypothesis: row.get(20)?,
                         tags: row.get(21)?,
                         regime: row.get(22)?,
-                        created_at: row.get(23)?,
+                        source: row
+                            .get::<_, Option<String>>(23)?
+                            .unwrap_or_else(|| "manual".to_string()),
+                        thread_id: row.get(24)?,
+                        created_at: row.get(25)?,
                     })
                 },
             )
@@ -473,7 +498,7 @@ impl RunStore for SqliteRunStore {
                 "SELECT sw.id, sw.strategy_id, s.name as strategy_name,
                         sw.symbol, sw.sweep_config, sw.objective, sw.mode,
                         sw.combinations, sw.execution_time_ms, sw.analysis,
-                        sw.created_at
+                        sw.source, sw.thread_id, sw.created_at
                  FROM sweeps sw
                  LEFT JOIN strategies s ON s.id = sw.strategy_id
                  WHERE sw.id = ?1",
@@ -494,7 +519,11 @@ impl RunStore for SqliteRunStore {
                         combinations: row.get(7)?,
                         execution_time_ms: row.get(8)?,
                         analysis: row.get(9)?,
-                        created_at: row.get(10)?,
+                        source: row
+                            .get::<_, Option<String>>(10)?
+                            .unwrap_or_else(|| "manual".to_string()),
+                        thread_id: row.get(11)?,
+                        created_at: row.get(12)?,
                         runs: Vec::new(), // filled below
                     })
                 },
@@ -512,7 +541,8 @@ impl RunStore for SqliteRunStore {
                 "SELECT r.id, r.sweep_id, r.strategy_id, s.name as strategy_name,
                         r.symbol, r.params, r.total_return, r.win_rate,
                         r.max_drawdown, r.sharpe, r.sortino, r.cagr,
-                        r.profit_factor, r.trade_count, r.tags, r.created_at
+                        r.profit_factor, r.trade_count, r.tags,
+                        r.source, r.thread_id, r.created_at
                  FROM runs r
                  LEFT JOIN strategies s ON s.id = r.strategy_id
                  WHERE r.sweep_id = ?1
@@ -541,7 +571,11 @@ impl RunStore for SqliteRunStore {
                     profit_factor: row.get(12)?,
                     trade_count: row.get(13)?,
                     tags: row.get(14)?,
-                    created_at: row.get(15)?,
+                    source: row
+                        .get::<_, Option<String>>(15)?
+                        .unwrap_or_else(|| "manual".to_string()),
+                    thread_id: row.get(16)?,
+                    created_at: row.get(17)?,
                 })
             })
             .context("Failed to query sweep runs")?
@@ -681,6 +715,8 @@ mod tests {
                 None,
                 None,
                 None,
+                "manual",
+                None,
             )
             .expect("insert_run");
         assert!(!created_at.is_empty());
@@ -721,6 +757,8 @@ mod tests {
                 "grid",
                 3,
                 Some(5000),
+                "manual",
+                None,
             )
             .expect("insert_sweep");
         assert!(!created_at.is_empty());
@@ -751,6 +789,8 @@ mod tests {
                     Some(100),
                     None,
                     None,
+                    None,
+                    "manual",
                     None,
                 )
                 .unwrap();
@@ -795,6 +835,8 @@ mod tests {
                 None,
                 None,
                 None,
+                "manual",
+                None,
             )
             .unwrap();
 
@@ -810,6 +852,8 @@ mod tests {
                 "grid",
                 2,
                 Some(100),
+                "manual",
+                None,
             )
             .unwrap();
 
@@ -837,6 +881,8 @@ mod tests {
                 None,
                 None,
                 None,
+                "manual",
+                None,
             )
             .unwrap();
 
@@ -854,7 +900,7 @@ mod tests {
         store
             .insert_run(
                 &id, None, None, "SPY", 10_000.0, &params, None, None, None, None, None, None,
-                None, None, None, None, "{}", None, None, None, None,
+                None, None, None, None, "{}", None, None, None, None, "manual", None,
             )
             .unwrap();
 
@@ -871,7 +917,9 @@ mod tests {
         let run_id = uuid::Uuid::new_v4().to_string();
 
         store
-            .insert_sweep(&sweep_id, None, "SPY", &params, "sharpe", "grid", 1, None)
+            .insert_sweep(
+                &sweep_id, None, "SPY", &params, "sharpe", "grid", 1, None, "manual", None,
+            )
             .unwrap();
         store
             .insert_run(
@@ -896,6 +944,8 @@ mod tests {
                 None,
                 None,
                 None,
+                "manual",
+                None,
             )
             .unwrap();
 
@@ -914,7 +964,7 @@ mod tests {
         store
             .insert_run(
                 &id, None, None, "SPY", 10_000.0, &params, None, None, None, None, None, None,
-                None, None, None, None, "{}", None, None, None, None,
+                None, None, None, None, "{}", None, None, None, None, "manual", None,
             )
             .unwrap();
 
@@ -933,7 +983,9 @@ mod tests {
         let sweep_id = uuid::Uuid::new_v4().to_string();
 
         store
-            .insert_sweep(&sweep_id, None, "SPY", &params, "sharpe", "grid", 1, None)
+            .insert_sweep(
+                &sweep_id, None, "SPY", &params, "sharpe", "grid", 1, None, "manual", None,
+            )
             .unwrap();
 
         assert!(store
@@ -971,6 +1023,8 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                "manual",
                 None,
             )
             .unwrap();

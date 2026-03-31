@@ -14,6 +14,10 @@ use serde_json::Value;
 use super::strategy_store::StrategyRow;
 use crate::scripting::stdlib::{parse_script_meta, ScriptMeta};
 
+fn default_source() -> String {
+    "manual".to_string()
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // RunStore types
 // ──────────────────────────────────────────────────────────────────────────────
@@ -71,6 +75,10 @@ pub struct RunSummary {
     pub trade_count: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tags: Option<String>,
+    #[serde(default = "default_source")]
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
     pub created_at: String,
 }
 
@@ -101,6 +109,10 @@ pub struct RunDetail {
     pub hypothesis: Option<String>,
     pub tags: Option<String>,
     pub regime: Option<String>,
+    #[serde(default = "default_source")]
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
     pub created_at: String,
 }
 
@@ -125,6 +137,10 @@ pub enum RunRow {
         best_cagr: Option<f64>,
         best_profit_factor: Option<f64>,
         best_trade_count: Option<i64>,
+        #[serde(default = "default_source")]
+        source: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thread_id: Option<String>,
         created_at: String,
     },
 }
@@ -160,6 +176,10 @@ pub struct SweepDetail {
     pub combinations: i64,
     pub execution_time_ms: Option<i64>,
     pub analysis: Option<String>,
+    #[serde(default = "default_source")]
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
     pub created_at: String,
     pub runs: Vec<RunSummary>,
 }
@@ -195,6 +215,8 @@ pub trait RunStore: Send + Sync {
         hypothesis: Option<&str>,
         tags: Option<&str>,
         regime: Option<&str>,
+        source: &str,
+        thread_id: Option<&str>,
     ) -> Result<String>;
 
     /// Insert trades for a run.
@@ -212,6 +234,8 @@ pub trait RunStore: Send + Sync {
         mode: &str,
         combinations: i64,
         execution_time_ms: Option<i64>,
+        source: &str,
+        thread_id: Option<&str>,
     ) -> Result<String>;
 
     /// List all runs and sweeps, newest first.
