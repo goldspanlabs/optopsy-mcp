@@ -265,6 +265,8 @@ impl RunStore for SqliteRunStore {
                     "SELECT sw.id, sw.strategy_id, s.name as strategy_name,
                             sw.symbol, sw.combinations,
                             MAX(r.total_return) as best_return,
+                            MAX(r.win_rate) as best_win_rate,
+                            MAX(r.max_drawdown) as best_max_dd,
                             MAX(r.sharpe) as best_sharpe,
                             sw.created_at
                      FROM sweeps sw
@@ -284,8 +286,10 @@ impl RunStore for SqliteRunStore {
                         symbol: row.get(3)?,
                         combinations: row.get(4)?,
                         best_return: row.get(5)?,
-                        best_sharpe: row.get(6)?,
-                        created_at: row.get(7)?,
+                        best_win_rate: row.get(6)?,
+                        best_max_dd: row.get(7)?,
+                        best_sharpe: row.get(8)?,
+                        created_at: row.get(9)?,
                     })
                 })
                 .context("Failed to query sweep rows")?

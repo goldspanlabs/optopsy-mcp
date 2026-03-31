@@ -16,6 +16,11 @@
 // a stop at 2 ATR below entry. Falls back to 10% of equity if ATR unavailable.
 //
 // Required params: SYMBOL, CAPITAL
+let IBS_THRESHOLD = extern("IBS_THRESHOLD", 0.3, "IBS entry threshold");
+let LOOKBACK = extern("LOOKBACK", 10, "Highest-high lookback period");
+let CHANNEL_MULT = extern("CHANNEL_MULT", 2.5, "Channel width multiplier");
+let RISK_PCT = extern("RISK_PCT", 0.02, "Fraction of equity to risk per trade");
+let ATR_MULT = extern("ATR_MULT", 2.0, "ATR multiplier for stop distance");
 
 fn config() {
     #{

@@ -16,6 +16,10 @@
 // we BUY the breakout (going long on mean reversion back toward the mean).
 //
 // Required params: SYMBOL, CAPITAL
+let BB_PERIOD = extern("BB_PERIOD", 20, "Bollinger Band period");
+let MAX_HOLD = extern("MAX_HOLD", 10, "Max bars to hold position");
+let RISK_PCT = extern("RISK_PCT", 0.02, "Fraction of equity to risk per trade");
+let ATR_MULT = extern("ATR_MULT", 2.0, "ATR multiplier for stop distance");
 
 fn config() {
     #{

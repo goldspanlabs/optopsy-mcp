@@ -181,7 +181,7 @@ fn persist_sweep(
                 symbol,
                 capital,
                 &params_value,
-                Some(sanitize(result.pnl)),
+                Some(sanitize(if capital > 0.0 { result.pnl / capital * 100.0 } else { 0.0 })),
                 Some(sanitize(result.win_rate)),
                 Some(sanitize(result.max_dd)),
                 Some(sanitize(result.sharpe)),
@@ -439,6 +439,7 @@ pub async fn create_sweep_stream(
         let sweep_result = match req.mode.as_str() {
             "grid" => {
                 let param_grid = build_grid(&req.sweep_params);
+                tracing::info!("Grid sweep: base_params={:?}, param_grid={:?}, sweep_params={:?}", req.params, param_grid, req.sweep_params);
                 let config = GridSweepConfig {
                     script_source,
                     base_params: req.params.clone(),
@@ -486,6 +487,11 @@ pub async fn create_sweep_stream(
 
         match sweep_result {
             Ok(sweep_response) => {
+                tracing::info!(
+                    "Sweep completed: combinations_run={}, ranked_results={}",
+                    sweep_response.combinations_run,
+                    sweep_response.ranked_results.len()
+                );
                 match persist_sweep(&state, &strategy_key, &symbol, &req, &sweep_response) {
                     Ok(sweep_id) => {
                         if let Ok(Some(detail)) = state.run_store.get_sweep(&sweep_id) {

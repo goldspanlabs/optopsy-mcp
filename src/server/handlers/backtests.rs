@@ -135,7 +135,7 @@ fn persist_backtest(
             symbol,
             capital,
             &params_value,
-            Some(sanitize(response.result.total_pnl)),
+            Some(sanitize(if capital > 0.0 { response.result.total_pnl / capital * 100.0 } else { 0.0 })),
             Some(sanitize(m.win_rate)),
             Some(sanitize(m.max_drawdown)),
             Some(sanitize(m.sharpe)),

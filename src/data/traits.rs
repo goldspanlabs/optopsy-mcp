@@ -97,6 +97,8 @@ pub enum RunRow {
         symbol: String,
         combinations: i64,
         best_return: Option<f64>,
+        best_win_rate: Option<f64>,
+        best_max_dd: Option<f64>,
         best_sharpe: Option<f64>,
         created_at: String,
     },

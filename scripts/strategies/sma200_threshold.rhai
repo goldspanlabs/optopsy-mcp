@@ -12,8 +12,8 @@
 //
 // Required params: SYMBOL, CAPITAL
 
-let entry_threshold = 0.04;  // +4% above SMA
-let exit_threshold  = 0.03;  // -3% below SMA
+let entry_threshold = extern("ENTRY_THRESHOLD", 0.04, "Entry threshold above SMA (e.g. 0.04 = +4%)");
+let exit_threshold  = extern("EXIT_THRESHOLD", 0.03, "Exit threshold below SMA (e.g. 0.03 = -3%)");
 
 fn config() {
     #{
