@@ -16,6 +16,7 @@ pub struct SweepResult {
     pub win_rate: f64,
     pub max_dd: f64,
     pub profit_factor: f64,
+    pub cagr: f64,
     pub calmar: f64,
 }
 
@@ -28,7 +29,7 @@ pub struct DimensionStat {
 }
 
 /// Shared response shape for both grid sweep and Bayesian optimization.
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SweepResponse {
     pub mode: String,
     pub objective: String,
@@ -43,4 +44,9 @@ pub struct SweepResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub convergence_trace: Option<Vec<f64>>,
     pub execution_time_ms: u64,
+    /// Full backtest responses per combo — parallel to `ranked_results`.
+    /// Skipped from MCP serialization (too large); used by REST handler for DB storage.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub full_results: Vec<crate::scripting::engine::ScriptBacktestResult>,
 }

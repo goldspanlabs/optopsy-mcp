@@ -29,6 +29,7 @@ pub async fn run_grid_sweep(
     let combos = cartesian_product(&config.param_grid);
     let total = combos.len();
     let mut results: Vec<SweepResult> = Vec::new();
+    let mut full_results: Vec<crate::scripting::engine::ScriptBacktestResult> = Vec::new();
     let mut failed = 0usize;
 
     for (idx, combo) in combos.iter().enumerate() {
@@ -52,8 +53,10 @@ pub async fn run_grid_sweep(
                     win_rate: m.win_rate,
                     max_dd: m.max_drawdown,
                     profit_factor: m.profit_factor,
+                    cagr: m.cagr,
                     calmar: m.calmar,
                 });
+                full_results.push(bt);
             }
             Err(_) => {
                 failed += 1;
@@ -61,7 +64,10 @@ pub async fn run_grid_sweep(
         }
     }
 
-    sort_by_objective(&mut results, &config.objective);
+    // Sort results and full_results together by objective
+    let mut paired: Vec<_> = results.into_iter().zip(full_results).collect();
+    paired.sort_by(|(a, _), (b, _)| sort_cmp_objective(a, b, &config.objective));
+    let (mut results, full_results): (Vec<_>, Vec<_>) = paired.into_iter().unzip();
     for (i, r) in results.iter_mut().enumerate() {
         r.rank = i + 1;
     }
@@ -79,19 +85,22 @@ pub async fn run_grid_sweep(
         dimension_sensitivity: sensitivity,
         convergence_trace: None,
         execution_time_ms: start.elapsed().as_millis() as u64,
+        full_results,
     })
 }
 
+fn sort_cmp_objective(a: &SweepResult, b: &SweepResult, objective: &str) -> std::cmp::Ordering {
+    let (va, vb) = match objective {
+        "sortino" => (a.sortino, b.sortino),
+        "calmar" => (a.calmar, b.calmar),
+        "profit_factor" => (a.profit_factor, b.profit_factor),
+        _ => (a.sharpe, b.sharpe),
+    };
+    vb.partial_cmp(&va).unwrap_or(std::cmp::Ordering::Equal)
+}
+
 pub fn sort_by_objective(results: &mut [SweepResult], objective: &str) {
-    results.sort_by(|a, b| {
-        let (va, vb) = match objective {
-            "sortino" => (a.sortino, b.sortino),
-            "calmar" => (a.calmar, b.calmar),
-            "profit_factor" => (a.profit_factor, b.profit_factor),
-            _ => (a.sharpe, b.sharpe),
-        };
-        vb.partial_cmp(&va).unwrap_or(std::cmp::Ordering::Equal)
-    });
+    results.sort_by(|a, b| sort_cmp_objective(a, b, objective));
 }
 
 pub fn extract_objective(result: &SweepResult, objective: &str) -> f64 {

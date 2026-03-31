@@ -21,7 +21,7 @@ use crate::server::state::AppState;
 use crate::tools::run_script::RunScriptParams;
 
 /// Replace NaN/Infinity with 0.0 to prevent JSON serialization errors.
-fn sanitize(v: f64) -> f64 {
+pub(crate) fn sanitize(v: f64) -> f64 {
     if v.is_finite() {
         v
     } else {
@@ -55,7 +55,7 @@ pub struct ListQuery {
 ///
 /// Maps `TradeRecord` → `TradeRow` preserving the same field names so the
 /// REST API returns the identical JSON shape as the MCP tool response.
-fn build_trades(response: &crate::tools::run_script::RunScriptResponse) -> Vec<TradeRow> {
+pub(crate) fn build_trades(response: &crate::tools::run_script::RunScriptResponse) -> Vec<TradeRow> {
     response
         .result
         .trade_log
@@ -85,7 +85,7 @@ fn build_trades(response: &crate::tools::run_script::RunScriptResponse) -> Vec<T
 }
 
 /// Strip trades from a `RunScriptResponse` for storage (trades stored separately).
-fn strip_trades_from_result_json(response: &crate::tools::run_script::RunScriptResponse) -> String {
+pub(crate) fn strip_trades_from_result_json(response: &crate::tools::run_script::RunScriptResponse) -> String {
     let mut value = serde_json::to_value(response).unwrap_or(Value::Object(serde_json::Map::default()));
     if let Some(obj) = value.as_object_mut() {
         if let Some(result) = obj.get_mut("result") {

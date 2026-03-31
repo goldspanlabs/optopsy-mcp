@@ -68,6 +68,38 @@ pub struct ListQuery {
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────────
 
+use crate::data::traits::TradeRow;
+use crate::scripting::engine::ScriptBacktestResult;
+
+/// Build `TradeRow` vector from a `ScriptBacktestResult`.
+fn build_sweep_trades(bt: &ScriptBacktestResult) -> Vec<TradeRow> {
+    bt.result
+        .trade_log
+        .iter()
+        .map(|t| TradeRow {
+            trade_id: t.trade_id as i64,
+            entry_datetime: t.entry_datetime.and_utc().timestamp(),
+            exit_datetime: t.exit_datetime.and_utc().timestamp(),
+            entry_cost: sanitize(t.entry_cost),
+            exit_proceeds: sanitize(t.exit_proceeds),
+            entry_amount: sanitize(t.entry_amount),
+            entry_label: format!("{:?}", t.entry_label),
+            exit_amount: sanitize(t.exit_amount),
+            exit_label: format!("{:?}", t.exit_label),
+            pnl: sanitize(t.pnl),
+            days_held: t.days_held,
+            exit_type: format!("{:?}", t.exit_type),
+            legs: serde_json::to_value(&t.legs).unwrap_or(Value::Array(vec![])),
+            computed_quantity: t.computed_quantity,
+            entry_equity: t.entry_equity.map(sanitize),
+            stock_entry_price: t.stock_entry_price.map(sanitize),
+            stock_exit_price: t.stock_exit_price.map(sanitize),
+            stock_pnl: t.stock_pnl.map(sanitize),
+            group: t.group.clone(),
+        })
+        .collect()
+}
+
 /// Replace NaN/Infinity with 0.0.
 fn sanitize(v: f64) -> f64 {
     if v.is_finite() {
@@ -167,10 +199,24 @@ fn persist_sweep(
         .and_then(Value::as_f64)
         .unwrap_or(0.0);
 
-    for result in &sweep_response.ranked_results {
+    for (i, result) in sweep_response.ranked_results.iter().enumerate() {
         let run_id = uuid::Uuid::new_v4().to_string();
         let params_value =
             serde_json::to_value(&result.params).unwrap_or(Value::Object(Default::default()));
+
+        // Use full backtest result if available (grid sweep), otherwise empty
+        let full = sweep_response.full_results.get(i);
+        let result_json = full
+            .map(|r| {
+                let mut value = serde_json::to_value(&r.result)
+                    .unwrap_or(Value::Object(Default::default()));
+                if let Some(obj) = value.as_object_mut() {
+                    obj.remove("trade_log");
+                }
+                serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned())
+            })
+            .unwrap_or_else(|| "{}".to_owned());
+        let m = full.map(|r| &r.result.metrics);
 
         state
             .run_store
@@ -186,18 +232,27 @@ fn persist_sweep(
                 Some(sanitize(result.max_dd)),
                 Some(sanitize(result.sharpe)),
                 Some(sanitize(result.sortino)),
-                None, // cagr not in SweepResult
+                Some(sanitize(result.cagr)),
                 Some(sanitize(result.profit_factor)),
                 Some(result.trades as i64),
-                None, // expectancy not in SweepResult
-                None, // var_95 not in SweepResult
-                "{}", // no full result_json per sweep run
-                None, // execution_time_ms per-run not available
+                m.map(|m| sanitize(m.expectancy)),
+                m.map(|m| sanitize(m.var_95)),
+                &result_json,
+                full.map(|r| r.execution_time_ms as i64),
                 None,
                 None,
                 None,
             )
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        // Store trades if full result is available
+        if let Some(full_result) = full {
+            let trades = build_sweep_trades(full_result);
+            state
+                .run_store
+                .insert_trades(&run_id, &trades)
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
     }
 
     Ok(sweep_id)
