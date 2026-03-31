@@ -192,7 +192,7 @@ impl RunStore for SqliteRunStore {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn list(&self) -> Result<RunsListResponse> {
+    fn list(&self, tag: Option<&str>) -> Result<RunsListResponse> {
         let conn = self.conn.lock().expect("mutex poisoned");
 
         // Build overview
@@ -220,49 +220,66 @@ impl RunStore for SqliteRunStore {
             )
             .context("Failed to query runs overview")?;
 
-        // Collect standalone runs (no sweep_id)
+        // Collect standalone runs (no sweep_id), optionally filtered by tag
         let mut rows: Vec<RunRow> = Vec::new();
+        let tag_filter = tag.map(|t| format!("%{}%", t.to_lowercase()));
 
         {
+            let sql = if tag_filter.is_some() {
+                "SELECT r.id, r.sweep_id, r.strategy_id, s.name as strategy_name,
+                        r.symbol, r.params, r.total_return, r.win_rate,
+                        r.max_drawdown, r.sharpe, r.sortino, r.cagr,
+                        r.profit_factor, r.trade_count, r.tags, r.created_at
+                 FROM runs r
+                 LEFT JOIN strategies s ON s.id = r.strategy_id
+                 WHERE r.sweep_id IS NULL AND LOWER(COALESCE(r.tags, '')) LIKE ?1
+                 ORDER BY r.created_at DESC"
+            } else {
+                "SELECT r.id, r.sweep_id, r.strategy_id, s.name as strategy_name,
+                        r.symbol, r.params, r.total_return, r.win_rate,
+                        r.max_drawdown, r.sharpe, r.sortino, r.cagr,
+                        r.profit_factor, r.trade_count, r.tags, r.created_at
+                 FROM runs r
+                 LEFT JOIN strategies s ON s.id = r.strategy_id
+                 WHERE r.sweep_id IS NULL
+                 ORDER BY r.created_at DESC"
+            };
             let mut stmt = conn
-                .prepare(
-                    "SELECT r.id, r.sweep_id, r.strategy_id, s.name as strategy_name,
-                            r.symbol, r.params, r.total_return, r.win_rate,
-                            r.max_drawdown, r.sharpe, r.sortino, r.cagr,
-                            r.profit_factor, r.trade_count, r.created_at
-                     FROM runs r
-                     LEFT JOIN strategies s ON s.id = r.strategy_id
-                     WHERE r.sweep_id IS NULL
-                     ORDER BY r.created_at DESC",
-                )
+                .prepare(sql)
                 .context("Failed to prepare standalone runs query")?;
 
-            let single_rows = stmt
-                .query_map([], |row| {
-                    let params_str: String = row.get(5)?;
-                    let params: Value = serde_json::from_str(&params_str)
-                        .unwrap_or(Value::Object(serde_json::Map::default()));
-                    Ok(RunRow::Single(RunSummary {
-                        id: row.get(0)?,
-                        sweep_id: row.get(1)?,
-                        strategy_id: row.get(2)?,
-                        strategy_name: row.get(3)?,
-                        symbol: row.get(4)?,
-                        params,
-                        total_return: row.get(6)?,
-                        win_rate: row.get(7)?,
-                        max_drawdown: row.get(8)?,
-                        sharpe: row.get(9)?,
-                        sortino: row.get(10)?,
-                        cagr: row.get(11)?,
-                        profit_factor: row.get(12)?,
-                        trade_count: row.get(13)?,
-                        created_at: row.get(14)?,
-                    }))
-                })
-                .context("Failed to query standalone runs")?
-                .collect::<Result<Vec<_>, _>>()
-                .context("Failed to collect standalone runs")?;
+            let map_row = |row: &rusqlite::Row| {
+                let params_str: String = row.get(5)?;
+                let params: Value = serde_json::from_str(&params_str)
+                    .unwrap_or(Value::Object(serde_json::Map::default()));
+                Ok(RunRow::Single(RunSummary {
+                    id: row.get(0)?,
+                    sweep_id: row.get(1)?,
+                    strategy_id: row.get(2)?,
+                    strategy_name: row.get(3)?,
+                    symbol: row.get(4)?,
+                    params,
+                    total_return: row.get(6)?,
+                    win_rate: row.get(7)?,
+                    max_drawdown: row.get(8)?,
+                    sharpe: row.get(9)?,
+                    sortino: row.get(10)?,
+                    cagr: row.get(11)?,
+                    profit_factor: row.get(12)?,
+                    trade_count: row.get(13)?,
+                    tags: row.get(14)?,
+                    created_at: row.get(15)?,
+                }))
+            };
+
+            let single_rows = if let Some(ref filter) = tag_filter {
+                stmt.query_map(rusqlite::params![filter], map_row)
+            } else {
+                stmt.query_map([], map_row)
+            }
+            .context("Failed to query standalone runs")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("Failed to collect standalone runs")?;
 
             rows.extend(single_rows);
         }
@@ -495,7 +512,7 @@ impl RunStore for SqliteRunStore {
                 "SELECT r.id, r.sweep_id, r.strategy_id, s.name as strategy_name,
                         r.symbol, r.params, r.total_return, r.win_rate,
                         r.max_drawdown, r.sharpe, r.sortino, r.cagr,
-                        r.profit_factor, r.trade_count, r.created_at
+                        r.profit_factor, r.trade_count, r.tags, r.created_at
                  FROM runs r
                  LEFT JOIN strategies s ON s.id = r.strategy_id
                  WHERE r.sweep_id = ?1
@@ -523,7 +540,8 @@ impl RunStore for SqliteRunStore {
                     cagr: row.get(11)?,
                     profit_factor: row.get(12)?,
                     trade_count: row.get(13)?,
-                    created_at: row.get(14)?,
+                    tags: row.get(14)?,
+                    created_at: row.get(15)?,
                 })
             })
             .context("Failed to query sweep runs")?
@@ -822,7 +840,7 @@ mod tests {
             )
             .unwrap();
 
-        let response = store.list().unwrap();
+        let response = store.list(None).unwrap();
         assert_eq!(response.overview.total_runs, 2); // 2 runs total in runs table
         assert_eq!(response.rows.len(), 2); // 1 single + 1 sweep
     }

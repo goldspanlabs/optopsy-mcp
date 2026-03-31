@@ -1,21 +1,30 @@
 //! REST API handlers for the unified `/runs` endpoints.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
+use serde::Deserialize;
 use std::collections::HashMap;
 
 use crate::data::traits::{RunDetail, RunsListResponse, SweepDetail};
 use crate::server::state::AppState;
 
+#[derive(Debug, Deserialize, Default)]
+pub struct ListRunsQuery {
+    pub tag: Option<String>,
+}
+
 /// `GET /runs` — List all runs and sweeps, newest first.
+/// Supports optional `?tag=` filter for peer lookup by strategy tags.
 pub async fn list_runs(
     State(state): State<AppState>,
+    Query(query): Query<ListRunsQuery>,
 ) -> Result<Json<RunsListResponse>, (StatusCode, String)> {
     let store = state.run_store.clone();
-    let response = tokio::task::spawn_blocking(move || store.list())
+    let tag = query.tag;
+    let response = tokio::task::spawn_blocking(move || store.list(tag.as_deref()))
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

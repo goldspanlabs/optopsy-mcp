@@ -213,9 +213,9 @@ fn persist_sweep(
                 m.map(|m| sanitize(m.var_95)),
                 &result_json,
                 full.map(|r| r.execution_time_ms as i64),
-                None,
-                None,
-                None,
+                script_meta.hypothesis.as_deref(),
+                script_meta.tags.as_ref().map(|t| t.join(",")).as_deref(),
+                script_meta.regime.as_ref().map(|r| r.join(",")).as_deref(),
             )
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 

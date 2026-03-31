@@ -155,7 +155,7 @@ fn full_lifecycle_insert_list_get_delete() {
 
     // ── list all → 2 single runs ─────────────────────────────────────────
 
-    let response = store.list().expect("list all");
+    let response = store.list(None).expect("list all");
     assert_eq!(response.overview.total_runs, 2, "expected 2 runs");
     assert_eq!(response.rows.len(), 2, "expected 2 rows");
 
@@ -198,7 +198,7 @@ fn full_lifecycle_insert_list_get_delete() {
 
     // ── id2 still intact ────────────────────────────────────────────────
 
-    let remaining = store.list().expect("list after delete");
+    let remaining = store.list(None).expect("list after delete");
     assert_eq!(remaining.overview.total_runs, 1, "only id2 should remain");
 }
 

@@ -69,6 +69,8 @@ pub struct RunSummary {
     pub cagr: Option<f64>,
     pub profit_factor: Option<f64>,
     pub trade_count: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<String>,
     pub created_at: String,
 }
 
@@ -213,7 +215,9 @@ pub trait RunStore: Send + Sync {
     ) -> Result<String>;
 
     /// List all runs and sweeps, newest first.
-    fn list(&self) -> Result<RunsListResponse>;
+    /// If `tag` is provided, only return standalone runs whose `tags` column
+    /// contains the given tag (case-insensitive substring match).
+    fn list(&self, tag: Option<&str>) -> Result<RunsListResponse>;
 
     /// Get full detail for a single run by id.
     fn get_run(&self, id: &str) -> Result<Option<RunDetail>>;
