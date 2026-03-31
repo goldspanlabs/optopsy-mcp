@@ -208,7 +208,9 @@ impl RunStore for SqliteRunStore {
                     COUNT(*) as total_runs,
                     MAX(created_at) as last_run_at,
                     MAX(total_return) as best_return,
-                    AVG(win_rate) as avg_win_rate
+                    MAX(sharpe) as best_sharpe,
+                    AVG(win_rate) as avg_win_rate,
+                    AVG(sharpe) as avg_sharpe
                  FROM runs",
                 [],
                 |row| {
@@ -216,7 +218,9 @@ impl RunStore for SqliteRunStore {
                         total_runs: row.get(0)?,
                         last_run_at: row.get(1)?,
                         best_return: row.get(2)?,
-                        avg_win_rate: row.get(3)?,
+                        best_sharpe: row.get(3)?,
+                        avg_win_rate: row.get(4)?,
+                        avg_sharpe: row.get(5)?,
                     })
                 },
             )

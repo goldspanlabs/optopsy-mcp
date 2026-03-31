@@ -133,7 +133,9 @@ pub struct RunsOverview {
     pub total_runs: i64,
     pub last_run_at: Option<String>,
     pub best_return: Option<f64>,
+    pub best_sharpe: Option<f64>,
     pub avg_win_rate: Option<f64>,
+    pub avg_sharpe: Option<f64>,
 }
 
 /// Combined response for the runs list endpoint.
