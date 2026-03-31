@@ -219,53 +219,6 @@ The default cache directory is `~/.optopsy/cache/`. To use a different location,
 | `close` | Float64 | Close price |
 | `volume` | Int64/Float64 | Volume |
 
-<details>
-<summary><h2>REST API (optional)</h2></summary>
-
-When running in HTTP mode (`PORT=8000 cargo run`), a REST API is available alongside the MCP endpoint at `/mcp`. This is primarily used by optopsy-ui (private, unreleased) for backtest persistence and retrieval.
-
-| Group | Method | Endpoint | Description |
-|-------|--------|----------|-------------|
-| **Strategies** | `GET` | `/strategies` | List strategy scripts |
-| | `POST` | `/strategies` | Create a strategy |
-| | `GET` | `/strategies/{id}` | Get strategy details |
-| | `PUT` | `/strategies/{id}` | Update a strategy |
-| | `DELETE` | `/strategies/{id}` | Delete a strategy |
-| | `GET` | `/strategies/{id}/source` | Get strategy Rhai source |
-| | `POST` | `/strategies/{id}/validate` | Validate a stored strategy |
-| | `POST` | `/strategies/validate` | Validate inline Rhai source |
-| **Runs** | `GET` | `/runs` | List backtest runs |
-| | `POST` | `/runs` | Create a backtest run |
-| | `POST` | `/runs/stream` | Create a backtest run (SSE stream) |
-| | `GET` | `/runs/{id}` | Get run details |
-| | `DELETE` | `/runs/{id}` | Delete a run |
-| | `PATCH` | `/runs/{id}/analysis` | Set run analysis notes |
-| **Sweeps** | `POST` | `/runs/sweep` | Create a parameter sweep |
-| | `POST` | `/runs/sweep/stream` | Create a sweep (SSE stream) |
-| | `POST` | `/runs/sweep/cancel` | Cancel running sweeps |
-| | `GET` | `/runs/sweep/{sweepId}` | Get sweep details |
-| | `DELETE` | `/runs/sweep/{sweepId}` | Delete a sweep |
-| | `PATCH` | `/runs/sweep/{sweepId}/analysis` | Set sweep analysis notes |
-| **Walk-Forward** | `POST` | `/walk-forward` | Run walk-forward analysis |
-| **Threads** | `GET` | `/threads` | List chat threads |
-| | `POST` | `/threads` | Create a thread |
-| | `GET` | `/threads/{id}` | Get thread details |
-| | `PATCH` | `/threads/{id}` | Update a thread |
-| | `DELETE` | `/threads/{id}` | Delete a thread |
-| | `GET` | `/threads/{id}/messages` | Get thread messages |
-| | `POST` | `/threads/{id}/messages` | Upsert a message |
-| | `DELETE` | `/threads/{id}/messages` | Delete messages |
-| | `GET` | `/threads/{id}/results` | Get thread results |
-| | `PUT` | `/threads/{id}/results` | Replace thread results |
-| | `DELETE` | `/threads/{id}/results/{key}` | Delete a result |
-| **Misc** | `GET` | `/prices/{symbol}` | Load OHLCV price data |
-| | `GET` | `/profiles` | List profiles |
-| | `GET` | `/health` | Health check |
-
-Data is persisted to SQLite (`{DATA_ROOT}/optopsy.db`).
-
-</details>
-
 ## Development
 
 After cloning, configure git to use the project's shared hooks:
