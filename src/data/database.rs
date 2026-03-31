@@ -1,7 +1,8 @@
-//! Shared `SQLite` database connection, schema management, and one-time migrations.
+//! Shared `SQLite` database connection and schema management.
 //!
-//! [`Database`] owns a single connection to the `SQLite` database file, runs all
-//! schema migrations on open, and provides factory methods for creating stores.
+//! [`Database`] owns a single connection to the `SQLite` database file, creates
+//! all tables on open, and provides factory methods for creating stores.
+//! The database is ephemeral — delete the file to reset.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -23,7 +24,7 @@ pub struct Database {
 }
 
 impl Database {
-    /// Open (or create) a file-based `SQLite` database and run all migrations.
+    /// Open (or create) a file-based `SQLite` database and initialise schema.
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)
             .with_context(|| format!("Failed to open SQLite database at {}", path.display()))?;
@@ -124,23 +125,29 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_runs_strategy ON runs(strategy_id);
             CREATE INDEX IF NOT EXISTS idx_runs_created ON runs(created_at DESC);
 
-            -- Trades
+            -- Trades (mirrors TradeRecord / FE TradeLogEntry shape)
             CREATE TABLE IF NOT EXISTS trades (
-                id                INTEGER PRIMARY KEY AUTOINCREMENT,
-                run_id            TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-                trade_id          INTEGER NOT NULL,
-                entry_datetime    TEXT NOT NULL,
-                exit_datetime     TEXT NOT NULL,
-                entry_cost        REAL,
-                exit_proceeds     REAL,
-                pnl               REAL,
-                pnl_pct           REAL,
-                days_held         INTEGER,
-                exit_type         TEXT,
-                legs              TEXT,
-                computed_quantity INTEGER,
-                entry_equity      REAL,
-                group_label       TEXT
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id              TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+                trade_id            INTEGER NOT NULL,
+                entry_datetime      INTEGER NOT NULL,
+                exit_datetime       INTEGER NOT NULL,
+                entry_cost          REAL,
+                exit_proceeds       REAL,
+                entry_amount        REAL,
+                entry_label         TEXT,
+                exit_amount         REAL,
+                exit_label          TEXT,
+                pnl                 REAL,
+                days_held           INTEGER,
+                exit_type           TEXT,
+                legs                TEXT,
+                computed_quantity   INTEGER,
+                entry_equity        REAL,
+                stock_entry_price   REAL,
+                stock_exit_price    REAL,
+                stock_pnl           REAL,
+                [group]             TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_trades_run_id ON trades(run_id);
@@ -211,41 +218,6 @@ impl Database {
             ",
         )
         .context("Failed to initialise database schema")?;
-
-        // Migrations for existing databases
-        Self::migrate(&conn)?;
-        Ok(())
-    }
-
-    /// Run incremental migrations for columns added after initial schema.
-    fn migrate(conn: &Connection) -> Result<()> {
-        // Add thread_id to strategies if missing
-        let cols: Vec<String> = conn
-            .prepare("PRAGMA table_info(strategies)")?
-            .query_map([], |row| row.get::<_, String>(1))?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        if !cols.iter().any(|c| c == "thread_id") {
-            conn.execute_batch("ALTER TABLE strategies ADD COLUMN thread_id TEXT")?;
-        }
-
-        // Add strategy_id to threads if missing
-        let thread_cols: Vec<String> = conn
-            .prepare("PRAGMA table_info(threads)")?
-            .query_map([], |row| row.get::<_, String>(1))?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        if !thread_cols.iter().any(|c| c == "strategy_id") {
-            conn.execute_batch("ALTER TABLE threads ADD COLUMN strategy_id TEXT")?;
-            conn.execute_batch(
-                "UPDATE threads SET strategy_id = (
-                    SELECT s.id FROM strategies s WHERE s.thread_id = threads.id
-                ) WHERE EXISTS (
-                    SELECT 1 FROM strategies s WHERE s.thread_id = threads.id
-                )",
-            )?;
-            conn.execute_batch(
-                "CREATE INDEX IF NOT EXISTS idx_threads_strategy_id ON threads(strategy_id)",
-            )?;
-        }
 
         Ok(())
     }

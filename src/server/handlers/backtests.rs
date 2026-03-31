@@ -52,32 +52,34 @@ pub struct ListQuery {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// Build `TradeRow` vector from a `RunScriptResponse`.
+///
+/// Maps `TradeRecord` → `TradeRow` preserving the same field names so the
+/// REST API returns the identical JSON shape as the MCP tool response.
 fn build_trades(response: &crate::tools::run_script::RunScriptResponse) -> Vec<TradeRow> {
     response
         .result
         .trade_log
         .iter()
-        .map(|t| {
-            let pnl_pct = if t.entry_cost.abs() > 0.0 {
-                t.pnl / t.entry_cost.abs()
-            } else {
-                0.0
-            };
-            TradeRow {
-                trade_id: t.trade_id as i64,
-                entry_datetime: t.entry_datetime.and_utc().timestamp().to_string(),
-                exit_datetime: t.exit_datetime.and_utc().timestamp().to_string(),
-                entry_cost: sanitize(t.entry_cost),
-                exit_proceeds: sanitize(t.exit_proceeds),
-                pnl: sanitize(t.pnl),
-                pnl_pct: sanitize(pnl_pct),
-                days_held: t.days_held,
-                exit_type: format!("{:?}", t.exit_type),
-                legs: serde_json::to_string(&t.legs).unwrap_or_else(|_| "[]".to_owned()),
-                computed_quantity: t.computed_quantity,
-                entry_equity: t.entry_equity.map(sanitize),
-                group_label: t.group.clone(),
-            }
+        .map(|t| TradeRow {
+            trade_id: t.trade_id as i64,
+            entry_datetime: t.entry_datetime.and_utc().timestamp(),
+            exit_datetime: t.exit_datetime.and_utc().timestamp(),
+            entry_cost: sanitize(t.entry_cost),
+            exit_proceeds: sanitize(t.exit_proceeds),
+            entry_amount: sanitize(t.entry_amount),
+            entry_label: format!("{:?}", t.entry_label),
+            exit_amount: sanitize(t.exit_amount),
+            exit_label: format!("{:?}", t.exit_label),
+            pnl: sanitize(t.pnl),
+            days_held: t.days_held,
+            exit_type: format!("{:?}", t.exit_type),
+            legs: serde_json::to_value(&t.legs).unwrap_or(Value::Array(vec![])),
+            computed_quantity: t.computed_quantity,
+            entry_equity: t.entry_equity.map(sanitize),
+            stock_entry_price: t.stock_entry_price.map(sanitize),
+            stock_exit_price: t.stock_exit_price.map(sanitize),
+            stock_pnl: t.stock_pnl.map(sanitize),
+            group: t.group.clone(),
         })
         .collect()
 }

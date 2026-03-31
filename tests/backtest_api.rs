@@ -13,48 +13,66 @@ fn sample_trades() -> Vec<TradeRow> {
     vec![
         TradeRow {
             trade_id: 1,
-            entry_datetime: "2024-01-02T09:30:00Z".to_string(),
-            exit_datetime: "2024-01-12T16:00:00Z".to_string(),
+            entry_datetime: 1704186600, // 2024-01-02 09:30
+            exit_datetime: 1705075200,  // 2024-01-12 16:00
             entry_cost: 1_000.0,
             exit_proceeds: 1_300.0,
+            entry_amount: 1_000.0,
+            entry_label: "DR".to_string(),
+            exit_amount: 1_300.0,
+            exit_label: "CR".to_string(),
             pnl: 300.0,
-            pnl_pct: 0.30,
             days_held: 10,
             exit_type: "TakeProfit".to_string(),
-            legs: "[]".to_string(),
+            legs: serde_json::Value::Array(vec![]),
             computed_quantity: Some(2),
             entry_equity: Some(100_000.0),
-            group_label: Some("Cycle 1".to_string()),
+            stock_entry_price: None,
+            stock_exit_price: None,
+            stock_pnl: None,
+            group: Some("Cycle 1".to_string()),
         },
         TradeRow {
             trade_id: 2,
-            entry_datetime: "2024-02-05T09:30:00Z".to_string(),
-            exit_datetime: "2024-02-20T16:00:00Z".to_string(),
+            entry_datetime: 1707122600, // 2024-02-05 09:30
+            exit_datetime: 1708444800,  // 2024-02-20 16:00
             entry_cost: 800.0,
             exit_proceeds: 650.0,
+            entry_amount: 800.0,
+            entry_label: "DR".to_string(),
+            exit_amount: 650.0,
+            exit_label: "CR".to_string(),
             pnl: -150.0,
-            pnl_pct: -0.1875,
             days_held: 15,
             exit_type: "StopLoss".to_string(),
-            legs: "[]".to_string(),
+            legs: serde_json::Value::Array(vec![]),
             computed_quantity: None,
             entry_equity: Some(100_300.0),
-            group_label: None,
+            stock_entry_price: None,
+            stock_exit_price: None,
+            stock_pnl: None,
+            group: None,
         },
         TradeRow {
             trade_id: 3,
-            entry_datetime: "2024-03-01T09:30:00Z".to_string(),
-            exit_datetime: "2024-03-31T16:00:00Z".to_string(),
+            entry_datetime: 1709287800, // 2024-03-01 09:30
+            exit_datetime: 1711900800,  // 2024-03-31 16:00
             entry_cost: 950.0,
             exit_proceeds: 1_100.0,
+            entry_amount: 950.0,
+            entry_label: "DR".to_string(),
+            exit_amount: 1_100.0,
+            exit_label: "CR".to_string(),
             pnl: 150.0,
-            pnl_pct: 0.1579,
             days_held: 30,
             exit_type: "MaxHold".to_string(),
-            legs: "[]".to_string(),
+            legs: serde_json::Value::Array(vec![]),
             computed_quantity: Some(1),
             entry_equity: Some(100_150.0),
-            group_label: None,
+            stock_entry_price: None,
+            stock_exit_price: None,
+            stock_pnl: None,
+            group: None,
         },
     ]
 }
@@ -152,14 +170,14 @@ fn full_lifecycle_insert_list_get_delete() {
     assert_eq!(detail.trades.len(), 3, "expected 3 trade rows for id1");
     assert_eq!(detail.trades[0].exit_type, "TakeProfit");
     assert_eq!(
-        detail.trades[0].group_label,
+        detail.trades[0].group,
         Some("Cycle 1".to_string()),
-        "first trade should carry group_label 'Cycle 1'"
+        "first trade should carry group 'Cycle 1'"
     );
     assert_eq!(detail.trades[1].exit_type, "StopLoss");
     assert!(
-        detail.trades[1].group_label.is_none(),
-        "second trade should have no group_label"
+        detail.trades[1].group.is_none(),
+        "second trade should have no group"
     );
     assert_eq!(detail.trades[2].exit_type, "MaxHold");
 

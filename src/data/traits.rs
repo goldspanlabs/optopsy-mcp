@@ -19,21 +19,37 @@ use crate::scripting::stdlib::{parse_script_meta, ScriptMeta};
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A single trade record associated with a run.
+///
+/// Field names and types intentionally mirror `TradeRecord` (the MCP response
+/// struct) so that the REST API and the MCP tool return identical JSON shapes,
+/// and the frontend can use one `TradeLogEntry` interface for both.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeRow {
     pub trade_id: i64,
-    pub entry_datetime: String,
-    pub exit_datetime: String,
+    pub entry_datetime: i64,
+    pub exit_datetime: i64,
     pub entry_cost: f64,
     pub exit_proceeds: f64,
+    pub entry_amount: f64,
+    pub entry_label: String,
+    pub exit_amount: f64,
+    pub exit_label: String,
     pub pnl: f64,
-    pub pnl_pct: f64,
     pub days_held: i64,
     pub exit_type: String,
-    pub legs: String,
+    pub legs: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub computed_quantity: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub entry_equity: Option<f64>,
-    pub group_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stock_entry_price: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stock_exit_price: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stock_pnl: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
 
 /// Summary view of a run (no trades, no result_json).
@@ -49,6 +65,9 @@ pub struct RunSummary {
     pub win_rate: Option<f64>,
     pub max_drawdown: Option<f64>,
     pub sharpe: Option<f64>,
+    pub sortino: Option<f64>,
+    pub cagr: Option<f64>,
+    pub profit_factor: Option<f64>,
     pub trade_count: Option<i64>,
     pub created_at: String,
 }

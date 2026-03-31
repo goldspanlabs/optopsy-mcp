@@ -9,11 +9,11 @@
 // intraday weakness (close in bottom 30% of range). Exits when close breaks
 // above yesterday's high.
 //
-// Entry: close < (highest_high(10) - 2.5 * (sma_high_25 - sma_low_25)) AND IBS < 0.3
+// Entry: close < (highest_high(LOOKBACK) - CHANNEL_MULT * (sma_high_25 - sma_low_25)) AND IBS < IBS_THRESHOLD
 // Exit:  close > yesterday's high
 //
-// Uses size_by_risk for position sizing: risks 2% of equity per trade with
-// a stop at 2 ATR below entry. Falls back to 10% of equity if ATR unavailable.
+// Uses size_by_risk for position sizing: risks RISK_PCT of equity per trade with
+// a stop at ATR_MULT ATR below entry. Falls back to 10% of equity if ATR unavailable.
 //
 // Required params: SYMBOL, CAPITAL
 let IBS_THRESHOLD = extern("IBS_THRESHOLD", 0.3, "IBS entry threshold");
@@ -44,8 +44,8 @@ fn on_bar(ctx) {
     if bar_range <= 0.0 { return []; }
     let ibs = (ctx.close - ctx.low) / bar_range;
 
-    // Highest high over last 10 bars
-    let hh10 = ctx.highest_high(10);
+    // Highest high over last LOOKBACK bars
+    let hh = ctx.highest_high(LOOKBACK);
 
     // 25-day average high and average low (manual calc via lookback)
     let sum_high = 0.0;
@@ -61,13 +61,13 @@ fn on_bar(ctx) {
     let avg_low = sum_low / 25.0;
 
     // Entry threshold
-    let threshold = hh10 - 2.5 * (avg_high - avg_low);
+    let threshold = hh - CHANNEL_MULT * (avg_high - avg_low);
 
-    if ctx.close < threshold && ibs < 0.3 {
-        // Position sizing: risk 2% of equity, stop at 2 ATR below entry
+    if ctx.close < threshold && ibs < IBS_THRESHOLD {
+        // Position sizing: risk RISK_PCT of equity, stop at ATR_MULT ATR below entry
         let atr = ctx.atr(14);
         let qty = if atr != () && atr > 0.0 {
-            ctx.size_by_risk(0.02, ctx.close - 2.0 * atr)
+            ctx.size_by_risk(RISK_PCT, ctx.close - ATR_MULT * atr)
         } else {
             ctx.size_by_equity(0.10)
         };

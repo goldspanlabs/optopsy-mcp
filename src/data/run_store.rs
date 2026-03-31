@@ -126,9 +126,10 @@ impl RunStore for SqliteRunStore {
             tx.execute(
                 "INSERT INTO trades
                     (run_id, trade_id, entry_datetime, exit_datetime, entry_cost,
-                     exit_proceeds, pnl, pnl_pct, days_held, exit_type, legs,
-                     computed_quantity, entry_equity, group_label)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                     exit_proceeds, entry_amount, entry_label, exit_amount, exit_label,
+                     pnl, days_held, exit_type, legs, computed_quantity, entry_equity,
+                     stock_entry_price, stock_exit_price, stock_pnl, [group])
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
                 rusqlite::params![
                     run_id,
                     trade.trade_id,
@@ -136,14 +137,20 @@ impl RunStore for SqliteRunStore {
                     trade.exit_datetime,
                     trade.entry_cost,
                     trade.exit_proceeds,
+                    trade.entry_amount,
+                    trade.entry_label,
+                    trade.exit_amount,
+                    trade.exit_label,
                     trade.pnl,
-                    trade.pnl_pct,
                     trade.days_held,
                     trade.exit_type,
-                    trade.legs,
+                    trade.legs.to_string(),
                     trade.computed_quantity,
                     trade.entry_equity,
-                    trade.group_label,
+                    trade.stock_entry_price,
+                    trade.stock_exit_price,
+                    trade.stock_pnl,
+                    trade.group,
                 ],
             )
             .context("Failed to insert trade")?;
@@ -223,7 +230,8 @@ impl RunStore for SqliteRunStore {
                 .prepare(
                     "SELECT r.id, r.sweep_id, r.strategy_id, s.name as strategy_name,
                             r.symbol, r.params, r.total_return, r.win_rate,
-                            r.max_drawdown, r.sharpe, r.trade_count, r.created_at
+                            r.max_drawdown, r.sharpe, r.sortino, r.cagr,
+                            r.profit_factor, r.trade_count, r.created_at
                      FROM runs r
                      LEFT JOIN strategies s ON s.id = r.strategy_id
                      WHERE r.sweep_id IS NULL
@@ -247,8 +255,11 @@ impl RunStore for SqliteRunStore {
                         win_rate: row.get(7)?,
                         max_drawdown: row.get(8)?,
                         sharpe: row.get(9)?,
-                        trade_count: row.get(10)?,
-                        created_at: row.get(11)?,
+                        sortino: row.get(10)?,
+                        cagr: row.get(11)?,
+                        profit_factor: row.get(12)?,
+                        trade_count: row.get(13)?,
+                        created_at: row.get(14)?,
                     }))
                 })
                 .context("Failed to query standalone runs")?
@@ -379,8 +390,10 @@ impl RunStore for SqliteRunStore {
         let mut stmt = conn
             .prepare(
                 "SELECT trade_id, entry_datetime, exit_datetime, entry_cost, exit_proceeds,
-                        pnl, pnl_pct, days_held, exit_type, legs,
-                        computed_quantity, entry_equity, group_label
+                        entry_amount, entry_label, exit_amount, exit_label,
+                        pnl, days_held, exit_type, legs,
+                        computed_quantity, entry_equity,
+                        stock_entry_price, stock_exit_price, stock_pnl, [group]
                  FROM trades
                  WHERE run_id = ?1
                  ORDER BY trade_id ASC",
@@ -395,14 +408,23 @@ impl RunStore for SqliteRunStore {
                     exit_datetime: row.get(2)?,
                     entry_cost: row.get(3)?,
                     exit_proceeds: row.get(4)?,
-                    pnl: row.get(5)?,
-                    pnl_pct: row.get(6)?,
-                    days_held: row.get(7)?,
-                    exit_type: row.get(8)?,
-                    legs: row.get(9)?,
-                    computed_quantity: row.get(10)?,
-                    entry_equity: row.get(11)?,
-                    group_label: row.get(12)?,
+                    entry_amount: row.get(5)?,
+                    entry_label: row.get(6)?,
+                    exit_amount: row.get(7)?,
+                    exit_label: row.get(8)?,
+                    pnl: row.get(9)?,
+                    days_held: row.get(10)?,
+                    exit_type: row.get(11)?,
+                    legs: {
+                        let s: String = row.get(12)?;
+                        serde_json::from_str(&s).unwrap_or(Value::Array(vec![]))
+                    },
+                    computed_quantity: row.get(13)?,
+                    entry_equity: row.get(14)?,
+                    stock_entry_price: row.get(15)?,
+                    stock_exit_price: row.get(16)?,
+                    stock_pnl: row.get(17)?,
+                    group: row.get(18)?,
                 })
             })
             .context("Failed to query trades")?
@@ -458,7 +480,8 @@ impl RunStore for SqliteRunStore {
             .prepare(
                 "SELECT r.id, r.sweep_id, r.strategy_id, s.name as strategy_name,
                         r.symbol, r.params, r.total_return, r.win_rate,
-                        r.max_drawdown, r.sharpe, r.trade_count, r.created_at
+                        r.max_drawdown, r.sharpe, r.sortino, r.cagr,
+                        r.profit_factor, r.trade_count, r.created_at
                  FROM runs r
                  LEFT JOIN strategies s ON s.id = r.strategy_id
                  WHERE r.sweep_id = ?1
@@ -482,8 +505,11 @@ impl RunStore for SqliteRunStore {
                     win_rate: row.get(7)?,
                     max_drawdown: row.get(8)?,
                     sharpe: row.get(9)?,
-                    trade_count: row.get(10)?,
-                    created_at: row.get(11)?,
+                    sortino: row.get(10)?,
+                    cagr: row.get(11)?,
+                    profit_factor: row.get(12)?,
+                    trade_count: row.get(13)?,
+                    created_at: row.get(14)?,
                 })
             })
             .context("Failed to query sweep runs")?
@@ -551,33 +577,45 @@ mod tests {
         vec![
             TradeRow {
                 trade_id: 1,
-                entry_datetime: "2024-01-10T00:00:00Z".to_string(),
-                exit_datetime: "2024-01-20T00:00:00Z".to_string(),
+                entry_datetime: 1704844800, // 2024-01-10
+                exit_datetime: 1705708800,  // 2024-01-20
                 entry_cost: 500.0,
                 exit_proceeds: 700.0,
+                entry_amount: 500.0,
+                entry_label: "DR".to_string(),
+                exit_amount: 700.0,
+                exit_label: "CR".to_string(),
                 pnl: 200.0,
-                pnl_pct: 0.40,
                 days_held: 10,
                 exit_type: "TakeProfit".to_string(),
-                legs: "[]".to_string(),
+                legs: Value::Array(vec![]),
                 computed_quantity: Some(2),
                 entry_equity: Some(10000.0),
-                group_label: None,
+                stock_entry_price: None,
+                stock_exit_price: None,
+                stock_pnl: None,
+                group: None,
             },
             TradeRow {
                 trade_id: 2,
-                entry_datetime: "2024-02-01T00:00:00Z".to_string(),
-                exit_datetime: "2024-02-15T00:00:00Z".to_string(),
+                entry_datetime: 1706745600, // 2024-02-01
+                exit_datetime: 1707955200,  // 2024-02-15
                 entry_cost: 600.0,
                 exit_proceeds: 550.0,
+                entry_amount: 600.0,
+                entry_label: "DR".to_string(),
+                exit_amount: 550.0,
+                exit_label: "CR".to_string(),
                 pnl: -50.0,
-                pnl_pct: -0.083,
                 days_held: 14,
                 exit_type: "StopLoss".to_string(),
-                legs: "[]".to_string(),
+                legs: Value::Array(vec![]),
                 computed_quantity: None,
                 entry_equity: Some(10200.0),
-                group_label: Some("group-A".to_string()),
+                stock_entry_price: None,
+                stock_exit_price: None,
+                stock_pnl: None,
+                group: Some("group-A".to_string()),
             },
         ]
     }
