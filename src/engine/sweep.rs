@@ -7,7 +7,9 @@ use anyhow::Result;
 use serde_json::Value;
 
 use crate::engine::walk_forward::cartesian_product;
-use crate::scripting::engine::{run_script_backtest, DataLoader};
+use crate::scripting::engine::{
+    run_script_backtest_with_progress, DataLoader, PrecomputedOptionsData,
+};
 use crate::tools::response_types::sweep::{DimensionStat, SweepResponse, SweepResult};
 
 /// Input configuration for a grid sweep.
@@ -32,6 +34,10 @@ pub async fn run_grid_sweep(
     let mut full_results: Vec<crate::scripting::engine::ScriptBacktestResult> = Vec::new();
     let mut failed = 0usize;
 
+    // Pre-build options data on the first combo so subsequent combos skip the
+    // expensive build_price_table + DatePartitionedOptions::from_df work.
+    let mut precomputed: Option<PrecomputedOptionsData> = None;
+
     for (idx, combo) in combos.iter().enumerate() {
         if is_cancelled() {
             break;
@@ -40,8 +46,22 @@ pub async fn run_grid_sweep(
         let mut run_params = config.base_params.clone();
         run_params.extend(combo.clone());
 
-        match run_script_backtest(&config.script_source, &run_params, data_loader).await {
+        match run_script_backtest_with_progress(
+            &config.script_source,
+            &run_params,
+            data_loader,
+            None,
+            precomputed.as_ref(),
+        )
+        .await
+        {
             Ok(bt) => {
+                // After the first successful run, capture precomputed options data
+                // so subsequent combos can skip the expensive rebuild.
+                if precomputed.is_none() {
+                    precomputed.clone_from(&bt.precomputed_options);
+                }
+
                 let m = &bt.result.metrics;
                 results.push(SweepResult {
                     rank: 0,

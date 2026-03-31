@@ -61,6 +61,7 @@ pub async fn execute_with_progress(
         &effective_params,
         &loader,
         progress,
+        None,
     )
     .await?;
 

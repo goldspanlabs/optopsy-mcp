@@ -29,12 +29,26 @@ use super::types::*;
 /// Optional progress callback: receives (current_bar, total_bars).
 pub type ProgressCallback = Box<dyn Fn(usize, usize) + Send + Sync>;
 
+/// Pre-computed options data that can be shared across sweep iterations.
+///
+/// Building the `PriceTable` and `DatePartitionedOptions` from a large options
+/// DataFrame (e.g. SPY with millions of rows) is expensive. When running a
+/// parameter sweep, the symbol, date range, and expiration filter are identical
+/// across combos — only script params (delta, DTE, etc.) change. This struct
+/// allows building once and reusing across all combos.
+#[derive(Clone)]
+pub struct PrecomputedOptionsData {
+    pub options_by_date: Arc<DatePartitionedOptions>,
+    pub price_table: Arc<crate::engine::sim_types::PriceTable>,
+    pub date_index: Arc<crate::engine::sim_types::DateIndex>,
+}
+
 pub async fn run_script_backtest(
     script_source: &str,
     params: &HashMap<String, serde_json::Value>,
     data_loader: &dyn DataLoader,
 ) -> Result<ScriptBacktestResult> {
-    run_script_backtest_with_progress(script_source, params, data_loader, None).await
+    run_script_backtest_with_progress(script_source, params, data_loader, None, None).await
 }
 
 // ---------------------------------------------------------------------------
@@ -407,6 +421,7 @@ pub async fn run_script_backtest_with_progress(
     params: &HashMap<String, serde_json::Value>,
     data_loader: &dyn DataLoader,
     progress: Option<ProgressCallback>,
+    precomputed_options: Option<&PrecomputedOptionsData>,
 ) -> Result<ScriptBacktestResult> {
     let backtest_start = std::time::Instant::now();
 
@@ -557,21 +572,29 @@ pub async fn run_script_backtest_with_progress(
     };
 
     // Load options data if needed + build PriceTable for MTM
+    // When precomputed_options is provided (e.g. during a sweep), skip the
+    // expensive build_price_table + DatePartitionedOptions::from_df work.
     let options_by_date: Option<Arc<DatePartitionedOptions>>;
     let price_table: Option<Arc<crate::engine::sim_types::PriceTable>>;
     let date_index: Option<Arc<crate::engine::sim_types::DateIndex>>;
 
     if config.needs_options {
-        let df = data_loader
-            .load_options(&config.symbol, config.start_date, config.end_date)
-            .await?;
-        let (pt, _trading_days, di) = crate::engine::price_table::build_price_table(&df)?;
-        price_table = Some(Arc::new(pt));
-        date_index = Some(Arc::new(di));
-        options_by_date = Some(Arc::new(DatePartitionedOptions::from_df(
-            &df,
-            &config.expiration_filter,
-        )?));
+        if let Some(pre) = precomputed_options {
+            options_by_date = Some(Arc::clone(&pre.options_by_date));
+            price_table = Some(Arc::clone(&pre.price_table));
+            date_index = Some(Arc::clone(&pre.date_index));
+        } else {
+            let df = data_loader
+                .load_options(&config.symbol, config.start_date, config.end_date)
+                .await?;
+            let (pt, _trading_days, di) = crate::engine::price_table::build_price_table(&df)?;
+            price_table = Some(Arc::new(pt));
+            date_index = Some(Arc::new(di));
+            options_by_date = Some(Arc::new(DatePartitionedOptions::from_df(
+                &df,
+                &config.expiration_filter,
+            )?));
+        }
     } else {
         options_by_date = None;
         price_table = None;
@@ -1200,6 +1223,17 @@ pub async fn run_script_backtest_with_progress(
                     }
                 }
             }
+        },
+        precomputed_options: if let (Some(obd), Some(pt), Some(di)) =
+            (options_by_date, price_table, date_index)
+        {
+            Some(PrecomputedOptionsData {
+                options_by_date: obd,
+                price_table: pt,
+                date_index: di,
+            })
+        } else {
+            None
         },
     })
 }
@@ -2497,6 +2531,9 @@ pub struct ScriptBacktestResult {
     pub indicator_data: HashMap<String, Vec<f64>>,
     /// Script-emitted custom series via `ctx.plot()` / `ctx.plot_with()`.
     pub custom_series: CustomSeriesStore,
+    /// Precomputed options data from this run, available for reuse by subsequent
+    /// sweep iterations. `None` for stock-only strategies.
+    pub precomputed_options: Option<PrecomputedOptionsData>,
 }
 
 /// A single indicator series for JSON serialization in the response.

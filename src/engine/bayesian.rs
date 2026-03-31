@@ -9,7 +9,9 @@ use rand::Rng;
 use serde_json::Value;
 
 use crate::engine::sweep::{compute_sensitivity, extract_objective, sort_by_objective};
-use crate::scripting::engine::{run_script_backtest, DataLoader};
+use crate::scripting::engine::{
+    run_script_backtest_with_progress, DataLoader, PrecomputedOptionsData,
+};
 use crate::tools::response_types::sweep::{SweepResponse, SweepResult};
 
 /// Configuration for Bayesian optimization.
@@ -52,6 +54,10 @@ pub async fn run_bayesian(
     let mut best_so_far = f64::NEG_INFINITY;
     let mut eval_cache: HashMap<String, (SweepResult, f64)> = HashMap::new();
 
+    // Pre-build options data on the first evaluation so subsequent ones skip the
+    // expensive build_price_table + DatePartitionedOptions::from_df work.
+    let mut precomputed: Option<PrecomputedOptionsData> = None;
+
     // Run all iterations (phase 1 random + phase 2 GP-EI)
     for i in 0..config.max_evaluations {
         if is_cancelled() {
@@ -84,14 +90,18 @@ pub async fn run_bayesian(
             continue;
         }
 
-        if let Ok(result) = evaluate(
+        if let Ok((result, pre)) = evaluate(
             &config.script_source,
             &config.base_params,
             &swept,
             data_loader,
+            precomputed.as_ref(),
         )
         .await
         {
+            if precomputed.is_none() {
+                precomputed = pre;
+            }
             let obj = extract_objective(&result, &config.objective);
             eval_cache.insert(key, (result.clone(), obj));
             if obj.is_finite() {
@@ -422,26 +432,38 @@ async fn evaluate(
     base_params: &HashMap<String, Value>,
     swept_params: &HashMap<String, Value>,
     data_loader: &dyn DataLoader,
-) -> Result<SweepResult> {
+    precomputed: Option<&PrecomputedOptionsData>,
+) -> Result<(SweepResult, Option<PrecomputedOptionsData>)> {
     let mut run_params = base_params.clone();
     run_params.extend(swept_params.clone());
 
-    let bt = run_script_backtest(script_source, &run_params, data_loader).await?;
+    let bt = run_script_backtest_with_progress(
+        script_source,
+        &run_params,
+        data_loader,
+        None,
+        precomputed,
+    )
+    .await?;
     let m = &bt.result.metrics;
+    let pre = bt.precomputed_options.clone();
 
-    Ok(SweepResult {
-        rank: 0,
-        params: swept_params.clone(),
-        sharpe: m.sharpe,
-        sortino: m.sortino,
-        pnl: bt.result.total_pnl,
-        trades: bt.result.trade_count,
-        win_rate: m.win_rate,
-        max_drawdown: m.max_drawdown,
-        profit_factor: m.profit_factor,
-        cagr: m.cagr,
-        calmar: m.calmar,
-    })
+    Ok((
+        SweepResult {
+            rank: 0,
+            params: swept_params.clone(),
+            sharpe: m.sharpe,
+            sortino: m.sortino,
+            pnl: bt.result.total_pnl,
+            trades: bt.result.trade_count,
+            win_rate: m.win_rate,
+            max_drawdown: m.max_drawdown,
+            profit_factor: m.profit_factor,
+            cagr: m.cagr,
+            calmar: m.calmar,
+        },
+        pre,
+    ))
 }
 
 // ---------------------------------------------------------------------------
