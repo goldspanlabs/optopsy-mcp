@@ -4,7 +4,7 @@
 
 # optopsy-mcp
 
-A high-performance options and stock backtesting engine exposed as an [MCP](https://modelcontextprotocol.io/) server. Connect it to Claude Desktop, Claude Code, or any MCP-compatible client and backtest strategies, optimize parameters, and analyze price patterns through natural language.
+A high-performance options and stock backtesting engine exposed as a self-hosted [MCP](https://modelcontextprotocol.io/) server. Backtest strategies, optimize parameters, and analyze price patterns through natural language.
 
 > [!NOTE]
 > This project is under active development. Breaking changes to the API and configuration may occur between minor versions. Pin to a specific release tag for stability.
@@ -80,33 +80,13 @@ cd optopsy-mcp
 cargo build --release
 ```
 
-### Claude Desktop (stdio)
-
-Add to your Claude Desktop config (`claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "optopsy": {
-      "command": "/path/to/optopsy-mcp/target/release/optopsy-mcp"
-    }
-  }
-}
-```
-
-### Claude Code
-
-```bash
-claude mcp add optopsy /path/to/optopsy-mcp/target/release/optopsy-mcp
-```
-
-### HTTP Mode (StreamableHTTP)
-
-For remote or multi-client setups, run as an HTTP server exposing MCP over StreamableHTTP at `/mcp`:
+### Run the server
 
 ```bash
 PORT=8000 cargo run --release
 ```
+
+This starts the MCP server over StreamableHTTP at `/mcp`.
 
 ### Configuration
 
@@ -114,17 +94,8 @@ Place your Parquet data files in `~/.optopsy/cache/` before your first session â
 
 To change the cache directory, set `DATA_ROOT`:
 
-```json
-{
-  "mcpServers": {
-    "optopsy": {
-      "command": "/path/to/optopsy-mcp/target/release/optopsy-mcp",
-      "env": {
-        "DATA_ROOT": "/your/custom/cache/dir"
-      }
-    }
-  }
-}
+```bash
+DATA_ROOT=/your/custom/cache/dir PORT=8000 cargo run --release
 ```
 
 ## Key Capabilities
