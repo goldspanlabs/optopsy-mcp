@@ -19,7 +19,7 @@ on each bar
 
     // Should contain config function
     assert!(rhai.contains("fn config()"));
-    assert!(rhai.contains("symbol: AAPL"));
+    assert!(rhai.contains("symbol: \"AAPL\""));
     assert!(rhai.contains("interval: \"daily\""));
     assert!(rhai.contains("ohlcv: true"));
 

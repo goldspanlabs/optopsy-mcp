@@ -9,6 +9,8 @@
 // This is a code generator — push_str(&format!(...)) is the natural pattern.
 #![allow(clippy::format_push_string)]
 
+use std::collections::HashSet;
+
 use super::parser::*;
 
 // ---------------------------------------------------------------------------
@@ -18,6 +20,16 @@ use super::parser::*;
 /// Generate Rhai source code from a parsed DSL program.
 pub fn generate(program: &DslProgram) -> String {
     let mut out = String::with_capacity(2048);
+
+    // Collect top-level variable names (params + state) so that `set` inside
+    // callbacks can distinguish reassignment from new local variable declaration.
+    let mut scope_vars: HashSet<String> = HashSet::new();
+    for p in &program.params {
+        scope_vars.insert(p.name.clone());
+    }
+    for s in &program.states {
+        scope_vars.insert(s.name.clone());
+    }
 
     out.push_str("// Auto-generated from Trading DSL — do not edit by hand.\n\n");
 
@@ -45,13 +57,13 @@ pub fn generate(program: &DslProgram) -> String {
 
     // on_bar(ctx)
     if let Some(ref stmts) = program.on_bar {
-        generate_on_bar(&mut out, stmts);
+        generate_on_bar(&mut out, stmts, &scope_vars);
         out.push('\n');
     }
 
     // on_exit_check(ctx, pos)
     if let Some(ref stmts) = program.on_exit_check {
-        generate_on_exit_check(&mut out, stmts);
+        generate_on_exit_check(&mut out, stmts, &scope_vars);
         out.push('\n');
     }
 
@@ -63,6 +75,7 @@ pub fn generate(program: &DslProgram) -> String {
             "ctx, pos",
             stmts,
             CallbackKind::SideEffect,
+            &scope_vars,
         );
         out.push('\n');
     }
@@ -75,13 +88,21 @@ pub fn generate(program: &DslProgram) -> String {
             "ctx, pos, exit_type",
             stmts,
             CallbackKind::SideEffect,
+            &scope_vars,
         );
         out.push('\n');
     }
 
     // on_end(ctx)
     if let Some(ref stmts) = program.on_end {
-        generate_callback(&mut out, "on_end", "ctx", stmts, CallbackKind::SideEffect);
+        generate_callback(
+            &mut out,
+            "on_end",
+            "ctx",
+            stmts,
+            CallbackKind::SideEffect,
+            &scope_vars,
+        );
         out.push('\n');
     }
 
@@ -106,12 +127,16 @@ enum CallbackKind {
 // Config generation
 // ---------------------------------------------------------------------------
 
-/// Map universal param keywords to params.XXX references.
+/// Map config values: universal param keywords become `params.XXX`,
+/// numeric values pass through, and other identifiers are quoted as strings.
 fn config_value(val: &str) -> String {
     match val {
         "SYMBOL" => "params.SYMBOL".to_string(),
         "CAPITAL" => "params.CAPITAL".to_string(),
-        other => other.to_string(),
+        v if v.parse::<f64>().is_ok() => v.to_string(),
+        v if v.starts_with('"') => v.to_string(),
+        v if v.starts_with("params.") => v.to_string(),
+        other => format!("\"{other}\""),
     }
 }
 
@@ -194,10 +219,10 @@ fn generate_param(out: &mut String, p: &ParamDecl) {
 // on_bar generation
 // ---------------------------------------------------------------------------
 
-fn generate_on_bar(out: &mut String, stmts: &[Stmt]) {
+fn generate_on_bar(out: &mut String, stmts: &[Stmt], scope_vars: &HashSet<String>) {
     out.push_str("fn on_bar(ctx) {\n");
     out.push_str("    let __actions = [];\n");
-    generate_stmts(out, stmts, 1, CallbackKind::ActionArray);
+    generate_stmts(out, stmts, 1, CallbackKind::ActionArray, scope_vars);
     out.push_str("    __actions\n");
     out.push_str("}\n");
 }
@@ -206,9 +231,9 @@ fn generate_on_bar(out: &mut String, stmts: &[Stmt]) {
 // on_exit_check generation
 // ---------------------------------------------------------------------------
 
-fn generate_on_exit_check(out: &mut String, stmts: &[Stmt]) {
+fn generate_on_exit_check(out: &mut String, stmts: &[Stmt], scope_vars: &HashSet<String>) {
     out.push_str("fn on_exit_check(ctx, pos) {\n");
-    generate_stmts(out, stmts, 1, CallbackKind::SingleAction);
+    generate_stmts(out, stmts, 1, CallbackKind::SingleAction, scope_vars);
     // If no explicit return, default to hold
     out.push_str("    hold_position()\n");
     out.push_str("}\n");
@@ -224,12 +249,13 @@ fn generate_callback(
     params: &str,
     stmts: &[Stmt],
     kind: CallbackKind,
+    scope_vars: &HashSet<String>,
 ) {
     out.push_str(&format!("fn {name}({params}) {{\n"));
     if kind == CallbackKind::ActionArray {
         out.push_str("    let __actions = [];\n");
     }
-    generate_stmts(out, stmts, 1, kind);
+    generate_stmts(out, stmts, 1, kind, scope_vars);
     if kind == CallbackKind::ActionArray {
         out.push_str("    __actions\n");
     }
@@ -240,7 +266,13 @@ fn generate_callback(
 // Statement generation (recursive)
 // ---------------------------------------------------------------------------
 
-fn generate_stmts(out: &mut String, stmts: &[Stmt], depth: usize, kind: CallbackKind) {
+fn generate_stmts(
+    out: &mut String,
+    stmts: &[Stmt],
+    depth: usize,
+    kind: CallbackKind,
+    scope_vars: &HashSet<String>,
+) {
     let indent = "    ".repeat(depth);
 
     for stmt in stmts {
@@ -265,7 +297,13 @@ fn generate_stmts(out: &mut String, stmts: &[Stmt], depth: usize, kind: Callback
 
             Stmt::Set { name, expr, .. } => {
                 let rhs = rewrite_expr(expr);
-                out.push_str(&format!("{indent}{name} = {rhs};\n"));
+                if scope_vars.contains(name) {
+                    // Reassign existing top-level state/param variable
+                    out.push_str(&format!("{indent}{name} = {rhs};\n"));
+                } else {
+                    // Declare new local variable
+                    out.push_str(&format!("{indent}let {name} = {rhs};\n"));
+                }
             }
 
             Stmt::When {
@@ -276,7 +314,7 @@ fn generate_stmts(out: &mut String, stmts: &[Stmt], depth: usize, kind: Callback
             } => {
                 let cond = rewrite_expr(condition);
                 out.push_str(&format!("{indent}if {cond} {{\n"));
-                generate_stmts(out, then_body, depth + 1, kind);
+                generate_stmts(out, then_body, depth + 1, kind, scope_vars);
                 out.push_str(&format!("{indent}}}"));
 
                 if let Some(ref else_stmts) = else_body {
@@ -291,11 +329,11 @@ fn generate_stmts(out: &mut String, stmts: &[Stmt], depth: usize, kind: Callback
                         {
                             let ec_rw = rewrite_expr(ec);
                             out.push_str(&format!(" else if {ec_rw} {{\n"));
-                            generate_stmts(out, et, depth + 1, kind);
+                            generate_stmts(out, et, depth + 1, kind, scope_vars);
                             out.push_str(&format!("{indent}}}"));
                             if let Some(ref final_else) = ee {
                                 out.push_str(" else {\n");
-                                generate_stmts(out, final_else, depth + 1, kind);
+                                generate_stmts(out, final_else, depth + 1, kind, scope_vars);
                                 out.push_str(&format!("{indent}}}"));
                             }
                             out.push('\n');
@@ -303,7 +341,7 @@ fn generate_stmts(out: &mut String, stmts: &[Stmt], depth: usize, kind: Callback
                         }
                     }
                     out.push_str(" else {\n");
-                    generate_stmts(out, else_stmts, depth + 1, kind);
+                    generate_stmts(out, else_stmts, depth + 1, kind, scope_vars);
                     out.push_str(&format!("{indent}}}"));
                 }
                 out.push('\n');
