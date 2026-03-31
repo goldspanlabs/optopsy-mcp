@@ -164,16 +164,17 @@ fn persist_sweep(
 
     for (i, result) in sweep_response.ranked_results.iter().enumerate() {
         let run_id = uuid::Uuid::new_v4().to_string();
-        let params_value =
-            serde_json::to_value(&result.params).unwrap_or(Value::Object(Default::default()));
+        let params_value = serde_json::to_value(&result.params)
+            .unwrap_or(Value::Object(serde_json::Map::default()));
 
         // Use full backtest result if available (grid sweep), otherwise empty.
         // Inject script_meta + indicator_data so the FE detail page has full context.
         let full = sweep_response.full_results.get(i);
-        let result_json = full
-            .map(|r| {
-                let mut value =
-                    serde_json::to_value(&r.result).unwrap_or(Value::Object(Default::default()));
+        let result_json = full.map_or_else(
+            || "{}".to_owned(),
+            |r| {
+                let mut value = serde_json::to_value(&r.result)
+                    .unwrap_or(Value::Object(serde_json::Map::default()));
                 if let Some(obj) = value.as_object_mut() {
                     obj.remove("trade_log");
                     if let Ok(meta_val) = serde_json::to_value(script_meta) {
@@ -188,8 +189,8 @@ fn persist_sweep(
                     }
                 }
                 serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned())
-            })
-            .unwrap_or_else(|| "{}".to_owned());
+            },
+        );
         let m = full.map(|r| &r.result.metrics);
 
         state

@@ -26,7 +26,7 @@ pub fn sanitize(v: f64) -> f64 {
     }
 }
 
-/// Replace NaN/Infinity with `None` for safe storage in SQLite.
+/// Replace NaN/Infinity with `None` for safe storage in `SQLite`.
 pub fn sanitize_opt(v: f64) -> Option<f64> {
     if v.is_finite() {
         Some(v)

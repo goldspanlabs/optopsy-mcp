@@ -19,7 +19,7 @@ use crate::server::sanitize::sanitize_opt;
 
 /// Flatten `Option<f64>` through `sanitize_opt`, converting NaN/Infinity to `None`.
 fn sanitize_option(v: Option<f64>) -> Option<f64> {
-    v.and_then(|x| sanitize_opt(x))
+    v.and_then(sanitize_opt)
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -191,6 +191,7 @@ impl RunStore for SqliteRunStore {
         Ok(created_at)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn list(&self) -> Result<RunsListResponse> {
         let conn = self.conn.lock().expect("mutex poisoned");
 
@@ -240,7 +241,7 @@ impl RunStore for SqliteRunStore {
                 .query_map([], |row| {
                     let params_str: String = row.get(5)?;
                     let params: Value = serde_json::from_str(&params_str)
-                        .unwrap_or(Value::Object(Default::default()));
+                        .unwrap_or(Value::Object(serde_json::Map::default()));
                     Ok(RunRow::Single(RunSummary {
                         id: row.get(0)?,
                         sweep_id: row.get(1)?,
@@ -350,7 +351,7 @@ impl RunStore for SqliteRunStore {
                 |row| {
                     let params_str: String = row.get(6)?;
                     let params: Value = serde_json::from_str(&params_str)
-                        .unwrap_or(Value::Object(Default::default()));
+                        .unwrap_or(Value::Object(serde_json::Map::default()));
                     let result_json_str: Option<String> = row.get(17)?;
                     let result_json: Option<Value> =
                         result_json_str.and_then(|s| serde_json::from_str(&s).ok());
@@ -455,7 +456,7 @@ impl RunStore for SqliteRunStore {
                 |row| {
                     let config_str: String = row.get(4)?;
                     let sweep_config: Value = serde_json::from_str(&config_str)
-                        .unwrap_or(Value::Object(Default::default()));
+                        .unwrap_or(Value::Object(serde_json::Map::default()));
 
                     Ok(SweepDetail {
                         id: row.get(0)?,
@@ -497,8 +498,8 @@ impl RunStore for SqliteRunStore {
         detail.runs = stmt
             .query_map(rusqlite::params![id], |row| {
                 let params_str: String = row.get(5)?;
-                let params: Value =
-                    serde_json::from_str(&params_str).unwrap_or(Value::Object(Default::default()));
+                let params: Value = serde_json::from_str(&params_str)
+                    .unwrap_or(Value::Object(serde_json::Map::default()));
                 Ok(RunSummary {
                     id: row.get(0)?,
                     sweep_id: row.get(1)?,
@@ -582,8 +583,8 @@ mod tests {
         vec![
             TradeRow {
                 trade_id: 1,
-                entry_datetime: 1704844800, // 2024-01-10
-                exit_datetime: 1705708800,  // 2024-01-20
+                entry_datetime: 1_704_844_800, // 2024-01-10
+                exit_datetime: 1_705_708_800,  // 2024-01-20
                 entry_cost: 500.0,
                 exit_proceeds: 700.0,
                 entry_amount: 500.0,
@@ -603,8 +604,8 @@ mod tests {
             },
             TradeRow {
                 trade_id: 2,
-                entry_datetime: 1706745600, // 2024-02-01
-                exit_datetime: 1707955200,  // 2024-02-15
+                entry_datetime: 1_706_745_600, // 2024-02-01
+                exit_datetime: 1_707_955_200,  // 2024-02-15
                 entry_cost: 600.0,
                 exit_proceeds: 550.0,
                 entry_amount: 600.0,

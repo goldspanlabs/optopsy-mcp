@@ -13,8 +13,8 @@ fn sample_trades() -> Vec<TradeRow> {
     vec![
         TradeRow {
             trade_id: 1,
-            entry_datetime: 1704186600, // 2024-01-02 09:30
-            exit_datetime: 1705075200,  // 2024-01-12 16:00
+            entry_datetime: 1_704_186_600, // 2024-01-02 09:30
+            exit_datetime: 1_705_075_200,  // 2024-01-12 16:00
             entry_cost: 1_000.0,
             exit_proceeds: 1_300.0,
             entry_amount: 1_000.0,
@@ -34,8 +34,8 @@ fn sample_trades() -> Vec<TradeRow> {
         },
         TradeRow {
             trade_id: 2,
-            entry_datetime: 1707122600, // 2024-02-05 09:30
-            exit_datetime: 1708444800,  // 2024-02-20 16:00
+            entry_datetime: 1_707_122_600, // 2024-02-05 09:30
+            exit_datetime: 1_708_444_800,  // 2024-02-20 16:00
             entry_cost: 800.0,
             exit_proceeds: 650.0,
             entry_amount: 800.0,
@@ -55,8 +55,8 @@ fn sample_trades() -> Vec<TradeRow> {
         },
         TradeRow {
             trade_id: 3,
-            entry_datetime: 1709287800, // 2024-03-01 09:30
-            exit_datetime: 1711900800,  // 2024-03-31 16:00
+            entry_datetime: 1_709_287_800, // 2024-03-01 09:30
+            exit_datetime: 1_711_900_800,  // 2024-03-31 16:00
             entry_cost: 950.0,
             exit_proceeds: 1_100.0,
             entry_amount: 950.0,

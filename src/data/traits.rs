@@ -52,7 +52,7 @@ pub struct TradeRow {
     pub group: Option<String>,
 }
 
-/// Summary view of a run (no trades, no result_json).
+/// Summary view of a run (no trades, no `result_json`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunSummary {
     pub id: String,
