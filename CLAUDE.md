@@ -83,7 +83,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Development Commands
 
 ```bash
-cargo build                          # build
+cargo build --release                # build (always use release)
 cargo test                           # run all tests
 cargo test <test_name>               # run a single test by name
 cargo test --test strategy_coverage  # run a specific integration test file
@@ -134,20 +134,27 @@ Strategy scripts live in `scripts/strategies/`. See `scripts/SCRIPTING_REFERENCE
 Internal backtest engines used by the scripting layer and optimization tools:
 
 - **`ohlcv.rs`** — OHLCV data loading, parsing, resampling (`load_ohlcv_df`, `bars_from_df`, `resample_ohlcv`, `detect_date_col`)
-- **`core.rs`** — Options backtest orchestration (strategy resolution, signal filters, price table construction)
-- **`event_sim.rs`** — Options event-driven simulation loop
-- **`stock_sim.rs`** — Stock/equity event-driven simulation loop
-- **`wheel_sim.rs`** — Wheel strategy simulation (put → assignment → covered call cycles)
 - **`filters.rs`** — DTE/delta filtering pipeline
 - **`pricing.rs`** — 5 slippage models (Mid/Spread/Liquidity/PerLeg/BidAskTravel)
+- **`price_table.rs`** — PriceTable hash map for O(1) options quote lookups during simulation
+- **`positions.rs`** — Position management, MTM updates, last-known price carry-forward
 - **`metrics.rs`** — Performance calculations (Sharpe, Sortino, CAGR, VaR, etc.)
-- **`sizing.rs`** — Dynamic position sizing (5 methods with max-loss computation)
+- **`sweep.rs`** — Grid parameter sweep (Cartesian product of param ranges)
+- **`bayesian.rs`** — Bayesian optimization using Gaussian Process with Expected Improvement
+- **`walk_forward.rs`** — Walk-forward analysis with train/test window splits
+- **`sim_types.rs`** — Shared simulation types (PriceTable, DateIndex, QuoteSnapshot)
 
 ### Strategies (`src/strategies/`)
 31 strategies across singles, spreads, butterflies, condors, iron, and calendar categories. Built using helpers (`call_leg`, `put_leg`, `strategy`) in `helpers.rs`. `all_strategies()` returns the full list; `find_strategy(name)` does linear scan. Multi-expiration strategies (calendar/diagonal) use `ExpirationCycle::Primary`/`Secondary` tags on legs.
 
 ### Data Layer (`src/data/`)
 `DataStore` trait with `CachedStore` as default — local Parquet cache only at `data/{category}/{SYMBOL}.parquet`, errors if data not found. `ParquetStore` handles date column normalization: options files store `date` (Date) which is cast to `datetime` (Datetime) at 15:59:00 on load; OHLCV files already have a `datetime` (Datetime) column. Path segments validated against traversal attacks.
+
+`Database` manages SQLite via `rusqlite`. Schema is fully managed by **refinery** migrations in `migrations/`. On startup, `init_schema()` sets PRAGMAs (WAL, foreign_keys) then runs `migrations::runner().run()`. Strategies are auto-seeded from `scripts/strategies/` on first run via `seed_strategies_if_empty()`.
+
+### Migrations (`migrations/`)
+SQL migration files managed by refinery. Naming: `V{n}__{description}.sql`. Currently:
+- `V1__initial_schema.sql` — All tables, indices, and columns
 
 ### Signals (`src/signals/`)
 TA indicator system using `rust_ti` and `blackscholes`. Modules for momentum, trend, volatility, overlap, price, volume, plus combinators. Split across three focused modules: `spec.rs` (the `SignalSpec` enum with 40+ variants), `builders.rs` (`build_signal()` factory and per-category builders), and `registry.rs` (signal catalog metadata, `collect_cross_symbols`, re-exports). Signals are **fully wired** into both options and stock backtests via `entry_signal` and `exit_signal` params. For options (`BacktestParams`), signals are optional entry/exit filters. For stocks (`StockBacktestParams`), `entry_signal` is required — it drives when trades open. OHLCV data is loaded from the local Parquet cache when signals are used.
@@ -289,7 +296,7 @@ Validation happens in tool handlers via `params.validate().map_err(...)?`. Inval
 
 ### Adding a New Tool
 1. Create `src/tools/my_tool.rs` with `pub async fn execute(...) -> Result<MyResponse>`
-2. Define parameter struct in `src/engine/types.rs` or `src/tools/response_types.rs`, derive `Serialize + Deserialize + JsonSchema + Validate`
+2. Define parameter struct in `src/engine/types.rs` or `src/tools/response_types/`, derive `Serialize + Deserialize + JsonSchema + Validate`
 3. Add `#[tool(...)]` method in `src/server/mod.rs` that calls `tools::my_tool::execute()`
 4. Return AI-formatted response via `ai_format::format_my_response(...)`
 
