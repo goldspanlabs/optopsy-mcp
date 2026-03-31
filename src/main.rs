@@ -234,7 +234,14 @@ async fn main() -> Result<()> {
             .with_state(app_state.clone());
 
         let run_routes = axum::Router::new()
-            .route("/runs", axum::routing::get(runs::list_runs))
+            .route(
+                "/runs",
+                axum::routing::get(runs::list_runs).post(backtests::create_backtest),
+            )
+            .route(
+                "/runs/stream",
+                axum::routing::post(backtests::create_backtest_stream),
+            )
             .route(
                 "/runs/{id}",
                 axum::routing::get(runs::get_run).delete(runs::delete_run),
