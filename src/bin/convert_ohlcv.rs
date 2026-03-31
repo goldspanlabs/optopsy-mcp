@@ -15,10 +15,9 @@
 //! `datetime, open, high, low, close, volume, adjclose`
 //!
 //! Usage:
-//!   cargo run --release --bin convert-ohlcv -- --input ~/Downloads --output data
-//!   cargo run --release --bin convert-ohlcv -- --input ~/Downloads --output data --categories etf,futures
+//!   cargo run --release --bin convert-ohlcv -- --input stock_A.zip --output data/stocks
+//!   cargo run --release --bin convert-ohlcv -- --input ~/Downloads/futures/ --output data/futures
 
-use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -198,87 +197,33 @@ fn convert_txt(txt_path: &Path, output_dir: &Path) -> Result<String> {
     Ok(symbol)
 }
 
-struct CategoryConfig {
-    name: &'static str,
-    input_subdir: &'static str,  // relative to input_dir
-    output_subdir: &'static str, // relative to output_dir
-    mode: InputMode,
-}
-
-enum InputMode {
-    /// Directory of zip files, each containing per-symbol TXT files
-    Zips,
-    /// Directory of per-symbol TXT files
-    FlatTxt,
-}
-
-fn categories() -> Vec<CategoryConfig> {
-    vec![
-        CategoryConfig {
-            name: "etf",
-            input_subdir: "etf",
-            output_subdir: "etf",
-            mode: InputMode::Zips,
-        },
-        CategoryConfig {
-            name: "stocks",
-            input_subdir: "stocks",
-            output_subdir: "stocks",
-            mode: InputMode::Zips,
-        },
-        CategoryConfig {
-            name: "futures",
-            input_subdir: "futures/futures_full_1min_contin_adj_ratio",
-            output_subdir: "futures",
-            mode: InputMode::FlatTxt,
-        },
-        CategoryConfig {
-            name: "indices",
-            input_subdir: "index/index_full_1min",
-            output_subdir: "indices",
-            mode: InputMode::FlatTxt,
-        },
-    ]
-}
-
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
-    let home = std::env::var("HOME").unwrap_or_default();
-    let mut input_dir = PathBuf::from(&home).join("Downloads");
+    let mut input: Option<PathBuf> = None;
     let mut output_dir = PathBuf::from("data");
-    let mut category_filter: Option<HashSet<String>> = None;
 
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "--input" => {
                 i += 1;
-                input_dir = PathBuf::from(args.get(i).expect("--input requires a path"));
+                input = Some(PathBuf::from(args.get(i).expect("--input requires a path")));
             }
             "--output" => {
                 i += 1;
                 output_dir = PathBuf::from(args.get(i).expect("--output requires a path"));
             }
-            "--categories" => {
-                i += 1;
-                let cats: HashSet<String> = args
-                    .get(i)
-                    .expect("--categories requires a list")
-                    .split(',')
-                    .map(|s| s.trim().to_lowercase())
-                    .collect();
-                category_filter = Some(cats);
-            }
             "--help" | "-h" => {
-                println!("Usage: convert-ohlcv [OPTIONS]");
+                println!("Usage: convert-ohlcv --input <PATH> --output <DIR>");
                 println!();
                 println!("Options:");
-                println!("  --input <DIR>              Input directory (default: ~/Downloads)");
-                println!("  --output <DIR>             Output directory (default: data)");
-                println!("  --categories etf,futures   Only convert specific categories");
+                println!("  --input <PATH>   A zip file, or directory of zips/txt files");
+                println!("  --output <DIR>   Output directory for parquet files (default: data)");
                 println!();
-                println!("Categories: etf, stocks, futures, indices");
+                println!("Examples:");
+                println!("  convert-ohlcv --input ~/Downloads/stock_A.zip --output data/stocks");
+                println!("  convert-ohlcv --input ~/Downloads/futures/ --output data/futures");
                 return Ok(());
             }
             _ => {}
@@ -286,103 +231,85 @@ fn main() -> Result<()> {
         i += 1;
     }
 
+    let input = input.context("--input is required (zip file or directory)")?;
+    anyhow::ensure!(input.exists(), "Input not found: {}", input.display());
+
+    fs::create_dir_all(&output_dir)
+        .with_context(|| format!("Cannot create output dir: {}", output_dir.display()))?;
+
     let total_start = Instant::now();
-    let mut grand_total = 0usize;
+    let grand_total;
 
-    for cat in categories() {
-        if let Some(ref filter) = category_filter {
-            if !filter.contains(cat.name) {
-                continue;
-            }
-        }
+    if input.is_file() && input.extension().is_some_and(|ext| ext == "zip") {
+        // Single zip file
+        println!("Converting {} → {}", input.display(), output_dir.display());
+        grand_total = convert_zip(&input, &output_dir)?;
+    } else if input.is_dir() {
+        // Directory: process all zips and txt files
+        let mut zips: Vec<PathBuf> = fs::read_dir(&input)?
+            .filter_map(std::result::Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|ext| ext == "zip"))
+            .collect();
+        zips.sort();
 
-        let cat_input = input_dir.join(cat.input_subdir);
-        let cat_output = output_dir.join(cat.output_subdir);
+        let mut txts: Vec<PathBuf> = fs::read_dir(&input)?
+            .filter_map(std::result::Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|ext| ext == "txt"))
+            .collect();
+        txts.sort();
 
-        if !cat_input.exists() {
-            println!(
-                "[{}] Input not found: {}, skipping",
-                cat.name,
-                cat_input.display()
+        anyhow::ensure!(
+            !zips.is_empty() || !txts.is_empty(),
+            "No zip or txt files found in {}",
+            input.display()
+        );
+
+        println!(
+            "Input: {} ({} zips, {} txt files)",
+            input.display(),
+            zips.len(),
+            txts.len()
+        );
+        println!("Output: {}", output_dir.display());
+
+        let mut total = 0usize;
+
+        if !zips.is_empty() {
+            let pb = ProgressBar::new(zips.len() as u64);
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template("[{elapsed_precise}] {bar:40} {pos}/{len} {msg}")
+                    .unwrap(),
             );
-            continue;
+            for zip_path in &zips {
+                let label = zip_path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+                pb.set_message(label.to_string());
+                total += convert_zip(zip_path, &output_dir)?;
+                pb.inc(1);
+            }
+            pb.finish_with_message("done");
         }
 
-        fs::create_dir_all(&cat_output)?;
-
-        match cat.mode {
-            InputMode::Zips => {
-                let mut zips: Vec<PathBuf> = fs::read_dir(&cat_input)?
-                    .filter_map(std::result::Result::ok)
-                    .map(|e| e.path())
-                    .filter(|p| p.extension().is_some_and(|ext| ext == "zip"))
-                    .collect();
-                zips.sort();
-
-                if zips.is_empty() {
-                    println!("[{}] No zip files found, skipping", cat.name);
-                    continue;
-                }
-
-                println!(
-                    "\n[{}] {} zip files → {}",
-                    cat.name,
-                    zips.len(),
-                    cat_output.display()
-                );
-                let pb = ProgressBar::new(zips.len() as u64);
-                pb.set_style(
-                    ProgressStyle::default_bar()
-                        .template("[{elapsed_precise}] {bar:40} {pos}/{len} {msg}")
-                        .unwrap(),
-                );
-
-                let mut total = 0;
-                for zip_path in &zips {
-                    let label = zip_path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-                    pb.set_message(label.to_string());
-                    total += convert_zip(zip_path, &cat_output)?;
-                    pb.inc(1);
-                }
-                pb.finish_with_message("done");
-                println!("[{}] {} symbols", cat.name, total);
-                grand_total += total;
+        if !txts.is_empty() {
+            let pb = ProgressBar::new(txts.len() as u64);
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template("[{elapsed_precise}] {bar:40} {pos}/{len}")
+                    .unwrap(),
+            );
+            for txt_path in &txts {
+                convert_txt(txt_path, &output_dir)?;
+                pb.inc(1);
+                total += 1;
             }
-            InputMode::FlatTxt => {
-                let mut txts: Vec<PathBuf> = fs::read_dir(&cat_input)?
-                    .filter_map(std::result::Result::ok)
-                    .map(|e| e.path())
-                    .filter(|p| p.extension().is_some_and(|ext| ext == "txt"))
-                    .collect();
-                txts.sort();
-
-                if txts.is_empty() {
-                    println!("[{}] No TXT files found, skipping", cat.name);
-                    continue;
-                }
-
-                println!(
-                    "\n[{}] {} files → {}",
-                    cat.name,
-                    txts.len(),
-                    cat_output.display()
-                );
-                let pb = ProgressBar::new(txts.len() as u64);
-                pb.set_style(
-                    ProgressStyle::default_bar()
-                        .template("[{elapsed_precise}] {bar:40} {pos}/{len}")
-                        .unwrap(),
-                );
-
-                for txt_path in &txts {
-                    convert_txt(txt_path, &cat_output)?;
-                    pb.inc(1);
-                }
-                pb.finish_with_message("done");
-                println!("[{}] {} symbols", cat.name, txts.len());
-                grand_total += txts.len();
-            }
+            pb.finish_with_message("done");
         }
+
+        grand_total = total;
+    } else {
+        anyhow::bail!("Input must be a zip file or directory: {}", input.display());
     }
 
     let elapsed = total_start.elapsed();
