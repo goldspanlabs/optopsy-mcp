@@ -419,3 +419,46 @@ fn dsl_detection_on_real_files() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Test: All .rhai strategy scripts compile with DSL custom syntax
+// ---------------------------------------------------------------------------
+
+#[test]
+fn all_rhai_strategies_compile_with_dsl_syntax() {
+    let params = default_params();
+    let engine = build_test_engine(&params);
+
+    let mut rhai_files: Vec<std::path::PathBuf> = std::fs::read_dir("scripts/strategies")
+        .expect("scripts/strategies directory should exist")
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "rhai") {
+                Some(path)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    rhai_files.sort();
+
+    assert_eq!(
+        rhai_files.len(),
+        5,
+        "Expected 5 .rhai files in scripts/strategies/, found: {rhai_files:?}"
+    );
+
+    for path in &rhai_files {
+        let source = std::fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {e}", path.display()));
+
+        engine.compile(&source).unwrap_or_else(|e| {
+            panic!(
+                "{} should compile successfully with build_engine().\nError: {e}",
+                path.display()
+            )
+        });
+    }
+}
