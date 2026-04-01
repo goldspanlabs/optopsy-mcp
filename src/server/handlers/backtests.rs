@@ -13,18 +13,24 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use crate::data::traits::{RunDetail, TradeRow};
+use crate::data::traits::TradeRow;
 use crate::server::sanitize::{sanitize, trade_row_from_record};
 use crate::server::state::AppState;
 use crate::tools::run_script::RunScriptParams;
 
-/// Request body for `POST /backtests`.
+/// Request body for `POST /runs`.
 #[derive(Debug, Deserialize)]
 pub struct CreateBacktestRequest {
     pub strategy: String,
     pub params: HashMap<String, Value>,
     #[serde(default)]
     pub profile: Option<String>,
+}
+
+/// Optional request body for `POST /runs/cancel`.
+#[derive(Debug, Deserialize)]
+pub struct CancelRunRequest {
+    pub id: Option<String>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -132,68 +138,9 @@ pub(crate) fn persist_backtest(
 // Handlers
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// `POST /backtests` — Run a strategy and persist the result.
-#[allow(clippy::too_many_lines)]
-pub async fn create_backtest(
-    State(state): State<AppState>,
-    Json(req): Json<CreateBacktestRequest>,
-) -> Result<(StatusCode, Json<RunDetail>), (StatusCode, String)> {
-    let run_params = RunScriptParams {
-        strategy: Some(req.strategy.clone()),
-        script: None,
-        params: req.params.clone(),
-        profile: req.profile.clone(),
-    };
-
-    let exec_result = crate::server::handlers::run_script::execute(&state.server, run_params)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let strategy_key = exec_result
-        .resolved_strategy_id
-        .unwrap_or_else(|| req.strategy.clone());
-    let response = exec_result.response;
-
-    let symbol = req
-        .params
-        .get("SYMBOL")
-        .and_then(Value::as_str)
-        .unwrap_or("UNKNOWN")
-        .to_owned();
-
-    let capital = req
-        .params
-        .get("CAPITAL")
-        .and_then(Value::as_f64)
-        .unwrap_or(0.0);
-
-    let (id, _created_at) = persist_backtest(
-        &*state.run_store,
-        &strategy_key,
-        &symbol,
-        capital,
-        &req.params,
-        &response,
-        "manual",
-        None,
-    )?;
-
-    let detail = state
-        .run_store
-        .get_run(&id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Run inserted but not found".to_string(),
-            )
-        })?;
-
-    Ok((StatusCode::CREATED, Json(detail)))
-}
-
-/// `POST /backtests/stream` — Run a strategy with SSE progress updates.
+/// `POST /runs` — Run a strategy with SSE progress updates.
 #[allow(clippy::unused_async, clippy::too_many_lines)]
-pub async fn create_backtest_stream(
+pub async fn create_backtest(
     State(state): State<AppState>,
     Json(req): Json<CreateBacktestRequest>,
 ) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
@@ -233,6 +180,25 @@ pub async fn create_backtest_stream(
             }
         });
 
+        // Cancellation
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let cancellations = Arc::clone(&state.cancellations);
+        let cancel_run_id = run_id.clone();
+        let is_cancelled: crate::scripting::engine::CancelCallback = Box::new(move || {
+            cancellations
+                .lock()
+                .is_ok_and(|set| set.contains(&cancel_run_id) || set.contains("__cancel_all__"))
+        });
+
+        // Send run_id as first SSE event so the FE can target cancellation
+        let _ = tx
+            .send(
+                Event::default()
+                    .event("run_id")
+                    .data(format!(r#"{{"id":"{run_id}"}}"#)),
+            )
+            .await;
+
         // Run the actual backtest
         let run_params = RunScriptParams {
             strategy: Some(req.strategy.clone()),
@@ -242,11 +208,17 @@ pub async fn create_backtest_stream(
         };
 
         let result =
-            super::run_script::execute_with_progress(&state.server, run_params, Some(progress_cb), None)
+            super::run_script::execute_with_progress(&state.server, run_params, Some(progress_cb), Some(&is_cancelled))
                 .await;
 
         // Stop the progress ticker
         ticker.abort();
+
+        // Clean up cancellation flag
+        if let Ok(mut set) = state.cancellations.lock() {
+            set.remove(&run_id);
+            set.remove("__cancel_all__");
+        }
 
         match result {
             Ok(exec_result) => {
@@ -306,4 +278,23 @@ pub async fn create_backtest_stream(
     });
 
     Sse::new(tokio_stream::wrappers::ReceiverStream::new(rx).map(Ok))
+}
+
+/// `POST /runs/cancel` — Cancel a specific run or all in-flight runs.
+#[allow(clippy::unused_async)]
+pub async fn cancel_run(
+    State(state): State<AppState>,
+    body: Option<Json<CancelRunRequest>>,
+) -> StatusCode {
+    if let Ok(mut set) = state.cancellations.lock() {
+        match body.and_then(|b| b.id.clone()) {
+            Some(id) => {
+                set.insert(id);
+            }
+            None => {
+                set.insert("__cancel_all__".to_string());
+            }
+        }
+    }
+    StatusCode::NO_CONTENT
 }

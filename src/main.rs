@@ -206,8 +206,8 @@ async fn main() -> Result<()> {
                 axum::routing::get(runs::list_runs).post(backtests::create_backtest),
             )
             .route(
-                "/runs/stream",
-                axum::routing::post(backtests::create_backtest_stream),
+                "/runs/cancel",
+                axum::routing::post(backtests::cancel_run),
             )
             .route(
                 "/runs/{id}",
@@ -217,18 +217,9 @@ async fn main() -> Result<()> {
                 "/runs/{id}/analysis",
                 axum::routing::patch(runs::set_run_analysis),
             )
-            // Sweep routes under /runs/sweep
             .route(
                 "/runs/sweep",
                 axum::routing::post(sweeps::create_sweep),
-            )
-            .route(
-                "/runs/sweep/stream",
-                axum::routing::post(sweeps::create_sweep_stream),
-            )
-            .route(
-                "/runs/sweep/cancel",
-                axum::routing::post(sweeps::cancel_sweeps),
             )
             .route(
                 "/runs/sweep/{sweepId}",
