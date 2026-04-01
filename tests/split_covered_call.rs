@@ -261,3 +261,237 @@ async fn covered_call_spanning_split() {
         result.result.equity_curve.last().map(|e| e.equity).unwrap_or(0.0)
     );
 }
+
+/// Scenario: Full wheel cycle across a 2:1 split.
+/// Short put → assigned → hold stock → sell covered call → called away.
+///
+/// Timeline:
+///   Jan 2:  Sell short put strike $95, exp Jan 19. Stock $200 (unadj), split-adj $100.
+///   Jan 15: 2:1 split. Stock $100 (unadj). Split-adj $100.
+///   Jan 19: Put exp. Stock $90 (unadj), split-adj $90. Strike $95 > close $90 → ITM.
+///           Assignment: implicit stock 100 shares at $95.
+///   Jan 22: Sell covered call strike $100, exp Feb 16. Stock $92 (unadj), split-adj $92.
+///   Feb 16: Stock $105 (unadj). Strike $100 <= close $105 → called away.
+///           Stock closed at $100. PnL = ($100 - $95) × 100 = $500.
+#[tokio::test(flavor = "multi_thread")]
+async fn wheel_cycle_spanning_split() {
+    let put_entry = d(2024, 1, 2);
+    let split_date = d(2024, 1, 15);
+    let put_exp = d(2024, 1, 19);
+    let call_entry = d(2024, 1, 22);
+    let call_exp = d(2024, 2, 16);
+
+    // OHLCV: unadjusted prices
+    let mut closes = BTreeMap::new();
+    closes.insert(put_entry, 200.0); // pre-split
+    closes.insert(split_date, 100.0); // post-split
+    closes.insert(put_exp, 90.0); // below put strike → ITM
+    closes.insert(call_entry, 92.0); // post-split
+    closes.insert(call_exp, 105.0); // above call strike → ITM
+
+    let bars = make_bars_from_closes(&closes);
+
+    // Options data: all strikes split-adjusted
+    let options_df = make_options_df(&[
+        // Put entry: strike 95, delta -0.30
+        (dt(2024, 1, 2), put_exp, "p", 95.0, 3.00, 3.50, -0.30),
+        // Put on split day (for MTM)
+        (dt(2024, 1, 15), put_exp, "p", 95.0, 4.00, 4.50, -0.40),
+        // Put at expiration: ITM (close 90 < strike 95)
+        (dt(2024, 1, 19), put_exp, "p", 95.0, 5.00, 5.50, -0.80),
+        // Call entry: strike 100, delta -0.30
+        (dt(2024, 1, 22), call_exp, "c", 100.0, 3.00, 3.50, -0.30),
+        // Call at expiration: ITM (close 105 > strike 100)
+        (dt(2024, 2, 16), call_exp, "c", 100.0, 5.00, 5.50, -0.60),
+    ]);
+
+    let splits = vec![SplitRow {
+        symbol: "TEST".to_string(),
+        date: split_date,
+        ratio: 2.0,
+    }];
+
+    let loader = SplitTestDataLoader {
+        ohlcv_df: bars_to_df(&bars),
+        options_df,
+        splits,
+    };
+
+    // Wheel script: sell put → on assignment sell call → hold
+    let script = r#"
+        let state = "selling_puts";
+
+        fn config() {
+            #{
+                symbol: "TEST",
+                capital: 50000.0,
+                start_date: "2024-01-02",
+                end_date: "2024-02-16",
+                interval: "daily",
+                data: #{ ohlcv: true, options: true },
+                engine: #{ slippage: "mid" },
+            }
+        }
+
+        fn on_bar(ctx) {
+            if ctx.has_positions() { return []; }
+
+            if state == "selling_puts" {
+                let spread = ctx.build_strategy([
+                    #{ side: "short", option_type: "put", delta: 0.30, dte: 17 },
+                ]);
+                if spread != () {
+                    return [#{ action: "open_spread", spread: spread }];
+                }
+            }
+
+            if state == "selling_calls" {
+                let spread = ctx.build_strategy([
+                    #{ side: "short", option_type: "call", delta: 0.30, dte: 25 },
+                ]);
+                if spread != () {
+                    return [#{ action: "open_spread", spread: spread }];
+                }
+            }
+
+            []
+        }
+
+        fn on_position_closed(ctx, pos, reason) {
+            if reason == "assignment" {
+                state = "selling_calls";
+            }
+        }
+    "#;
+
+    let params = std::collections::HashMap::new();
+    let result = run_script_backtest(script, &params, &loader).await;
+
+    assert!(
+        result.is_ok(),
+        "Wheel backtest should succeed: {:?}",
+        result.err()
+    );
+
+    let result = result.unwrap();
+
+    for (i, trade) in result.result.trade_log.iter().enumerate() {
+        eprintln!(
+            "Wheel trade {}: exit_type={:?}, pnl={:.2}, days_held={}",
+            i, trade.exit_type, trade.pnl, trade.days_held,
+        );
+    }
+
+    // Should have at least: put assignment + call called-away (which closes the stock)
+    assert!(
+        result.result.trade_count >= 2,
+        "Expected at least 2 trades (put + call/stock), got {}. Warnings: {:?}",
+        result.result.trade_count,
+        result.result.warnings,
+    );
+
+    // Verify we got both assignment and called-away exits
+    let exit_types: Vec<_> = result
+        .result
+        .trade_log
+        .iter()
+        .map(|t| format!("{:?}", t.exit_type))
+        .collect();
+    eprintln!("Exit types: {:?}", exit_types);
+
+    assert!(
+        exit_types.iter().any(|t| t == "Assignment"),
+        "Should have an Assignment exit"
+    );
+    assert!(
+        exit_types.iter().any(|t| t == "CalledAway"),
+        "Should have a CalledAway exit"
+    );
+}
+
+/// Scenario: Stock-only backtest across a split (no options).
+/// Verifies split-adjusted prices produce correct returns.
+///
+/// Buy at $200 (unadj, pre-split), sell at $115 (unadj, post-split).
+/// Split-adjusted: buy at $100, sell at $115 → 15% return.
+/// Without split adjustment: $200 → $115 would be -42.5% — clearly wrong.
+#[tokio::test(flavor = "multi_thread")]
+async fn stock_only_across_split() {
+    let entry_date = d(2024, 1, 2);
+    let split_date = d(2024, 1, 15);
+    let exit_date = d(2024, 2, 1);
+
+    let mut closes = BTreeMap::new();
+    closes.insert(entry_date, 200.0); // pre-split
+    closes.insert(split_date, 100.0); // post-split
+    closes.insert(exit_date, 115.0); // post-split, up 15% from adjusted entry
+
+    let bars = make_bars_from_closes(&closes);
+
+    let splits = vec![SplitRow {
+        symbol: "TEST".to_string(),
+        date: split_date,
+        ratio: 2.0,
+    }];
+
+    let loader = SplitTestDataLoader {
+        ohlcv_df: bars_to_df(&bars),
+        options_df: DataFrame::empty(),
+        splits,
+    };
+
+    // Buy on bar 0, sell after 1+ days held
+    let script = r#"
+        fn config() {
+            #{
+                symbol: "TEST",
+                capital: 50000.0,
+                start_date: "2024-01-02",
+                end_date: "2024-02-01",
+                interval: "daily",
+                data: #{ ohlcv: true, options: false },
+                engine: #{ slippage: "mid" },
+            }
+        }
+
+        fn on_bar(ctx) {
+            if !ctx.has_positions() {
+                return [#{ action: "open_stock", side: "long", qty: 100 }];
+            }
+            []
+        }
+
+        fn on_exit_check(ctx, pos) {
+            if pos.days_held >= 2 {
+                return #{ action: "close", reason: "target" };
+            }
+            #{ action: "hold" }
+        }
+    "#;
+
+    let params = std::collections::HashMap::new();
+    let result = run_script_backtest(script, &params, &loader).await;
+
+    assert!(
+        result.is_ok(),
+        "Stock backtest should succeed: {:?}",
+        result.err()
+    );
+
+    let result = result.unwrap();
+
+    assert_eq!(
+        result.result.trade_count, 1,
+        "Should have 1 closed trade. Warnings: {:?}",
+        result.result.warnings,
+    );
+
+    // Split-adjusted: bought at $100, sold at $115 → PnL = $15 × 100 shares = $1,500
+    let pnl = result.result.trade_log[0].pnl;
+    eprintln!("Stock PnL: {:.2}", pnl);
+    assert!(
+        (pnl - 1500.0).abs() < 1.0,
+        "Expected ~$1,500 PnL (split-adjusted $100→$115 × 100 shares), got {:.2}",
+        pnl,
+    );
+}
