@@ -3,6 +3,7 @@
 //! Shared infrastructure used by the Rhai scripting engine: types, metrics,
 //! pricing, filters, and data loading.
 
+pub mod adjustments;
 pub mod bayesian;
 pub mod filters;
 pub mod hmm;
