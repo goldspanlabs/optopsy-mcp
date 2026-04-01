@@ -58,7 +58,7 @@ fn strip_trades_from_result_json(response: &crate::tools::run_script::RunScriptR
 /// Insert a backtest result into the run store, returning `(id, created_at)`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn persist_backtest(
-    state: &AppState,
+    run_store: &dyn crate::data::traits::RunStore,
     strategy_key: &str,
     symbol: &str,
     capital: f64,
@@ -89,8 +89,7 @@ pub(crate) fn persist_backtest(
         .and_then(|m| m.regime.as_ref())
         .map(|r| r.join(","));
 
-    let created_at = state
-        .run_store
+    let created_at = run_store
         .insert_run(
             &id,
             None, // no sweep
@@ -122,8 +121,7 @@ pub(crate) fn persist_backtest(
         )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    state
-        .run_store
+    run_store
         .insert_trades(&id, &trades)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -169,7 +167,7 @@ pub async fn create_backtest(
         .unwrap_or(0.0);
 
     let (id, _created_at) = persist_backtest(
-        &state,
+        &*state.run_store,
         &strategy_key,
         &symbol,
         capital,
@@ -271,7 +269,7 @@ pub async fn create_backtest_stream(
                     .unwrap_or(0.0);
 
                 match persist_backtest(
-                    &state,
+                    &*state.run_store,
                     &strategy_key,
                     &symbol,
                     capital,
