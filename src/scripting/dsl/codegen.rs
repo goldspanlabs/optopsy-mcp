@@ -322,8 +322,10 @@ fn generate_stmts(
                 generate_stmts(out, then_body, depth + 1, kind, scope_vars);
                 out.push_str(&format!("{indent}}}"));
 
-                if let Some(ref else_stmts) = else_body {
-                    // Check if it's a chained when (single When in else_body)
+                // Flatten chained when/otherwise into if/else-if/else iteratively
+                let mut current_else = else_body.as_deref();
+                while let Some(else_stmts) = current_else {
+                    // Single When in else_body → emit as `else if`
                     if else_stmts.len() == 1 {
                         if let Stmt::When {
                             condition: ec,
@@ -336,18 +338,15 @@ fn generate_stmts(
                             out.push_str(&format!(" else if {ec_rw} {{\n"));
                             generate_stmts(out, et, depth + 1, kind, scope_vars);
                             out.push_str(&format!("{indent}}}"));
-                            if let Some(ref final_else) = ee {
-                                out.push_str(" else {\n");
-                                generate_stmts(out, final_else, depth + 1, kind, scope_vars);
-                                out.push_str(&format!("{indent}}}"));
-                            }
-                            out.push('\n');
+                            current_else = ee.as_deref();
                             continue;
                         }
                     }
+                    // Non-When else body → emit as final `else`
                     out.push_str(" else {\n");
                     generate_stmts(out, else_stmts, depth + 1, kind, scope_vars);
                     out.push_str(&format!("{indent}}}"));
+                    break;
                 }
                 out.push('\n');
             }

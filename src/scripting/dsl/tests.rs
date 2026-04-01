@@ -328,3 +328,68 @@ on end
     let rhai = transpile(dsl).unwrap();
     assert!(rhai.contains("fn on_end(ctx)"));
 }
+
+#[test]
+fn test_independent_when_blocks_without_otherwise() {
+    // Two consecutive `when` blocks WITHOUT `otherwise` should produce
+    // two separate `if` statements, not an if/else-if chain.
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  when close > 100 then
+    buy 50 shares
+  when rsi(14) < 30 then
+    buy 50 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    // Should have two separate `if` blocks, not `else if`
+    assert!(
+        !rhai.contains("else if"),
+        "Independent when blocks should NOT produce else-if.\nGenerated:\n{rhai}"
+    );
+    // Both conditions should appear as separate if statements
+    let if_count =
+        rhai.matches("if ctx.close > 100").count() + rhai.matches("if ctx.rsi(14) < 30").count();
+    assert_eq!(if_count, 2, "Expected 2 separate if blocks");
+}
+
+#[test]
+fn test_when_chain_with_otherwise_produces_else_if() {
+    // Consecutive `when` blocks WITH `otherwise` should chain into if/else-if/else.
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on exit check
+  when pos.pnl_pct > 0.50 then
+    close position "take_profit"
+  when pos.days_held > 30 then
+    close position "max_hold"
+  when pos.pnl_pct < -1.0 then
+    close position "stop_loss"
+  otherwise
+    hold position
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    // Should have a fully flattened else-if chain
+    assert!(
+        rhai.contains("else if pos.days_held > 30"),
+        "Chained when with otherwise should produce else-if.\nGenerated:\n{rhai}"
+    );
+    assert!(
+        rhai.contains("else if pos.pnl_pct < -1.0"),
+        "Third when in chain should also be else-if.\nGenerated:\n{rhai}"
+    );
+    // The otherwise should be a flat `else`, not nested
+    let nested_else_if = rhai.contains("else {\n        if");
+    assert!(
+        !nested_else_if,
+        "Chain should be fully flattened, not nested.\nGenerated:\n{rhai}"
+    );
+}

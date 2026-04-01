@@ -42,7 +42,7 @@ pub fn build_engine() -> Engine {
     register_action_helpers(&mut engine);
     register_strategy_helpers(&mut engine);
 
-    // Register DSL custom syntax (buy N shares, close position "reason", etc.)
+    // Register DSL custom syntax (buy N shares, exit_position "reason", hold, etc.)
     dsl::register_dsl_syntax(&mut engine);
 
     engine

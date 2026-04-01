@@ -591,6 +591,25 @@ fn parse_statements(lines: &[Line]) -> Result<Vec<Stmt>, DslError> {
 // When / otherwise chain parsing
 // ---------------------------------------------------------------------------
 
+/// Check if an `otherwise` block exists among sibling lines at `base_indent`,
+/// skipping over `when ... then` blocks and their indented bodies.
+fn has_otherwise_in_siblings(lines: &[Line], start: usize, base_indent: usize) -> bool {
+    let mut j = start;
+    while j < lines.len() {
+        if lines[j].indent == base_indent {
+            if lines[j].content == "otherwise" {
+                return true;
+            }
+            if !(lines[j].content.starts_with("when ") && lines[j].content.ends_with(" then")) {
+                // Non-when/otherwise sibling — stop scanning
+                return false;
+            }
+        }
+        j += 1;
+    }
+    false
+}
+
 /// Parse a `when CONDITION then` block, consuming any subsequent `when`/`otherwise`
 /// siblings at the same indent level to form an if/else-if/else chain.
 fn parse_when_chain(
@@ -624,7 +643,10 @@ fn parse_when_chain(
 
     let then_body = parse_statements(&then_body_lines)?;
 
-    // Check for chained when/otherwise at same indent level
+    // Check for chained when/otherwise at same indent level.
+    // Only chain consecutive `when` blocks into else-if if an `otherwise`
+    // eventually appears in the sibling sequence. Without `otherwise`, each
+    // `when` block is independent (separate `if` statements).
     let else_body = if i < lines.len() && lines[i].indent == base_indent {
         let next_content = &lines[i].content;
 
@@ -645,11 +667,15 @@ fn parse_when_chain(
             }
             Some(parse_statements(&otherwise_lines)?)
         } else if next_content.starts_with("when ") && next_content.ends_with(" then") {
-            // Chain: else-if via nested When
-            let rest = next_content.strip_prefix("when ").unwrap();
-            let (chained, next_i) = parse_when_chain(lines, i, rest)?;
-            i = next_i;
-            Some(vec![chained])
+            // Only chain as else-if if an `otherwise` eventually follows
+            if has_otherwise_in_siblings(lines, i, base_indent) {
+                let rest = next_content.strip_prefix("when ").unwrap();
+                let (chained, next_i) = parse_when_chain(lines, i, rest)?;
+                i = next_i;
+                Some(vec![chained])
+            } else {
+                None
+            }
         } else {
             None
         }
