@@ -929,6 +929,10 @@ pub async fn run_script_backtest_with_progress(
                     ScriptAction::OpenOptions { legs, qty } => {
                         let resolved = resolve_option_legs(legs, &options_by_date, today, &config);
                         if resolved.is_empty() {
+                            warnings.push(format!(
+                                "OpenOptions pending order skipped on {today}: no option contracts \
+                                 could be resolved (check data.options coverage for this date)"
+                            ));
                             continue;
                         }
                         let effective_qty = qty.unwrap_or(1);
@@ -1394,8 +1398,11 @@ pub async fn run_script_backtest_with_progress(
         let end_positions_arc = Arc::new(positions.clone());
         let pnl_history_arc = Arc::new(pnl_history.clone());
         let ctx = if let Some(last_bar) = price_history.last() {
-            let end_awareness =
-                compute_position_awareness(&positions, 0, price_history.len().saturating_sub(1));
+            let end_awareness = compute_position_awareness(
+                &positions,
+                pending_orders.len(),
+                price_history.len().saturating_sub(1),
+            );
             ctx_factory.build(
                 last_bar,
                 price_history.len() - 1,
@@ -2117,11 +2124,11 @@ fn compute_options_entry(
 ///
 /// For stocks, uses the current bar's close price.
 /// For options, recomputes P&L from each leg's cached `current_price`
-/// (updated in Phase C) and `entry_price`, including the contract multiplier.
-/// Both `leg.current_price` and `leg.entry_price` are per-contract premiums
-/// (e.g., $2.50 for a $2.50 premium option); the contract multiplier (typically
-/// 100) converts them to per-position dollar P&L.
-/// Note: Phase A closes happen before Phase C MTM update, so `current_price`
+/// (updated in Phase D bookkeeping) and `entry_price`, including the contract
+/// multiplier. Both `leg.current_price` and `leg.entry_price` are per-contract
+/// premiums (e.g., $2.50 for a $2.50 premium option); the contract multiplier
+/// (typically 100) converts them to per-position dollar P&L.
+/// Note: Phase B closes happen before Phase D MTM update, so `current_price`
 /// reflects the previous bar — this matches the native engine behavior where
 /// exit prices are determined at the close trigger bar.
 fn compute_close_pnl(pos: &ScriptPosition, bar: &OhlcvBar) -> f64 {
