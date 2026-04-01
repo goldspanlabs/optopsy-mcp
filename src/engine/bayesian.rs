@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::engine::sweep::{compute_sensitivity, extract_objective, sort_by_objective};
 use crate::scripting::engine::{
-    run_script_backtest_with_progress, DataLoader, PrecomputedOptionsData,
+    run_script_backtest, CancelCallback, DataLoader, PrecomputedOptionsData,
 };
 use crate::tools::response_types::sweep::{SweepResponse, SweepResult};
 
@@ -41,7 +41,7 @@ fn cache_key(swept: &HashMap<String, Value>) -> String {
 pub async fn run_bayesian(
     config: &BayesianConfig,
     data_loader: &dyn DataLoader,
-    is_cancelled: impl Fn() -> bool,
+    is_cancelled: &CancelCallback,
     on_progress: impl Fn(usize, usize),
 ) -> Result<SweepResponse> {
     let start = Instant::now();
@@ -96,6 +96,7 @@ pub async fn run_bayesian(
             &swept,
             data_loader,
             precomputed.as_ref(),
+            Some(is_cancelled),
         )
         .await
         {
@@ -433,16 +434,18 @@ async fn evaluate(
     swept_params: &HashMap<String, Value>,
     data_loader: &dyn DataLoader,
     precomputed: Option<&PrecomputedOptionsData>,
+    is_cancelled: Option<&CancelCallback>,
 ) -> Result<(SweepResult, Option<PrecomputedOptionsData>)> {
     let mut run_params = base_params.clone();
     run_params.extend(swept_params.clone());
 
-    let bt = run_script_backtest_with_progress(
+    let bt = run_script_backtest(
         script_source,
         &run_params,
         data_loader,
         None,
         precomputed,
+        is_cancelled,
     )
     .await?;
     let m = &bt.result.metrics;

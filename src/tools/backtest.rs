@@ -1,4 +1,4 @@
-//! MCP tool handler for `backtest` — run a backtest or parameter sweep and persist results.
+//! MCP tool handler for `backtest` — run a single backtest or parameter sweep and persist results.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -10,13 +10,14 @@ use serde_json::Value;
 
 use crate::engine::bayesian::{run_bayesian, BayesianConfig};
 use crate::engine::sweep::{run_grid_sweep, GridSweepConfig};
-use crate::scripting::engine::CachingDataLoader;
+use crate::scripting::engine::{CachingDataLoader, CancelCallback};
 use crate::server::handlers::sweeps::{
     build_grid, persist_sweep_to_store, resolve_strategy_source_from_store, CreateSweepRequest,
     SweepParamDef,
 };
 use crate::server::OptopsyServer;
 use crate::tools::response_types::sweep::SweepResponse;
+use crate::tools::run_script::RunScriptResponse;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Default helpers
@@ -80,9 +81,19 @@ pub struct BacktestToolParams {
 // Response
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// Response from the `backtest` tool.
+/// Inner struct for single backtest result (boxed to reduce enum variant size).
 #[derive(Serialize, Deserialize, JsonSchema)]
-pub struct BacktestToolResponse {
+pub struct SingleBacktestResponse {
+    /// Unique run ID for referencing the persisted result.
+    pub run_id: String,
+    /// Full backtest result.
+    #[serde(flatten)]
+    pub result: RunScriptResponse,
+}
+
+/// Inner struct for sweep result (boxed to reduce enum variant size).
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct SweepBacktestResponse {
     /// Unique sweep ID for referencing the persisted results.
     pub sweep_id: String,
     /// Run IDs for each individual backtest within the sweep.
@@ -92,12 +103,93 @@ pub struct BacktestToolResponse {
     pub sweep: SweepResponse,
 }
 
+/// Response from the `backtest` tool — either a single run or a sweep.
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type")]
+pub enum BacktestToolResponse {
+    /// Single backtest result with full equity curve, trade log, and metrics.
+    #[serde(rename = "single")]
+    Single(Box<SingleBacktestResponse>),
+    /// Parameter sweep result with ranked combinations.
+    #[serde(rename = "sweep")]
+    Sweep(Box<SweepBacktestResponse>),
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Execute
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// Run a parameter sweep (or single backtest) and persist the results.
+/// Run a single backtest or parameter sweep and persist the results.
 pub async fn execute(
+    server: &OptopsyServer,
+    params: BacktestToolParams,
+) -> Result<BacktestToolResponse, anyhow::Error> {
+    if params.sweep_params.is_empty() {
+        execute_single(server, params).await
+    } else {
+        execute_sweep(server, params).await
+    }
+}
+
+/// Run a single backtest and persist the result.
+async fn execute_single(
+    server: &OptopsyServer,
+    params: BacktestToolParams,
+) -> Result<BacktestToolResponse, anyhow::Error> {
+    let run_store = server
+        .run_store
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Run store not configured — cannot persist results"))?;
+
+    // Reuse the existing run_script handler for execution
+    let run_params = crate::tools::run_script::RunScriptParams {
+        strategy: Some(params.strategy.clone()),
+        script: None,
+        params: params.params.clone(),
+        profile: None,
+    };
+
+    let exec_result = crate::server::handlers::run_script::execute(server, run_params).await?;
+    let strategy_key = exec_result
+        .resolved_strategy_id
+        .unwrap_or_else(|| params.strategy.clone());
+    let response = exec_result.response;
+
+    let symbol = params
+        .params
+        .get("SYMBOL")
+        .and_then(Value::as_str)
+        .unwrap_or("UNKNOWN")
+        .to_owned();
+    let capital = params
+        .params
+        .get("CAPITAL")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
+
+    // Persist via the existing backtest persistence helper
+    let (run_id, _created_at) = crate::server::handlers::backtests::persist_backtest(
+        run_store.as_ref(),
+        &strategy_key,
+        &symbol,
+        capital,
+        &params.params,
+        &response,
+        "agent",
+        params.thread_id.as_deref(),
+    )
+    .map_err(|(_status, msg)| anyhow::anyhow!("{msg}"))?;
+
+    Ok(BacktestToolResponse::Single(Box::new(
+        SingleBacktestResponse {
+            run_id,
+            result: response,
+        },
+    )))
+}
+
+/// Run a parameter sweep and persist the results.
+async fn execute_sweep(
     server: &OptopsyServer,
     params: BacktestToolParams,
 ) -> Result<BacktestToolResponse, anyhow::Error> {
@@ -140,8 +232,10 @@ pub async fn execute(
         max_evaluations: params.max_evaluations,
     };
 
-    // 6. Run grid or bayesian sweep
-    let no_cancel = || false;
+    // 6. No-op cancellation — cancellation is handled via /tasks/* endpoints
+    let is_cancelled: CancelCallback = Box::new(|| false);
+
+    // 7. Run grid or bayesian sweep
     let sweep_response: SweepResponse = match params.mode.as_str() {
         "grid" => {
             let param_grid = build_grid(&req.sweep_params);
@@ -151,7 +245,7 @@ pub async fn execute(
                 param_grid,
                 objective: req.objective.clone(),
             };
-            run_grid_sweep(&config, &loader, &no_cancel, |_, _| {}).await?
+            run_grid_sweep(&config, &loader, &is_cancelled, |_, _| {}).await?
         }
         "bayesian" => {
             let continuous_params: Vec<(String, f64, f64, bool)> = req
@@ -168,7 +262,7 @@ pub async fn execute(
                 initial_samples,
                 objective: req.objective.clone(),
             };
-            run_bayesian(&config, &loader, &no_cancel, |_, _| {}).await?
+            run_bayesian(&config, &loader, &is_cancelled, |_, _| {}).await?
         }
         other => {
             return Err(anyhow::anyhow!(
@@ -177,7 +271,7 @@ pub async fn execute(
         }
     };
 
-    // 7. Persist via persist_sweep with source = "agent"
+    // 8. Persist via persist_sweep with source = "agent"
     let sweep_id = persist_sweep_to_store(
         run_store.as_ref(),
         &strategy_key,
@@ -190,16 +284,18 @@ pub async fn execute(
     )
     .map_err(|(_status, msg)| anyhow::anyhow!("{msg}"))?;
 
-    // 8. Query back run_ids from the persisted sweep
+    // 9. Query back run_ids from the persisted sweep
     let run_ids = run_store
         .get_sweep(&sweep_id)?
         .map(|detail| detail.runs.iter().map(|r| r.id.clone()).collect())
         .unwrap_or_default();
 
-    // 9. Return response
-    Ok(BacktestToolResponse {
-        sweep_id,
-        run_ids,
-        sweep: sweep_response,
-    })
+    // 10. Return response
+    Ok(BacktestToolResponse::Sweep(Box::new(
+        SweepBacktestResponse {
+            sweep_id,
+            run_ids,
+            sweep: sweep_response,
+        },
+    )))
 }

@@ -28,6 +28,7 @@ use super::types::*;
 /// loads data, pre-computes indicators, and runs the unified simulation loop.
 /// Optional progress callback: receives (current_bar, total_bars).
 pub type ProgressCallback = Box<dyn Fn(usize, usize) + Send + Sync>;
+pub type CancelCallback = Box<dyn Fn() -> bool + Send + Sync>;
 
 /// Pre-computed options data that can be shared across sweep iterations.
 ///
@@ -41,14 +42,6 @@ pub struct PrecomputedOptionsData {
     pub options_by_date: Arc<DatePartitionedOptions>,
     pub price_table: Arc<crate::engine::sim_types::PriceTable>,
     pub date_index: Arc<crate::engine::sim_types::DateIndex>,
-}
-
-pub async fn run_script_backtest(
-    script_source: &str,
-    params: &HashMap<String, serde_json::Value>,
-    data_loader: &dyn DataLoader,
-) -> Result<ScriptBacktestResult> {
-    run_script_backtest_with_progress(script_source, params, data_loader, None, None).await
 }
 
 // ---------------------------------------------------------------------------
@@ -416,12 +409,13 @@ pub fn validate_script(
     }
 }
 
-pub async fn run_script_backtest_with_progress(
+pub async fn run_script_backtest(
     script_source: &str,
     params: &HashMap<String, serde_json::Value>,
     data_loader: &dyn DataLoader,
     progress: Option<ProgressCallback>,
     precomputed_options: Option<&PrecomputedOptionsData>,
+    is_cancelled: Option<&CancelCallback>,
 ) -> Result<ScriptBacktestResult> {
     let backtest_start = std::time::Instant::now();
 
@@ -724,6 +718,12 @@ pub async fn run_script_backtest_with_progress(
 
         // Wall-clock timeout check (every 100 bars to minimize overhead)
         if bar_idx % 100 == 0 {
+            if let Some(cancel_fn) = is_cancelled {
+                if cancel_fn() {
+                    warnings.push("Backtest cancelled by user".to_string());
+                    break;
+                }
+            }
             if loop_start.elapsed() > timeout {
                 warnings.push(format!(
                     "Backtest exceeded {}s timeout at bar {bar_idx}",

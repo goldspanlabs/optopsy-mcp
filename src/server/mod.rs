@@ -5,8 +5,10 @@
 
 pub mod handlers;
 mod params;
+pub mod router;
 pub(crate) mod sanitize;
 pub mod state;
+pub mod task_manager;
 
 pub use params::{AggMetric, CorrelateMode, FactorProxies, GroupBy, RegimeMethod, RollingMetric};
 
@@ -572,7 +574,8 @@ impl OptopsyServer {
 
     /// Run a backtest or parameter sweep. Pass a saved strategy by display name.
     ///
-    /// Omit `sweep_params` for a single backtest, or provide ranges for a grid/bayesian sweep.
+    /// Omit `sweep_params` for a single backtest (returns full equity curve, trade log, metrics).
+    /// Provide `sweep_params` for a grid/bayesian sweep (returns ranked results).
     /// Results are persisted to the runs database.
     ///
     /// **Example (single backtest)**:
