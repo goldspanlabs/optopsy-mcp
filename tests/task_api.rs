@@ -304,10 +304,10 @@ async fn e2e_backtest_runs_through_task_manager() {
         "Should have done event in SSE stream, got:\n{sse_text}"
     );
 
-    // 4b. Verify the stream contained a completed state (the final state event)
+    // 4b. Verify the stream contained a result event (backtest completed)
     assert!(
-        sse_text.contains("\"status\":\"completed\""),
-        "Should have completed status in SSE stream, got:\n{sse_text}"
+        sse_text.contains("event: result") || sse_text.contains("event:result"),
+        "Should have result event in SSE stream, got:\n{sse_text}"
     );
 
     // 5. Verify result was persisted — get task to find the result_id

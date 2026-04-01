@@ -457,7 +457,7 @@ pub async fn cancel_task(State(state): State<AppState>, Path(id): Path<String>) 
 ///
 /// Sends the current state immediately on connect, then polls every 200ms
 /// until the task reaches a terminal state.
-#[allow(clippy::unused_async)]
+#[allow(clippy::unused_async, clippy::too_many_lines)]
 pub async fn stream_task(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -468,24 +468,62 @@ pub async fn stream_task(
     let (tx, rx) = tokio::sync::mpsc::channel::<Event>(32);
 
     tokio::spawn(async move {
-        // Send initial state
-        let pos = tm.queue_position(&task.id);
-        let snap = snapshot(&task, pos);
-        let _ = tx
-            .send(
-                Event::default()
-                    .event("state")
-                    .data(serde_json::to_string(&snap).unwrap_or_default()),
-            )
-            .await;
-
-        // If already terminal, send done and return
-        if snap.status.is_terminal() {
-            let _ = tx.send(Event::default().event("done").data("")).await;
-            return;
+        /// Helper: send an SSE event; returns false if the client disconnected.
+        async fn emit(tx: &tokio::sync::mpsc::Sender<Event>, event: &str, data: String) -> bool {
+            tx.send(Event::default().event(event).data(data))
+                .await
+                .is_ok()
         }
 
-        // Poll loop
+        let status = task.status();
+
+        // ── Send initial state based on current status ──
+        match status {
+            TaskStatus::Queued => {
+                let pos = tm.queue_position(&task.id).unwrap_or(0);
+                emit(&tx, "queued", format!(r#"{{"position":{pos}}}"#)).await;
+            }
+            TaskStatus::Running => {
+                let cur = task.progress_current.load(Ordering::Relaxed);
+                let tot = task.progress_total.load(Ordering::Relaxed);
+                emit(
+                    &tx,
+                    "progress",
+                    format!(r#"{{"current":{cur},"total":{tot}}}"#),
+                )
+                .await;
+            }
+            TaskStatus::Completed => {
+                let result_str = {
+                    let m = task.mutable.lock().unwrap();
+                    m.result.as_ref().map(std::string::ToString::to_string)
+                };
+                if let Some(s) = result_str {
+                    emit(&tx, "result", s).await;
+                }
+                emit(&tx, "done", String::new()).await;
+                return;
+            }
+            TaskStatus::Failed => {
+                let msg = {
+                    let m = task.mutable.lock().unwrap();
+                    m.error.clone().unwrap_or_default()
+                };
+                emit(&tx, "error", msg).await;
+                emit(&tx, "done", String::new()).await;
+                return;
+            }
+            TaskStatus::Cancelled => {
+                emit(&tx, "cancelled", String::new()).await;
+                emit(&tx, "done", String::new()).await;
+                return;
+            }
+        }
+
+        // ── Track status transitions for "started" event ──
+        let mut prev_status = status;
+
+        // ── Poll loop ──
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(200));
         loop {
             interval.tick().await;
@@ -494,64 +532,49 @@ pub async fn stream_task(
             let current = task.progress_current.load(Ordering::Relaxed);
             let total = task.progress_total.load(Ordering::Relaxed);
 
-            if status.is_terminal() {
-                // Send final state
-                let pos = tm.queue_position(&task.id);
-                let snap = snapshot(&task, pos);
-                let _ = tx
-                    .send(
-                        Event::default()
-                            .event("state")
-                            .data(serde_json::to_string(&snap).unwrap_or_default()),
-                    )
-                    .await;
-                let _ = tx.send(Event::default().event("done").data("")).await;
-                break;
+            // Detect transition from Queued → Running and send "started"
+            if prev_status == TaskStatus::Queued && status == TaskStatus::Running {
+                emit(&tx, "started", String::new()).await;
             }
+            prev_status = status;
 
-            // Send progress update
-            if total > 0 {
-                let data = format!(
-                    r#"{{"status":"{}","current":{},"total":{}}}"#,
-                    serde_json::to_value(status)
-                        .unwrap_or(Value::Null)
-                        .as_str()
-                        .unwrap_or("running"),
-                    current,
-                    total
-                );
-                if tx
-                    .send(Event::default().event("progress").data(data))
-                    .await
-                    .is_err()
-                {
-                    break; // Client disconnected
-                }
-            } else if status == TaskStatus::Queued {
-                let pos = tm.queue_position(&task.id);
-                let data = format!(
-                    r#"{{"status":"queued","queue_position":{}}}"#,
-                    pos.unwrap_or(0)
-                );
-                if tx
-                    .send(Event::default().event("progress").data(data))
-                    .await
-                    .is_err()
-                {
+            match status {
+                TaskStatus::Completed => {
+                    let result_str = {
+                        let m = task.mutable.lock().unwrap();
+                        m.result.as_ref().map(std::string::ToString::to_string)
+                    };
+                    if let Some(s) = result_str {
+                        emit(&tx, "result", s).await;
+                    }
+                    emit(&tx, "done", String::new()).await;
                     break;
                 }
-            } else {
-                // Still initializing; send heartbeat
-                if tx
-                    .send(
-                        Event::default()
-                            .event("progress")
-                            .data(r#"{"current":0,"total":0}"#),
-                    )
-                    .await
-                    .is_err()
-                {
+                TaskStatus::Failed => {
+                    let msg = {
+                        let m = task.mutable.lock().unwrap();
+                        m.error.clone().unwrap_or_default()
+                    };
+                    emit(&tx, "error", msg).await;
+                    emit(&tx, "done", String::new()).await;
                     break;
+                }
+                TaskStatus::Cancelled => {
+                    emit(&tx, "cancelled", String::new()).await;
+                    emit(&tx, "done", String::new()).await;
+                    break;
+                }
+                TaskStatus::Running => {
+                    let data = format!(r#"{{"current":{current},"total":{total}}}"#);
+                    if !emit(&tx, "progress", data).await {
+                        break;
+                    }
+                }
+                TaskStatus::Queued => {
+                    let pos = tm.queue_position(&task.id).unwrap_or(0);
+                    if !emit(&tx, "queued", format!(r#"{{"position":{pos}}}"#)).await {
+                        break;
+                    }
                 }
             }
         }
