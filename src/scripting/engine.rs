@@ -858,6 +858,10 @@ pub async fn run_script_backtest_with_progress(
                             max_profit_tracker.remove(pid);
                             max_loss_tracker.remove(pid);
                             positions.swap_remove(idx);
+                        } else {
+                            warnings.push(format!(
+                                "Pending close order: position_id {pid} not found (may have been closed already)"
+                            ));
                         }
                     }
                     ScriptAction::OpenOptions { legs, qty } => {
@@ -927,12 +931,12 @@ pub async fn run_script_backtest_with_progress(
 
         // Compute position awareness for this bar
         let mut awareness = compute_position_awareness(&positions, pending_orders.len());
-        // Apply tracked max profit/loss values
-        for pos in &positions {
-            if let Some(&mp) = max_profit_tracker.get(&pos.id) {
+        // Apply tracked max profit/loss only for the chosen awareness position
+        if let Some(pid) = awareness.chosen_position_id {
+            if let Some(&mp) = max_profit_tracker.get(&pid) {
                 awareness.max_profit = mp;
             }
-            if let Some(&ml) = max_loss_tracker.get(&pos.id) {
+            if let Some(&ml) = max_loss_tracker.get(&pid) {
                 awareness.max_loss = ml;
             }
         }
@@ -1185,10 +1189,10 @@ pub async fn run_script_backtest_with_progress(
         // Call on_bar(ctx) — actions are queued, not immediately executed
         match call_fn_persistent(&engine, &mut scope, &ast, "on_bar", (ctx,)) {
             Ok(result) => {
-                let actions = parse_bar_actions(&result);
+                let parsed = parse_bar_actions(&result);
                 let is_last_bar = bar_idx == price_history.len() - 1;
-                for action in actions {
-                    match &action {
+                for pa in parsed {
+                    match &pa.action {
                         ScriptAction::Stop { reason } => {
                             stop_requested = true;
                             warnings.push(format!("Script requested stop: {reason}"));
@@ -1209,16 +1213,13 @@ pub async fn run_script_backtest_with_progress(
                                 continue;
                             }
 
-                            // Extract order type from the action map metadata
-                            let (order_type, signal, ttl) =
-                                extract_order_metadata(&result, &action);
-
                             pending_orders.push(PendingOrder {
-                                action,
-                                order_type,
-                                signal,
+                                action: pa.action,
+                                order_type: pa.order_type,
+                                is_buy: pa.is_buy,
+                                signal: pa.signal,
                                 submitted_bar: bar_idx,
-                                ttl,
+                                ttl: pa.ttl,
                             });
                         }
                     }
@@ -1776,6 +1777,8 @@ pub struct PositionAwareness {
     pub max_profit: f64,
     pub max_loss: f64,
     pub pending_orders_count: i64,
+    /// The position id chosen for awareness (used to apply tracked max values).
+    pub chosen_position_id: Option<usize>,
 }
 
 /// Compute position awareness from the current positions vector (stock-only for now).
@@ -1807,6 +1810,7 @@ pub fn compute_position_awareness(
                 max_profit: 0.0, // tracked externally
                 max_loss: 0.0,   // tracked externally
                 pending_orders_count: pending_orders_count as i64,
+                chosen_position_id: Some(pos.id),
             };
         }
     }
@@ -2339,7 +2343,21 @@ fn parse_exit_action(result: &Dynamic) -> Option<ScriptAction> {
 }
 
 /// Parse the result of `on_bar` into a list of `ScriptAction`s.
-fn parse_bar_actions(result: &Dynamic) -> Vec<ScriptAction> {
+/// A parsed action from `on_bar()` with associated order metadata.
+struct ParsedAction {
+    action: ScriptAction,
+    order_type: OrderType,
+    /// `true` = buy direction, `false` = sell direction for fill logic.
+    is_buy: bool,
+    signal: Option<String>,
+    ttl: Option<usize>,
+}
+
+/// Parse the result of `on_bar` into a list of `ParsedAction`s.
+///
+/// Each action is paired with its order metadata (order type, signal, TTL)
+/// extracted from the same map, ensuring metadata is tied to the correct item.
+fn parse_bar_actions(result: &Dynamic) -> Vec<ParsedAction> {
     let Some(arr) = result.clone().try_cast::<rhai::Array>() else {
         return vec![];
     };
@@ -2347,9 +2365,9 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ScriptAction> {
     arr.into_iter()
         .filter_map(|item| {
             let map = item.try_cast::<rhai::Map>()?;
-            let action = map.get("action")?.clone().into_immutable_string().ok()?;
+            let action_str = map.get("action")?.clone().into_immutable_string().ok()?;
 
-            match action.as_str() {
+            let (action, is_buy) = match action_str.as_str() {
                 "open_stock" => {
                     let side_str = map.get("side")?.clone().into_immutable_string().ok()?;
                     let side = match side_str.as_str() {
@@ -2358,7 +2376,8 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ScriptAction> {
                         _ => return None,
                     };
                     let qty = map.get("qty")?.as_int().ok()? as i32;
-                    Some(ScriptAction::OpenStock { side, qty })
+                    let is_buy = side == Side::Long;
+                    (ScriptAction::OpenStock { side, qty }, is_buy)
                 }
                 "close" => {
                     let position_id = map
@@ -2370,10 +2389,19 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ScriptAction> {
                         .and_then(|v| v.clone().into_immutable_string().ok())
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| "script_close".to_string());
-                    Some(ScriptAction::Close {
-                        position_id,
-                        reason,
-                    })
+                    // Close a long position = sell, close a short = buy.
+                    // Default to sell (most common: closing a long).
+                    let side_str = map
+                        .get("side")
+                        .and_then(|v| v.clone().into_immutable_string().ok());
+                    let is_buy = side_str.as_deref() == Some("long");
+                    (
+                        ScriptAction::Close {
+                            position_id,
+                            reason,
+                        },
+                        is_buy,
+                    )
                 }
                 "stop" => {
                     let reason = map
@@ -2381,19 +2409,16 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ScriptAction> {
                         .and_then(|v| v.clone().into_immutable_string().ok())
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| "stop".to_string());
-                    Some(ScriptAction::Stop { reason })
+                    (ScriptAction::Stop { reason }, false)
                 }
                 "cancel_orders" => {
                     let signal = map
                         .get("signal")
                         .and_then(|v| v.clone().into_immutable_string().ok())
                         .map(|s| s.to_string());
-                    Some(ScriptAction::CancelOrders { signal })
+                    (ScriptAction::CancelOrders { signal }, false)
                 }
                 "open_options" | "open_spread" => {
-                    // Support two shapes:
-                    // 1. #{ action: "open_options", legs: [...] }
-                    // 2. #{ action: "open_spread", spread: #{ legs: [...], ... } }
                     let legs_arr = if let Some(legs) = map.get("legs") {
                         legs.clone().try_cast::<rhai::Array>()?
                     } else if let Some(spread) = map.get("spread") {
@@ -2426,9 +2451,7 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ScriptAction> {
                                 _ => return None,
                             };
 
-                            // Check if resolved (has strike/expiration) or unresolved (has delta/dte)
                             if let Some(strike_val) = leg.get("strike") {
-                                // Resolved leg
                                 let strike = strike_val.as_float().ok()?;
                                 let exp_str = leg
                                     .get("expiration")?
@@ -2454,7 +2477,6 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ScriptAction> {
                                     ask,
                                 })
                             } else {
-                                // Unresolved leg — needs delta/dte
                                 let delta = leg
                                     .get("delta")
                                     .and_then(|v| v.as_float().ok())
@@ -2474,96 +2496,82 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ScriptAction> {
                     if legs.is_empty() {
                         return None;
                     }
-                    Some(ScriptAction::OpenOptions { legs, qty })
+                    // Options: buy = long first leg (net debit), sell = short first leg
+                    let is_buy =
+                        legs.first()
+                            .map(|l| match l {
+                                LegSpec::Unresolved { side, .. }
+                                | LegSpec::Resolved { side, .. } => *side == Side::Long,
+                            })
+                            .unwrap_or(true);
+                    (ScriptAction::OpenOptions { legs, qty }, is_buy)
                 }
-                _ => None,
-            }
+                _ => return None,
+            };
+
+            // Extract order metadata from the same map (tied to this exact action)
+            let signal = map
+                .get("signal")
+                .and_then(|v| v.clone().into_immutable_string().ok())
+                .map(|s| s.to_string());
+
+            let ttl = map
+                .get("ttl")
+                .and_then(|v| v.as_int().ok())
+                .map(|v| v as usize);
+
+            let order_type = extract_order_type(&map);
+
+            Some(ParsedAction {
+                action,
+                order_type,
+                is_buy,
+                signal,
+                ttl,
+            })
         })
         .collect()
 }
 
-/// Extract order type metadata from the on_bar result array for a given action.
-///
-/// Reads `order_type`, `limit_price`, `stop_price`, `signal`, and `ttl` fields
-/// from the action map. Defaults to `OrderType::Market` if no order_type specified.
-fn extract_order_metadata(
-    result: &Dynamic,
-    action: &ScriptAction,
-) -> (OrderType, Option<String>, Option<usize>) {
-    // Try to find the matching action map in the result array
-    let Some(arr) = result.clone().try_cast::<rhai::Array>() else {
-        return (OrderType::Market, None, None);
-    };
+/// Extract `OrderType` from an action map. Falls back to `Market` with a warning
+/// if required price fields are missing.
+fn extract_order_type(map: &rhai::Map) -> OrderType {
+    let order_type_str = map
+        .get("order_type")
+        .and_then(|v| v.clone().into_immutable_string().ok());
 
-    // Find the map that produced this action
-    for item in &arr {
-        let Some(map) = item.clone().try_cast::<rhai::Map>() else {
-            continue;
-        };
-
-        // Match by action type
-        let action_str = map
-            .get("action")
-            .and_then(|v| v.clone().into_immutable_string().ok());
-        if !matches!(
-            (action_str.as_deref(), action),
-            (Some("open_stock"), ScriptAction::OpenStock { .. })
-                | (Some("close"), ScriptAction::Close { .. })
-                | (
-                    Some("open_options" | "open_spread"),
-                    ScriptAction::OpenOptions { .. }
-                )
-        ) {
-            continue;
-        }
-
-        let signal = map
-            .get("signal")
-            .and_then(|v| v.clone().into_immutable_string().ok())
-            .map(|s| s.to_string());
-
-        let ttl = map
-            .get("ttl")
-            .and_then(|v| v.as_int().ok())
-            .map(|v| v as usize);
-
-        let order_type_str = map
-            .get("order_type")
-            .and_then(|v| v.clone().into_immutable_string().ok());
-
-        let order_type = match order_type_str.as_deref() {
-            Some("limit") => {
-                let price = map
-                    .get("limit_price")
-                    .and_then(|v| v.as_float().ok())
-                    .unwrap_or(0.0);
+    match order_type_str.as_deref() {
+        Some("limit") => {
+            if let Some(price) = map.get("limit_price").and_then(|v| v.as_float().ok()) {
                 OrderType::Limit { price }
+            } else {
+                tracing::warn!("Missing `limit_price` for limit order; falling back to market");
+                OrderType::Market
             }
-            Some("stop") => {
-                let price = map
-                    .get("stop_price")
-                    .and_then(|v| v.as_float().ok())
-                    .unwrap_or(0.0);
+        }
+        Some("stop") => {
+            if let Some(price) = map.get("stop_price").and_then(|v| v.as_float().ok()) {
                 OrderType::Stop { price }
+            } else {
+                tracing::warn!("Missing `stop_price` for stop order; falling back to market");
+                OrderType::Market
             }
-            Some("stop_limit") => {
-                let stop = map
-                    .get("stop_price")
-                    .and_then(|v| v.as_float().ok())
-                    .unwrap_or(0.0);
-                let limit = map
-                    .get("limit_price")
-                    .and_then(|v| v.as_float().ok())
-                    .unwrap_or(0.0);
+        }
+        Some("stop_limit") => {
+            if let (Some(stop), Some(limit)) = (
+                map.get("stop_price").and_then(|v| v.as_float().ok()),
+                map.get("limit_price").and_then(|v| v.as_float().ok()),
+            ) {
                 OrderType::StopLimit { stop, limit }
+            } else {
+                tracing::warn!(
+                    "Missing `stop_price`/`limit_price` for stop_limit order; falling back to market"
+                );
+                OrderType::Market
             }
-            _ => OrderType::Market,
-        };
-
-        return (order_type, signal, ttl);
+        }
+        _ => OrderType::Market,
     }
-
-    (OrderType::Market, None, None)
 }
 
 // ---------------------------------------------------------------------------

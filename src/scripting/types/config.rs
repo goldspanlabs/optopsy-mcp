@@ -179,6 +179,11 @@ pub struct PendingOrder {
     pub action: ScriptAction,
     /// The order type determining fill conditions.
     pub order_type: OrderType,
+    /// Explicit buy/sell direction for fill logic. `true` = buy (long entry or
+    /// short cover), `false` = sell (short entry or long exit). This avoids
+    /// inferring direction from the action variant, which is ambiguous for
+    /// `Close` actions.
+    pub is_buy: bool,
     /// Optional signal name for trade logging.
     pub signal: Option<String>,
     /// The bar index at which this order was submitted.
@@ -191,7 +196,7 @@ impl PendingOrder {
     /// Check whether this order has expired given the current bar index.
     pub fn is_expired(&self, current_bar: usize) -> bool {
         if let Some(ttl) = self.ttl {
-            current_bar - self.submitted_bar > ttl
+            current_bar.saturating_sub(self.submitted_bar) > ttl
         } else {
             false
         }
@@ -203,76 +208,50 @@ impl PendingOrder {
         match &self.order_type {
             OrderType::Market => Some(open),
             OrderType::Limit { price } => {
-                // Determine direction from the action
-                let is_buy = matches!(
-                    &self.action,
-                    ScriptAction::OpenStock {
-                        side: crate::engine::types::Side::Long,
-                        ..
-                    }
-                );
-                if is_buy {
+                if self.is_buy {
                     // Buy limit: fill if low ≤ limit price
                     if low <= *price {
-                        Some(price.min(open)) // fill at limit or open (whichever is lower)
+                        Some(price.min(open))
                     } else {
                         None
                     }
                 } else {
-                    // Sell/short limit: fill if high ≥ limit price
+                    // Sell limit: fill if high ≥ limit price
                     if high >= *price {
-                        Some(price.max(open)) // fill at limit or open (whichever is higher)
+                        Some(price.max(open))
                     } else {
                         None
                     }
                 }
             }
             OrderType::Stop { price } => {
-                let is_buy = matches!(
-                    &self.action,
-                    ScriptAction::OpenStock {
-                        side: crate::engine::types::Side::Long,
-                        ..
-                    }
-                );
-                if is_buy {
+                if self.is_buy {
                     // Buy stop: fill if high ≥ stop price (breakout)
                     if high >= *price {
-                        Some(price.max(open)) // fill at stop or open (whichever is higher)
+                        Some(price.max(open))
                     } else {
                         None
                     }
                 } else {
                     // Sell stop: fill if low ≤ stop price (breakdown)
                     if low <= *price {
-                        Some(price.min(open)) // fill at stop or open (whichever is lower)
+                        Some(price.min(open))
                     } else {
                         None
                     }
                 }
             }
             OrderType::StopLimit { stop, limit } => {
-                let is_buy = matches!(
-                    &self.action,
-                    ScriptAction::OpenStock {
-                        side: crate::engine::types::Side::Long,
-                        ..
-                    }
-                );
-                if is_buy {
-                    // Buy stop-limit: stop breached (high ≥ stop) AND limit met (low ≤ limit)
+                if self.is_buy {
                     if high >= *stop && low <= *limit {
                         Some(limit.min(stop.max(open)))
                     } else {
                         None
                     }
+                } else if low <= *stop && high >= *limit {
+                    Some(limit.max(stop.min(open)))
                 } else {
-                    // Sell stop-limit: stop breached (low ≤ stop) AND limit met (high ≥ limit)
-                    if low <= *stop && high >= *limit {
-                        Some(limit.max(stop.min(open)))
-                    } else {
-                        None
-                    }
+                    None
                 }
             }
         }
