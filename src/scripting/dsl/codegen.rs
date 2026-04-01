@@ -475,6 +475,33 @@ fn generate_stmts(
                 out.push_str(&format!("{indent}{name} += {rw};\n"));
             }
 
+            Stmt::SubtractFrom { expr, name, .. } => {
+                let rw = rewrite_expr(expr);
+                out.push_str(&format!("{indent}{name} -= {rw};\n"));
+            }
+
+            Stmt::MultiplyBy { name, expr, .. } => {
+                let rw = rewrite_expr(expr);
+                out.push_str(&format!("{indent}{name} *= {rw};\n"));
+            }
+
+            Stmt::DivideBy { name, expr, .. } => {
+                let rw = rewrite_expr(expr);
+                out.push_str(&format!("{indent}{name} /= {rw};\n"));
+            }
+
+            Stmt::ForEach {
+                var,
+                iterable,
+                body,
+                ..
+            } => {
+                let iter_rw = rewrite_expr(iterable);
+                out.push_str(&format!("{indent}for {var} in {iter_rw} {{\n"));
+                generate_stmts(out, body, depth + 1, kind, scope_vars);
+                out.push_str(&format!("{indent}}}\n"));
+            }
+
             Stmt::Return { expr, .. } => {
                 let rw = rewrite_expr(expr);
                 out.push_str(&format!("{indent}return {rw};\n"));

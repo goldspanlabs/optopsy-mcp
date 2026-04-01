@@ -393,3 +393,152 @@ on exit check
         "Chain should be fully flattened, not nested.\nGenerated:\n{rhai}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// New feature tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_for_each_loop() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  for each pos in positions()
+    when pos.pnl_pct < -0.5 then
+      close position pos.id "stop_loss"
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(rhai.contains("for pos in ctx.positions()"));
+    assert!(rhai.contains("if pos.pnl_pct < -0.5"));
+}
+
+#[test]
+fn test_subtract_from() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+state balance = 100
+
+on each bar
+  subtract 10 from balance
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(rhai.contains("balance -= 10;"));
+}
+
+#[test]
+fn test_multiply_and_divide() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+state factor = 1.0
+
+on each bar
+  multiply factor by 1.05
+  divide factor by 2
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(rhai.contains("factor *= 1.05;"));
+    assert!(rhai.contains("factor /= 2;"));
+}
+
+#[test]
+fn test_array_indexing_in_expressions() {
+    // Verify that pos.legs[0].strike passes through rewriting unchanged
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+  data ohlcv, options
+
+on exit check
+  when pos.legs[0].strike > close then
+    close position "itm"
+  otherwise
+    hold position
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    // legs[0].strike should NOT be rewritten — it's after a dot
+    assert!(
+        rhai.contains("pos.legs[0].strike > ctx.close"),
+        "Array indexing should pass through.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_underscore_group_variable() {
+    // Verify that _group works as a state variable
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+state _group = "Cycle 1"
+
+on each bar
+  buy 100 shares
+
+on position closed
+  set _group to "Cycle 2"
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(rhai.contains("let _group = \"Cycle 1\";"));
+    // _group is in scope_vars, so `set` should use bare assignment (no let)
+    assert!(rhai.contains("_group = \"Cycle 2\";"));
+    assert!(!rhai.contains("let _group = \"Cycle 2\""));
+}
+
+#[test]
+fn test_for_each_with_complex_body() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+state total_pnl = 0.0
+
+on each bar
+  for each pos in positions()
+    add pos.unrealized_pnl to total_pnl
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(rhai.contains("for pos in ctx.positions()"));
+    assert!(rhai.contains("total_pnl += pos.unrealized_pnl;"));
+}
+
+#[test]
+fn test_mixed_dsl_and_raw_for_complex_patterns() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+  data ohlcv
+
+on each bar
+  raw let bb_width = (ctx.bbands_upper(20) - ctx.bbands_lower(20)) / ctx.sma(20);
+  raw let regime = if bb_width > 0.08 { "volatile" } else { "normal" };
+  when regime == "normal" then
+    buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(rhai.contains("let bb_width = (ctx.bbands_upper(20)"));
+    assert!(rhai.contains("let regime = if bb_width > 0.08"));
+}

@@ -32,16 +32,16 @@ strategy "Name"
 param NAME = DEFAULT "description"
 state NAME = DEFAULT
 
-on each bar
+on each bar                    # available: ctx (implicit via expression rewriting)
   STATEMENTS...
 
-on exit check
+on exit check                  # available: pos (current position being checked)
   STATEMENTS...
 
-on position opened
+on position opened             # available: pos (the newly opened position)
   STATEMENTS...
 
-on position closed
+on position closed             # available: pos, exit_type (string)
   STATEMENTS...
 
 on end
@@ -118,15 +118,33 @@ open iron_condor(0.20, 0.20, 45)           # strategy call with null check
 open bull_put_spread(0.30, 0.15, 45)       # any ctx strategy method
 ```
 
-### Variables and Plotting
+### Variables and Math
 
 ```
 set upper to sma(200) * 1.05               # local variable (let)
 set consecutive_losses to 0                 # state reassignment (no let)
 add 1 to counter                           # counter += 1
+subtract 10 from balance                   # balance -= 10
+multiply factor by 1.05                    # factor *= 1.05
+divide total by 2                          # total /= 2
 plot "Upper Band" at upper                  # ctx.plot("Upper Band", upper)
 plot "RSI" at rsi(14) as subchart           # ctx.plot_with(..., "subchart")
 ```
+
+### Loops
+
+Iterate over positions, legs, or any array:
+
+```
+for each pos in positions()
+  when pos.pnl_pct < -0.5 then
+    close position pos.id "stop_loss"
+
+for each pos in positions()
+  add pos.unrealized_pnl to total_pnl
+```
+
+The loop body supports all statement types including nested `when`/`otherwise`.
 
 ### Escape Hatch
 
@@ -134,9 +152,46 @@ plot "RSI" at rsi(14) as subchart           # ctx.plot_with(..., "subchart")
 raw let x = #{ key: "value" };             # arbitrary Rhai (not rewritten)
 raw let legs = pos.legs;                   # access complex structures
 raw if legs.len() > 0 { let strike = legs[0].strike; }
+raw let regime = if bb_width > 0.08 { "volatile" } else { "normal" };
 ```
 
 Use `raw` for anything the DSL can't express natively.
+
+## Available Variables Per Callback
+
+Each event block has specific variables in scope. These are **implicit** — you
+don't declare them, they're provided by the engine.
+
+| Block | Available Variables | Notes |
+|-------|-------------------|-------|
+| `on each bar` | *(none explicit)* | Use expression rewriting (`close`, `sma(200)`, etc.) which maps to `ctx` |
+| `on exit check` | `pos` | The position being evaluated for exit |
+| `on position opened` | `pos` | The newly opened position |
+| `on position closed` | `pos`, `exit_type` | The closed position and why it closed |
+| `on end` | *(none explicit)* | Final cleanup callback |
+
+### `pos` Properties (available in exit check, position opened/closed)
+
+```
+pos.id               # unique position ID
+pos.pnl_pct          # P&L as fraction of entry cost
+pos.unrealized_pnl   # current unrealized P&L
+pos.days_held        # days since entry
+pos.entry_cost       # cost at entry
+pos.entry_date       # entry date string
+pos.is_options       # true for options positions
+pos.is_stock         # true for stock positions
+pos.side             # "long" or "short" (stock only)
+pos.source           # "script" or "assignment"
+pos.dte              # days to expiration (options only)
+pos.expiration       # expiration date string (options only)
+pos.legs             # array of leg maps (options only, use raw for indexing)
+```
+
+### `exit_type` Values (available in `on position closed`)
+
+`"expiration"`, `"stop_loss"`, `"take_profit"`, `"max_hold"`,
+`"dte_exit"`, `"signal"`, `"delta_exit"`, `"assignment"`, `"called_away"`
 
 ## Expression Rules
 
@@ -251,22 +306,24 @@ legs requires `raw` blocks: `raw let strike = pos.legs[0].strike;`
 
 ## Known Limitations
 
-### Cannot Express Without `raw`
+### Still Requires `raw`
 
-1. **Loops**: `for`, `while` — use `raw` for iteration
-2. **Array/map literals**: `[1, 2, 3]` or `#{ key: val }` — use `raw`
-3. **Array indexing**: `pos.legs[0].strike` — use `raw`
-4. **String interpolation**: `` `text ${var}` `` — use `raw` or `+` concatenation
-5. **Compound assignments**: only `+=` via `add`; no `-=`, `*=`, `/=` — use `raw`
-6. **Complex conditional assignments**: `let x = if cond { a } else { b }` — use `raw`
-7. **Method chaining**: `value.to_string()` — use `raw`
-8. **Function definitions**: user-defined functions — use `raw` or Rhai
-9. **Match/pattern matching**: use when/otherwise chains or `raw`
-10. **Engine-read variables**: `_group = "Cycle 1"` — use `raw`
+1. **Array/map literals**: `[1, 2, 3]` or `#{ key: val }` — use `raw`
+2. **String interpolation**: `` `text ${var}` `` — use `raw` or `+` concatenation
+3. **Complex conditional assignments**: `let x = if cond { a } else { b }` — use `raw`
+4. **Method chaining**: `value.to_string()` — use `raw`
+5. **Function definitions**: user-defined functions — use `raw` or Rhai
+6. **`while` loops**: use `raw` (DSL has `for each` but not `while`)
+
+### Now Supported (previously required `raw`)
+
+- **For-each loops**: `for each pos in positions()` with indented body
+- **All compound assignments**: `add`, `subtract from`, `multiply by`, `divide by`
+- **Array indexing in expressions**: `pos.legs[0].strike` works in any expression
+- **Engine-read variables**: `state _group = "Cycle 1"` + `set _group to "Cycle 2"`
 
 ### Expression Limitations
 
-- `set NAME to EXPR` fails if EXPR contains ` to ` (e.g., `set x to a to b`)
 - Multiline expressions are not supported (each statement is one line)
 - Nested parentheses work but complex expressions may be clearer in `raw`
 

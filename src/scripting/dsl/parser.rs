@@ -127,6 +127,27 @@ pub enum Stmt {
         name: String,
         line: usize,
     },
+    SubtractFrom {
+        expr: String,
+        name: String,
+        line: usize,
+    },
+    MultiplyBy {
+        name: String,
+        expr: String,
+        line: usize,
+    },
+    DivideBy {
+        name: String,
+        expr: String,
+        line: usize,
+    },
+    ForEach {
+        var: String,
+        iterable: String,
+        body: Vec<Stmt>,
+        line: usize,
+    },
     Return {
         expr: String,
         line: usize,
@@ -564,6 +585,41 @@ fn parse_statements(lines: &[Line]) -> Result<Vec<Stmt>, DslError> {
                 line: line.num,
             });
             i += 1;
+        } else if let Some(rest) = content.strip_prefix("subtract ") {
+            let (expr, name) = parse_subtract_from(rest, line.num)?;
+            stmts.push(Stmt::SubtractFrom {
+                expr,
+                name,
+                line: line.num,
+            });
+            i += 1;
+        } else if let Some(rest) = content.strip_prefix("multiply ") {
+            let (name, expr) = parse_multiply_by(rest, line.num)?;
+            stmts.push(Stmt::MultiplyBy {
+                name,
+                expr,
+                line: line.num,
+            });
+            i += 1;
+        } else if let Some(rest) = content.strip_prefix("divide ") {
+            let (name, expr) = parse_divide_by(rest, line.num)?;
+            stmts.push(Stmt::DivideBy {
+                name,
+                expr,
+                line: line.num,
+            });
+            i += 1;
+        } else if let Some(rest) = content.strip_prefix("for each ") {
+            let (var, iterable) = parse_for_each_header(rest, line.num)?;
+            let (body_lines, next) = parse_indented_body(lines, i)?;
+            let body = parse_statements(&body_lines)?;
+            stmts.push(Stmt::ForEach {
+                var,
+                iterable,
+                body,
+                line: line.num,
+            });
+            i = next;
         } else if let Some(rest) = content.strip_prefix("return ") {
             stmts.push(Stmt::Return {
                 expr: rest.to_string(),
@@ -760,6 +816,91 @@ fn parse_add_to(rest: &str, line_num: usize) -> Result<(String, String), DslErro
     }
 
     Ok((expr, name))
+}
+
+/// Parse `EXPR from NAME`
+fn parse_subtract_from(rest: &str, line_num: usize) -> Result<(String, String), DslError> {
+    let from_pos = rest.rfind(" from ").ok_or_else(|| {
+        DslError::new(
+            line_num,
+            "subtract statement requires 'from' (e.g., subtract 1 from counter)",
+        )
+    })?;
+
+    let expr = rest[..from_pos].trim().to_string();
+    let name = rest[from_pos + 6..].trim().to_string();
+
+    if expr.is_empty() || name.is_empty() {
+        return Err(DslError::new(
+            line_num,
+            "subtract statement requires EXPR from NAME",
+        ));
+    }
+
+    Ok((expr, name))
+}
+
+/// Parse `NAME by EXPR`
+fn parse_multiply_by(rest: &str, line_num: usize) -> Result<(String, String), DslError> {
+    let by_pos = rest.find(" by ").ok_or_else(|| {
+        DslError::new(
+            line_num,
+            "multiply statement requires 'by' (e.g., multiply counter by 2)",
+        )
+    })?;
+
+    let name = rest[..by_pos].trim().to_string();
+    let expr = rest[by_pos + 4..].trim().to_string();
+
+    if name.is_empty() || expr.is_empty() {
+        return Err(DslError::new(
+            line_num,
+            "multiply statement requires NAME by EXPR",
+        ));
+    }
+
+    Ok((name, expr))
+}
+
+/// Parse `NAME by EXPR`
+fn parse_divide_by(rest: &str, line_num: usize) -> Result<(String, String), DslError> {
+    let by_pos = rest.find(" by ").ok_or_else(|| {
+        DslError::new(
+            line_num,
+            "divide statement requires 'by' (e.g., divide counter by 2)",
+        )
+    })?;
+
+    let name = rest[..by_pos].trim().to_string();
+    let expr = rest[by_pos + 4..].trim().to_string();
+
+    if name.is_empty() || expr.is_empty() {
+        return Err(DslError::new(
+            line_num,
+            "divide statement requires NAME by EXPR",
+        ));
+    }
+
+    Ok((name, expr))
+}
+
+/// Parse `VAR in EXPR` (for `for each VAR in EXPR`)
+fn parse_for_each_header(rest: &str, line_num: usize) -> Result<(String, String), DslError> {
+    let in_pos = rest.find(" in ").ok_or_else(|| {
+        DslError::new(
+            line_num,
+            "for each requires 'in' (e.g., for each pos in positions())",
+        )
+    })?;
+
+    let var = rest[..in_pos].trim().to_string();
+    let iterable = rest[in_pos + 4..].trim().to_string();
+
+    if var.is_empty() || iterable.is_empty() {
+        return Err(DslError::new(line_num, "for each requires VAR in EXPR"));
+    }
+
+    Ok((var, iterable))
 }
 
 /// Extract a `"quoted string"` value from the start of a string.
