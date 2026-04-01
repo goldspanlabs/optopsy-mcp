@@ -623,6 +623,6 @@ async fn wheel_full_cycle_assignment_and_called_away() {
     assert_eq!(
         result.result.equity_curve.len(),
         5,
-        "Should have 3 equity points"
+        "Should have 5 equity points"
     );
 }

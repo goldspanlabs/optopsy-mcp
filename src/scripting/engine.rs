@@ -782,6 +782,7 @@ pub async fn run_script_backtest_with_progress(
                             unrealized_pnl: 0.0,
                             days_held: 0,
                             current_date: today,
+                            entry_bar_idx: bar_idx,
                             source: "script".to_string(),
                             implicit: false,
                             group: read_group(&scope),
@@ -792,8 +793,11 @@ pub async fn run_script_backtest_with_progress(
 
                         if has_on_position_opened {
                             let positions_arc = Arc::new(positions.clone());
-                            let awareness =
-                                compute_position_awareness(&positions, unfilled_orders.len());
+                            let awareness = compute_position_awareness(
+                                &positions,
+                                unfilled_orders.len(),
+                                bar_idx,
+                            );
                             let ctx = ctx_factory.build(
                                 bar,
                                 bar_idx,
@@ -826,8 +830,11 @@ pub async fn run_script_backtest_with_progress(
 
                             if has_on_position_closed {
                                 let positions_arc = Arc::new(positions.clone());
-                                let awareness =
-                                    compute_position_awareness(&positions, unfilled_orders.len());
+                                let awareness = compute_position_awareness(
+                                    &positions,
+                                    unfilled_orders.len(),
+                                    bar_idx,
+                                );
                                 let ctx = ctx_factory.build(
                                     bar,
                                     bar_idx,
@@ -864,6 +871,61 @@ pub async fn run_script_backtest_with_progress(
                             ));
                         }
                     }
+                    ScriptAction::Close {
+                        position_id: None,
+                        reason,
+                    } => {
+                        // Close without position_id: close the first non-implicit position
+                        if let Some(idx) = positions.iter().position(|p| !p.implicit) {
+                            let closed_pos = positions[idx].clone();
+                            let pnl = compute_close_pnl_at_price(&closed_pos, fill_price);
+                            let exit_comm = compute_commission(&config.commission, &closed_pos);
+                            realized_equity += pnl - exit_comm;
+
+                            if has_on_position_closed {
+                                let positions_arc = Arc::new(positions.clone());
+                                let awareness = compute_position_awareness(
+                                    &positions,
+                                    unfilled_orders.len(),
+                                    bar_idx,
+                                );
+                                let ctx = ctx_factory.build(
+                                    bar,
+                                    bar_idx,
+                                    &positions_arc,
+                                    realized_equity,
+                                    &pnl_history_arc,
+                                    &awareness,
+                                );
+                                let pos_dyn = Dynamic::from(closed_pos.clone());
+                                let exit_dyn = Dynamic::from(reason.clone());
+                                let _ = call_fn_persistent(
+                                    &engine,
+                                    &mut scope,
+                                    &ast,
+                                    "on_position_closed",
+                                    (ctx, pos_dyn, exit_dyn),
+                                );
+                            }
+
+                            trade_log.push(build_script_trade_record(
+                                &closed_pos,
+                                bar.datetime,
+                                pnl,
+                                reason,
+                            ));
+                            pnl_history.push(pnl);
+                            pnl_dirty = true;
+                            max_profit_tracker.remove(&closed_pos.id);
+                            max_loss_tracker.remove(&closed_pos.id);
+                            positions.swap_remove(idx);
+                        } else {
+                            warnings.push(
+                                "Pending close order (no position_id): no open positions to close"
+                                    .to_string(),
+                            );
+                        }
+                    }
                     ScriptAction::OpenOptions { legs, qty } => {
                         let resolved = resolve_option_legs(legs, &options_by_date, today, &config);
                         if resolved.is_empty() {
@@ -887,6 +949,7 @@ pub async fn run_script_backtest_with_progress(
                             unrealized_pnl: 0.0,
                             days_held: 0,
                             current_date: today,
+                            entry_bar_idx: bar_idx,
                             source: "script".to_string(),
                             implicit: false,
                             group: read_group(&scope),
@@ -897,8 +960,11 @@ pub async fn run_script_backtest_with_progress(
 
                         if has_on_position_opened {
                             let positions_arc = Arc::new(positions.clone());
-                            let awareness =
-                                compute_position_awareness(&positions, unfilled_orders.len());
+                            let awareness = compute_position_awareness(
+                                &positions,
+                                unfilled_orders.len(),
+                                bar_idx,
+                            );
                             let ctx = ctx_factory.build(
                                 bar,
                                 bar_idx,
@@ -930,7 +996,7 @@ pub async fn run_script_backtest_with_progress(
         // --- Phase B: Exits (immediate processing) ---
 
         // Compute position awareness for this bar
-        let mut awareness = compute_position_awareness(&positions, pending_orders.len());
+        let mut awareness = compute_position_awareness(&positions, pending_orders.len(), bar_idx);
         // Apply tracked max profit/loss only for the chosen awareness position
         if let Some(pid) = awareness.chosen_position_id {
             if let Some(&mp) = max_profit_tracker.get(&pid) {
@@ -1088,6 +1154,7 @@ pub async fn run_script_backtest_with_progress(
                                             * f64::from(shares),
                                         days_held: 0,
                                         current_date: today,
+                                        entry_bar_idx: bar_idx,
                                         source: "assignment".to_string(),
                                         implicit: true,
                                         group: closed_pos.group.clone(),
@@ -1166,7 +1233,7 @@ pub async fn run_script_backtest_with_progress(
         // filled on the next bar (bar N+1). This eliminates look-ahead bias.
 
         // Update awareness after exits
-        awareness = compute_position_awareness(&positions, pending_orders.len());
+        awareness = compute_position_awareness(&positions, pending_orders.len(), bar_idx);
         for pos in &positions {
             if let Some(&mp) = max_profit_tracker.get(&pos.id) {
                 awareness.max_profit = mp;
@@ -1327,7 +1394,8 @@ pub async fn run_script_backtest_with_progress(
         let end_positions_arc = Arc::new(positions.clone());
         let pnl_history_arc = Arc::new(pnl_history.clone());
         let ctx = if let Some(last_bar) = price_history.last() {
-            let end_awareness = compute_position_awareness(&positions, 0);
+            let end_awareness =
+                compute_position_awareness(&positions, 0, price_history.len().saturating_sub(1));
             ctx_factory.build(
                 last_bar,
                 price_history.len() - 1,
@@ -1785,6 +1853,7 @@ pub struct PositionAwareness {
 pub fn compute_position_awareness(
     positions: &[ScriptPosition],
     pending_orders_count: usize,
+    current_bar_idx: usize,
 ) -> PositionAwareness {
     // Find the first non-implicit stock position for awareness
     let stock_pos = positions.iter().find(|p| !p.implicit && p.is_stock());
@@ -1804,7 +1873,7 @@ pub fn compute_position_awareness(
             return PositionAwareness {
                 market_position: mp,
                 entry_price: *entry_price,
-                bars_since_entry: pos.days_held,
+                bars_since_entry: current_bar_idx.saturating_sub(pos.entry_bar_idx) as i64,
                 current_shares: *qty as i64,
                 open_profit: pos.unrealized_pnl,
                 max_profit: 0.0, // tracked externally

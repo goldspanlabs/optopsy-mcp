@@ -821,6 +821,7 @@ mod tests {
                 unrealized_pnl: 500.0,
                 days_held: 5,
                 current_date: bars[0].datetime.date(),
+                entry_bar_idx: 0,
                 source: String::new(),
                 implicit: false,
                 group: None,
@@ -837,6 +838,7 @@ mod tests {
                 unrealized_pnl: -200.0,
                 days_held: 3,
                 current_date: bars[0].datetime.date(),
+                entry_bar_idx: 0,
                 source: String::new(),
                 implicit: false,
                 group: None,
@@ -1422,6 +1424,7 @@ mod tests {
                 unrealized_pnl: 0.0,
                 days_held: 0,
                 current_date: bars[0].datetime.date(),
+                entry_bar_idx: 0,
                 source: String::new(),
                 implicit: false,
                 group: None,
@@ -1438,6 +1441,7 @@ mod tests {
                 unrealized_pnl: 0.0,
                 days_held: 0,
                 current_date: bars[0].datetime.date(),
+                entry_bar_idx: 0,
                 source: String::new(),
                 implicit: false,
                 group: None,
@@ -1739,7 +1743,7 @@ mod tests {
     fn test_position_awareness_flat() {
         use crate::scripting::engine::compute_position_awareness;
 
-        let awareness = compute_position_awareness(&[], 0);
+        let awareness = compute_position_awareness(&[], 0, 0);
         assert_eq!(awareness.market_position, 0);
         assert_eq!(awareness.entry_price, 0.0);
         assert_eq!(awareness.current_shares, 0);
@@ -1764,16 +1768,17 @@ mod tests {
             unrealized_pnl: 500.0,
             days_held: 5,
             current_date: chrono::NaiveDate::from_ymd_opt(2024, 1, 6).unwrap(),
+            entry_bar_idx: 5,
             source: "script".to_string(),
             implicit: false,
             group: None,
         };
 
-        let awareness = compute_position_awareness(&[pos], 2);
+        let awareness = compute_position_awareness(&[pos], 2, 10);
         assert_eq!(awareness.market_position, 1);
         assert_eq!(awareness.entry_price, 150.0);
         assert_eq!(awareness.current_shares, 100);
-        assert_eq!(awareness.bars_since_entry, 5);
+        assert_eq!(awareness.bars_since_entry, 5); // 10 - 5 = 5 bars
         assert_eq!(awareness.open_profit, 500.0);
         assert_eq!(awareness.pending_orders_count, 2);
     }
