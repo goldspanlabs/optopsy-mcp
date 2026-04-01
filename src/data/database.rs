@@ -112,6 +112,8 @@ mod tests {
         assert!(tables.contains(&"threads".to_string()));
         assert!(tables.contains(&"messages".to_string()));
         assert!(tables.contains(&"results".to_string()));
+        assert!(tables.contains(&"splits".to_string()));
+        assert!(tables.contains(&"dividends".to_string()));
     }
 
     #[test]

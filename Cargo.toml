@@ -52,6 +52,10 @@ path = "src/bin/convert_ohlcv.rs"
 name = "merge-updates"
 path = "src/bin/merge_updates.rs"
 
+[[bin]]
+name = "gen-adjustment-migration"
+path = "src/bin/gen_adjustment_migration.rs"
+
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
