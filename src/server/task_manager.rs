@@ -179,6 +179,9 @@ impl TaskManager {
         if let Some(task) = self.tasks.get(task_id) {
             if !task.status().is_terminal() {
                 task.set_status(TaskStatus::Cancelled);
+                if let Ok(mut m) = task.mutable.lock() {
+                    m.completed_at = Some(Utc::now());
+                }
             }
         }
     }
@@ -187,11 +190,15 @@ impl TaskManager {
     /// Returns `false` if the task is already in a terminal state or not found.
     pub fn cancel(&self, task_id: &str) -> bool {
         if let Some(task) = self.tasks.get(task_id) {
-            if task.status().is_terminal() {
+            let status = task.status();
+            if status.is_terminal() {
                 return false;
             }
             task.cancellation_token.cancel();
             task.set_status(TaskStatus::Cancelled);
+            if let Ok(mut m) = task.mutable.lock() {
+                m.completed_at = Some(Utc::now());
+            }
             true
         } else {
             false

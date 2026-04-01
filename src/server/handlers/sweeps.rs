@@ -334,24 +334,8 @@ pub async fn create_sweep(
             }
         });
 
-        // Cancellation
-        let run_id = uuid::Uuid::new_v4().to_string();
-        let cancellations = Arc::clone(&state.cancellations);
-        let cancel_run_id = run_id.clone();
-        let is_cancelled: CancelCallback = Box::new(move || {
-            cancellations
-                .lock()
-                .is_ok_and(|set| set.contains(&cancel_run_id) || set.contains("__cancel_all__"))
-        });
-
-        // Send run_id as first SSE event so the FE can target cancellation
-        let _ = tx
-            .send(
-                Event::default()
-                    .event("run_id")
-                    .data(format!(r#"{{"id":"{run_id}"}}"#)),
-            )
-            .await;
+        // No-op cancellation — cancellation is now handled via /tasks/* endpoints
+        let is_cancelled: CancelCallback = Box::new(|| false);
 
         // Progress callback
         let cur_cb = Arc::clone(&current);
@@ -409,55 +393,38 @@ pub async fn create_sweep(
 
         ticker.abort();
 
-        // Check if this run was cancelled before cleaning up flags
-        let was_cancelled = state
-            .cancellations
-            .lock()
-            .is_ok_and(|set| set.contains(&run_id) || set.contains("__cancel_all__"));
-
-        // Clean up cancellation flags
-        if let Ok(mut set) = state.cancellations.lock() {
-            set.remove(&run_id);
-            set.remove("__cancel_all__");
-        }
-
-        if was_cancelled {
-            tracing::info!("Sweep cancelled, discarding partial results");
-            let _ = tx.send(Event::default().event("cancelled").data("")).await;
-        } else {
-            match sweep_result {
-                Ok(sweep_response) => {
-                    tracing::info!(
-                        "Sweep completed: combinations_run={}, ranked_results={}",
-                        sweep_response.combinations_run,
-                        sweep_response.ranked_results.len()
-                    );
-                    match persist_sweep(
-                        &state,
-                        &strategy_key,
-                        &symbol,
-                        &req,
-                        &sweep_response,
-                        &script_meta,
-                        "manual",
-                        None,
-                    ) {
-                        Ok(sweep_id) => {
-                            if let Ok(Some(detail)) = state.run_store.get_sweep(&sweep_id) {
-                                let json = serde_json::to_string(&detail).unwrap_or_default();
-                                let _ = tx.send(Event::default().event("result").data(json)).await;
-                            }
-                        }
-                        Err((_status, msg)) => {
-                            let _ = tx.send(Event::default().event("error").data(msg)).await;
+        match sweep_result {
+            Ok(sweep_response) => {
+                tracing::info!(
+                    "Sweep completed: combinations_run={}, ranked_results={}",
+                    sweep_response.combinations_run,
+                    sweep_response.ranked_results.len()
+                );
+                match persist_sweep(
+                    &state,
+                    &strategy_key,
+                    &symbol,
+                    &req,
+                    &sweep_response,
+                    &script_meta,
+                    "manual",
+                    None,
+                ) {
+                    Ok(sweep_id) => {
+                        if let Ok(Some(detail)) = state.run_store.get_sweep(&sweep_id) {
+                            let json = serde_json::to_string(&detail).unwrap_or_default();
+                            let _ = tx.send(Event::default().event("result").data(json)).await;
                         }
                     }
+                    Err((_status, msg)) => {
+                        let _ = tx.send(Event::default().event("error").data(msg)).await;
+                    }
                 }
-                Err(e) => {
-                    let _ = tx
-                        .send(Event::default().event("error").data(e.to_string()))
-                        .await;
-                }
+            }
+            Err(e) => {
+                let _ = tx
+                    .send(Event::default().event("error").data(e.to_string()))
+                    .await;
             }
         }
 

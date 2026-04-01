@@ -232,13 +232,8 @@ async fn execute_sweep(
         max_evaluations: params.max_evaluations,
     };
 
-    // 6. Build cancellation closure from server state
-    let cancellations = Arc::clone(&server.cancellations);
-    let is_cancelled: CancelCallback = Box::new(move || {
-        cancellations
-            .lock()
-            .is_ok_and(|set| set.contains("__cancel_all__"))
-    });
+    // 6. No-op cancellation — cancellation is handled via /tasks/* endpoints
+    let is_cancelled: CancelCallback = Box::new(|| false);
 
     // 7. Run grid or bayesian sweep
     let sweep_response: SweepResponse = match params.mode.as_str() {

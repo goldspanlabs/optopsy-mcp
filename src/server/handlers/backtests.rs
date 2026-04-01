@@ -27,12 +27,6 @@ pub struct CreateBacktestRequest {
     pub profile: Option<String>,
 }
 
-/// Optional request body for `POST /runs/cancel`.
-#[derive(Debug, Deserialize)]
-pub struct CancelRunRequest {
-    pub id: Option<String>,
-}
-
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────────
@@ -138,7 +132,9 @@ pub(crate) fn persist_backtest(
 // Handlers
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// `POST /runs` — Run a strategy with SSE progress updates.
+/// `POST /runs` — Run a strategy with SSE progress updates (legacy endpoint).
+///
+/// Cancellation is handled via `/tasks/*` endpoints; this endpoint runs to completion.
 #[allow(clippy::unused_async, clippy::too_many_lines)]
 pub async fn create_backtest(
     State(state): State<AppState>,
@@ -180,25 +176,6 @@ pub async fn create_backtest(
             }
         });
 
-        // Cancellation
-        let run_id = uuid::Uuid::new_v4().to_string();
-        let cancellations = Arc::clone(&state.cancellations);
-        let cancel_run_id = run_id.clone();
-        let is_cancelled: crate::scripting::engine::CancelCallback = Box::new(move || {
-            cancellations
-                .lock()
-                .is_ok_and(|set| set.contains(&cancel_run_id) || set.contains("__cancel_all__"))
-        });
-
-        // Send run_id as first SSE event so the FE can target cancellation
-        let _ = tx
-            .send(
-                Event::default()
-                    .event("run_id")
-                    .data(format!(r#"{{"id":"{run_id}"}}"#)),
-            )
-            .await;
-
         // Run the actual backtest
         let run_params = RunScriptParams {
             strategy: Some(req.strategy.clone()),
@@ -211,81 +188,64 @@ pub async fn create_backtest(
             &state.server,
             run_params,
             Some(progress_cb),
-            Some(&is_cancelled),
+            None,
         )
         .await;
 
         // Stop the progress ticker
         ticker.abort();
 
-        // Check if this run was cancelled before cleaning up flags
-        let was_cancelled = state
-            .cancellations
-            .lock()
-            .is_ok_and(|set| set.contains(&run_id) || set.contains("__cancel_all__"));
+        match result {
+            Ok(exec_result) => {
+                let strategy_key = exec_result
+                    .resolved_strategy_id
+                    .unwrap_or_else(|| req.strategy.clone());
+                let response = exec_result.response;
 
-        // Clean up cancellation flag
-        if let Ok(mut set) = state.cancellations.lock() {
-            set.remove(&run_id);
-            set.remove("__cancel_all__");
-        }
+                let symbol = req
+                    .params
+                    .get("SYMBOL")
+                    .and_then(Value::as_str)
+                    .unwrap_or("UNKNOWN")
+                    .to_owned();
 
-        if was_cancelled {
-            tracing::info!("Backtest cancelled, discarding partial result");
-            let _ = tx.send(Event::default().event("cancelled").data("")).await;
-        } else {
-            match result {
-                Ok(exec_result) => {
-                    let strategy_key = exec_result
-                        .resolved_strategy_id
-                        .unwrap_or_else(|| req.strategy.clone());
-                    let response = exec_result.response;
+                let capital = req
+                    .params
+                    .get("CAPITAL")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0);
 
-                    let symbol = req
-                        .params
-                        .get("SYMBOL")
-                        .and_then(Value::as_str)
-                        .unwrap_or("UNKNOWN")
-                        .to_owned();
-
-                    let capital = req
-                        .params
-                        .get("CAPITAL")
-                        .and_then(Value::as_f64)
-                        .unwrap_or(0.0);
-
-                    match persist_backtest(
-                        &*state.run_store,
-                        &strategy_key,
-                        &symbol,
-                        capital,
-                        &req.params,
-                        &response,
-                        "manual",
-                        None,
-                    ) {
-                        Ok((id, _)) => {
-                            if let Ok(Some(detail)) = state.run_store.get_run(&id) {
-                                let json = serde_json::to_string(&detail).unwrap_or_default();
-                                let _ = tx.send(Event::default().event("result").data(json)).await;
-                            }
-                        }
-                        Err((_status, msg)) => {
-                            let _ = tx
-                                .send(
-                                    Event::default()
-                                        .event("error")
-                                        .data(format!("DB insert failed: {msg}")),
-                                )
-                                .await;
+                match persist_backtest(
+                    &*state.run_store,
+                    &strategy_key,
+                    &symbol,
+                    capital,
+                    &req.params,
+                    &response,
+                    "manual",
+                    None,
+                ) {
+                    Ok((id, _)) => {
+                        if let Ok(Some(detail)) = state.run_store.get_run(&id) {
+                            let json = serde_json::to_string(&detail).unwrap_or_default();
+                            let _ = tx.send(Event::default().event("result").data(json)).await;
                         }
                     }
+                    Err((_status, msg)) => {
+                        let _ = tx
+                            .send(
+                                Event::default()
+                                    .event("error")
+                                    .data(format!("DB insert failed: {msg}")),
+                            )
+                            .await;
+                    }
                 }
-                Err(e) => {
-                    let _ = tx
-                        .send(Event::default().event("error").data(e.to_string()))
-                        .await;
-                }
+            }
+            Err(e) => {
+                let _ = tx
+                    .send(Event::default().event("error").data(e.to_string()))
+                    .await;
             }
         }
 
@@ -293,23 +253,4 @@ pub async fn create_backtest(
     });
 
     Sse::new(tokio_stream::wrappers::ReceiverStream::new(rx).map(Ok))
-}
-
-/// `POST /runs/cancel` — Cancel a specific run or all in-flight runs.
-#[allow(clippy::unused_async)]
-pub async fn cancel_run(
-    State(state): State<AppState>,
-    body: Option<Json<CancelRunRequest>>,
-) -> StatusCode {
-    if let Ok(mut set) = state.cancellations.lock() {
-        match body.and_then(|b| b.id.clone()) {
-            Some(id) => {
-                set.insert(id);
-            }
-            None => {
-                set.insert("__cancel_all__".to_string());
-            }
-        }
-    }
-    StatusCode::NO_CONTENT
 }

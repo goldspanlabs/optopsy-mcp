@@ -15,9 +15,10 @@ use tracing_subscriber::{self, EnvFilter};
 use optopsy_mcp::data::database::Database;
 use optopsy_mcp::data::traits::{self, StrategyStore};
 use optopsy_mcp::server::handlers::{
-    backtests, chat as chat_handlers, profiles, runs, strategies, sweeps,
+    backtests, chat as chat_handlers, profiles, runs, strategies, sweeps, tasks,
 };
 use optopsy_mcp::server::state::AppState;
+use optopsy_mcp::server::task_manager::TaskManager;
 use optopsy_mcp::{data, server};
 
 /// Query parameters for the `/prices/{symbol}` REST endpoint.
@@ -96,37 +97,37 @@ async fn main() -> Result<()> {
 
         let chat_store: Arc<dyn optopsy_mcp::data::traits::ChatStore> = Arc::new(db.chat());
 
-        let cancellations =
-            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+        let max_concurrent_tasks = std::env::var("MAX_CONCURRENT_TASKS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1usize);
+        let task_manager = Arc::new(TaskManager::new(max_concurrent_tasks));
 
-        let mut server = server::OptopsyServer::with_all_stores(
+        let server = server::OptopsyServer::with_all_stores(
             cache.clone(),
             strategy_store.clone(),
             run_store.clone(),
             adjustment_store.clone(),
         );
-        server.cancellations = cancellations.clone();
 
         let app_state = AppState {
             server,
             run_store,
             chat_store,
-            cancellations: cancellations.clone(),
+            task_manager: Arc::clone(&task_manager),
         };
 
         let strategy_store_for_mcp = strategy_store.clone();
         let run_store_for_mcp = app_state.run_store.clone();
         let adjustment_store_for_mcp = adjustment_store.clone();
-        let cancellations_for_mcp = cancellations.clone();
         let service = StreamableHttpService::new(
             move || {
-                let mut srv = server::OptopsyServer::with_all_stores(
+                let srv = server::OptopsyServer::with_all_stores(
                     cache.clone(),
                     strategy_store_for_mcp.clone(),
                     run_store_for_mcp.clone(),
                     adjustment_store_for_mcp.clone(),
                 );
-                srv.cancellations = cancellations_for_mcp.clone();
                 Ok(srv)
             },
             LocalSessionManager::default().into(),
@@ -204,7 +205,6 @@ async fn main() -> Result<()> {
                 "/runs",
                 axum::routing::get(runs::list_runs).post(backtests::create_backtest),
             )
-            .route("/runs/cancel", axum::routing::post(backtests::cancel_run))
             .route(
                 "/runs/{id}",
                 axum::routing::get(runs::get_run).delete(runs::delete_run),
@@ -226,12 +226,37 @@ async fn main() -> Result<()> {
                 "/walk-forward",
                 axum::routing::post(optopsy_mcp::server::handlers::walk_forward::run_walk_forward),
             )
+            .with_state(app_state.clone());
+
+        let task_routes = axum::Router::new()
+            .route("/tasks", axum::routing::get(tasks::list_tasks))
+            .route(
+                "/tasks/backtest",
+                axum::routing::post(tasks::submit_backtest),
+            )
+            .route("/tasks/sweep", axum::routing::post(tasks::submit_sweep))
+            .route(
+                "/tasks/{id}",
+                axum::routing::get(tasks::get_task).delete(tasks::cancel_task),
+            )
+            .route("/tasks/{id}/stream", axum::routing::get(tasks::stream_task))
             .with_state(app_state);
+
+        // Spawn background task cleanup (remove terminal tasks older than 10 minutes)
+        let cleanup_tm = Arc::clone(&task_manager);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                cleanup_tm.cleanup(chrono::Duration::minutes(10));
+            }
+        });
 
         let app = axum::Router::new()
             .merge(strategy_routes)
             .merge(chat_routes)
             .merge(run_routes)
+            .merge(task_routes)
             .merge(misc_routes)
             .nest_service("/mcp", service)
             .layer(CorsLayer::permissive());
