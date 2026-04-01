@@ -218,63 +218,74 @@ pub async fn create_backtest(
         // Stop the progress ticker
         ticker.abort();
 
+        // Check if this run was cancelled before cleaning up flags
+        let was_cancelled = state
+            .cancellations
+            .lock()
+            .is_ok_and(|set| set.contains(&run_id) || set.contains("__cancel_all__"));
+
         // Clean up cancellation flag
         if let Ok(mut set) = state.cancellations.lock() {
             set.remove(&run_id);
             set.remove("__cancel_all__");
         }
 
-        match result {
-            Ok(exec_result) => {
-                let strategy_key = exec_result
-                    .resolved_strategy_id
-                    .unwrap_or_else(|| req.strategy.clone());
-                let response = exec_result.response;
+        if was_cancelled {
+            tracing::info!("Backtest cancelled, discarding partial result");
+            let _ = tx.send(Event::default().event("cancelled").data("")).await;
+        } else {
+            match result {
+                Ok(exec_result) => {
+                    let strategy_key = exec_result
+                        .resolved_strategy_id
+                        .unwrap_or_else(|| req.strategy.clone());
+                    let response = exec_result.response;
 
-                let symbol = req
-                    .params
-                    .get("SYMBOL")
-                    .and_then(Value::as_str)
-                    .unwrap_or("UNKNOWN")
-                    .to_owned();
+                    let symbol = req
+                        .params
+                        .get("SYMBOL")
+                        .and_then(Value::as_str)
+                        .unwrap_or("UNKNOWN")
+                        .to_owned();
 
-                let capital = req
-                    .params
-                    .get("CAPITAL")
-                    .and_then(Value::as_f64)
-                    .unwrap_or(0.0);
+                    let capital = req
+                        .params
+                        .get("CAPITAL")
+                        .and_then(Value::as_f64)
+                        .unwrap_or(0.0);
 
-                match persist_backtest(
-                    &*state.run_store,
-                    &strategy_key,
-                    &symbol,
-                    capital,
-                    &req.params,
-                    &response,
-                    "manual",
-                    None,
-                ) {
-                    Ok((id, _)) => {
-                        if let Ok(Some(detail)) = state.run_store.get_run(&id) {
-                            let json = serde_json::to_string(&detail).unwrap_or_default();
-                            let _ = tx.send(Event::default().event("result").data(json)).await;
+                    match persist_backtest(
+                        &*state.run_store,
+                        &strategy_key,
+                        &symbol,
+                        capital,
+                        &req.params,
+                        &response,
+                        "manual",
+                        None,
+                    ) {
+                        Ok((id, _)) => {
+                            if let Ok(Some(detail)) = state.run_store.get_run(&id) {
+                                let json = serde_json::to_string(&detail).unwrap_or_default();
+                                let _ = tx.send(Event::default().event("result").data(json)).await;
+                            }
+                        }
+                        Err((_status, msg)) => {
+                            let _ = tx
+                                .send(
+                                    Event::default()
+                                        .event("error")
+                                        .data(format!("DB insert failed: {msg}")),
+                                )
+                                .await;
                         }
                     }
-                    Err((_status, msg)) => {
-                        let _ = tx
-                            .send(
-                                Event::default()
-                                    .event("error")
-                                    .data(format!("DB insert failed: {msg}")),
-                            )
-                            .await;
-                    }
                 }
-            }
-            Err(e) => {
-                let _ = tx
-                    .send(Event::default().event("error").data(e.to_string()))
-                    .await;
+                Err(e) => {
+                    let _ = tx
+                        .send(Event::default().event("error").data(e.to_string()))
+                        .await;
+                }
             }
         }
 

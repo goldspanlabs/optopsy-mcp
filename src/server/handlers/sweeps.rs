@@ -409,44 +409,55 @@ pub async fn create_sweep(
 
         ticker.abort();
 
+        // Check if this run was cancelled before cleaning up flags
+        let was_cancelled = state
+            .cancellations
+            .lock()
+            .is_ok_and(|set| set.contains(&run_id) || set.contains("__cancel_all__"));
+
         // Clean up cancellation flags
         if let Ok(mut set) = state.cancellations.lock() {
             set.remove(&run_id);
             set.remove("__cancel_all__");
         }
 
-        match sweep_result {
-            Ok(sweep_response) => {
-                tracing::info!(
-                    "Sweep completed: combinations_run={}, ranked_results={}",
-                    sweep_response.combinations_run,
-                    sweep_response.ranked_results.len()
-                );
-                match persist_sweep(
-                    &state,
-                    &strategy_key,
-                    &symbol,
-                    &req,
-                    &sweep_response,
-                    &script_meta,
-                    "manual",
-                    None,
-                ) {
-                    Ok(sweep_id) => {
-                        if let Ok(Some(detail)) = state.run_store.get_sweep(&sweep_id) {
-                            let json = serde_json::to_string(&detail).unwrap_or_default();
-                            let _ = tx.send(Event::default().event("result").data(json)).await;
+        if was_cancelled {
+            tracing::info!("Sweep cancelled, discarding partial results");
+            let _ = tx.send(Event::default().event("cancelled").data("")).await;
+        } else {
+            match sweep_result {
+                Ok(sweep_response) => {
+                    tracing::info!(
+                        "Sweep completed: combinations_run={}, ranked_results={}",
+                        sweep_response.combinations_run,
+                        sweep_response.ranked_results.len()
+                    );
+                    match persist_sweep(
+                        &state,
+                        &strategy_key,
+                        &symbol,
+                        &req,
+                        &sweep_response,
+                        &script_meta,
+                        "manual",
+                        None,
+                    ) {
+                        Ok(sweep_id) => {
+                            if let Ok(Some(detail)) = state.run_store.get_sweep(&sweep_id) {
+                                let json = serde_json::to_string(&detail).unwrap_or_default();
+                                let _ = tx.send(Event::default().event("result").data(json)).await;
+                            }
+                        }
+                        Err((_status, msg)) => {
+                            let _ = tx.send(Event::default().event("error").data(msg)).await;
                         }
                     }
-                    Err((_status, msg)) => {
-                        let _ = tx.send(Event::default().event("error").data(msg)).await;
-                    }
                 }
-            }
-            Err(e) => {
-                let _ = tx
-                    .send(Event::default().event("error").data(e.to_string()))
-                    .await;
+                Err(e) => {
+                    let _ = tx
+                        .send(Event::default().event("error").data(e.to_string()))
+                        .await;
+                }
             }
         }
 
