@@ -167,15 +167,21 @@ use optopsy_mcp::server::task_manager::TaskManager;
 use optopsy_mcp::server::OptopsyServer;
 
 /// Create an `AppState` with in-memory `SQLite`, temp-dir cache, and `TaskManager(1)`.
+/// The in-memory DB includes seeded splits/dividends from migrations.
 pub fn test_app_state() -> (AppState, TempDir) {
     let db = Database::open_in_memory().expect("open in-memory DB");
     let tmp = tempfile::tempdir().unwrap();
-    let cache = Arc::new(CachedStore::new(tmp.path().to_path_buf(), "options".to_string()));
+    let cache = Arc::new(CachedStore::new(
+        tmp.path().to_path_buf(),
+        "options".to_string(),
+    ));
     let strategy_store: Arc<dyn optopsy_mcp::data::traits::StrategyStore> =
         Arc::new(db.strategies());
     let run_store: Arc<dyn optopsy_mcp::data::traits::RunStore> = Arc::new(db.runs());
     let chat_store: Arc<dyn optopsy_mcp::data::traits::ChatStore> = Arc::new(db.chat());
-    let server = OptopsyServer::with_stores(cache, strategy_store, run_store.clone());
+    let adjustment_store = Arc::new(db.adjustments());
+    let server =
+        OptopsyServer::with_all_stores(cache, strategy_store, run_store.clone(), adjustment_store);
     let task_manager = Arc::new(TaskManager::new(1));
     let state = AppState {
         server,
@@ -187,7 +193,7 @@ pub fn test_app_state() -> (AppState, TempDir) {
 }
 
 /// Create an `AppState` with NVDA OHLCV fixture data and a seeded stock strategy.
-/// The strategy buys on bar 0 and holds. Returns (AppState, TempDir, strategy_id).
+/// The strategy buys on bar 0 and holds. Returns (`AppState`, `TempDir`, strategy\_id).
 pub fn test_app_state_with_ohlcv() -> (AppState, TempDir, String) {
     let (state, tmp) = test_app_state();
 

@@ -557,8 +557,8 @@ pub async fn stream_task(
         }
     });
 
-    Ok(Sse::new(
-        tokio_stream::wrappers::ReceiverStream::new(rx).map(Ok),
+    Ok(
+        Sse::new(tokio_stream::wrappers::ReceiverStream::new(rx).map(Ok))
+            .keep_alive(KeepAlive::default()),
     )
-    .keep_alive(KeepAlive::default()))
 }

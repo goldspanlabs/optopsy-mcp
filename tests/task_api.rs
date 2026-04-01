@@ -69,10 +69,7 @@ async fn submit_backtest_returns_task_id() {
         task_id.is_some(),
         "response should contain task_id string, got: {body}"
     );
-    assert!(
-        !task_id.unwrap().is_empty(),
-        "task_id should not be empty"
-    );
+    assert!(!task_id.unwrap().is_empty(), "task_id should not be empty");
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -108,8 +105,7 @@ async fn list_active_tasks_shows_submitted_task() {
     // Verify via GET /tasks/{id} that the task exists at all.
     let task_in_list = active
         .as_array()
-        .map(|arr| arr.iter().any(|t| t["id"].as_str() == Some(&task_id)))
-        .unwrap_or(false);
+        .is_some_and(|arr| arr.iter().any(|t| t["id"].as_str() == Some(&task_id)));
 
     if !task_in_list {
         // Task finished fast — verify it's retrievable
@@ -156,7 +152,11 @@ async fn get_task_returns_snapshot() {
 
     let snap: serde_json::Value = serde_json::from_str(&body).expect("valid JSON");
     assert_eq!(snap["id"].as_str(), Some(task_id.as_str()), "id mismatch");
-    assert_eq!(snap["kind"].as_str(), Some("single"), "kind should be single");
+    assert_eq!(
+        snap["kind"].as_str(),
+        Some("single"),
+        "kind should be single"
+    );
     assert_eq!(
         snap["symbol"].as_str(),
         Some("SPY"),
@@ -357,8 +357,6 @@ async fn e2e_backtest_runs_through_task_manager() {
         "Should have at least one trade, got: {run_detail}"
     );
 }
-
-
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sse_stream_delivers_events() {
