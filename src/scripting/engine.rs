@@ -770,15 +770,17 @@ pub async fn run_script_backtest_with_progress(
                             }
                         }
 
+                        let adjusted_fill =
+                            apply_stock_slippage(fill_price, *side, &config.slippage);
                         let pos = ScriptPosition {
                             id: next_id,
                             entry_date: today,
                             inner: ScriptPositionInner::Stock {
                                 side: *side,
                                 qty: *qty,
-                                entry_price: fill_price,
+                                entry_price: adjusted_fill,
                             },
-                            entry_cost: fill_price * *qty as f64 * side.multiplier(),
+                            entry_cost: adjusted_fill * *qty as f64 * side.multiplier(),
                             unrealized_pnl: 0.0,
                             days_held: 0,
                             current_date: today,
@@ -1863,7 +1865,11 @@ pub fn compute_position_awareness(
     current_bar_idx: usize,
 ) -> PositionAwareness {
     // Find the first non-implicit stock position for awareness
-    let stock_pos = positions.iter().find(|p| !p.implicit && p.is_stock());
+    // Prefer non-implicit stock; fall back to implicit (e.g., assignment-created)
+    let stock_pos = positions
+        .iter()
+        .find(|p| !p.implicit && p.is_stock())
+        .or_else(|| positions.iter().find(|p| p.implicit && p.is_stock()));
 
     if let Some(pos) = stock_pos {
         if let ScriptPositionInner::Stock {
@@ -2149,6 +2155,25 @@ fn compute_close_pnl(pos: &ScriptPosition, bar: &OhlcvBar) -> f64 {
                     * f64::from(*multiplier)
             })
             .sum(),
+    }
+}
+
+/// Apply slippage to a stock fill price.
+///
+/// For `PerLeg`, adds a fixed cost per share (adverse direction).
+/// For `Mid`, no adjustment (fill at computed price).
+/// Other models are options-specific and don't apply to stock fills.
+fn apply_stock_slippage(fill_price: f64, side: Side, slippage: &Slippage) -> f64 {
+    match slippage {
+        Slippage::PerLeg { per_leg } => {
+            // Buy: price worsens upward, Sell: price worsens downward
+            match side {
+                Side::Long => fill_price + per_leg,
+                Side::Short => fill_price - per_leg,
+            }
+        }
+        // Mid / Spread / Liquidity / BidAskTravel are options-specific (need bid/ask)
+        _ => fill_price,
     }
 }
 

@@ -157,18 +157,29 @@ pub struct CrossSymbolBar {
 
 /// Order type for the next-bar execution model.
 ///
-/// Orders are submitted on bar N and filled on bar N+1. The fill price depends
-/// on the order type and the N+1 bar's OHLCV data.
+/// Orders are submitted on bar N and evaluated for fills on bar N+1 using that
+/// bar's full OHLCV range. For non-market orders, the fill price accounts for
+/// gap-through behavior:
+/// - Limit orders fill at the more favorable of the limit price and the open.
+/// - Stop orders fill at the less favorable of the stop price and the open.
 #[derive(Debug, Clone)]
 pub enum OrderType {
-    /// Fills at next bar's open price.
+    /// Fills at the next bar's open price, regardless of gaps.
     Market,
-    /// Fills if price reaches the specified limit level (buy ≤ limit, sell ≥ limit).
+    /// Fills if the next bar trades at or through the limit level (buy ≤ limit,
+    /// sell ≥ limit). When the market gaps through, fills at the more favorable
+    /// of the limit price and the open (e.g., a buy limit below a gap-down open
+    /// fills at the open).
     Limit { price: f64 },
-    /// Fills if price breaches the trigger level (buy ≥ stop, sell ≤ stop).
+    /// Fills if the next bar trades at or through the stop level (buy ≥ stop,
+    /// sell ≤ stop). When the market gaps through, fills at the less favorable
+    /// of the stop price and the open (e.g., a buy stop above a gap-up open
+    /// fills at the open).
     Stop { price: f64 },
-    /// Stop triggers first, then limit applies. Fill only if stop is breached
-    /// AND the limit condition is met within the same bar.
+    /// Stop triggers first based on the bar's range, then the limit applies.
+    /// Fill only if stop is breached AND the limit condition is met within the
+    /// same bar. Invalid stop/limit relationships (buy: limit < stop, sell:
+    /// limit > stop) are rejected as unfilled.
     StopLimit { stop: f64, limit: f64 },
 }
 
@@ -243,15 +254,25 @@ impl PendingOrder {
             }
             OrderType::StopLimit { stop, limit } => {
                 if self.is_buy {
+                    // Buy stop-limit: limit must be >= stop (otherwise inverted)
+                    if *limit < *stop {
+                        return None;
+                    }
                     if high >= *stop && low <= *limit {
                         Some(limit.min(stop.max(open)))
                     } else {
                         None
                     }
-                } else if low <= *stop && high >= *limit {
-                    Some(limit.max(stop.min(open)))
                 } else {
-                    None
+                    // Sell stop-limit: limit must be <= stop (otherwise inverted)
+                    if *limit > *stop {
+                        return None;
+                    }
+                    if low <= *stop && high >= *limit {
+                        Some(limit.max(stop.min(open)))
+                    } else {
+                        None
+                    }
                 }
             }
         }
