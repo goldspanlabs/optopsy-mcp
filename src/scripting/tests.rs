@@ -661,6 +661,7 @@ mod tests {
                     num_bars: bars.len(),
                 },
             )),
+            adjusted_close: bar.close, // no adjustments in tests
         }
     }
 

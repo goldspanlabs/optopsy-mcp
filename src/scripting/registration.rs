@@ -54,6 +54,7 @@ fn register_bar_context(engine: &mut Engine) {
     engine.register_get("low", BarContext::get_low);
     engine.register_get("close", BarContext::get_close);
     engine.register_get("volume", BarContext::get_volume);
+    engine.register_get("adjusted_close", BarContext::get_adjusted_close);
     engine.register_get("bar_idx", BarContext::get_bar_idx);
 
     // Portfolio getters

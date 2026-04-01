@@ -522,10 +522,40 @@ pub async fn run_script_backtest_with_progress(
     // 4b. Convert DataFrame → Vec<OhlcvBar> for the simulation loop
     let bars = ohlcv_bars_from_df(&ohlcv_df)?;
 
+    // Load adjustment factors (splits + dividends)
+    let splits = data_loader.load_splits(&config.symbol)?;
+    let dividends = data_loader.load_dividends(&config.symbol)?;
+    let closes: Vec<(NaiveDate, f64)> = bars.iter().map(|b| (b.datetime.date(), b.close)).collect();
+    let adjustment_timeline = Arc::new(crate::engine::adjustments::AdjustmentTimeline::build(
+        &splits, &dividends, &closes,
+    ));
+
     let config = Arc::new(config);
 
+    // Build adjusted bars for indicator computation (avoids false signals at split/div dates)
+    let indicator_bars = if adjustment_timeline.is_empty() {
+        bars.clone()
+    } else {
+        bars.iter()
+            .map(|b| {
+                let factor = adjustment_timeline.factor_at(b.datetime.date());
+                OhlcvBar {
+                    datetime: b.datetime,
+                    open: b.open * factor,
+                    high: b.high * factor,
+                    low: b.low * factor,
+                    close: b.close * factor,
+                    volume: b.volume,
+                }
+            })
+            .collect()
+    };
+
     // 5. Pre-compute indicators
-    let indicator_store = Arc::new(IndicatorStore::build(&config.declared_indicators, &bars)?);
+    let indicator_store = Arc::new(IndicatorStore::build(
+        &config.declared_indicators,
+        &indicator_bars,
+    )?);
 
     // 6. Run main simulation loop
     let price_history = Arc::new(bars);
@@ -636,6 +666,7 @@ pub async fn run_script_backtest_with_progress(
         config: Arc::clone(&config),
         options_by_date: options_by_date.clone(),
         custom_series: Arc::clone(&custom_series),
+        adjustment_timeline: Arc::clone(&adjustment_timeline),
     };
 
     for (bar_idx, bar) in price_history.iter().enumerate() {
@@ -663,6 +694,21 @@ pub async fn run_script_backtest_with_progress(
         }
 
         let today = bar.datetime.date();
+
+        // Check for stock splits on this date — adjust stock position quantities
+        for s in &splits {
+            if s.date == today {
+                for pos in &mut positions {
+                    if let ScriptPositionInner::Stock {
+                        qty, entry_price, ..
+                    } = &mut pos.inner
+                    {
+                        *qty = (*qty as f64 * s.ratio) as i32;
+                        *entry_price /= s.ratio;
+                    }
+                }
+            }
+        }
 
         // --- Phase A: Exits (immediate processing) ---
 
@@ -1588,6 +1634,7 @@ struct BarContextFactory {
     config: Arc<ScriptConfig>,
     options_by_date: Option<Arc<DatePartitionedOptions>>,
     custom_series: Arc<Mutex<CustomSeriesStore>>,
+    adjustment_timeline: Arc<crate::engine::adjustments::AdjustmentTimeline>,
 }
 
 impl BarContextFactory {
@@ -1618,6 +1665,7 @@ impl BarContextFactory {
             config: Arc::clone(&self.config),
             pnl_history: Arc::clone(pnl_history),
             custom_series: Arc::clone(&self.custom_series),
+            adjusted_close: bar.close * self.adjustment_timeline.factor_at(bar.datetime.date()),
         }
     }
 }
