@@ -661,6 +661,14 @@ mod tests {
                     num_bars: bars.len(),
                 },
             )),
+            market_position: 0,
+            entry_price: 0.0,
+            bars_since_entry: 0,
+            current_shares: 0,
+            open_profit: 0.0,
+            max_profit: 0.0,
+            max_loss: 0.0,
+            pending_orders_count: 0,
         }
     }
 
@@ -1541,5 +1549,314 @@ mod tests {
         assert_eq!(item.name, "my_band");
         assert!(matches!(item.display_type, DisplayType::Subchart));
         assert_eq!(item.values, vec![Some(100.0), None, Some(102.0)]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Order type and next-bar execution tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_pending_order_market_fill() {
+        use crate::engine::types::Side;
+        use crate::scripting::types::{OrderType, PendingOrder, ScriptAction};
+
+        let order = PendingOrder {
+            action: ScriptAction::OpenStock {
+                side: Side::Long,
+                qty: 100,
+            },
+            order_type: OrderType::Market,
+            signal: None,
+            submitted_bar: 0,
+            ttl: None,
+        };
+
+        // Market orders always fill at the open
+        let fill = order.try_fill(150.0, 155.0, 148.0, 152.0);
+        assert_eq!(fill, Some(150.0));
+    }
+
+    #[test]
+    fn test_pending_order_limit_buy_fill() {
+        use crate::engine::types::Side;
+        use crate::scripting::types::{OrderType, PendingOrder, ScriptAction};
+
+        let order = PendingOrder {
+            action: ScriptAction::OpenStock {
+                side: Side::Long,
+                qty: 100,
+            },
+            order_type: OrderType::Limit { price: 148.0 },
+            signal: None,
+            submitted_bar: 0,
+            ttl: None,
+        };
+
+        // Low reaches limit → fills at limit price
+        let fill = order.try_fill(150.0, 155.0, 147.0, 152.0);
+        assert_eq!(fill, Some(148.0));
+
+        // Low doesn't reach limit → no fill
+        let fill = order.try_fill(150.0, 155.0, 149.0, 152.0);
+        assert_eq!(fill, None);
+
+        // Open gaps below limit → fills at open
+        let fill = order.try_fill(147.0, 155.0, 146.0, 152.0);
+        assert_eq!(fill, Some(147.0));
+    }
+
+    #[test]
+    fn test_pending_order_stop_buy_fill() {
+        use crate::engine::types::Side;
+        use crate::scripting::types::{OrderType, PendingOrder, ScriptAction};
+
+        let order = PendingOrder {
+            action: ScriptAction::OpenStock {
+                side: Side::Long,
+                qty: 100,
+            },
+            order_type: OrderType::Stop { price: 155.0 },
+            signal: None,
+            submitted_bar: 0,
+            ttl: None,
+        };
+
+        // High reaches stop → fills at stop price
+        let fill = order.try_fill(150.0, 156.0, 149.0, 154.0);
+        assert_eq!(fill, Some(155.0));
+
+        // High doesn't reach stop → no fill
+        let fill = order.try_fill(150.0, 154.0, 149.0, 152.0);
+        assert_eq!(fill, None);
+
+        // Open gaps above stop → fills at open
+        let fill = order.try_fill(156.0, 158.0, 155.0, 157.0);
+        assert_eq!(fill, Some(156.0));
+    }
+
+    #[test]
+    fn test_pending_order_sell_stop_fill() {
+        use crate::engine::types::Side;
+        use crate::scripting::types::{OrderType, PendingOrder, ScriptAction};
+
+        let order = PendingOrder {
+            action: ScriptAction::OpenStock {
+                side: Side::Short,
+                qty: 100,
+            },
+            order_type: OrderType::Stop { price: 145.0 },
+            signal: None,
+            submitted_bar: 0,
+            ttl: None,
+        };
+
+        // Low reaches stop → fills at stop price
+        let fill = order.try_fill(150.0, 152.0, 144.0, 146.0);
+        assert_eq!(fill, Some(145.0));
+
+        // Low doesn't reach stop → no fill
+        let fill = order.try_fill(150.0, 152.0, 146.0, 148.0);
+        assert_eq!(fill, None);
+    }
+
+    #[test]
+    fn test_pending_order_expiry() {
+        use crate::engine::types::Side;
+        use crate::scripting::types::{OrderType, PendingOrder, ScriptAction};
+
+        let order = PendingOrder {
+            action: ScriptAction::OpenStock {
+                side: Side::Long,
+                qty: 100,
+            },
+            order_type: OrderType::Market,
+            signal: Some("test".to_string()),
+            submitted_bar: 5,
+            ttl: Some(3),
+        };
+
+        assert!(!order.is_expired(6));
+        assert!(!order.is_expired(8)); // exactly 3 bars = not expired
+        assert!(order.is_expired(9)); // 4 bars = expired
+    }
+
+    #[test]
+    fn test_pending_order_gtc_never_expires() {
+        use crate::engine::types::Side;
+        use crate::scripting::types::{OrderType, PendingOrder, ScriptAction};
+
+        let order = PendingOrder {
+            action: ScriptAction::OpenStock {
+                side: Side::Long,
+                qty: 100,
+            },
+            order_type: OrderType::Market,
+            signal: None,
+            submitted_bar: 0,
+            ttl: None, // GTC
+        };
+
+        assert!(!order.is_expired(1000));
+    }
+
+    #[test]
+    fn test_stop_limit_buy_fill() {
+        use crate::engine::types::Side;
+        use crate::scripting::types::{OrderType, PendingOrder, ScriptAction};
+
+        let order = PendingOrder {
+            action: ScriptAction::OpenStock {
+                side: Side::Long,
+                qty: 100,
+            },
+            order_type: OrderType::StopLimit {
+                stop: 155.0,
+                limit: 157.0,
+            },
+            signal: None,
+            submitted_bar: 0,
+            ttl: None,
+        };
+
+        // Both conditions met: high >= stop AND low <= limit
+        let fill = order.try_fill(150.0, 158.0, 149.0, 154.0);
+        assert!(fill.is_some());
+
+        // Stop not reached
+        let fill = order.try_fill(150.0, 154.0, 149.0, 152.0);
+        assert!(fill.is_none());
+    }
+
+    #[test]
+    fn test_position_awareness_flat() {
+        use crate::scripting::engine::compute_position_awareness;
+
+        let awareness = compute_position_awareness(&[], 0);
+        assert_eq!(awareness.market_position, 0);
+        assert_eq!(awareness.entry_price, 0.0);
+        assert_eq!(awareness.current_shares, 0);
+        assert_eq!(awareness.pending_orders_count, 0);
+    }
+
+    #[test]
+    fn test_position_awareness_long() {
+        use crate::engine::types::Side;
+        use crate::scripting::engine::compute_position_awareness;
+        use crate::scripting::types::{ScriptPosition, ScriptPositionInner};
+
+        let pos = ScriptPosition {
+            id: 1,
+            entry_date: chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+            inner: ScriptPositionInner::Stock {
+                side: Side::Long,
+                qty: 100,
+                entry_price: 150.0,
+            },
+            entry_cost: 15000.0,
+            unrealized_pnl: 500.0,
+            days_held: 5,
+            current_date: chrono::NaiveDate::from_ymd_opt(2024, 1, 6).unwrap(),
+            source: "script".to_string(),
+            implicit: false,
+            group: None,
+        };
+
+        let awareness = compute_position_awareness(&[pos], 2);
+        assert_eq!(awareness.market_position, 1);
+        assert_eq!(awareness.entry_price, 150.0);
+        assert_eq!(awareness.current_shares, 100);
+        assert_eq!(awareness.bars_since_entry, 5);
+        assert_eq!(awareness.open_profit, 500.0);
+        assert_eq!(awareness.pending_orders_count, 2);
+    }
+
+    #[test]
+    fn test_helper_buy_limit() {
+        use crate::scripting::helpers;
+
+        let result = helpers::buy_limit(100, 150.0);
+        let map = result.cast::<rhai::Map>();
+        assert_eq!(
+            map.get("order_type")
+                .unwrap()
+                .clone()
+                .into_immutable_string()
+                .unwrap()
+                .as_str(),
+            "limit"
+        );
+        assert_eq!(map.get("limit_price").unwrap().as_float().unwrap(), 150.0);
+        assert_eq!(
+            map.get("side")
+                .unwrap()
+                .clone()
+                .into_immutable_string()
+                .unwrap()
+                .as_str(),
+            "long"
+        );
+    }
+
+    #[test]
+    fn test_helper_sell_stop() {
+        use crate::scripting::helpers;
+
+        let result = helpers::sell_stop(50, 145.0);
+        let map = result.cast::<rhai::Map>();
+        assert_eq!(
+            map.get("order_type")
+                .unwrap()
+                .clone()
+                .into_immutable_string()
+                .unwrap()
+                .as_str(),
+            "stop"
+        );
+        assert_eq!(map.get("stop_price").unwrap().as_float().unwrap(), 145.0);
+        assert_eq!(
+            map.get("side")
+                .unwrap()
+                .clone()
+                .into_immutable_string()
+                .unwrap()
+                .as_str(),
+            "short"
+        );
+    }
+
+    #[test]
+    fn test_helper_cancel_orders() {
+        use crate::scripting::helpers;
+
+        let result = helpers::cancel_orders();
+        let map = result.cast::<rhai::Map>();
+        assert_eq!(
+            map.get("action")
+                .unwrap()
+                .clone()
+                .into_immutable_string()
+                .unwrap()
+                .as_str(),
+            "cancel_orders"
+        );
+    }
+
+    #[test]
+    fn test_helper_buy_stop_limit() {
+        use crate::scripting::helpers;
+
+        let result = helpers::buy_stop_limit(100, 155.0, 153.0);
+        let map = result.cast::<rhai::Map>();
+        assert_eq!(
+            map.get("order_type")
+                .unwrap()
+                .clone()
+                .into_immutable_string()
+                .unwrap()
+                .as_str(),
+            "stop_limit"
+        );
+        assert_eq!(map.get("stop_price").unwrap().as_float().unwrap(), 155.0);
+        assert_eq!(map.get("limit_price").unwrap().as_float().unwrap(), 153.0);
     }
 }

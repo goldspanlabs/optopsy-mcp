@@ -152,6 +152,134 @@ pub struct CrossSymbolBar {
 }
 
 // ---------------------------------------------------------------------------
+// Order types — next-bar execution model
+// ---------------------------------------------------------------------------
+
+/// Order type for the next-bar execution model.
+///
+/// Orders are submitted on bar N and filled on bar N+1. The fill price depends
+/// on the order type and the N+1 bar's OHLCV data.
+#[derive(Debug, Clone)]
+pub enum OrderType {
+    /// Fills at next bar's open price.
+    Market,
+    /// Fills if price reaches the specified limit level (buy ≤ limit, sell ≥ limit).
+    Limit { price: f64 },
+    /// Fills if price breaches the trigger level (buy ≥ stop, sell ≤ stop).
+    Stop { price: f64 },
+    /// Stop triggers first, then limit applies. Fill only if stop is breached
+    /// AND the limit condition is met within the same bar.
+    StopLimit { stop: f64, limit: f64 },
+}
+
+/// A pending order in the order queue, waiting to be filled on a future bar.
+#[derive(Debug, Clone)]
+pub struct PendingOrder {
+    /// The action to execute when this order is filled.
+    pub action: ScriptAction,
+    /// The order type determining fill conditions.
+    pub order_type: OrderType,
+    /// Optional signal name for trade logging.
+    pub signal: Option<String>,
+    /// The bar index at which this order was submitted.
+    pub submitted_bar: usize,
+    /// Time-to-live in bars. `None` = Good-Till-Canceled.
+    pub ttl: Option<usize>,
+}
+
+impl PendingOrder {
+    /// Check whether this order has expired given the current bar index.
+    pub fn is_expired(&self, current_bar: usize) -> bool {
+        if let Some(ttl) = self.ttl {
+            current_bar - self.submitted_bar > ttl
+        } else {
+            false
+        }
+    }
+
+    /// Attempt to fill this order given the current bar's OHLCV data.
+    /// Returns `Some(fill_price)` if the order should be filled, `None` otherwise.
+    pub fn try_fill(&self, open: f64, high: f64, low: f64, _close: f64) -> Option<f64> {
+        match &self.order_type {
+            OrderType::Market => Some(open),
+            OrderType::Limit { price } => {
+                // Determine direction from the action
+                let is_buy = matches!(
+                    &self.action,
+                    ScriptAction::OpenStock {
+                        side: crate::engine::types::Side::Long,
+                        ..
+                    }
+                );
+                if is_buy {
+                    // Buy limit: fill if low ≤ limit price
+                    if low <= *price {
+                        Some(price.min(open)) // fill at limit or open (whichever is lower)
+                    } else {
+                        None
+                    }
+                } else {
+                    // Sell/short limit: fill if high ≥ limit price
+                    if high >= *price {
+                        Some(price.max(open)) // fill at limit or open (whichever is higher)
+                    } else {
+                        None
+                    }
+                }
+            }
+            OrderType::Stop { price } => {
+                let is_buy = matches!(
+                    &self.action,
+                    ScriptAction::OpenStock {
+                        side: crate::engine::types::Side::Long,
+                        ..
+                    }
+                );
+                if is_buy {
+                    // Buy stop: fill if high ≥ stop price (breakout)
+                    if high >= *price {
+                        Some(price.max(open)) // fill at stop or open (whichever is higher)
+                    } else {
+                        None
+                    }
+                } else {
+                    // Sell stop: fill if low ≤ stop price (breakdown)
+                    if low <= *price {
+                        Some(price.min(open)) // fill at stop or open (whichever is lower)
+                    } else {
+                        None
+                    }
+                }
+            }
+            OrderType::StopLimit { stop, limit } => {
+                let is_buy = matches!(
+                    &self.action,
+                    ScriptAction::OpenStock {
+                        side: crate::engine::types::Side::Long,
+                        ..
+                    }
+                );
+                if is_buy {
+                    // Buy stop-limit: stop breached (high ≥ stop) AND limit met (low ≤ limit)
+                    if high >= *stop && low <= *limit {
+                        Some(limit.min(stop.max(open)))
+                    } else {
+                        None
+                    }
+                } else {
+                    // Sell stop-limit: stop breached (low ≤ stop) AND limit met (high ≥ limit)
+                    if low <= *stop && high >= *limit {
+                        Some(limit.max(stop.min(open)))
+                    } else {
+                        None
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Action types — returned by script callbacks, processed by the engine
 // ---------------------------------------------------------------------------
 
@@ -172,6 +300,8 @@ pub enum ScriptAction {
         position_id: Option<usize>,
         reason: String,
     },
+    /// Cancel all pending orders (optionally filtered by signal name).
+    CancelOrders { signal: Option<String> },
     /// Do nothing (from `on_exit_check`).
     Hold,
     /// Stop the backtest loop early.
