@@ -9,14 +9,10 @@
 use anyhow::{Context, Result};
 use rmcp::ServiceExt;
 use std::sync::Arc;
-use tower_http::cors::CorsLayer;
 use tracing_subscriber::{self, EnvFilter};
 
 use optopsy_mcp::data::database::Database;
 use optopsy_mcp::data::traits::{self, StrategyStore};
-use optopsy_mcp::server::handlers::{
-    backtests, chat as chat_handlers, profiles, runs, strategies, sweeps, tasks,
-};
 use optopsy_mcp::server::state::AppState;
 use optopsy_mcp::server::task_manager::TaskManager;
 use optopsy_mcp::{data, server};
@@ -134,114 +130,6 @@ async fn main() -> Result<()> {
             StreamableHttpServerConfig::default(),
         );
 
-        let strategy_routes = axum::Router::new()
-            .route(
-                "/strategies",
-                axum::routing::get(strategies::list_strategies).post(strategies::create_strategy),
-            )
-            .route(
-                "/strategies/validate",
-                axum::routing::post(strategies::validate_script),
-            )
-            .route(
-                "/strategies/{id}",
-                axum::routing::get(strategies::get_strategy)
-                    .put(strategies::update_strategy)
-                    .delete(strategies::delete_strategy),
-            )
-            .route(
-                "/strategies/{id}/source",
-                axum::routing::get(strategies::get_strategy_source),
-            )
-            .route(
-                "/strategies/{id}/validate",
-                axum::routing::post(strategies::validate_stored_strategy),
-            )
-            .with_state(app_state.clone());
-
-        let chat_routes = axum::Router::new()
-            .route(
-                "/threads",
-                axum::routing::get(chat_handlers::list_threads).post(chat_handlers::create_thread),
-            )
-            .route(
-                "/threads/{id}",
-                axum::routing::get(chat_handlers::get_thread)
-                    .patch(chat_handlers::update_thread)
-                    .delete(chat_handlers::delete_thread),
-            )
-            .route(
-                "/threads/{id}/messages",
-                axum::routing::get(chat_handlers::get_messages)
-                    .post(chat_handlers::upsert_message)
-                    .delete(chat_handlers::delete_messages),
-            )
-            .route(
-                "/threads/{id}/results",
-                axum::routing::get(chat_handlers::get_results)
-                    .put(chat_handlers::replace_results)
-                    .post(chat_handlers::replace_results),
-            )
-            .route(
-                "/threads/{id}/results/{key}",
-                axum::routing::delete(chat_handlers::delete_result),
-            )
-            .with_state(app_state.clone());
-
-        let misc_routes = axum::Router::new()
-            .route("/profiles", axum::routing::get(profiles::list_profiles))
-            .route(
-                "/prices/{symbol}",
-                axum::routing::get({
-                    let cache = prices_cache.clone();
-                    move |path, query| prices_handler(cache.clone(), path, query)
-                }),
-            )
-            .route("/health", axum::routing::get(|| async { "ok" }))
-            .with_state(app_state.clone());
-
-        let run_routes = axum::Router::new()
-            .route(
-                "/runs",
-                axum::routing::get(runs::list_runs).post(backtests::create_backtest),
-            )
-            .route(
-                "/runs/{id}",
-                axum::routing::get(runs::get_run).delete(runs::delete_run),
-            )
-            .route(
-                "/runs/{id}/analysis",
-                axum::routing::patch(runs::set_run_analysis),
-            )
-            .route("/runs/sweep", axum::routing::post(sweeps::create_sweep))
-            .route(
-                "/runs/sweep/{sweepId}",
-                axum::routing::get(runs::get_sweep_detail).delete(runs::delete_sweep),
-            )
-            .route(
-                "/runs/sweep/{sweepId}/analysis",
-                axum::routing::patch(runs::set_sweep_analysis),
-            )
-            .route(
-                "/walk-forward",
-                axum::routing::post(optopsy_mcp::server::handlers::walk_forward::run_walk_forward),
-            )
-            .with_state(app_state.clone());
-
-        let task_routes = axum::Router::new()
-            .route("/tasks", axum::routing::get(tasks::list_tasks))
-            .route(
-                "/tasks/backtest",
-                axum::routing::post(tasks::submit_backtest),
-            )
-            .route("/tasks/sweep", axum::routing::post(tasks::submit_sweep))
-            .route(
-                "/tasks/{id}",
-                axum::routing::get(tasks::get_task).delete(tasks::cancel_task),
-            )
-            .route("/tasks/{id}/stream", axum::routing::get(tasks::stream_task))
-            .with_state(app_state);
-
         // Spawn background task cleanup (remove terminal tasks older than 10 minutes)
         let cleanup_tm = Arc::clone(&task_manager);
         tokio::spawn(async move {
@@ -252,14 +140,15 @@ async fn main() -> Result<()> {
             }
         });
 
-        let app = axum::Router::new()
-            .merge(strategy_routes)
-            .merge(chat_routes)
-            .merge(run_routes)
-            .merge(task_routes)
-            .merge(misc_routes)
-            .nest_service("/mcp", service)
-            .layer(CorsLayer::permissive());
+        let app = server::router::build_api_router(app_state)
+            .route(
+                "/prices/{symbol}",
+                axum::routing::get({
+                    let cache = prices_cache.clone();
+                    move |path, query| prices_handler(cache.clone(), path, query)
+                }),
+            )
+            .nest_service("/mcp", service);
 
         let addr = format!("0.0.0.0:{port}");
         tracing::info!("Starting optopsy-mcp HTTP server on {addr}");

@@ -73,3 +73,5 @@ cast_precision_loss = "allow"
 [dev-dependencies]
 tempfile = "3.26.0"
 rmcp = { version = "0.17", features = ["client", "transport-async-rw"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

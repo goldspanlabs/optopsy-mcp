@@ -5,6 +5,7 @@
 
 pub mod handlers;
 mod params;
+pub mod router;
 pub(crate) mod sanitize;
 pub mod state;
 pub mod task_manager;

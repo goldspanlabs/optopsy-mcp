@@ -159,6 +159,67 @@ pub fn write_ohlcv_parquet(dates: &[NaiveDate], closes: &[f64]) -> (TempDir, Str
     (dir, path_str)
 }
 
+use optopsy_mcp::data::cache::CachedStore;
+use optopsy_mcp::data::database::Database;
+use optopsy_mcp::data::strategy_store::StrategyRow;
+use optopsy_mcp::server::state::AppState;
+use optopsy_mcp::server::task_manager::TaskManager;
+use optopsy_mcp::server::OptopsyServer;
+
+/// Create an `AppState` with in-memory `SQLite`, temp-dir cache, and `TaskManager(1)`.
+pub fn test_app_state() -> (AppState, TempDir) {
+    let db = Database::open_in_memory().expect("open in-memory DB");
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = Arc::new(CachedStore::new(tmp.path().to_path_buf(), "options".to_string()));
+    let strategy_store: Arc<dyn optopsy_mcp::data::traits::StrategyStore> =
+        Arc::new(db.strategies());
+    let run_store: Arc<dyn optopsy_mcp::data::traits::RunStore> = Arc::new(db.runs());
+    let chat_store: Arc<dyn optopsy_mcp::data::traits::ChatStore> = Arc::new(db.chat());
+    let server = OptopsyServer::with_stores(cache, strategy_store, run_store.clone());
+    let task_manager = Arc::new(TaskManager::new(1));
+    let state = AppState {
+        server,
+        run_store,
+        chat_store,
+        task_manager,
+    };
+    (state, tmp)
+}
+
+/// Create an `AppState` and seed a simple Rhai strategy for backtest execution.
+pub fn test_app_state_with_strategy() -> (AppState, TempDir, String) {
+    let (state, tmp) = test_app_state();
+    let strategy_source = r#"
+fn config() {
+    #{
+        mode: "stock",
+    }
+}
+fn on_bar(ctx) {
+    if ctx.bar_index == 0 {
+        ctx.buy_stock(1);
+    }
+}
+"#;
+    let id = "test_buy_hold".to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+    let row = StrategyRow {
+        id: id.clone(),
+        name: "test_buy_hold".to_string(),
+        description: None,
+        category: None,
+        hypothesis: None,
+        tags: None,
+        regime: None,
+        source: strategy_source.to_string(),
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    let store = state.server.strategy_store.as_ref().unwrap();
+    store.upsert(&row).expect("seed strategy");
+    (state, tmp, id)
+}
+
 pub fn backtest_params(strategy: &str, leg_deltas: Vec<TargetRange>) -> BacktestParams {
     BacktestParams {
         strategy: strategy.to_string(),
