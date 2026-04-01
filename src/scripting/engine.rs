@@ -1234,11 +1234,11 @@ pub async fn run_script_backtest_with_progress(
 
         // Update awareness after exits
         awareness = compute_position_awareness(&positions, pending_orders.len(), bar_idx);
-        for pos in &positions {
-            if let Some(&mp) = max_profit_tracker.get(&pos.id) {
+        if let Some(chosen_id) = awareness.chosen_position_id {
+            if let Some(&mp) = max_profit_tracker.get(&chosen_id) {
                 awareness.max_profit = mp;
             }
-            if let Some(&ml) = max_loss_tracker.get(&pos.id) {
+            if let Some(&ml) = max_loss_tracker.get(&chosen_id) {
                 awareness.max_loss = ml;
             }
         }
@@ -2458,12 +2458,13 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ParsedAction> {
                         .and_then(|v| v.clone().into_immutable_string().ok())
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| "script_close".to_string());
-                    // Close a long position = sell, close a short = buy.
+                    // Close a long position = sell (is_buy=false),
+                    // close a short position = buy-to-cover (is_buy=true).
                     // Default to sell (most common: closing a long).
                     let side_str = map
                         .get("side")
                         .and_then(|v| v.clone().into_immutable_string().ok());
-                    let is_buy = side_str.as_deref() == Some("long");
+                    let is_buy = side_str.as_deref() == Some("short");
                     (
                         ScriptAction::Close {
                             position_id,
