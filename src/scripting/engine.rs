@@ -735,20 +735,11 @@ pub async fn run_script_backtest_with_progress(
 
         let today = bar.datetime.date();
 
-        // Check for stock splits on this date — adjust stock position quantities
-        for s in &splits {
-            if s.date == today {
-                for pos in &mut positions {
-                    if let ScriptPositionInner::Stock {
-                        qty, entry_price, ..
-                    } = &mut pos.inner
-                    {
-                        *qty = (*qty as f64 * s.ratio) as i32;
-                        *entry_price /= s.ratio;
-                    }
-                }
-            }
-        }
+        // Note: stock position quantities are NOT adjusted at split dates because
+        // OHLCV bars are already split-adjusted before entering the simulation loop.
+        // With split-adjusted prices there is no discontinuity, so positions remain
+        // correct without runtime adjustment. The "100 shares at $100" in split-adjusted
+        // terms is economically equivalent to "200 shares at $100" in unadjusted terms.
 
         // --- Phase A: Exits (immediate processing) ---
 

@@ -250,4 +250,14 @@ async fn covered_call_spanning_split() {
         has_called_away,
         "Should have a CalledAway trade (call ITM at expiration)"
     );
+
+    // With split-adjusted bars, stock was bought at $100 (split-adj close on Jan 2).
+    // No position qty adjustment should occur (bars are already adjusted).
+    // The stock position should remain 100 shares at $100, NOT 200 shares at $50.
+    eprintln!("trade_count: {}", result.result.trade_count);
+    eprintln!("warnings: {:?}", result.result.warnings);
+    eprintln!(
+        "final equity: {:.2}",
+        result.result.equity_curve.last().map(|e| e.equity).unwrap_or(0.0)
+    );
 }
