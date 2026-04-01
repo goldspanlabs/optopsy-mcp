@@ -526,25 +526,64 @@ pub async fn run_script_backtest_with_progress(
     let splits = data_loader.load_splits(&config.symbol)?;
     let dividends = data_loader.load_dividends(&config.symbol)?;
     let closes: Vec<(NaiveDate, f64)> = bars.iter().map(|b| (b.datetime.date(), b.close)).collect();
+
+    // Split-only timeline: matches options data (which is split-adjusted by data provider).
+    // Used for the simulation bars so strike-vs-price comparisons are correct.
+    let split_timeline = Arc::new(crate::engine::adjustments::AdjustmentTimeline::build(
+        &splits, &[], &[],
+    ));
+
+    // Full timeline (splits + dividends): used for indicators and ctx.adjusted_close
+    // so returns/metrics are fully adjusted.
     let adjustment_timeline = Arc::new(crate::engine::adjustments::AdjustmentTimeline::build(
         &splits, &dividends, &closes,
     ));
 
     let config = Arc::new(config);
 
-    // Build adjusted bars for indicator computation (avoids false signals at split/div dates)
-    let indicator_bars = if adjustment_timeline.is_empty() {
-        bars.clone()
+    // Apply split-only adjustment to simulation bars so OHLCV prices match
+    // the split-adjusted options strikes from the data provider.
+    let bars = if split_timeline.is_empty() {
+        bars
     } else {
         bars.iter()
             .map(|b| {
-                let factor = adjustment_timeline.factor_at(b.datetime.date());
+                let factor = split_timeline.factor_at(b.datetime.date());
                 OhlcvBar {
                     datetime: b.datetime,
                     open: b.open * factor,
                     high: b.high * factor,
                     low: b.low * factor,
                     close: b.close * factor,
+                    volume: b.volume,
+                }
+            })
+            .collect()
+    };
+
+    // Build fully-adjusted bars for indicator computation (split + dividend adjusted
+    // to avoid false signals at corporate action dates)
+    let indicator_bars = if adjustment_timeline.is_empty() {
+        bars.clone()
+    } else {
+        bars.iter()
+            .map(|b| {
+                // bars are already split-adjusted, so only apply dividend adjustment
+                // by dividing out the split factor and applying the full factor
+                let split_factor = split_timeline.factor_at(b.datetime.date());
+                let full_factor = adjustment_timeline.factor_at(b.datetime.date());
+                // dividend-only factor = full / split
+                let div_factor = if split_factor.abs() > f64::EPSILON {
+                    full_factor / split_factor
+                } else {
+                    1.0
+                };
+                OhlcvBar {
+                    datetime: b.datetime,
+                    open: b.open * div_factor,
+                    high: b.high * div_factor,
+                    low: b.low * div_factor,
+                    close: b.close * div_factor,
                     volume: b.volume,
                 }
             })
@@ -667,6 +706,7 @@ pub async fn run_script_backtest_with_progress(
         options_by_date: options_by_date.clone(),
         custom_series: Arc::clone(&custom_series),
         adjustment_timeline: Arc::clone(&adjustment_timeline),
+        split_timeline: Arc::clone(&split_timeline),
     };
 
     for (bar_idx, bar) in price_history.iter().enumerate() {
@@ -1635,6 +1675,7 @@ struct BarContextFactory {
     options_by_date: Option<Arc<DatePartitionedOptions>>,
     custom_series: Arc<Mutex<CustomSeriesStore>>,
     adjustment_timeline: Arc<crate::engine::adjustments::AdjustmentTimeline>,
+    split_timeline: Arc<crate::engine::adjustments::AdjustmentTimeline>,
 }
 
 impl BarContextFactory {
@@ -1665,7 +1706,14 @@ impl BarContextFactory {
             config: Arc::clone(&self.config),
             pnl_history: Arc::clone(pnl_history),
             custom_series: Arc::clone(&self.custom_series),
-            adjusted_close: bar.close * self.adjustment_timeline.factor_at(bar.datetime.date()),
+            // bar.close is already split-adjusted; apply dividend-only factor
+            // for the fully-adjusted close (dividend factor = full / split)
+            adjusted_close: {
+                let split_f = self.split_timeline.factor_at(bar.datetime.date());
+                let full_f = self.adjustment_timeline.factor_at(bar.datetime.date());
+                let div_f = if split_f.abs() > f64::EPSILON { full_f / split_f } else { 1.0 };
+                bar.close * div_f
+            },
         }
     }
 }
