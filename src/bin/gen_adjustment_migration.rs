@@ -1,10 +1,10 @@
 //! One-time binary: reads splits/dividends TXT files and generates a SQL migration.
 //!
-//! Usage:
-//!   cargo run --release --bin gen-adjustment-migration -- \
-//!     --splits "/Volumes/Lexar EQ790/Historic Market Data/stocks/stock_splits" \
-//!     --dividends "/Volumes/Lexar EQ790/Historic Market Data/stocks/stock_dividends" \
-//!     --output migrations/V2__seed_splits_dividends.sql
+//! ```text
+//! cargo run --release --bin gen-adjustment-migration -- \
+//!   --splits <SPLITS_DIR> --dividends <DIVIDENDS_DIR> \
+//!   --output migrations/V2__seed_splits_dividends.sql
+//! ```
 
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
@@ -100,7 +100,7 @@ fn write_splits(dir: &Path, out: &mut File) -> Result<usize> {
     let mut entries: Vec<(String, String, f64)> = Vec::new();
 
     let mut files: Vec<_> = fs::read_dir(dir)?
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .map(|e| e.path())
         .filter(|p| {
             p.extension().is_some_and(|ext| ext == "txt")
@@ -149,7 +149,7 @@ fn write_dividends(dir: &Path, out: &mut File) -> Result<usize> {
     let mut entries: Vec<(String, String, f64)> = Vec::new();
 
     let mut files: Vec<_> = fs::read_dir(dir)?
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|ext| ext == "txt"))
         .collect();

@@ -21,7 +21,7 @@ pub struct DividendRow {
     pub amount: f64,
 }
 
-/// SQLite implementation of adjustment data queries.
+/// `SQLite` implementation of adjustment data queries.
 pub struct SqliteAdjustmentStore {
     pub(crate) conn: DbConnection,
 }
