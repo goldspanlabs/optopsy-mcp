@@ -341,7 +341,9 @@ async fn wheel_script_stock_only_smoke_test() {
     params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
     params.insert("CAPITAL".to_string(), serde_json::json!(100_000.0));
 
-    let result = run_script_backtest(script, &params, &loader, None, None, None).await.unwrap();
+    let result = run_script_backtest(script, &params, &loader, None, None, None)
+        .await
+        .unwrap();
 
     assert_eq!(result.result.trade_count, 1, "Should have 1 closed trade");
     assert_eq!(
@@ -413,7 +415,9 @@ async fn script_opens_options_position() {
     params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
     params.insert("CAPITAL".to_string(), serde_json::json!(100_000.0));
 
-    let result = run_script_backtest(script, &params, &loader, None, None, None).await.unwrap();
+    let result = run_script_backtest(script, &params, &loader, None, None, None)
+        .await
+        .unwrap();
 
     // Should have opened a position on bar 0
     assert!(
@@ -444,9 +448,10 @@ async fn wheel_script_result_has_expected_fields() {
     let mut params = wheel_params();
     params.insert("TAKE_PROFIT".to_string(), serde_json::json!(null));
 
-    let ScriptBacktestResult { result, .. } = run_script_backtest(&script_source, &params, &loader, None, None, None)
-        .await
-        .unwrap();
+    let ScriptBacktestResult { result, .. } =
+        run_script_backtest(&script_source, &params, &loader, None, None, None)
+            .await
+            .unwrap();
 
     // Verify all fields the FE needs are present and serializable
     let json = serde_json::to_value(&result.metrics).unwrap();

@@ -207,9 +207,13 @@ pub async fn create_backtest(
             profile: req.profile.clone(),
         };
 
-        let result =
-            super::run_script::execute_with_progress(&state.server, run_params, Some(progress_cb), Some(&is_cancelled))
-                .await;
+        let result = super::run_script::execute_with_progress(
+            &state.server,
+            run_params,
+            Some(progress_cb),
+            Some(&is_cancelled),
+        )
+        .await;
 
         // Stop the progress ticker
         ticker.abort();

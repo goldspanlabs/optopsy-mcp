@@ -96,9 +96,8 @@ async fn main() -> Result<()> {
 
         let chat_store: Arc<dyn optopsy_mcp::data::traits::ChatStore> = Arc::new(db.chat());
 
-        let cancellations = std::sync::Arc::new(std::sync::Mutex::new(
-            std::collections::HashSet::new(),
-        ));
+        let cancellations =
+            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
 
         let mut server = server::OptopsyServer::with_all_stores(
             cache.clone(),
@@ -205,10 +204,7 @@ async fn main() -> Result<()> {
                 "/runs",
                 axum::routing::get(runs::list_runs).post(backtests::create_backtest),
             )
-            .route(
-                "/runs/cancel",
-                axum::routing::post(backtests::cancel_run),
-            )
+            .route("/runs/cancel", axum::routing::post(backtests::cancel_run))
             .route(
                 "/runs/{id}",
                 axum::routing::get(runs::get_run).delete(runs::delete_run),
@@ -217,10 +213,7 @@ async fn main() -> Result<()> {
                 "/runs/{id}/analysis",
                 axum::routing::patch(runs::set_run_analysis),
             )
-            .route(
-                "/runs/sweep",
-                axum::routing::post(sweeps::create_sweep),
-            )
+            .route("/runs/sweep", axum::routing::post(sweeps::create_sweep))
             .route(
                 "/runs/sweep/{sweepId}",
                 axum::routing::get(runs::get_sweep_detail).delete(runs::delete_sweep),

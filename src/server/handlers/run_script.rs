@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use crate::scripting::engine::{CachingDataLoader, CancelCallback, ProgressCallback, ScriptBacktestResult};
+use crate::scripting::engine::{
+    CachingDataLoader, CancelCallback, ProgressCallback, ScriptBacktestResult,
+};
 use crate::scripting::stdlib::parse_script_meta;
 use crate::server::OptopsyServer;
 use crate::tools::run_script::{format_indicator_data, RunScriptParams, RunScriptResponse};
