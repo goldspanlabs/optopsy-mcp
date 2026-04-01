@@ -79,6 +79,20 @@ impl DataLoader for TestDataLoader {
     ) -> Result<DataFrame> {
         Ok(self.options_df.clone())
     }
+
+    fn load_splits(
+        &self,
+        _symbol: &str,
+    ) -> Result<Vec<optopsy_mcp::data::adjustment_store::SplitRow>> {
+        Ok(Vec::new())
+    }
+
+    fn load_dividends(
+        &self,
+        _symbol: &str,
+    ) -> Result<Vec<optopsy_mcp::data::adjustment_store::DividendRow>> {
+        Ok(Vec::new())
+    }
 }
 
 /// Convert `Vec<OhlcvBar>` to a Polars `DataFrame` for test data loaders.

@@ -54,7 +54,9 @@ impl AdjustmentTimeline {
         events.sort_by_key(|(d, _)| *d);
 
         if events.is_empty() {
-            return Self { entries: Vec::new() };
+            return Self {
+                entries: Vec::new(),
+            };
         }
 
         let close_map: std::collections::BTreeMap<NaiveDate, f64> =
@@ -117,11 +119,7 @@ impl AdjustmentTimeline {
     ///
     /// Returns the product of all split ratios between `from` (exclusive) and `to` (inclusive).
     /// Only considers splits, not dividends.
-    pub fn split_ratio_between(
-        splits: &[SplitRow],
-        from: NaiveDate,
-        to: NaiveDate,
-    ) -> f64 {
+    pub fn split_ratio_between(splits: &[SplitRow], from: NaiveDate, to: NaiveDate) -> f64 {
         let mut ratio = 1.0;
         for s in splits {
             if s.date > from && s.date <= to {
@@ -188,10 +186,7 @@ mod tests {
     #[test]
     fn test_two_splits() {
         // AAPL: 7:1 on 2014-06-09, 4:1 on 2020-08-31
-        let splits = vec![
-            make_split("2014-06-09", 7.0),
-            make_split("2020-08-31", 4.0),
-        ];
+        let splits = vec![make_split("2014-06-09", 7.0), make_split("2020-08-31", 4.0)];
         let tl = AdjustmentTimeline::build(&splits, &[], &[]);
 
         // Before both splits: factor = 1/(7*4) = 1/28
@@ -233,20 +228,20 @@ mod tests {
 
     #[test]
     fn test_split_ratio_between() {
-        let splits = vec![
-            make_split("2014-06-09", 7.0),
-            make_split("2020-08-31", 4.0),
-        ];
+        let splits = vec![make_split("2014-06-09", 7.0), make_split("2020-08-31", 4.0)];
         // Between 2014-01-01 and 2021-01-01: both splits apply → 7 * 4 = 28
-        let ratio = AdjustmentTimeline::split_ratio_between(&splits, d("2014-01-01"), d("2021-01-01"));
+        let ratio =
+            AdjustmentTimeline::split_ratio_between(&splits, d("2014-01-01"), d("2021-01-01"));
         assert!((ratio - 28.0).abs() < f64::EPSILON);
 
         // Between 2015-01-01 and 2021-01-01: only the 4:1 split applies
-        let ratio = AdjustmentTimeline::split_ratio_between(&splits, d("2015-01-01"), d("2021-01-01"));
+        let ratio =
+            AdjustmentTimeline::split_ratio_between(&splits, d("2015-01-01"), d("2021-01-01"));
         assert!((ratio - 4.0).abs() < f64::EPSILON);
 
         // Between 2021-01-01 and 2022-01-01: no splits
-        let ratio = AdjustmentTimeline::split_ratio_between(&splits, d("2021-01-01"), d("2022-01-01"));
+        let ratio =
+            AdjustmentTimeline::split_ratio_between(&splits, d("2021-01-01"), d("2022-01-01"));
         assert!((ratio - 1.0).abs() < f64::EPSILON);
     }
 }

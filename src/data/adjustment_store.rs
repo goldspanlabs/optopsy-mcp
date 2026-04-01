@@ -83,10 +83,7 @@ mod tests {
         let store = db.adjustments();
         let splits = store.splits("AAPL").expect("query splits");
         // V2 migration seeds AAPL splits
-        assert!(
-            !splits.is_empty(),
-            "AAPL should have splits from seed data"
-        );
+        assert!(!splits.is_empty(), "AAPL should have splits from seed data");
         // Check the most recent split (4:1 on 2020-08-31)
         let latest = splits.last().unwrap();
         assert_eq!(latest.date, NaiveDate::from_ymd_opt(2020, 8, 31).unwrap());

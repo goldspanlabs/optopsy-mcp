@@ -38,7 +38,7 @@ pub async fn execute_with_progress(
         .or(params.strategy.as_deref())
         .map(|id| parse_script_meta(id, &source));
 
-    let loader = CachingDataLoader::new(Arc::clone(&server.cache));
+    let loader = CachingDataLoader::new(Arc::clone(&server.cache), server.adjustment_store.clone());
 
     // Merge profile params if a profile was requested
     let effective_params = if let Some(ref profile_name) = params.profile {

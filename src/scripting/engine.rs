@@ -2222,6 +2222,15 @@ pub trait DataLoader: Send + Sync {
         start: Option<NaiveDate>,
         end: Option<NaiveDate>,
     ) -> Result<polars::prelude::DataFrame>;
+
+    /// Load splits for a symbol. Returns empty vec if no adjustment store available.
+    fn load_splits(&self, symbol: &str) -> Result<Vec<crate::data::adjustment_store::SplitRow>>;
+
+    /// Load dividends for a symbol. Returns empty vec if no adjustment store available.
+    fn load_dividends(
+        &self,
+        symbol: &str,
+    ) -> Result<Vec<crate::data::adjustment_store::DividendRow>>;
 }
 
 /// `DataLoader` backed by `CachedStore` — the production implementation.
@@ -2230,6 +2239,7 @@ pub trait DataLoader: Send + Sync {
 /// DataFrame via `stock_sim::load_ohlcv_df`.
 pub struct CachedDataLoader {
     pub cache: Arc<crate::data::cache::CachedStore>,
+    pub adjustment_store: Option<Arc<crate::data::adjustment_store::SqliteAdjustmentStore>>,
 }
 
 #[async_trait::async_trait]
@@ -2270,6 +2280,23 @@ impl DataLoader for CachedDataLoader {
             .load_options(&symbol.to_uppercase(), start, end)
             .await
     }
+
+    fn load_splits(&self, symbol: &str) -> Result<Vec<crate::data::adjustment_store::SplitRow>> {
+        match &self.adjustment_store {
+            Some(store) => store.splits(symbol),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    fn load_dividends(
+        &self,
+        symbol: &str,
+    ) -> Result<Vec<crate::data::adjustment_store::DividendRow>> {
+        match &self.adjustment_store {
+            Some(store) => store.dividends(symbol),
+            None => Ok(Vec::new()),
+        }
+    }
 }
 
 /// `DataLoader` wrapper that caches full DataFrames in memory by symbol.
@@ -2284,9 +2311,15 @@ pub struct CachingDataLoader {
 }
 
 impl CachingDataLoader {
-    pub fn new(cache: Arc<crate::data::cache::CachedStore>) -> Self {
+    pub fn new(
+        cache: Arc<crate::data::cache::CachedStore>,
+        adjustment_store: Option<Arc<crate::data::adjustment_store::SqliteAdjustmentStore>>,
+    ) -> Self {
         Self {
-            inner: CachedDataLoader { cache },
+            inner: CachedDataLoader {
+                cache,
+                adjustment_store,
+            },
             ohlcv_cache: tokio::sync::Mutex::new(HashMap::new()),
             options_cache: tokio::sync::Mutex::new(HashMap::new()),
         }
@@ -2383,6 +2416,17 @@ impl DataLoader for CachingDataLoader {
         }
 
         filter_df_by_date(&arc_df, start, end)
+    }
+
+    fn load_splits(&self, symbol: &str) -> Result<Vec<crate::data::adjustment_store::SplitRow>> {
+        self.inner.load_splits(symbol)
+    }
+
+    fn load_dividends(
+        &self,
+        symbol: &str,
+    ) -> Result<Vec<crate::data::adjustment_store::DividendRow>> {
+        self.inner.load_dividends(symbol)
     }
 }
 
