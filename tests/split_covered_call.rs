@@ -1,7 +1,7 @@
 //! Integration test: covered call position spanning a stock split.
 //!
 //! Verifies that when a 2:1 split occurs mid-position:
-//! 1. Stock position qty doubles and entry_price halves
+//! 1. Stock position qty doubles and `entry_price` halves
 //! 2. Split-adjusted OHLCV prices match split-adjusted option strikes
 //! 3. The covered call resolves correctly at expiration
 
@@ -88,7 +88,7 @@ fn make_bars_from_closes(closes: &BTreeMap<NaiveDate, f64>) -> Vec<OhlcvBar> {
         .collect()
 }
 
-/// Test DataLoader that returns splits for split-spanning tests.
+/// Test `DataLoader` that returns splits for split-spanning tests.
 struct SplitTestDataLoader {
     ohlcv_df: DataFrame,
     options_df: DataFrame,
@@ -129,13 +129,13 @@ impl DataLoader for SplitTestDataLoader {
 
 /// Scenario: Buy 100 shares + sell a covered call spanning a 2:1 split.
 ///
-/// OHLCV prices are UNADJUSTED. Options strikes are SPLIT-ADJUSTED (as FirstRate provides).
+/// OHLCV prices are UNADJUSTED. Options strikes are SPLIT-ADJUSTED (as `FirstRate` provides).
 /// The engine applies split adjustment to OHLCV at load time.
 ///
 /// Timeline:
 ///   Jan 2:  Stock $200 (unadj). Split-adjusted = $100. Open stock + short call strike $110.
 ///   Jan 15: 2:1 split. Stock $100 (unadj, post-split). Split-adjusted = $100 (factor=1.0).
-///           Stock position: qty 100→200, entry_price $100→$50.
+///           Stock position: qty 100→200, `entry_price` $100→$50.
 ///   Feb 16: Stock $115 (unadj, post-split). Expiration.
 ///           Strike $110 <= close $115 → ITM → called away.
 #[tokio::test(flavor = "multi_thread")]
@@ -258,7 +258,7 @@ async fn covered_call_spanning_split() {
     eprintln!("warnings: {:?}", result.result.warnings);
     eprintln!(
         "final equity: {:.2}",
-        result.result.equity_curve.last().map(|e| e.equity).unwrap_or(0.0)
+        result.result.equity_curve.last().map_or(0.0, |e| e.equity)
     );
 }
 
@@ -272,8 +272,9 @@ async fn covered_call_spanning_split() {
 ///           Assignment: implicit stock 100 shares at $95.
 ///   Jan 22: Sell covered call strike $100, exp Feb 16. Stock $92 (unadj), split-adj $92.
 ///   Feb 16: Stock $105 (unadj). Strike $100 <= close $105 → called away.
-///           Stock closed at $100. PnL = ($100 - $95) × 100 = $500.
+///           Stock closed at $100. P&L = ($100 - $95) × 100 = $500.
 #[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::too_many_lines)]
 async fn wheel_cycle_spanning_split() {
     let put_entry = d(2024, 1, 2);
     let split_date = d(2024, 1, 15);
@@ -397,7 +398,7 @@ async fn wheel_cycle_spanning_split() {
         .iter()
         .map(|t| format!("{:?}", t.exit_type))
         .collect();
-    eprintln!("Exit types: {:?}", exit_types);
+    eprintln!("Exit types: {exit_types:?}");
 
     assert!(
         exit_types.iter().any(|t| t == "Assignment"),
@@ -488,10 +489,9 @@ async fn stock_only_across_split() {
 
     // Split-adjusted: bought at $100, sold at $115 → PnL = $15 × 100 shares = $1,500
     let pnl = result.result.trade_log[0].pnl;
-    eprintln!("Stock PnL: {:.2}", pnl);
+    eprintln!("Stock PnL: {pnl:.2}");
     assert!(
         (pnl - 1500.0).abs() < 1.0,
-        "Expected ~$1,500 PnL (split-adjusted $100→$115 × 100 shares), got {:.2}",
-        pnl,
+        "Expected ~$1,500 PnL (split-adjusted $100→$115 × 100 shares), got {pnl:.2}",
     );
 }

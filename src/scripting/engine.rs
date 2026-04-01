@@ -530,7 +530,9 @@ pub async fn run_script_backtest_with_progress(
     // Split-only timeline: matches options data (which is split-adjusted by data provider).
     // Used for the simulation bars so strike-vs-price comparisons are correct.
     let split_timeline = Arc::new(crate::engine::adjustments::AdjustmentTimeline::build(
-        &splits, &[], &[],
+        &splits,
+        &[],
+        &[],
     ));
 
     // Full timeline (splits + dividends): used for indicators and ctx.adjusted_close
@@ -1702,7 +1704,11 @@ impl BarContextFactory {
             adjusted_close: {
                 let split_f = self.split_timeline.factor_at(bar.datetime.date());
                 let full_f = self.adjustment_timeline.factor_at(bar.datetime.date());
-                let div_f = if split_f.abs() > f64::EPSILON { full_f / split_f } else { 1.0 };
+                let div_f = if split_f.abs() > f64::EPSILON {
+                    full_f / split_f
+                } else {
+                    1.0
+                };
                 bar.close * div_f
             },
         }
