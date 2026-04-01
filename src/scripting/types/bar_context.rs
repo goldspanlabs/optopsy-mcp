@@ -75,6 +75,9 @@ pub struct BarContext {
     // Custom series emitted by scripts via ctx.plot()
     pub custom_series: Arc<Mutex<CustomSeriesStore>>,
 
+    // Adjusted close price (accounts for splits + dividends)
+    pub adjusted_close: f64,
+
     // --- Position awareness (next-bar execution model) ---
     /// Current market position: 1 = long, -1 = short, 0 = flat.
     pub market_position: i64,
@@ -120,6 +123,9 @@ impl BarContext {
     }
     pub fn get_volume(&mut self) -> f64 {
         self.volume
+    }
+    pub fn get_adjusted_close(&mut self) -> f64 {
+        self.adjusted_close
     }
     pub fn get_bar_idx(&mut self) -> i64 {
         self.bar_idx as i64

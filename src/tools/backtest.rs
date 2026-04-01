@@ -120,7 +120,7 @@ pub async fn execute(
     let script_meta = crate::scripting::stdlib::parse_script_meta(&strategy_key, &script_source);
 
     // 3. Create data loader
-    let loader = CachingDataLoader::new(Arc::clone(&server.cache));
+    let loader = CachingDataLoader::new(Arc::clone(&server.cache), server.adjustment_store.clone());
 
     // 4. Extract symbol from params
     let symbol = params

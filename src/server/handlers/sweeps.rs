@@ -284,7 +284,10 @@ pub async fn create_sweep(
 ) -> Result<(StatusCode, Json<SweepDetail>), (StatusCode, String)> {
     let (strategy_key, script_source) = resolve_strategy_source(&state, &req.strategy)?;
     let script_meta = crate::scripting::stdlib::parse_script_meta(&strategy_key, &script_source);
-    let loader = CachingDataLoader::new(Arc::clone(&state.server.cache));
+    let loader = CachingDataLoader::new(
+        Arc::clone(&state.server.cache),
+        state.server.adjustment_store.clone(),
+    );
 
     let symbol = req
         .params
@@ -392,7 +395,10 @@ pub async fn create_sweep_stream(
         };
         let script_meta =
             crate::scripting::stdlib::parse_script_meta(&strategy_key, &script_source);
-        let loader = CachingDataLoader::new(Arc::clone(&state.server.cache));
+        let loader = CachingDataLoader::new(
+            Arc::clone(&state.server.cache),
+            state.server.adjustment_store.clone(),
+        );
         let symbol = req
             .params
             .get("SYMBOL")

@@ -522,10 +522,81 @@ pub async fn run_script_backtest_with_progress(
     // 4b. Convert DataFrame → Vec<OhlcvBar> for the simulation loop
     let bars = ohlcv_bars_from_df(&ohlcv_df)?;
 
+    // Load adjustment factors (splits + dividends)
+    let splits = data_loader.load_splits(&config.symbol)?;
+    let dividends = data_loader.load_dividends(&config.symbol)?;
+    let closes: Vec<(NaiveDate, f64)> = bars.iter().map(|b| (b.datetime.date(), b.close)).collect();
+
+    // Split-only timeline: matches options data (which is split-adjusted by data provider).
+    // Used for the simulation bars so strike-vs-price comparisons are correct.
+    let split_timeline = Arc::new(crate::engine::adjustments::AdjustmentTimeline::build(
+        &splits,
+        &[],
+        &[],
+    ));
+
+    // Full timeline (splits + dividends): used for indicators and ctx.adjusted_close
+    // so returns/metrics are fully adjusted.
+    let adjustment_timeline = Arc::new(crate::engine::adjustments::AdjustmentTimeline::build(
+        &splits, &dividends, &closes,
+    ));
+
     let config = Arc::new(config);
 
+    // Apply split-only adjustment to simulation bars so OHLCV prices match
+    // the split-adjusted options strikes from the data provider.
+    let bars = if split_timeline.is_empty() {
+        bars
+    } else {
+        bars.iter()
+            .map(|b| {
+                let factor = split_timeline.factor_at(b.datetime.date());
+                OhlcvBar {
+                    datetime: b.datetime,
+                    open: b.open * factor,
+                    high: b.high * factor,
+                    low: b.low * factor,
+                    close: b.close * factor,
+                    volume: b.volume,
+                }
+            })
+            .collect()
+    };
+
+    // Build fully-adjusted bars for indicator computation (split + dividend adjusted
+    // to avoid false signals at corporate action dates)
+    let indicator_bars = if adjustment_timeline.is_empty() {
+        bars.clone()
+    } else {
+        bars.iter()
+            .map(|b| {
+                // bars are already split-adjusted, so only apply dividend adjustment
+                // by dividing out the split factor and applying the full factor
+                let split_factor = split_timeline.factor_at(b.datetime.date());
+                let full_factor = adjustment_timeline.factor_at(b.datetime.date());
+                // dividend-only factor = full / split
+                let div_factor = if split_factor.abs() > f64::EPSILON {
+                    full_factor / split_factor
+                } else {
+                    1.0
+                };
+                OhlcvBar {
+                    datetime: b.datetime,
+                    open: b.open * div_factor,
+                    high: b.high * div_factor,
+                    low: b.low * div_factor,
+                    close: b.close * div_factor,
+                    volume: b.volume,
+                }
+            })
+            .collect()
+    };
+
     // 5. Pre-compute indicators
-    let indicator_store = Arc::new(IndicatorStore::build(&config.declared_indicators, &bars)?);
+    let indicator_store = Arc::new(IndicatorStore::build(
+        &config.declared_indicators,
+        &indicator_bars,
+    )?);
 
     // 6. Run main simulation loop
     let price_history = Arc::new(bars);
@@ -636,6 +707,8 @@ pub async fn run_script_backtest_with_progress(
         config: Arc::clone(&config),
         options_by_date: options_by_date.clone(),
         custom_series: Arc::clone(&custom_series),
+        adjustment_timeline: Arc::clone(&adjustment_timeline),
+        split_timeline: Arc::clone(&split_timeline),
     };
 
     // Pending order queue for next-bar execution model
@@ -669,6 +742,12 @@ pub async fn run_script_backtest_with_progress(
         }
 
         let today = bar.datetime.date();
+
+        // Note: stock position quantities are NOT adjusted at split dates because
+        // OHLCV bars are already split-adjusted before entering the simulation loop.
+        // With split-adjusted prices there is no discontinuity, so positions remain
+        // correct without runtime adjustment. The "100 shares at $100" in split-adjusted
+        // terms is economically equivalent to "200 shares at $100" in unadjusted terms.
 
         // --- Phase A: Fill pending orders from previous bar ---
         // Orders submitted on bar N are filled on bar N+1.
@@ -857,6 +936,8 @@ pub async fn run_script_backtest_with_progress(
                 awareness.max_loss = ml;
             }
         }
+
+        // --- Phase B: Exits (immediate processing) ---
 
         // Build an Arc snapshot of positions for exit checks.
         // This is cheap (one Arc::new) and shared across all on_exit_check calls
@@ -1680,6 +1761,8 @@ struct BarContextFactory {
     config: Arc<ScriptConfig>,
     options_by_date: Option<Arc<DatePartitionedOptions>>,
     custom_series: Arc<Mutex<CustomSeriesStore>>,
+    adjustment_timeline: Arc<crate::engine::adjustments::AdjustmentTimeline>,
+    split_timeline: Arc<crate::engine::adjustments::AdjustmentTimeline>,
 }
 
 /// Position awareness snapshot for the `BarContext`.
@@ -1763,6 +1846,18 @@ impl BarContextFactory {
             config: Arc::clone(&self.config),
             pnl_history: Arc::clone(pnl_history),
             custom_series: Arc::clone(&self.custom_series),
+            // bar.close is already split-adjusted; apply dividend-only factor
+            // for the fully-adjusted close (dividend factor = full / split)
+            adjusted_close: {
+                let split_f = self.split_timeline.factor_at(bar.datetime.date());
+                let full_f = self.adjustment_timeline.factor_at(bar.datetime.date());
+                let div_f = if split_f.abs() > f64::EPSILON {
+                    full_f / split_f
+                } else {
+                    1.0
+                };
+                bar.close * div_f
+            },
             market_position: awareness.market_position,
             entry_price: awareness.entry_price,
             bars_since_entry: awareness.bars_since_entry,
@@ -2492,6 +2587,15 @@ pub trait DataLoader: Send + Sync {
         start: Option<NaiveDate>,
         end: Option<NaiveDate>,
     ) -> Result<polars::prelude::DataFrame>;
+
+    /// Load splits for a symbol. Returns empty vec if no adjustment store available.
+    fn load_splits(&self, symbol: &str) -> Result<Vec<crate::data::adjustment_store::SplitRow>>;
+
+    /// Load dividends for a symbol. Returns empty vec if no adjustment store available.
+    fn load_dividends(
+        &self,
+        symbol: &str,
+    ) -> Result<Vec<crate::data::adjustment_store::DividendRow>>;
 }
 
 /// `DataLoader` backed by `CachedStore` — the production implementation.
@@ -2500,6 +2604,7 @@ pub trait DataLoader: Send + Sync {
 /// DataFrame via `stock_sim::load_ohlcv_df`.
 pub struct CachedDataLoader {
     pub cache: Arc<crate::data::cache::CachedStore>,
+    pub adjustment_store: Option<Arc<crate::data::adjustment_store::SqliteAdjustmentStore>>,
 }
 
 #[async_trait::async_trait]
@@ -2540,6 +2645,23 @@ impl DataLoader for CachedDataLoader {
             .load_options(&symbol.to_uppercase(), start, end)
             .await
     }
+
+    fn load_splits(&self, symbol: &str) -> Result<Vec<crate::data::adjustment_store::SplitRow>> {
+        match &self.adjustment_store {
+            Some(store) => store.splits(symbol),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    fn load_dividends(
+        &self,
+        symbol: &str,
+    ) -> Result<Vec<crate::data::adjustment_store::DividendRow>> {
+        match &self.adjustment_store {
+            Some(store) => store.dividends(symbol),
+            None => Ok(Vec::new()),
+        }
+    }
 }
 
 /// `DataLoader` wrapper that caches full DataFrames in memory by symbol.
@@ -2554,9 +2676,15 @@ pub struct CachingDataLoader {
 }
 
 impl CachingDataLoader {
-    pub fn new(cache: Arc<crate::data::cache::CachedStore>) -> Self {
+    pub fn new(
+        cache: Arc<crate::data::cache::CachedStore>,
+        adjustment_store: Option<Arc<crate::data::adjustment_store::SqliteAdjustmentStore>>,
+    ) -> Self {
         Self {
-            inner: CachedDataLoader { cache },
+            inner: CachedDataLoader {
+                cache,
+                adjustment_store,
+            },
             ohlcv_cache: tokio::sync::Mutex::new(HashMap::new()),
             options_cache: tokio::sync::Mutex::new(HashMap::new()),
         }
@@ -2653,6 +2781,17 @@ impl DataLoader for CachingDataLoader {
         }
 
         filter_df_by_date(&arc_df, start, end)
+    }
+
+    fn load_splits(&self, symbol: &str) -> Result<Vec<crate::data::adjustment_store::SplitRow>> {
+        self.inner.load_splits(symbol)
+    }
+
+    fn load_dividends(
+        &self,
+        symbol: &str,
+    ) -> Result<Vec<crate::data::adjustment_store::DividendRow>> {
+        self.inner.load_dividends(symbol)
     }
 }
 

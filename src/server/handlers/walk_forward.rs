@@ -13,7 +13,10 @@ pub async fn run_walk_forward(
     State(state): State<AppState>,
     Json(params): Json<WalkForwardParams>,
 ) -> Result<Json<WalkForwardResponse>, (StatusCode, String)> {
-    let loader = CachingDataLoader::new(Arc::clone(&state.server.cache));
+    let loader = CachingDataLoader::new(
+        Arc::clone(&state.server.cache),
+        state.server.adjustment_store.clone(),
+    );
 
     let response = crate::engine::walk_forward::execute(params, &loader)
         .await

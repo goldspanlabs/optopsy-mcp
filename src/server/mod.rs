@@ -51,6 +51,8 @@ pub struct OptopsyServer {
     pub strategy_store: Option<Arc<dyn StrategyStore>>,
     /// Run/sweep persistence store (set in HTTP mode; `None` in stdio-only mode).
     pub run_store: Option<Arc<dyn RunStore>>,
+    /// Adjustment factor store (splits/dividends) for correct options backtesting.
+    pub adjustment_store: Option<Arc<crate::data::adjustment_store::SqliteAdjustmentStore>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -62,6 +64,7 @@ impl OptopsyServer {
             cache,
             strategy_store: None,
             run_store: None,
+            adjustment_store: None,
             tool_router: Self::tool_router(),
         }
     }
@@ -76,6 +79,7 @@ impl OptopsyServer {
             cache,
             strategy_store: Some(strategy_store),
             run_store: None,
+            adjustment_store: None,
             tool_router: Self::tool_router(),
         }
     }
@@ -91,6 +95,24 @@ impl OptopsyServer {
             cache,
             strategy_store: Some(strategy_store),
             run_store: Some(run_store),
+            adjustment_store: None,
+            tool_router: Self::tool_router(),
+        }
+    }
+
+    /// Create a new server instance with all stores including adjustment factors.
+    pub fn with_all_stores(
+        cache: Arc<CachedStore>,
+        strategy_store: Arc<dyn StrategyStore>,
+        run_store: Arc<dyn RunStore>,
+        adjustment_store: Arc<crate::data::adjustment_store::SqliteAdjustmentStore>,
+    ) -> Self {
+        Self {
+            data: Arc::new(RwLock::new(HashMap::new())),
+            cache,
+            strategy_store: Some(strategy_store),
+            run_store: Some(run_store),
+            adjustment_store: Some(adjustment_store),
             tool_router: Self::tool_router(),
         }
     }

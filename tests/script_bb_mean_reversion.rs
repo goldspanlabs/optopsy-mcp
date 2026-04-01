@@ -57,6 +57,20 @@ impl DataLoader for TestDataLoader {
     ) -> Result<DataFrame> {
         Ok(DataFrame::empty())
     }
+
+    fn load_splits(
+        &self,
+        _symbol: &str,
+    ) -> Result<Vec<optopsy_mcp::data::adjustment_store::SplitRow>> {
+        Ok(Vec::new())
+    }
+
+    fn load_dividends(
+        &self,
+        _symbol: &str,
+    ) -> Result<Vec<optopsy_mcp::data::adjustment_store::DividendRow>> {
+        Ok(Vec::new())
+    }
 }
 
 fn bb_params() -> std::collections::HashMap<String, serde_json::Value> {

@@ -661,6 +661,7 @@ mod tests {
                     num_bars: bars.len(),
                 },
             )),
+            adjusted_close: bar.close, // no adjustments in tests
             market_position: 0,
             entry_price: 0.0,
             bars_since_entry: 0,
