@@ -96,31 +96,39 @@ async fn main() -> Result<()> {
 
         let chat_store: Arc<dyn optopsy_mcp::data::traits::ChatStore> = Arc::new(db.chat());
 
+        let cancellations = std::sync::Arc::new(std::sync::Mutex::new(
+            std::collections::HashSet::new(),
+        ));
+
+        let mut server = server::OptopsyServer::with_all_stores(
+            cache.clone(),
+            strategy_store.clone(),
+            run_store.clone(),
+            adjustment_store.clone(),
+        );
+        server.cancellations = cancellations.clone();
+
         let app_state = AppState {
-            server: server::OptopsyServer::with_all_stores(
-                cache.clone(),
-                strategy_store.clone(),
-                run_store.clone(),
-                adjustment_store.clone(),
-            ),
+            server,
             run_store,
             chat_store,
-            sweep_cancellations: std::sync::Arc::new(std::sync::Mutex::new(
-                std::collections::HashSet::new(),
-            )),
+            cancellations: cancellations.clone(),
         };
 
         let strategy_store_for_mcp = strategy_store.clone();
         let run_store_for_mcp = app_state.run_store.clone();
         let adjustment_store_for_mcp = adjustment_store.clone();
+        let cancellations_for_mcp = cancellations.clone();
         let service = StreamableHttpService::new(
             move || {
-                Ok(server::OptopsyServer::with_all_stores(
+                let mut srv = server::OptopsyServer::with_all_stores(
                     cache.clone(),
                     strategy_store_for_mcp.clone(),
                     run_store_for_mcp.clone(),
                     adjustment_store_for_mcp.clone(),
-                ))
+                );
+                srv.cancellations = cancellations_for_mcp.clone();
+                Ok(srv)
             },
             LocalSessionManager::default().into(),
             StreamableHttpServerConfig::default(),

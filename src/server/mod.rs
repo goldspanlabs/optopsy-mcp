@@ -53,6 +53,8 @@ pub struct OptopsyServer {
     pub run_store: Option<Arc<dyn RunStore>>,
     /// Adjustment factor store (splits/dividends) for correct options backtesting.
     pub adjustment_store: Option<Arc<crate::data::adjustment_store::SqliteAdjustmentStore>>,
+    /// Shared cancellation tokens for in-flight runs (backtests + sweeps).
+    pub cancellations: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -65,6 +67,7 @@ impl OptopsyServer {
             strategy_store: None,
             run_store: None,
             adjustment_store: None,
+            cancellations: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             tool_router: Self::tool_router(),
         }
     }
@@ -80,6 +83,7 @@ impl OptopsyServer {
             strategy_store: Some(strategy_store),
             run_store: None,
             adjustment_store: None,
+            cancellations: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             tool_router: Self::tool_router(),
         }
     }
@@ -96,6 +100,7 @@ impl OptopsyServer {
             strategy_store: Some(strategy_store),
             run_store: Some(run_store),
             adjustment_store: None,
+            cancellations: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             tool_router: Self::tool_router(),
         }
     }
@@ -113,6 +118,7 @@ impl OptopsyServer {
             strategy_store: Some(strategy_store),
             run_store: Some(run_store),
             adjustment_store: Some(adjustment_store),
+            cancellations: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             tool_router: Self::tool_router(),
         }
     }

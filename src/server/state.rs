@@ -12,6 +12,6 @@ pub struct AppState {
     pub server: OptopsyServer,
     pub run_store: Arc<dyn RunStore>,
     pub chat_store: Arc<dyn ChatStore>,
-    /// Set of sweep run IDs that have been requested to cancel.
-    pub sweep_cancellations: Arc<Mutex<HashSet<String>>>,
+    /// Set of run IDs (backtests and sweeps) that have been requested to cancel.
+    pub cancellations: Arc<Mutex<HashSet<String>>>,
 }
