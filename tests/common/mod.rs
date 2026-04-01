@@ -186,6 +186,63 @@ pub fn test_app_state() -> (AppState, TempDir) {
     (state, tmp)
 }
 
+/// Create an `AppState` with NVDA OHLCV fixture data and a seeded stock strategy.
+/// The strategy buys on bar 0 and holds. Returns (AppState, TempDir, strategy_id).
+pub fn test_app_state_with_ohlcv() -> (AppState, TempDir, String) {
+    let (state, tmp) = test_app_state();
+
+    // Copy NVDA fixture into the temp cache directory under stocks/
+    let stocks_dir = tmp.path().join("stocks");
+    std::fs::create_dir_all(&stocks_dir).unwrap();
+    std::fs::copy(
+        "tests/fixtures/NVDA_1min_2weeks.parquet",
+        stocks_dir.join("NVDA.parquet"),
+    )
+    .unwrap();
+
+    // Seed a simple buy-and-hold stock strategy
+    let strategy_source = r#"
+fn config() {
+    #{
+        symbol: params.SYMBOL,
+        capital: params.CAPITAL,
+        interval: "1min",
+        auto_close_on_end: true,
+        data: #{
+            ohlcv: true,
+        },
+    }
+}
+fn on_bar(ctx) {
+    if ctx.bar_idx == 0 {
+        return [buy_stock(1)];
+    }
+    []
+}
+fn on_exit_check(ctx, pos) {
+    hold_position()
+}
+"#;
+    let id = "test_nvda_buy_hold".to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+    let row = StrategyRow {
+        id: id.clone(),
+        name: "test_nvda_buy_hold".to_string(),
+        description: None,
+        category: None,
+        hypothesis: None,
+        tags: None,
+        regime: None,
+        source: strategy_source.to_string(),
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    let store = state.server.strategy_store.as_ref().unwrap();
+    store.upsert(&row).expect("seed strategy");
+
+    (state, tmp, id)
+}
+
 /// Create an `AppState` and seed a simple Rhai strategy for backtest execution.
 pub fn test_app_state_with_strategy() -> (AppState, TempDir, String) {
     let (state, tmp) = test_app_state();

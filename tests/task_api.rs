@@ -242,6 +242,124 @@ async fn cancel_task_returns_204() {
 // Test 6: SSE stream delivers events including "done"
 // ──────────────────────────────────────────────────────────────────────────────
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Test 7: E2E — real OHLCV data through the full task manager pipeline
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_backtest_runs_through_task_manager() {
+    let (state, _tmp, strategy_id) = common::test_app_state_with_ohlcv();
+    let app = build_api_router(state.clone());
+
+    // 1. Submit backtest
+    let (status, body) = send(
+        app.clone(),
+        post_json(
+            "/tasks/backtest",
+            &format!(
+                r#"{{"strategy":"{strategy_id}","params":{{"SYMBOL":"NVDA","CAPITAL":100000}}}}"#
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "submit failed: {body}");
+    let task_id = serde_json::from_str::<serde_json::Value>(&body).unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // 2. Connect to SSE stream and collect all events (stream closes after "done")
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/tasks/{task_id}/stream"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body_bytes = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        response.into_body().collect(),
+    )
+    .await
+    .expect("backtest should complete within 60s")
+    .unwrap()
+    .to_bytes();
+    let sse_text = String::from_utf8_lossy(&body_bytes);
+
+    // 3. Verify SSE stream had events (progress heartbeat or state updates)
+    assert!(
+        sse_text.contains("event:") || sse_text.contains("event: "),
+        "Should have SSE events in stream, got:\n{sse_text}"
+    );
+
+    // 4. Verify SSE stream ended with a "done" event
+    assert!(
+        sse_text.contains("done"),
+        "Should have done event in SSE stream, got:\n{sse_text}"
+    );
+
+    // 4b. Verify the stream contained a completed state (the final state event)
+    assert!(
+        sse_text.contains("\"status\":\"completed\""),
+        "Should have completed status in SSE stream, got:\n{sse_text}"
+    );
+
+    // 5. Verify result was persisted — get task to find the result_id
+    let (_, task_body) = send(
+        app.clone(),
+        Request::builder()
+            .method("GET")
+            .uri(format!("/tasks/{task_id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    let task_snap: serde_json::Value = serde_json::from_str(&task_body).unwrap();
+    assert_eq!(
+        task_snap["status"].as_str().unwrap(),
+        "completed",
+        "Task should be completed, got: {task_snap}"
+    );
+
+    let result_id = task_snap["result_id"]
+        .as_str()
+        .expect("completed task should have result_id");
+
+    // 6. Verify the run was persisted to the database via GET /runs/{id}
+    let (run_status, run_body) = send(
+        app,
+        Request::builder()
+            .method("GET")
+            .uri(format!("/runs/{result_id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        run_status,
+        StatusCode::OK,
+        "Run should be fetchable from DB, body: {run_body}"
+    );
+    let run_detail: serde_json::Value = serde_json::from_str(&run_body).unwrap();
+    assert_eq!(
+        run_detail["symbol"].as_str().unwrap(),
+        "NVDA",
+        "symbol mismatch"
+    );
+    assert!(
+        run_detail["trade_count"].as_i64().unwrap_or(0) > 0,
+        "Should have at least one trade, got: {run_detail}"
+    );
+}
+
+
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sse_stream_delivers_events() {
     let (state, _tmp, strategy_id) = common::test_app_state_with_strategy();
