@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::engine::bayesian::{run_bayesian, BayesianConfig};
 use crate::engine::sweep::{run_grid_sweep, GridSweepConfig};
-use crate::scripting::engine::CachingDataLoader;
+use crate::scripting::engine::{CachingDataLoader, CancelCallback};
 use crate::server::handlers::sweeps::{
     build_grid, persist_sweep_to_store, resolve_strategy_source_from_store, CreateSweepRequest,
     SweepParamDef,
@@ -232,8 +232,15 @@ async fn execute_sweep(
         max_evaluations: params.max_evaluations,
     };
 
-    // 6. Run grid or bayesian sweep
-    let no_cancel = || false;
+    // 6. Build cancellation closure from server state
+    let cancellations = Arc::clone(&server.cancellations);
+    let is_cancelled: CancelCallback = Box::new(move || {
+        cancellations
+            .lock()
+            .is_ok_and(|set| set.contains("__cancel_all__"))
+    });
+
+    // 7. Run grid or bayesian sweep
     let sweep_response: SweepResponse = match params.mode.as_str() {
         "grid" => {
             let param_grid = build_grid(&req.sweep_params);
@@ -243,7 +250,7 @@ async fn execute_sweep(
                 param_grid,
                 objective: req.objective.clone(),
             };
-            run_grid_sweep(&config, &loader, &no_cancel, |_, _| {}).await?
+            run_grid_sweep(&config, &loader, &is_cancelled, |_, _| {}).await?
         }
         "bayesian" => {
             let continuous_params: Vec<(String, f64, f64, bool)> = req
@@ -260,7 +267,7 @@ async fn execute_sweep(
                 initial_samples,
                 objective: req.objective.clone(),
             };
-            run_bayesian(&config, &loader, &no_cancel, |_, _| {}).await?
+            run_bayesian(&config, &loader, &is_cancelled, |_, _| {}).await?
         }
         other => {
             return Err(anyhow::anyhow!(
@@ -269,7 +276,7 @@ async fn execute_sweep(
         }
     };
 
-    // 7. Persist via persist_sweep with source = "agent"
+    // 8. Persist via persist_sweep with source = "agent"
     let sweep_id = persist_sweep_to_store(
         run_store.as_ref(),
         &strategy_key,
@@ -282,13 +289,13 @@ async fn execute_sweep(
     )
     .map_err(|(_status, msg)| anyhow::anyhow!("{msg}"))?;
 
-    // 8. Query back run_ids from the persisted sweep
+    // 9. Query back run_ids from the persisted sweep
     let run_ids = run_store
         .get_sweep(&sweep_id)?
         .map(|detail| detail.runs.iter().map(|r| r.id.clone()).collect())
         .unwrap_or_default();
 
-    // 9. Return response
+    // 10. Return response
     Ok(BacktestToolResponse::Sweep(Box::new(
         SweepBacktestResponse {
             sweep_id,

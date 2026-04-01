@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::engine::walk_forward::cartesian_product;
 use crate::scripting::engine::{
-    run_script_backtest_with_progress, DataLoader, PrecomputedOptionsData,
+    run_script_backtest, CancelCallback, DataLoader, PrecomputedOptionsData,
 };
 use crate::tools::response_types::sweep::{DimensionStat, SweepResponse, SweepResult};
 
@@ -24,7 +24,7 @@ pub struct GridSweepConfig {
 pub async fn run_grid_sweep(
     config: &GridSweepConfig,
     data_loader: &dyn DataLoader,
-    is_cancelled: impl Fn() -> bool,
+    is_cancelled: &CancelCallback,
     on_progress: impl Fn(usize, usize),
 ) -> Result<SweepResponse> {
     let start = Instant::now();
@@ -40,18 +40,19 @@ pub async fn run_grid_sweep(
 
     for (idx, combo) in combos.iter().enumerate() {
         if is_cancelled() {
-            break;
+            break; // CancelCallback is Box<dyn Fn() -> bool>
         }
         on_progress(idx, total);
         let mut run_params = config.base_params.clone();
         run_params.extend(combo.clone());
 
-        match run_script_backtest_with_progress(
+        match run_script_backtest(
             &config.script_source,
             &run_params,
             data_loader,
             None,
             precomputed.as_ref(),
+            Some(is_cancelled),
         )
         .await
         {

@@ -242,7 +242,7 @@ pub async fn create_backtest_stream(
         };
 
         let result =
-            super::run_script::execute_with_progress(&state.server, run_params, Some(progress_cb))
+            super::run_script::execute_with_progress(&state.server, run_params, Some(progress_cb), None)
                 .await;
 
         // Stop the progress ticker

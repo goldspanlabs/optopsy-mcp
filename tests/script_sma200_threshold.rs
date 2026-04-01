@@ -119,7 +119,7 @@ async fn sma200_threshold_runs_and_produces_trades() {
     let script = std::fs::read_to_string("scripts/strategies/sma200_threshold.rhai")
         .expect("sma200_threshold.rhai should exist");
 
-    let result = run_script_backtest(&script, &sma200_params(), &loader)
+    let result = run_script_backtest(&script, &sma200_params(), &loader, None, None, None)
         .await
         .expect("backtest should complete without error");
 
@@ -176,7 +176,7 @@ async fn sma200_threshold_no_trades_before_warmup() {
     let script = std::fs::read_to_string("scripts/strategies/sma200_threshold.rhai")
         .expect("sma200_threshold.rhai should exist");
 
-    let result = run_script_backtest(&script, &sma200_params(), &loader)
+    let result = run_script_backtest(&script, &sma200_params(), &loader, None, None, None)
         .await
         .expect("backtest should complete without error");
 
