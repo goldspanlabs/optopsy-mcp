@@ -755,6 +755,8 @@ pub async fn run_script_backtest_with_progress(
         pending_orders.retain(|order| !order.is_expired(bar_idx));
 
         let orders_to_process = std::mem::take(&mut pending_orders);
+        // Snapshot the pending count before processing for accurate callback contexts
+        let phase_a_pending_count = orders_to_process.len();
         let mut unfilled_orders: Vec<PendingOrder> = Vec::new();
         for order in orders_to_process {
             if let Some(fill_price) = order.try_fill(bar.open, bar.high, bar.low, bar.close) {
@@ -797,7 +799,7 @@ pub async fn run_script_backtest_with_progress(
                             let positions_arc = Arc::new(positions.clone());
                             let awareness = compute_position_awareness(
                                 &positions,
-                                unfilled_orders.len(),
+                                phase_a_pending_count,
                                 bar_idx,
                             );
                             let ctx = ctx_factory.build(
@@ -826,7 +828,20 @@ pub async fn run_script_backtest_with_progress(
                     } => {
                         if let Some(idx) = positions.iter().position(|p| p.id == *pid) {
                             let closed_pos = positions[idx].clone();
-                            let pnl = compute_close_pnl_at_price(&closed_pos, fill_price);
+                            // Apply slippage: closing a position is the opposite direction
+                            // Closing is the opposite direction: long→sell, short→buy
+                            let exit_side = match &closed_pos.inner {
+                                ScriptPositionInner::Stock {
+                                    side: Side::Long, ..
+                                } => Side::Short,
+                                ScriptPositionInner::Stock {
+                                    side: Side::Short, ..
+                                } => Side::Long,
+                                _ => Side::Short, // default: sell
+                            };
+                            let exit_fill =
+                                apply_stock_slippage(fill_price, exit_side, &config.slippage);
+                            let pnl = compute_close_pnl_at_price(&closed_pos, exit_fill);
                             let exit_comm = compute_commission(&config.commission, &closed_pos);
                             realized_equity += pnl - exit_comm;
 
@@ -880,7 +895,18 @@ pub async fn run_script_backtest_with_progress(
                         // Close without position_id: close the first non-implicit position
                         if let Some(idx) = positions.iter().position(|p| !p.implicit) {
                             let closed_pos = positions[idx].clone();
-                            let pnl = compute_close_pnl_at_price(&closed_pos, fill_price);
+                            let exit_side = match &closed_pos.inner {
+                                ScriptPositionInner::Stock {
+                                    side: Side::Long, ..
+                                } => Side::Short,
+                                ScriptPositionInner::Stock {
+                                    side: Side::Short, ..
+                                } => Side::Long,
+                                _ => Side::Short,
+                            };
+                            let exit_fill =
+                                apply_stock_slippage(fill_price, exit_side, &config.slippage);
+                            let pnl = compute_close_pnl_at_price(&closed_pos, exit_fill);
                             let exit_comm = compute_commission(&config.commission, &closed_pos);
                             realized_equity += pnl - exit_comm;
 
@@ -968,7 +994,7 @@ pub async fn run_script_backtest_with_progress(
                             let positions_arc = Arc::new(positions.clone());
                             let awareness = compute_position_awareness(
                                 &positions,
-                                unfilled_orders.len(),
+                                phase_a_pending_count,
                                 bar_idx,
                             );
                             let ctx = ctx_factory.build(
