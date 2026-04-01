@@ -10,10 +10,12 @@ rmcp = { version = "0.17", features = ["server", "transport-io", "transport-stre
 axum = "0.8"
 polars = { version = "0.53", features = ["lazy", "parquet", "dtype-date", "dtype-datetime", "dtype-struct", "round_series", "is_in", "cum_agg", "rolling_window", "abs", "cross_join", "ewma"] }
 chrono = { version = "0.4", features = ["serde"] }
+dashmap = "6"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 schemars = "1"
 tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
 thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
