@@ -275,7 +275,7 @@ pub fn validate_script(
     if !callbacks.contains(&"on_exit_check".to_string()) {
         diagnostics.push(ValidationDiagnostic {
             level: DiagnosticLevel::Warning,
-            message: "Missing on_exit_check(ctx, pos) — positions exit via declarative stops or expiration only"
+            message: "Missing on_exit_check(ctx, pos) — positions will only exit at expiration"
                 .to_string(),
         });
     }
@@ -1066,58 +1066,6 @@ pub async fn run_script_backtest(
                 }
             }
 
-            // Built-in: declarative stop loss
-            if !should_close && pos.days_held > 0 {
-                if let Some(ref threshold) = config.stop_loss {
-                    let pnl_pct = pos.pnl_pct();
-                    let triggered = match threshold {
-                        ExitThreshold::Percent(pct) => pnl_pct <= -*pct,
-                        ExitThreshold::Dollar(amt) => pos.unrealized_pnl <= -*amt,
-                    };
-                    if triggered {
-                        should_close = true;
-                        exit_reason = "stop_loss".to_string();
-                    }
-                }
-            }
-
-            // Built-in: declarative profit target
-            if !should_close && pos.days_held > 0 {
-                if let Some(ref threshold) = config.profit_target {
-                    let pnl_pct = pos.pnl_pct();
-                    let triggered = match threshold {
-                        ExitThreshold::Percent(pct) => pnl_pct >= *pct,
-                        ExitThreshold::Dollar(amt) => pos.unrealized_pnl >= *amt,
-                    };
-                    if triggered {
-                        should_close = true;
-                        exit_reason = "take_profit".to_string();
-                    }
-                }
-            }
-
-            // Built-in: declarative trailing stop
-            if !should_close && pos.days_held > 0 {
-                if let Some(ref threshold) = config.trailing_stop {
-                    if let Some(&max_p) = max_profit_tracker.get(&pos.id) {
-                        if max_p > 0.0 {
-                            let drawdown = max_p - pos.unrealized_pnl;
-                            let triggered = match threshold {
-                                ExitThreshold::Percent(pct) => {
-                                    let entry_cost = pos.entry_cost.abs();
-                                    entry_cost > 0.0 && drawdown / entry_cost >= *pct
-                                }
-                                ExitThreshold::Dollar(amt) => drawdown >= *amt,
-                            };
-                            if triggered {
-                                should_close = true;
-                                exit_reason = "trailing_stop".to_string();
-                            }
-                        }
-                    }
-                }
-            }
-
             // Script exit check (only for positions NOT opened this bar)
             if !should_close && has_on_exit_check && pos.days_held > 0 {
                 // Rebuild Arc snapshot only if positions were modified since last snapshot
@@ -1639,10 +1587,6 @@ fn parse_config(map: Dynamic) -> Result<ScriptConfig> {
     // Script-readable defaults
     let defaults = parse_defaults_section(&map);
 
-    // Declarative exit thresholds
-    let stop_loss = parse_exit_threshold(&map, "stop_loss");
-    let profit_target = parse_exit_threshold(&map, "profit_target");
-    let trailing_stop = parse_exit_threshold(&map, "trailing_stop");
     let procedural = get_bool_or(&map, "procedural", false);
 
     Ok(ScriptConfig {
@@ -1664,9 +1608,6 @@ fn parse_config(map: Dynamic) -> Result<ScriptConfig> {
         expiration_filter: exp_filter,
         trade_selector,
         defaults,
-        stop_loss,
-        profit_target,
-        trailing_stop,
         procedural,
     })
 }
@@ -1863,18 +1804,6 @@ fn parse_defaults_section(map: &rhai::Map) -> HashMap<String, ScriptValue> {
     }
 
     defaults
-}
-
-fn parse_exit_threshold(map: &rhai::Map, key: &str) -> Option<ExitThreshold> {
-    let val = map.get(key)?;
-    let m = val.clone().try_cast::<rhai::Map>()?;
-    let mode = m.get("mode")?.clone().into_immutable_string().ok()?;
-    let value = m.get("value")?.as_float().ok()?;
-    match mode.as_str() {
-        "percent" => Some(ExitThreshold::Percent(value)),
-        "dollar" => Some(ExitThreshold::Dollar(value)),
-        _ => None,
-    }
 }
 
 // ---------------------------------------------------------------------------

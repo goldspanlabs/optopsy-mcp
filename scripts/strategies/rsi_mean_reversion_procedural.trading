@@ -6,8 +6,6 @@ strategy "RSI Mean Reversion" procedural
   capital CAPITAL
   interval daily
   indicators rsi:14, sma:200
-  stop_loss 5%
-  profit_target 10%
 
 extern OVERSOLD = 30 "RSI oversold threshold"
 extern OVERBOUGHT = 70 "RSI overbought threshold"

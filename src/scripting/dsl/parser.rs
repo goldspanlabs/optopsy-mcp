@@ -50,9 +50,6 @@ pub struct StrategyBlock {
     pub expiration_filter: Option<String>,
     pub max_positions: Option<i64>,
     pub cross_symbols: Vec<String>,
-    pub stop_loss: Option<(String, f64)>,
-    pub profit_target: Option<(String, f64)>,
-    pub trailing_stop: Option<(String, f64)>,
     pub procedural: bool,
 }
 
@@ -355,9 +352,6 @@ fn parse_strategy_block(lines: &[Line], start: usize) -> Result<(StrategyBlock, 
         expiration_filter: None,
         max_positions: None,
         cross_symbols: vec![],
-        stop_loss: None,
-        profit_target: None,
-        trailing_stop: None,
         procedural,
     };
 
@@ -390,12 +384,6 @@ fn parse_strategy_block(lines: &[Line], start: usize) -> Result<(StrategyBlock, 
             );
         } else if let Some(rest) = content.strip_prefix("cross_symbols ") {
             block.cross_symbols = rest.split(',').map(|s| s.trim().to_string()).collect();
-        } else if let Some(rest) = content.strip_prefix("stop_loss ") {
-            block.stop_loss = Some(parse_exit_threshold_dsl(rest.trim(), line.num)?);
-        } else if let Some(rest) = content.strip_prefix("profit_target ") {
-            block.profit_target = Some(parse_exit_threshold_dsl(rest.trim(), line.num)?);
-        } else if let Some(rest) = content.strip_prefix("trailing_stop ") {
-            block.trailing_stop = Some(parse_exit_threshold_dsl(rest.trim(), line.num)?);
         } else {
             return Err(DslError::new(
                 line.num,
@@ -409,7 +397,11 @@ fn parse_strategy_block(lines: &[Line], start: usize) -> Result<(StrategyBlock, 
     Ok((block, i))
 }
 
-fn parse_exit_threshold_dsl(s: &str, line_num: usize) -> Result<(String, f64), DslError> {
+#[allow(dead_code)] // Will be reused for per-order exit modifiers
+pub(crate) fn parse_exit_threshold_dsl(
+    s: &str,
+    line_num: usize,
+) -> Result<(String, f64), DslError> {
     if let Some(pct_str) = s.strip_suffix('%') {
         let value = pct_str
             .trim()

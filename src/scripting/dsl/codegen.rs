@@ -196,21 +196,6 @@ fn generate_config(out: &mut String, s: &StrategyBlock) {
         out.push_str(&format!("        cross_symbols: [{}],\n", syms.join(", ")));
     }
 
-    if let Some((ref mode, value)) = s.stop_loss {
-        out.push_str(&format!(
-            "        stop_loss: #{{ mode: \"{mode}\", value: {value} }},\n"
-        ));
-    }
-    if let Some((ref mode, value)) = s.profit_target {
-        out.push_str(&format!(
-            "        profit_target: #{{ mode: \"{mode}\", value: {value} }},\n"
-        ));
-    }
-    if let Some((ref mode, value)) = s.trailing_stop {
-        out.push_str(&format!(
-            "        trailing_stop: #{{ mode: \"{mode}\", value: {value} }},\n"
-        ));
-    }
     if s.procedural {
         out.push_str("        procedural: true,\n");
     }
