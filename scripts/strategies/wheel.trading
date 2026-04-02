@@ -35,16 +35,11 @@ on each bar
     open short_put(PUT_DELTA, PUT_DTE)
   when phase == "holding_stock" then
     skip when has positions
-    # Covered call opening requires multi-step logic:
-    # 1. Build the spread and check it returned a valid result (not ())
-    # 2. Verify the call strike is above our adjusted cost basis
-    #    to avoid locking in a loss if called away
-    # 3. Only then transition to selling_calls and queue the order
-    raw let spread = ctx.covered_call(CALL_DELTA, CALL_DTE);
-    raw if spread == () { return []; }
-    raw if spread["spread"].legs[0].strike < adjusted_basis { return []; }
-    raw phase = "selling_calls";
-    raw __actions.push(spread);
+    # Build covered call, verify strike is above adjusted cost basis
+    # to avoid locking in a loss if called away, then open
+    try open covered_call(CALL_DELTA, CALL_DTE) as spread
+      skip when spread.spread.legs[0].strike < adjusted_basis
+      set phase to "selling_calls"
 
 on exit check
   hold position

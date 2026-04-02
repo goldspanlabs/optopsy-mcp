@@ -128,6 +128,10 @@ fn collect_from_stmts(stmts: &[Stmt], specs: &mut Vec<String>, seen: &mut HashSe
             }
             Stmt::Return { expr, .. } => scan_expr(expr, specs, seen),
             Stmt::Raw { code, .. } => scan_expr(code, specs, seen),
+            Stmt::TryOpen { call, body, .. } => {
+                scan_expr(call, specs, seen);
+                collect_from_stmts(body, specs, seen);
+            }
             // Variants with no expressions to scan
             Stmt::HoldPosition { .. }
             | Stmt::ClosePosition { .. }
@@ -836,6 +840,23 @@ fn generate_stmts(
             Stmt::Return { expr, .. } => {
                 let rw = rewrite_expr(expr);
                 out.push_str(&format!("{indent}return {rw};\n"));
+            }
+
+            Stmt::TryOpen {
+                call,
+                var_name,
+                body,
+                ..
+            } => {
+                let rw = rewrite_expr(call);
+                out.push_str(&format!("{indent}let {var_name} = {rw};\n"));
+                out.push_str(&format!("{indent}if {var_name} != () {{\n"));
+                generate_stmts(out, body, depth + 1, kind, scope_vars);
+                if kind == CallbackKind::ActionArray {
+                    let inner_indent = "    ".repeat(depth + 1);
+                    out.push_str(&format!("{inner_indent}__actions.push({var_name});\n"));
+                }
+                out.push_str(&format!("{indent}}}\n"));
             }
 
             Stmt::Raw { code, .. } => {

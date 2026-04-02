@@ -1251,3 +1251,66 @@ on each bar
         "Should compound-assign dotted path.\n{rhai}"
     );
 }
+
+#[test]
+fn test_transpile_try_open() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+  data ohlcv, options
+
+state min_strike = 100.0
+
+on each bar
+  skip when has positions
+  try open covered_call(0.30, 30) as spread
+    skip when spread.spread.legs[0].strike < min_strike
+    set min_strike to spread.spread.legs[0].strike
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("let spread = ctx.covered_call(0.30, 30)"),
+        "Missing spread binding.\n{rhai}"
+    );
+    assert!(
+        rhai.contains("if spread != ()"),
+        "Missing null check.\n{rhai}"
+    );
+    assert!(
+        rhai.contains("spread.spread.legs[0].strike < min_strike"),
+        "Missing body condition.\n{rhai}"
+    );
+    assert!(
+        rhai.contains("__actions.push(spread)"),
+        "Missing auto-push.\n{rhai}"
+    );
+}
+
+#[test]
+fn test_transpile_try_open_procedural() {
+    let dsl = r#"
+strategy "Test" procedural
+  symbol SPY
+  interval daily
+  data ohlcv, options
+
+try open short_put(0.30, 45) as order
+  skip when close < sma(200)
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("let order = ctx.short_put(0.30, 45)"),
+        "Missing order binding.\n{rhai}"
+    );
+    assert!(
+        rhai.contains("if order != ()"),
+        "Missing null check.\n{rhai}"
+    );
+    assert!(
+        rhai.contains("__actions.push(order)"),
+        "Missing auto-push.\n{rhai}"
+    );
+}

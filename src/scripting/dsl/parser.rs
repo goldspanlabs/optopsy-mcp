@@ -198,6 +198,12 @@ pub enum Stmt {
         code: String,
         line: usize,
     },
+    TryOpen {
+        call: String,
+        var_name: String,
+        body: Vec<Stmt>,
+        line: usize,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -738,6 +744,17 @@ fn parse_statements(lines: &[Line]) -> Result<Vec<Stmt>, DslError> {
                 line: line.num,
             });
             i += 1;
+        } else if let Some(rest) = content.strip_prefix("try open ") {
+            let (call, var_name) = parse_try_open_header(rest, line.num)?;
+            let (body_lines, next) = parse_indented_body(lines, i)?;
+            let body = parse_statements(&body_lines)?;
+            stmts.push(Stmt::TryOpen {
+                call,
+                var_name,
+                body,
+                line: line.num,
+            });
+            i = next;
         } else if let Some(rest) = content.strip_prefix("open ") {
             stmts.push(Stmt::OpenStrategy {
                 call: rest.to_string(),
@@ -1077,6 +1094,25 @@ fn parse_for_each_header(rest: &str, line_num: usize) -> Result<(String, String)
     }
 
     Ok((var, iterable))
+}
+
+/// Parse `STRATEGY_CALL as VARNAME` for `try open` header.
+fn parse_try_open_header(rest: &str, line_num: usize) -> Result<(String, String), DslError> {
+    let as_pos = rest.rfind(" as ").ok_or_else(|| {
+        DslError::new(
+            line_num,
+            "try open requires 'as VARNAME' (e.g., try open short_put(0.30, 45) as spread)",
+        )
+    })?;
+    let call = rest[..as_pos].trim().to_string();
+    let var_name = rest[as_pos + 4..].trim().to_string();
+    if call.is_empty() || var_name.is_empty() {
+        return Err(DslError::new(
+            line_num,
+            "try open requires STRATEGY_CALL as VARNAME",
+        ));
+    }
+    Ok((call, var_name))
 }
 
 /// Case-insensitive prefix strip (checks both "Buy " and "buy ").
