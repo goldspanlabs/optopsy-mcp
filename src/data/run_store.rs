@@ -596,8 +596,8 @@ impl RunStore for SqliteRunStore {
             detail.validations = wfv_stmt
                 .query_map(rusqlite::params![id], |row| {
                     let window_results_str: Option<String> = row.get(13)?;
-                    let window_results = window_results_str
-                        .and_then(|s| serde_json::from_str(&s).ok());
+                    let window_results =
+                        window_results_str.and_then(|s| serde_json::from_str(&s).ok());
                     Ok(WalkForwardValidation {
                         id: row.get(0)?,
                         sweep_id: row.get(1)?,
@@ -773,8 +773,7 @@ impl RunStore for SqliteRunStore {
         let rows = stmt
             .query_map(rusqlite::params![sweep_id], |row| {
                 let window_results_str: Option<String> = row.get(13)?;
-                let window_results = window_results_str
-                    .and_then(|s| serde_json::from_str(&s).ok());
+                let window_results = window_results_str.and_then(|s| serde_json::from_str(&s).ok());
                 Ok(WalkForwardValidation {
                     id: row.get(0)?,
                     sweep_id: row.get(1)?,
