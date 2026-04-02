@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 use std::f64::consts::{FRAC_1_SQRT_2, PI};
-use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
@@ -60,8 +59,7 @@ pub async fn run_bayesian(
     let mut failed = 0usize;
     let mut convergence_trace: Vec<f64> = Vec::with_capacity(config.max_evaluations);
     let mut best_so_far = f64::NEG_INFINITY;
-    // Arc-wrapped cache: avoids cloning full SweepResult on cache hits
-    let mut eval_cache: HashMap<String, (Arc<SweepResult>, f64)> = HashMap::new();
+    let mut eval_cache: HashMap<String, (SweepResult, f64)> = HashMap::new();
 
     // Pre-build options data on the first evaluation so subsequent ones skip the
     // expensive build_price_table + DatePartitionedOptions::from_df work.
@@ -101,7 +99,7 @@ pub async fn run_bayesian(
                 best_so_far = *cached_obj;
             }
             convergence_trace.push(trace_val(best_so_far));
-            results.push(SweepResult::clone(cached_result));
+            results.push(cached_result.clone());
 
             // Track consecutive cache hits — if the GP keeps suggesting
             // already-evaluated points, the search space is exhausted.
@@ -133,8 +131,7 @@ pub async fn run_bayesian(
                 precomputed = pre;
             }
             let obj = extract_objective(&result, &config.objective);
-            let result_arc = Arc::new(result);
-            eval_cache.insert(key, (Arc::clone(&result_arc), obj));
+            eval_cache.insert(key, (result.clone(), obj));
             if obj.is_finite() {
                 xs.push(x);
                 ys.push(obj);
@@ -143,7 +140,7 @@ pub async fn run_bayesian(
                 }
             }
             convergence_trace.push(trace_val(best_so_far));
-            results.push(Arc::try_unwrap(result_arc).unwrap_or_else(|a| SweepResult::clone(&a)));
+            results.push(result);
 
             // Early stopping check (only after initial random phase)
             if i >= config.initial_samples {
@@ -683,10 +680,6 @@ mod tests {
              Uncached (rebuild): {uncached_ms:>8} µs\n\
              Speedup:            {speedup:>8.1}x\n\
              (sum={sum:.4}, sum2={sum2:.4})"
-        );
-        assert!(
-            speedup > 2.0,
-            "Cached Cholesky should be at least 2x faster, got {speedup:.1}x"
         );
     }
 

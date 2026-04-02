@@ -47,7 +47,7 @@ impl DatePartitionedOptions {
         let df_filtered = filters::filter_expiration_type(df_with_dte, expiration_filter)?;
 
         // 3. Partition by date using index gather (no per-slice lazy/collect)
-        let dt_col = df_filtered.column("datetime")?;
+        let dt_col = df_filtered.column(DATETIME_COL)?;
         let dt_ca = dt_col.datetime()?;
         let tu = dt_ca.time_unit();
         let n = df_filtered.height();
