@@ -45,11 +45,14 @@ async fn bayesian_wheel_call_dte_benchmark() {
     let loader = CachingDataLoader::new(cache, None);
     let is_cancelled: CancelCallback = Box::new(|| false);
 
-    let max_evaluations = 30;
-    let initial_samples = 10;
+    let max_evaluations = 50;
+    let initial_samples = 15;
 
-    // CALL_DTE: continuous param from 7 to 28, integer, step=1
-    let continuous_params = vec![("CALL_DTE".to_string(), 7.0, 28.0, true, Some(1.0))];
+    // 2D sweep: CALL_DELTA + PUT_DELTA, float, step=0.01
+    let continuous_params = vec![
+        ("CALL_DELTA".to_string(), 0.15, 0.45, false, Some(0.01)),
+        ("PUT_DELTA".to_string(), 0.15, 0.45, false, Some(0.01)),
+    ];
 
     let config = BayesianConfig {
         script_source,
@@ -63,9 +66,9 @@ async fn bayesian_wheel_call_dte_benchmark() {
     let sep = "=".repeat(70);
     println!("\n{sep}");
     println!(
-        "  Bayesian sweep: CALL_DTE 7..28 ({max_evaluations} evals, {initial_samples} initial)"
+        "  Bayesian sweep: CALL_DELTA + PUT_DELTA 0.15..0.45 ({max_evaluations} evals, {initial_samples} initial)"
     );
-    println!("  Symbol: SPY | Objective: sharpe");
+    println!("  Symbol: SPY | Objective: sharpe | Step: 0.01");
     println!("{sep}");
 
     let wall_start = Instant::now();
@@ -98,7 +101,9 @@ async fn bayesian_wheel_call_dte_benchmark() {
 
     if let Some(best) = &result.best_result {
         println!("\n  Best result (rank #{}):", best.rank);
-        println!("    CALL_DTE:       {:?}", best.params.get("CALL_DTE"));
+        for (k, v) in &best.params {
+            println!("    {k}: {v}");
+        }
         println!("    Sharpe:         {:.4}", best.sharpe);
         println!("    P&L:            ${:.2}", best.pnl);
         println!("    Trades:         {}", best.trades);
@@ -117,16 +122,19 @@ async fn bayesian_wheel_call_dte_benchmark() {
 
     println!("\n  All ranked results:");
     for r in &result.ranked_results {
+        let cd = r
+            .params
+            .get("CALL_DELTA")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+        let pd = r
+            .params
+            .get("PUT_DELTA")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
         println!(
-            "    #{:>2} CALL_DTE={:>5}  sharpe={:>7.4}  pnl=${:>10.2}  trades={:>3}",
-            r.rank,
-            r.params
-                .get("CALL_DTE")
-                .and_then(Value::as_f64)
-                .map_or_else(|| "?".to_string(), |v| format!("{v:.0}")),
-            r.sharpe,
-            r.pnl,
-            r.trades,
+            "    #{:>2} call_d={:.2} put_d={:.2}  sharpe={:>7.4}  pnl=${:>10.2}  trades={:>3}",
+            r.rank, cd, pd, r.sharpe, r.pnl, r.trades,
         );
     }
 
