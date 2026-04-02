@@ -32,6 +32,8 @@ pub struct DslProgram {
     pub on_position_opened: Option<Vec<Stmt>>,
     pub on_position_closed: Option<Vec<Stmt>>,
     pub on_end: Option<Vec<Stmt>>,
+    /// Procedural mode: bare statements that become the on_bar body.
+    pub body: Vec<Stmt>,
 }
 
 /// The `strategy` configuration block.
@@ -196,6 +198,7 @@ pub fn parse(source: &str) -> Result<DslProgram, DslError> {
         on_position_opened: None,
         on_position_closed: None,
         on_end: None,
+        body: vec![],
     };
 
     let mut i = 0;
@@ -265,6 +268,12 @@ pub fn parse(source: &str) -> Result<DslProgram, DslError> {
             program.on_end = Some(parse_statements(&body)?);
             i = next;
         } else {
+            // In procedural mode, remaining top-level lines become the body
+            if program.strategy.as_ref().is_some_and(|s| s.procedural) {
+                let remaining: Vec<Line> = lines[i..].to_vec();
+                program.body = parse_statements(&remaining)?;
+                break;
+            }
             return Err(DslError::new(
                 line.num,
                 format!("unrecognized top-level declaration: {content}"),
@@ -274,6 +283,26 @@ pub fn parse(source: &str) -> Result<DslProgram, DslError> {
 
     if program.strategy.is_none() {
         return Err(DslError::general("missing required 'strategy' block"));
+    }
+
+    let is_procedural = program.strategy.as_ref().is_some_and(|s| s.procedural);
+
+    if is_procedural
+        && (program.on_bar.is_some()
+            || program.on_exit_check.is_some()
+            || program.on_position_opened.is_some()
+            || program.on_position_closed.is_some()
+            || program.on_end.is_some())
+    {
+        return Err(DslError::general(
+            "procedural mode cannot have event blocks (on each bar, on exit check, etc.)",
+        ));
+    }
+
+    if is_procedural && program.body.is_empty() {
+        return Err(DslError::general(
+            "procedural strategy has no body statements",
+        ));
     }
 
     Ok(program)

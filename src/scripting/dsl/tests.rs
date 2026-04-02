@@ -893,3 +893,117 @@ on each bar
     assert!(rhai.contains("profit_target:"));
     assert!(rhai.contains("trailing_stop:"));
 }
+
+// ---------------------------------------------------------------------------
+// Procedural mode tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_transpile_procedural_mode() {
+    let dsl = r#"
+strategy "SMA Cross" procedural
+  symbol SYMBOL
+  capital CAPITAL
+  interval daily
+  indicators sma:50, sma:200
+  stop_loss 5%
+
+extern FAST = 50 "Fast MA"
+
+require sma:50, sma:200
+
+when no positions and sma(50) crosses above sma(200) then
+  Buy size_by_equity(1.0) shares next bar at market
+
+when has positions and close crosses below sma(50) then
+  close position "signal_exit"
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    // Should have procedural flag in config
+    assert!(
+        rhai.contains("procedural: true"),
+        "Missing procedural flag.\nGenerated:\n{rhai}"
+    );
+    // Should have single on_bar function
+    assert!(
+        rhai.contains("fn on_bar(ctx)"),
+        "Missing on_bar.\nGenerated:\n{rhai}"
+    );
+    // Should NOT have on_exit_check
+    assert!(
+        !rhai.contains("fn on_exit_check"),
+        "Should not have on_exit_check.\nGenerated:\n{rhai}"
+    );
+    // Body should be inside on_bar
+    assert!(
+        rhai.contains("crossed_above"),
+        "Missing crossed_above.\nGenerated:\n{rhai}"
+    );
+    assert!(
+        rhai.contains("close_position(\"signal_exit\")"),
+        "Missing close_position.\nGenerated:\n{rhai}"
+    );
+    // Should have stop_loss config
+    assert!(
+        rhai.contains("stop_loss:"),
+        "Missing stop_loss config.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_procedural_rejects_event_blocks() {
+    let dsl = r#"
+strategy "Test" procedural
+  symbol SPY
+  interval daily
+
+on each bar
+  buy 100 shares
+"#;
+
+    let err = transpile(dsl).unwrap_err();
+    assert!(
+        err.message.contains("procedural"),
+        "Error should mention procedural: {}",
+        err.message
+    );
+}
+
+#[test]
+fn test_callback_rejects_bare_statements() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+buy 100 shares
+"#;
+
+    let err = transpile(dsl).unwrap_err();
+    assert!(
+        err.message.contains("unrecognized"),
+        "Error should mention unrecognized: {}",
+        err.message
+    );
+}
+
+#[test]
+fn test_procedural_with_state() {
+    let dsl = r#"
+strategy "Test" procedural
+  symbol SPY
+  interval daily
+
+state counter = 0
+
+add 1 to counter
+when counter > 10 and no positions then
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(rhai.contains("let counter = 0;"));
+    assert!(rhai.contains("fn on_bar(ctx)"));
+    assert!(rhai.contains("counter += 1;"));
+}

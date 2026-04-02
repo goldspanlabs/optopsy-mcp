@@ -55,10 +55,18 @@ pub fn generate(program: &DslProgram) -> String {
         out.push('\n');
     }
 
-    // on_bar(ctx)
-    if let Some(ref stmts) = program.on_bar {
-        generate_on_bar(&mut out, stmts, &scope_vars);
+    // Procedural mode: body statements become on_bar
+    if !program.body.is_empty() {
+        generate_on_bar(&mut out, &program.body, &scope_vars);
         out.push('\n');
+    }
+
+    // on_bar(ctx) — callback mode
+    if program.body.is_empty() {
+        if let Some(ref stmts) = program.on_bar {
+            generate_on_bar(&mut out, stmts, &scope_vars);
+            out.push('\n');
+        }
     }
 
     // on_exit_check(ctx, pos)
