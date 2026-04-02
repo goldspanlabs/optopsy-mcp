@@ -142,6 +142,12 @@ pub enum RunRow {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         thread_id: Option<String>,
         created_at: String,
+        /// Best WFE across all validations (for badge display)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        wf_best_efficiency: Option<f64>,
+        /// Number of completed validations
+        #[serde(skip_serializing_if = "Option::is_none")]
+        wf_validation_count: Option<i64>,
     },
 }
 
@@ -163,6 +169,25 @@ pub struct RunsListResponse {
     pub rows: Vec<RunRow>,
 }
 
+/// A walk-forward validation result attached to a sweep.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WalkForwardValidation {
+    pub id: String,
+    pub sweep_id: String,
+    pub n_windows: i64,
+    pub train_pct: f64,
+    pub mode: String,
+    pub objective: String,
+    pub efficiency_ratio: Option<f64>,
+    pub profitable_windows: Option<i64>,
+    pub total_windows: Option<i64>,
+    pub param_stability: Option<String>,
+    pub analysis: Option<String>,
+    pub status: String,
+    pub execution_time_ms: Option<i64>,
+    pub created_at: String,
+}
+
 /// Full sweep detail with its child runs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SweepDetail {
@@ -182,6 +207,7 @@ pub struct SweepDetail {
     pub thread_id: Option<String>,
     pub created_at: String,
     pub runs: Vec<RunSummary>,
+    pub validations: Vec<WalkForwardValidation>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -260,6 +286,33 @@ pub trait RunStore: Send + Sync {
 
     /// Save AI-generated analysis text for a sweep.
     fn set_sweep_analysis(&self, id: &str, analysis: &str) -> Result<bool>;
+
+    /// Insert a walk-forward validation result.
+    #[allow(clippy::too_many_arguments)]
+    fn insert_walk_forward_validation(
+        &self,
+        id: &str,
+        sweep_id: &str,
+        n_windows: i64,
+        train_pct: f64,
+        mode: &str,
+        objective: &str,
+        efficiency_ratio: Option<f64>,
+        profitable_windows: Option<i64>,
+        total_windows: Option<i64>,
+        param_stability: Option<&str>,
+        status: &str,
+        execution_time_ms: Option<i64>,
+    ) -> Result<String>;
+
+    /// Get all walk-forward validations for a sweep.
+    fn get_walk_forward_validations(&self, sweep_id: &str) -> Result<Vec<WalkForwardValidation>>;
+
+    /// Save AI analysis text for a walk-forward validation.
+    fn set_walk_forward_analysis(&self, validation_id: &str, analysis: &str) -> Result<bool>;
+
+    /// Delete a walk-forward validation.
+    fn delete_walk_forward_validation(&self, id: &str) -> Result<bool>;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

@@ -148,3 +148,69 @@ pub async fn set_sweep_analysis(
         Err((StatusCode::NOT_FOUND, "Sweep not found".to_string()))
     }
 }
+
+/// `PATCH /runs/walk-forward/{id}/analysis` — Save AI-generated walk-forward analysis text.
+#[allow(clippy::implicit_hasher)]
+pub async fn set_walk_forward_analysis(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<HashMap<String, String>>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let analysis = body
+        .get("analysis")
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                "Missing 'analysis' field".to_string(),
+            )
+        })?
+        .clone();
+    let store = state.run_store.clone();
+    let found =
+        tokio::task::spawn_blocking(move || store.set_walk_forward_analysis(&id, &analysis))
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if found {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err((
+            StatusCode::NOT_FOUND,
+            "Walk-forward validation not found".to_string(),
+        ))
+    }
+}
+
+/// `GET /runs/sweep/{sweepId}/validations` — Get walk-forward validations for a sweep.
+pub async fn get_walk_forward_validations(
+    State(state): State<AppState>,
+    Path(sweep_id): Path<String>,
+) -> Result<Json<Vec<crate::data::traits::WalkForwardValidation>>, (StatusCode, String)> {
+    let store = state.run_store.clone();
+    let validations =
+        tokio::task::spawn_blocking(move || store.get_walk_forward_validations(&sweep_id))
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(validations))
+}
+
+/// `DELETE /runs/walk-forward/{id}` — Delete a walk-forward validation.
+pub async fn delete_walk_forward_validation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let store = state.run_store.clone();
+    let deleted = tokio::task::spawn_blocking(move || store.delete_walk_forward_validation(&id))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if deleted {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err((
+            StatusCode::NOT_FOUND,
+            "Walk-forward validation not found".to_string(),
+        ))
+    }
+}

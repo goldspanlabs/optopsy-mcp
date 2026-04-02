@@ -11,8 +11,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+// BTreeMap used for stable JSON serialization of param maps
+use std::collections::BTreeMap;
+
 use crate::engine::types::{BacktestResult, EquityPoint, PerformanceMetrics};
-use crate::scripting::engine::{run_script_backtest, DataLoader}; // signature: (src, params, loader, progress, precomputed, is_cancelled)
+use crate::scripting::engine::{run_script_backtest, CancelCallback, DataLoader};
 
 /// Walk-forward mode.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -178,6 +181,12 @@ pub struct WalkForwardParams {
     pub end_date: Option<String>,
     #[serde(default)]
     pub profile: Option<String>,
+    /// Pre-resolved script source; if None, reads from filesystem.
+    #[serde(skip)]
+    pub script_source: Option<String>,
+    /// Base parameters (strategy-specific) to merge before each run.
+    #[serde(default)]
+    pub base_params: Option<HashMap<String, Value>>,
 }
 
 fn default_objective() -> WfObjective {
@@ -216,6 +225,9 @@ pub struct WalkForwardResponse {
     pub objective: String,
     pub mode: String,
     pub execution_time_ms: u64,
+    pub profitable_windows: usize,
+    pub total_windows: usize,
+    pub param_stability: String,
 }
 
 /// Extract the target metric from a backtest result.
@@ -233,13 +245,20 @@ fn extract_metric(result: &BacktestResult, objective: &WfObjective) -> f64 {
 pub async fn execute(
     params: WalkForwardParams,
     data_loader: &dyn DataLoader,
+    is_cancelled: &CancelCallback,
+    on_progress: impl Fn(usize, usize),
 ) -> Result<WalkForwardResponse> {
     let start = std::time::Instant::now();
 
-    // Load script source
-    let script_path = format!("scripts/strategies/{}.rhai", params.strategy);
-    let script_source = std::fs::read_to_string(&script_path)
-        .map_err(|e| anyhow::anyhow!("Failed to read strategy script '{script_path}': {e}"))?;
+    // Load script source (use pre-resolved source if available, else read from filesystem)
+    let script_source = if let Some(src) = params.script_source {
+        src
+    } else {
+        let script_path = format!("scripts/strategies/{}.rhai", params.strategy);
+        tokio::fs::read_to_string(&script_path)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to read strategy script '{script_path}': {e}"))?
+    };
 
     // Load OHLCV data to get the date range
     let start_date = params
@@ -266,8 +285,8 @@ pub async fn execute(
         bail!("params_grid produced no parameter combinations");
     }
 
-    // Build base params with SYMBOL and CAPITAL
-    let mut base_params: HashMap<String, Value> = HashMap::new();
+    // Build base params: start from caller-provided params, then ensure SYMBOL and CAPITAL
+    let mut base_params: HashMap<String, Value> = params.base_params.unwrap_or_default();
     base_params.insert("SYMBOL".to_string(), serde_json::json!(params.symbol));
     base_params.insert("CAPITAL".to_string(), serde_json::json!(params.capital));
 
@@ -293,12 +312,21 @@ pub async fn execute(
     let mut is_metrics_sum = 0.0_f64;
     let mut oos_metrics_sum = 0.0_f64;
 
+    let total_steps = windows.len() * 2;
+
     for (idx, window) in windows.iter().enumerate() {
+        if is_cancelled() {
+            break;
+        }
+
         // --- Training phase: sweep all combos ---
         let mut best_metric = f64::NEG_INFINITY;
         let mut best_params = combos[0].clone();
 
         for combo in &combos {
+            if is_cancelled() {
+                break;
+            }
             let mut run_params = base_params.clone();
             run_params.extend(combo.clone());
             run_params.insert(
@@ -310,9 +338,15 @@ pub async fn execute(
                 serde_json::json!(window.train_end.to_string()),
             );
 
-            if let Ok(result) =
-                run_script_backtest(&script_source, &run_params, data_loader, None, None, None)
-                    .await
+            if let Ok(result) = run_script_backtest(
+                &script_source,
+                &run_params,
+                data_loader,
+                None,
+                None,
+                Some(is_cancelled),
+            )
+            .await
             {
                 let metric = extract_metric(&result.result, &params.objective);
                 if metric.is_finite() && metric > best_metric {
@@ -323,6 +357,11 @@ pub async fn execute(
         }
 
         let is_metric = best_metric;
+        on_progress(idx * 2 + 1, total_steps);
+
+        if is_cancelled() {
+            break;
+        }
 
         // --- Test phase: run best params on OOS window ---
         let mut oos_params = base_params.clone();
@@ -336,8 +375,15 @@ pub async fn execute(
             serde_json::json!(window.test_end.to_string()),
         );
 
-        let oos_result =
-            run_script_backtest(&script_source, &oos_params, data_loader, None, None, None).await?;
+        let oos_result = run_script_backtest(
+            &script_source,
+            &oos_params,
+            data_loader,
+            None,
+            None,
+            Some(is_cancelled),
+        )
+        .await?;
         let oos_metric = extract_metric(&oos_result.result, &params.objective);
 
         all_oos_equity.extend(oos_result.result.equity_curve.clone());
@@ -363,6 +409,8 @@ pub async fn execute(
             in_sample_metric: is_metric,
             out_of_sample_metric: oos_metric,
         });
+
+        on_progress(idx * 2 + 2, total_steps);
     }
 
     let efficiency_ratio = if is_metrics_sum.abs() > f64::EPSILON {
@@ -377,17 +425,62 @@ pub async fn execute(
         crate::engine::metrics::calculate_metrics(&all_oos_equity, &[], params.capital, 252.0)?
     };
 
-    let objective_str = format!("{:?}", params.objective).to_lowercase();
-    let mode_str = format!("{:?}", params.mode).to_lowercase();
+    let objective_str = match params.objective {
+        WfObjective::Sharpe => "sharpe",
+        WfObjective::Sortino => "sortino",
+        WfObjective::ProfitFactor => "profit_factor",
+        WfObjective::Cagr => "cagr",
+    };
+    let mode_str = match params.mode {
+        WfMode::Rolling => "rolling",
+        WfMode::Anchored => "anchored",
+    };
+
+    // Compute new summary fields
+    let profitable_windows = window_results
+        .iter()
+        .filter(|w| match objective_str {
+            "profit_factor" => w.out_of_sample_metric > 1.0,
+            _ => w.out_of_sample_metric > 0.0,
+        })
+        .count();
+    let total_windows = window_results.len();
+
+    let param_stability = {
+        use std::collections::HashSet;
+        let unique_params: HashSet<String> = window_results
+            .iter()
+            .map(|w| {
+                let sorted: BTreeMap<_, _> = w.best_params.iter().collect();
+                serde_json::to_string(&sorted).unwrap_or_default()
+            })
+            .collect();
+        let n_unique = unique_params.len();
+        let ratio = if total_windows > 0 {
+            n_unique as f64 / total_windows as f64
+        } else {
+            0.0
+        };
+        if n_unique <= 1 {
+            "stable".to_string()
+        } else if ratio <= 0.5 {
+            "moderate".to_string()
+        } else {
+            "unstable".to_string()
+        }
+    };
 
     Ok(WalkForwardResponse {
         windows: window_results,
         stitched_equity: all_oos_equity,
         stitched_metrics,
         efficiency_ratio,
-        objective: objective_str,
-        mode: mode_str,
+        objective: objective_str.to_string(),
+        mode: mode_str.to_string(),
         execution_time_ms: start.elapsed().as_millis() as u64,
+        profitable_windows,
+        total_windows,
+        param_stability,
     })
 }
 

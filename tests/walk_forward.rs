@@ -218,9 +218,12 @@ async fn walk_forward_rolling_end_to_end() {
         start_date: None,
         end_date: None,
         profile: None,
+        script_source: None,
+        base_params: None,
     };
 
-    let result = wf_engine::execute(params, &loader).await;
+    let no_cancel: Box<dyn Fn() -> bool + Send + Sync> = Box::new(|| false);
+    let result = wf_engine::execute(params, &loader, &no_cancel, |_, _| {}).await;
     assert!(
         result.is_ok(),
         "Walk-forward should succeed: {:?}",
@@ -310,9 +313,12 @@ async fn walk_forward_anchored_end_to_end() {
         start_date: None,
         end_date: None,
         profile: None,
+        script_source: None,
+        base_params: None,
     };
 
-    let result = wf_engine::execute(params, &loader).await;
+    let no_cancel: Box<dyn Fn() -> bool + Send + Sync> = Box::new(|| false);
+    let result = wf_engine::execute(params, &loader, &no_cancel, |_, _| {}).await;
     assert!(
         result.is_ok(),
         "Anchored walk-forward should succeed: {:?}",
@@ -352,10 +358,13 @@ async fn walk_forward_empty_grid_runs_with_base_params() {
         start_date: None,
         end_date: None,
         profile: None,
+        script_source: None,
+        base_params: None,
     };
 
     // Empty grid produces 1 combo (base params only) — should succeed
-    let result = wf_engine::execute(params, &loader).await;
+    let no_cancel: Box<dyn Fn() -> bool + Send + Sync> = Box::new(|| false);
+    let result = wf_engine::execute(params, &loader, &no_cancel, |_, _| {}).await;
     assert!(
         result.is_ok(),
         "Empty grid should still run with base params: {:?}",

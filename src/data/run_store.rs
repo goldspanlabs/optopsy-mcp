@@ -10,6 +10,7 @@ use serde_json::Value;
 use super::database::DbConnection;
 use super::traits::{
     RunDetail, RunRow, RunStore, RunSummary, RunsListResponse, RunsOverview, SweepDetail, TradeRow,
+    WalkForwardValidation,
 };
 use crate::server::sanitize::sanitize_opt;
 
@@ -314,7 +315,8 @@ impl RunStore for SqliteRunStore {
                             br.profit_factor as best_profit_factor,
                             br.trade_count as best_trade_count,
                             sw.source, sw.thread_id,
-                            sw.created_at
+                            sw.created_at,
+                            wfv.best_wfe, wfv.wf_count
                      FROM sweeps sw
                      LEFT JOIN strategies s ON s.id = sw.strategy_id
                      LEFT JOIN (
@@ -327,6 +329,14 @@ impl RunStore for SqliteRunStore {
                              GROUP BY sweep_id
                          ) r2 ON r1.sweep_id = r2.sweep_id AND r1.sharpe = r2.max_sharpe
                      ) br ON br.sweep_id = sw.id
+                     LEFT JOIN (
+                         SELECT sweep_id,
+                                MAX(efficiency_ratio) as best_wfe,
+                                COUNT(*) as wf_count
+                         FROM walk_forward_validations
+                         WHERE status = 'completed'
+                         GROUP BY sweep_id
+                     ) wfv ON wfv.sweep_id = sw.id
                      ORDER BY sw.created_at DESC",
                 )
                 .context("Failed to prepare sweep list query")?;
@@ -352,6 +362,8 @@ impl RunStore for SqliteRunStore {
                             .unwrap_or_else(|| "manual".to_string()),
                         thread_id: row.get(14)?,
                         created_at: row.get(15)?,
+                        wf_best_efficiency: row.get(16)?,
+                        wf_validation_count: row.get(17)?,
                     })
                 })
                 .context("Failed to query sweep rows")?
@@ -490,6 +502,7 @@ impl RunStore for SqliteRunStore {
         Ok(Some(detail))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn get_sweep(&self, id: &str) -> Result<Option<SweepDetail>> {
         let conn = self.conn.lock().expect("mutex poisoned");
 
@@ -524,7 +537,8 @@ impl RunStore for SqliteRunStore {
                             .unwrap_or_else(|| "manual".to_string()),
                         thread_id: row.get(11)?,
                         created_at: row.get(12)?,
-                        runs: Vec::new(), // filled below
+                        runs: Vec::new(),        // filled below
+                        validations: Vec::new(), // filled below
                     })
                 },
             )
@@ -534,6 +548,44 @@ impl RunStore for SqliteRunStore {
         let Some(mut detail) = row else {
             return Ok(None);
         };
+
+        // Load walk-forward validations for this sweep
+        {
+            let mut wfv_stmt = conn
+                .prepare(
+                    "SELECT id, sweep_id, n_windows, train_pct, mode, objective,
+                            efficiency_ratio, profitable_windows, total_windows,
+                            param_stability, analysis, status, execution_time_ms,
+                            created_at
+                     FROM walk_forward_validations
+                     WHERE sweep_id = ?1
+                     ORDER BY created_at DESC",
+                )
+                .context("Failed to prepare walk-forward validations query")?;
+
+            detail.validations = wfv_stmt
+                .query_map(rusqlite::params![id], |row| {
+                    Ok(WalkForwardValidation {
+                        id: row.get(0)?,
+                        sweep_id: row.get(1)?,
+                        n_windows: row.get(2)?,
+                        train_pct: row.get(3)?,
+                        mode: row.get(4)?,
+                        objective: row.get(5)?,
+                        efficiency_ratio: row.get(6)?,
+                        profitable_windows: row.get(7)?,
+                        total_windows: row.get(8)?,
+                        param_stability: row.get(9)?,
+                        analysis: row.get(10)?,
+                        status: row.get(11)?,
+                        execution_time_ms: row.get(12)?,
+                        created_at: row.get(13)?,
+                    })
+                })
+                .context("Failed to query walk-forward validations")?
+                .collect::<Result<Vec<_>, _>>()
+                .context("Failed to collect walk-forward validations")?;
+        }
 
         // Load runs for this sweep
         let mut stmt = conn
@@ -622,6 +674,110 @@ impl RunStore for SqliteRunStore {
             )
             .context("Failed to update sweep analysis")?;
         Ok(rows > 0)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_walk_forward_validation(
+        &self,
+        id: &str,
+        sweep_id: &str,
+        n_windows: i64,
+        train_pct: f64,
+        mode: &str,
+        objective: &str,
+        efficiency_ratio: Option<f64>,
+        profitable_windows: Option<i64>,
+        total_windows: Option<i64>,
+        param_stability: Option<&str>,
+        status: &str,
+        execution_time_ms: Option<i64>,
+    ) -> Result<String> {
+        let created_at = chrono::Utc::now().to_rfc3339();
+        let conn = self.conn.lock().expect("mutex poisoned");
+        conn.execute(
+            "INSERT INTO walk_forward_validations
+                (id, sweep_id, n_windows, train_pct, mode, objective,
+                 efficiency_ratio, profitable_windows, total_windows,
+                 param_stability, status, execution_time_ms, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            rusqlite::params![
+                id,
+                sweep_id,
+                n_windows,
+                train_pct,
+                mode,
+                objective,
+                efficiency_ratio,
+                profitable_windows,
+                total_windows,
+                param_stability,
+                status,
+                execution_time_ms,
+                created_at,
+            ],
+        )
+        .context("Failed to insert walk-forward validation")?;
+        Ok(created_at)
+    }
+
+    fn get_walk_forward_validations(&self, sweep_id: &str) -> Result<Vec<WalkForwardValidation>> {
+        let conn = self.conn.lock().expect("mutex poisoned");
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, sweep_id, n_windows, train_pct, mode, objective,
+                        efficiency_ratio, profitable_windows, total_windows,
+                        param_stability, analysis, status, execution_time_ms,
+                        created_at
+                 FROM walk_forward_validations
+                 WHERE sweep_id = ?1
+                 ORDER BY created_at DESC",
+            )
+            .context("Failed to prepare walk-forward validations query")?;
+
+        let rows = stmt
+            .query_map(rusqlite::params![sweep_id], |row| {
+                Ok(WalkForwardValidation {
+                    id: row.get(0)?,
+                    sweep_id: row.get(1)?,
+                    n_windows: row.get(2)?,
+                    train_pct: row.get(3)?,
+                    mode: row.get(4)?,
+                    objective: row.get(5)?,
+                    efficiency_ratio: row.get(6)?,
+                    profitable_windows: row.get(7)?,
+                    total_windows: row.get(8)?,
+                    param_stability: row.get(9)?,
+                    analysis: row.get(10)?,
+                    status: row.get(11)?,
+                    execution_time_ms: row.get(12)?,
+                    created_at: row.get(13)?,
+                })
+            })
+            .context("Failed to query walk-forward validations")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("Failed to collect walk-forward validations")?;
+
+        Ok(rows)
+    }
+
+    fn set_walk_forward_analysis(&self, validation_id: &str, analysis: &str) -> Result<bool> {
+        let conn = self.conn.lock().expect("mutex poisoned");
+        let updated = conn.execute(
+            "UPDATE walk_forward_validations SET analysis = ?1 WHERE id = ?2",
+            rusqlite::params![analysis, validation_id],
+        )?;
+        Ok(updated > 0)
+    }
+
+    fn delete_walk_forward_validation(&self, id: &str) -> Result<bool> {
+        let conn = self.conn.lock().expect("mutex poisoned");
+        let n = conn
+            .execute(
+                "DELETE FROM walk_forward_validations WHERE id = ?1",
+                rusqlite::params![id],
+            )
+            .context("Failed to delete walk-forward validation")?;
+        Ok(n > 0)
     }
 }
 
