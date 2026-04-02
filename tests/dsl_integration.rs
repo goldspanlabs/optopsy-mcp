@@ -342,10 +342,15 @@ fn dsl_mean_reversion_pairs_compiles_and_configures() {
     let config =
         transpile_compile_and_configure("scripts/strategies/mean_reversion_pairs.trading", &params);
 
-    // Should have cross_symbols
-    let cross = config
+    // Should have cross_symbols inside the data block
+    let data = config
+        .get("data")
+        .expect("data should be in config")
+        .clone()
+        .cast::<rhai::Map>();
+    let cross = data
         .get("cross_symbols")
-        .expect("cross_symbols should be in config")
+        .expect("cross_symbols should be in config.data")
         .clone()
         .cast::<rhai::Array>();
     let syms: Vec<String> = cross

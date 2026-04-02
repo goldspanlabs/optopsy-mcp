@@ -372,6 +372,13 @@ fn generate_config(out: &mut String, s: &StrategyBlock, program: &DslProgram) {
             ind_list.join(", ")
         ));
     }
+    if !s.cross_symbols.is_empty() {
+        let syms: Vec<String> = s.cross_symbols.iter().map(|s| format!("\"{s}\"")).collect();
+        out.push_str(&format!(
+            "            cross_symbols: [{}],\n",
+            syms.join(", ")
+        ));
+    }
     out.push_str("        },\n");
 
     // engine block (only if any engine settings present)
@@ -394,12 +401,6 @@ fn generate_config(out: &mut String, s: &StrategyBlock, program: &DslProgram) {
             out.push_str(&format!("            max_positions: {mp},\n"));
         }
         out.push_str("        },\n");
-    }
-
-    // cross_symbols
-    if !s.cross_symbols.is_empty() {
-        let syms: Vec<String> = s.cross_symbols.iter().map(|s| format!("\"{s}\"")).collect();
-        out.push_str(&format!("        cross_symbols: [{}],\n", syms.join(", ")));
     }
 
     if s.procedural {
