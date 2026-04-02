@@ -152,6 +152,134 @@ pub struct CrossSymbolBar {
 }
 
 // ---------------------------------------------------------------------------
+// Order types — next-bar execution model
+// ---------------------------------------------------------------------------
+
+/// Order type for the next-bar execution model.
+///
+/// Orders are submitted on bar N and evaluated for fills on bar N+1 using that
+/// bar's full OHLCV range. For non-market orders, the fill price accounts for
+/// gap-through behavior:
+/// - Limit orders fill at the more favorable of the limit price and the open.
+/// - Stop orders fill at the less favorable of the stop price and the open.
+#[derive(Debug, Clone)]
+pub enum OrderType {
+    /// Fills at the next bar's open price, regardless of gaps.
+    Market,
+    /// Fills if the next bar trades at or through the limit level (buy ≤ limit,
+    /// sell ≥ limit). When the market gaps through, fills at the more favorable
+    /// of the limit price and the open (e.g., a buy limit below a gap-down open
+    /// fills at the open).
+    Limit { price: f64 },
+    /// Fills if the next bar trades at or through the stop level (buy ≥ stop,
+    /// sell ≤ stop). When the market gaps through, fills at the less favorable
+    /// of the stop price and the open (e.g., a buy stop above a gap-up open
+    /// fills at the open).
+    Stop { price: f64 },
+    /// Stop triggers first based on the bar's range, then the limit applies.
+    /// Fill only if stop is breached AND the limit condition is met within the
+    /// same bar. Invalid stop/limit relationships (buy: limit < stop, sell:
+    /// limit > stop) are rejected as unfilled.
+    StopLimit { stop: f64, limit: f64 },
+}
+
+/// A pending order in the order queue, waiting to be filled on a future bar.
+#[derive(Debug, Clone)]
+pub struct PendingOrder {
+    /// The action to execute when this order is filled.
+    pub action: ScriptAction,
+    /// The order type determining fill conditions.
+    pub order_type: OrderType,
+    /// Explicit buy/sell direction for fill logic. `true` = buy (long entry or
+    /// short cover), `false` = sell (short entry or long exit). This avoids
+    /// inferring direction from the action variant, which is ambiguous for
+    /// `Close` actions.
+    pub is_buy: bool,
+    /// Optional signal name for trade logging.
+    pub signal: Option<String>,
+    /// The bar index at which this order was submitted.
+    pub submitted_bar: usize,
+    /// Time-to-live in bars. `None` = Good-Till-Canceled.
+    pub ttl: Option<usize>,
+}
+
+impl PendingOrder {
+    /// Check whether this order has expired given the current bar index.
+    pub fn is_expired(&self, current_bar: usize) -> bool {
+        if let Some(ttl) = self.ttl {
+            current_bar.saturating_sub(self.submitted_bar) > ttl
+        } else {
+            false
+        }
+    }
+
+    /// Attempt to fill this order given the current bar's OHLCV data.
+    /// Returns `Some(fill_price)` if the order should be filled, `None` otherwise.
+    pub fn try_fill(&self, open: f64, high: f64, low: f64, _close: f64) -> Option<f64> {
+        match &self.order_type {
+            OrderType::Market => Some(open),
+            OrderType::Limit { price } => {
+                if self.is_buy {
+                    // Buy limit: fill if low ≤ limit price
+                    if low <= *price {
+                        Some(price.min(open))
+                    } else {
+                        None
+                    }
+                } else {
+                    // Sell limit: fill if high ≥ limit price
+                    if high >= *price {
+                        Some(price.max(open))
+                    } else {
+                        None
+                    }
+                }
+            }
+            OrderType::Stop { price } => {
+                if self.is_buy {
+                    // Buy stop: fill if high ≥ stop price (breakout)
+                    if high >= *price {
+                        Some(price.max(open))
+                    } else {
+                        None
+                    }
+                } else {
+                    // Sell stop: fill if low ≤ stop price (breakdown)
+                    if low <= *price {
+                        Some(price.min(open))
+                    } else {
+                        None
+                    }
+                }
+            }
+            OrderType::StopLimit { stop, limit } => {
+                if self.is_buy {
+                    // Buy stop-limit: limit must be >= stop (otherwise inverted)
+                    if *limit < *stop {
+                        return None;
+                    }
+                    if high >= *stop && low <= *limit {
+                        Some(limit.min(stop.max(open)))
+                    } else {
+                        None
+                    }
+                } else {
+                    // Sell stop-limit: limit must be <= stop (otherwise inverted)
+                    if *limit > *stop {
+                        return None;
+                    }
+                    if low <= *stop && high >= *limit {
+                        Some(limit.max(stop.min(open)))
+                    } else {
+                        None
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Action types — returned by script callbacks, processed by the engine
 // ---------------------------------------------------------------------------
 
@@ -172,6 +300,8 @@ pub enum ScriptAction {
         position_id: Option<usize>,
         reason: String,
     },
+    /// Cancel all pending orders (optionally filtered by signal name).
+    CancelOrders { signal: Option<String> },
     /// Do nothing (from `on_exit_check`).
     Hold,
     /// Stop the backtest loop early.

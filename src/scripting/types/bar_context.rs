@@ -77,6 +77,24 @@ pub struct BarContext {
 
     // Adjusted close price (accounts for splits + dividends)
     pub adjusted_close: f64,
+
+    // --- Position awareness (next-bar execution model) ---
+    /// Current market position: 1 = long, -1 = short, 0 = flat.
+    pub market_position: i64,
+    /// Entry price of the current position (0.0 if flat).
+    pub entry_price: f64,
+    /// Bars since entry of the current position (0 if flat).
+    pub bars_since_entry: i64,
+    /// Number of shares/contracts in the current position (0 if flat).
+    pub current_shares: i64,
+    /// Unrealized P&L of the current stock position (0.0 if flat).
+    pub open_profit: f64,
+    /// Maximum unrealized profit seen since entry (0.0 if flat).
+    pub max_profit: f64,
+    /// Maximum unrealized loss seen since entry (0.0 if flat).
+    pub max_loss: f64,
+    /// Number of pending orders in the order queue.
+    pub pending_orders_count: i64,
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +137,32 @@ impl BarContext {
     }
     pub fn get_equity(&mut self) -> f64 {
         self.equity
+    }
+
+    // --- Position awareness getters ---
+    pub fn get_market_position(&mut self) -> i64 {
+        self.market_position
+    }
+    pub fn get_entry_price(&mut self) -> f64 {
+        self.entry_price
+    }
+    pub fn get_bars_since_entry(&mut self) -> i64 {
+        self.bars_since_entry
+    }
+    pub fn get_current_shares(&mut self) -> i64 {
+        self.current_shares
+    }
+    pub fn get_open_profit(&mut self) -> f64 {
+        self.open_profit
+    }
+    pub fn get_max_profit(&mut self) -> f64 {
+        self.max_profit
+    }
+    pub fn get_max_loss(&mut self) -> f64 {
+        self.max_loss
+    }
+    pub fn get_pending_orders_count(&mut self) -> i64 {
+        self.pending_orders_count
     }
 
     // --- Methods ---

@@ -416,15 +416,20 @@ async fn wheel_cycle_spanning_split() {
 /// Buy at $200 (unadj, pre-split), sell at $115 (unadj, post-split).
 /// Split-adjusted: buy at $100, sell at $115 → 15% return.
 /// Without split adjustment: $200 → $115 would be -42.5% — clearly wrong.
+///
+/// Next-bar execution: order queued on bar 0, fills on bar 1, needs 4 bars
+/// so `days_held` reaches 2 for exit.
 #[tokio::test(flavor = "multi_thread")]
 async fn stock_only_across_split() {
     let entry_date = d(2024, 1, 2);
     let split_date = d(2024, 1, 15);
+    let hold_date = d(2024, 1, 20); // extra bar so days_held reaches 2
     let exit_date = d(2024, 2, 1);
 
     let mut closes = BTreeMap::new();
     closes.insert(entry_date, 200.0); // pre-split
     closes.insert(split_date, 100.0); // post-split
+    closes.insert(hold_date, 110.0); // post-split, holding
     closes.insert(exit_date, 115.0); // post-split, up 15% from adjusted entry
 
     let bars = make_bars_from_closes(&closes);

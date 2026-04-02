@@ -90,6 +90,93 @@ pub fn sell_stock(qty: i64) -> Dynamic {
 }
 
 // ---------------------------------------------------------------------------
+// Order-type action helpers (next-bar execution model)
+// ---------------------------------------------------------------------------
+
+/// `buy_limit(qty, price)` → `#{ action: "open_stock", side: "long", qty, order_type: "limit", limit_price }`
+pub fn buy_limit(qty: i64, price: f64) -> Dynamic {
+    let mut map = rhai::Map::new();
+    map.insert("action".into(), "open_stock".into());
+    map.insert("side".into(), "long".into());
+    map.insert("qty".into(), qty.into());
+    map.insert("order_type".into(), "limit".into());
+    map.insert("limit_price".into(), price.into());
+    map.into()
+}
+
+/// `buy_stop(qty, price)` → `#{ action: "open_stock", side: "long", qty, order_type: "stop", stop_price }`
+pub fn buy_stop(qty: i64, price: f64) -> Dynamic {
+    let mut map = rhai::Map::new();
+    map.insert("action".into(), "open_stock".into());
+    map.insert("side".into(), "long".into());
+    map.insert("qty".into(), qty.into());
+    map.insert("order_type".into(), "stop".into());
+    map.insert("stop_price".into(), price.into());
+    map.into()
+}
+
+/// `buy_stop_limit(qty, stop, limit)` → `#{ action: "open_stock", side: "long", qty, order_type: "stop_limit", stop_price, limit_price }`
+pub fn buy_stop_limit(qty: i64, stop: f64, limit: f64) -> Dynamic {
+    let mut map = rhai::Map::new();
+    map.insert("action".into(), "open_stock".into());
+    map.insert("side".into(), "long".into());
+    map.insert("qty".into(), qty.into());
+    map.insert("order_type".into(), "stop_limit".into());
+    map.insert("stop_price".into(), stop.into());
+    map.insert("limit_price".into(), limit.into());
+    map.into()
+}
+
+/// `sell_limit(qty, price)` → `#{ action: "open_stock", side: "short", qty, order_type: "limit", limit_price }`
+pub fn sell_limit(qty: i64, price: f64) -> Dynamic {
+    let mut map = rhai::Map::new();
+    map.insert("action".into(), "open_stock".into());
+    map.insert("side".into(), "short".into());
+    map.insert("qty".into(), qty.into());
+    map.insert("order_type".into(), "limit".into());
+    map.insert("limit_price".into(), price.into());
+    map.into()
+}
+
+/// `sell_stop(qty, price)` → `#{ action: "open_stock", side: "short", qty, order_type: "stop", stop_price }`
+pub fn sell_stop(qty: i64, price: f64) -> Dynamic {
+    let mut map = rhai::Map::new();
+    map.insert("action".into(), "open_stock".into());
+    map.insert("side".into(), "short".into());
+    map.insert("qty".into(), qty.into());
+    map.insert("order_type".into(), "stop".into());
+    map.insert("stop_price".into(), price.into());
+    map.into()
+}
+
+/// `sell_stop_limit(qty, stop, limit)` → `#{ action: "open_stock", side: "short", qty, order_type: "stop_limit", stop_price, limit_price }`
+pub fn sell_stop_limit(qty: i64, stop: f64, limit: f64) -> Dynamic {
+    let mut map = rhai::Map::new();
+    map.insert("action".into(), "open_stock".into());
+    map.insert("side".into(), "short".into());
+    map.insert("qty".into(), qty.into());
+    map.insert("order_type".into(), "stop_limit".into());
+    map.insert("stop_price".into(), stop.into());
+    map.insert("limit_price".into(), limit.into());
+    map.into()
+}
+
+/// `cancel_orders()` → `#{ action: "cancel_orders" }`
+pub fn cancel_orders() -> Dynamic {
+    let mut map = rhai::Map::new();
+    map.insert("action".into(), "cancel_orders".into());
+    map.into()
+}
+
+/// `cancel_orders_by_signal(signal)` → `#{ action: "cancel_orders", signal }`
+pub fn cancel_orders_by_signal(signal: String) -> Dynamic {
+    let mut map = rhai::Map::new();
+    map.insert("action".into(), "cancel_orders".into());
+    map.insert("signal".into(), signal.into());
+    map.into()
+}
+
+// ---------------------------------------------------------------------------
 // Indicator utility (on BarContext)
 // ---------------------------------------------------------------------------
 
