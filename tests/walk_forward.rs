@@ -332,9 +332,9 @@ async fn walk_forward_anchored_end_to_end() {
     }
 }
 
-/// Walk-forward with empty `params_grid` should fail.
+/// Walk-forward with empty `params_grid` still runs (cartesian product of nothing = 1 combo).
 #[tokio::test(flavor = "multi_thread")]
-async fn walk_forward_empty_grid_fails() {
+async fn walk_forward_empty_grid_runs_with_base_params() {
     let bars = make_walk_forward_bars();
     let loader = DateFilteringLoader {
         ohlcv_df: bars_to_df(&bars),
@@ -354,8 +354,22 @@ async fn walk_forward_empty_grid_fails() {
         profile: None,
     };
 
+    // Empty grid produces 1 combo (base params only) — should succeed
     let result = wf_engine::execute(params, &loader).await;
-    if let Ok(r) = &result {
-        assert!(!r.windows.is_empty());
+    assert!(
+        result.is_ok(),
+        "Empty grid should still run with base params: {:?}",
+        result.err()
+    );
+    let result = result.unwrap();
+    assert!(!result.windows.is_empty());
+    // All windows should have empty best_params (no sweep params to pick)
+    for w in &result.windows {
+        assert!(
+            w.best_params.is_empty(),
+            "Window {}: best_params should be empty with no grid, got {:?}",
+            w.window_idx,
+            w.best_params,
+        );
     }
 }

@@ -88,8 +88,18 @@ pub async fn execute(
         .collect();
 
     let upper = sym.to_uppercase();
-    let obj_label = format!("{obj_str:?}").to_lowercase();
-    let mode_label = format!("{mode_str:?}").to_lowercase();
+    let obj_label = match obj_str {
+        WfObjective::Sharpe => "sharpe",
+        WfObjective::Sortino => "sortino",
+        WfObjective::ProfitFactor => "profit_factor",
+        WfObjective::Cagr => "cagr",
+    }
+    .to_string();
+    let mode_label = match mode_str {
+        WfMode::Rolling => "rolling",
+        WfMode::Anchored => "anchored",
+    }
+    .to_string();
     let er = result.efficiency_ratio;
 
     // Build AI summary
@@ -121,10 +131,10 @@ pub async fn execute(
 
     // Parameter stability across windows
     if windows.len() >= 2 {
-        let first_params = &windows[0].best_params;
-        let last_params = &windows[windows.len() - 1].best_params;
-        let stable = first_params == last_params;
-        if stable {
+        let all_same = windows
+            .windows(2)
+            .all(|pair| pair[0].best_params == pair[1].best_params);
+        if all_same {
             key_findings
                 .push("Parameters are stable across all windows (same best params)".to_string());
         } else {

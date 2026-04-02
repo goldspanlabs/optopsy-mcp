@@ -43,8 +43,9 @@ pub async fn run_walk_forward(
     State(state): State<AppState>,
     Json(params): Json<RestWalkForwardParams>,
 ) -> Result<Json<WalkForwardResponse>, (StatusCode, String)> {
+    let cache = Arc::clone(&state.server.cache);
     let response = wf_tool::execute(
-        &Arc::clone(&state.server.cache),
+        &cache,
         state.server.adjustment_store.clone(),
         &params.strategy,
         &params.symbol,
