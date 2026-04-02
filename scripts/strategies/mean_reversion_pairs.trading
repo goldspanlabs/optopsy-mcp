@@ -1,0 +1,59 @@
+# Mean Reversion Pairs Strategy
+# Uses cross-symbol data to trade mean reversion between SPY and QQQ.
+# Buys when the spread z-score is extreme.
+
+strategy "Mean Reversion Pairs"
+  symbol SPY
+  capital CAPITAL
+  interval daily
+  data ohlcv
+  indicators sma:20, atr:14, rsi:14
+  cross_symbols QQQ
+  category stock
+  description "Trade mean reversion between SPY and QQQ using z-score of price spread"
+  hypothesis "Correlated ETF pairs revert to mean spread, providing low-risk entry signals"
+  tags mean_reversion, pairs_trading, cross_asset
+  regime range_bound
+
+extern LOOKBACK = 20 "Z-score lookback period"
+extern ENTRY_Z = 2.0 "Z-score threshold for entry"
+extern EXIT_Z = 0.5 "Z-score threshold for exit"
+extern RISK_PCT = 0.02 "Risk per trade as fraction of equity"
+
+state in_trade = false
+state spread_sum = 0.0
+state spread_sq_sum = 0.0
+state bar_count = 0
+
+on each bar
+  require sma:20
+
+  # Compute spread
+  set spread to close - price_of("QQQ")
+  add spread to spread_sum
+  add spread * spread to spread_sq_sum
+  add 1 to bar_count
+
+  skip when bar_count < LOOKBACK
+
+  # Compute z-score
+  set mean to spread_sum / bar_count
+  set variance to spread_sq_sum / bar_count - mean * mean
+  skip when variance <= 0
+
+  when not in_trade and spread > mean + ENTRY_Z then
+    set qty to size_by_risk(RISK_PCT, close - atr(14) * 2)
+    Buy qty shares next bar at market
+    set in_trade to true
+
+on exit check
+  set spread to close - price_of("QQQ")
+  when spread < EXIT_Z then
+    close position "mean_reversion"
+  when pos.days_held > 10 then
+    close position "max_hold"
+  otherwise
+    hold position
+
+on position closed
+  set in_trade to false

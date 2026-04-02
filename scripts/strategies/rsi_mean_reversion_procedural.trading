@@ -1,0 +1,25 @@
+# RSI Mean Reversion (Procedural)
+# Converted from PineScript-style — entry and exit in a single body.
+
+strategy "RSI Mean Reversion" procedural
+  symbol SYMBOL
+  capital CAPITAL
+  interval daily
+  category stock
+  description "Buy on RSI oversold crossover above SMA(200), exit on overbought crossover"
+  hypothesis "RSI mean reversion with trend filter captures oversold bounces in uptrends"
+  tags mean_reversion, rsi, momentum
+  regime trending, bullish
+
+extern OVERSOLD = 30 "RSI oversold threshold"
+extern OVERBOUGHT = 70 "RSI overbought threshold"
+
+require rsi:14, sma:200
+
+when no positions and rsi(14) crosses above OVERSOLD and close > sma(200) then
+  Buy size_by_equity(1.0) shares next bar at market
+    stop_loss 5%
+    profit_target 10%
+
+when has positions and rsi(14) crosses below OVERBOUGHT then
+  close position "overbought_exit"

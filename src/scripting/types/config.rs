@@ -13,6 +13,7 @@ use crate::engine::types::{Commission, ExpirationFilter, Slippage, TradeSelector
 
 /// Configuration extracted from a script's `config()` callback.
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct ScriptConfig {
     pub symbol: String,
     pub capital: f64,
@@ -38,6 +39,9 @@ pub struct ScriptConfig {
 
     // Script-readable defaults (NOT engine-enforced)
     pub defaults: HashMap<String, ScriptValue>,
+
+    // Mode flags
+    pub procedural: bool,
 }
 
 /// Interval for bar iteration.
@@ -183,6 +187,13 @@ pub enum OrderType {
     StopLimit { stop: f64, limit: f64 },
 }
 
+/// Per-order exit modifier, attached to individual orders at submission time.
+#[derive(Debug, Clone)]
+pub enum ExitModifier {
+    Percent(f64),
+    Dollar(f64),
+}
+
 /// A pending order in the order queue, waiting to be filled on a future bar.
 #[derive(Debug, Clone)]
 pub struct PendingOrder {
@@ -201,6 +212,12 @@ pub struct PendingOrder {
     pub submitted_bar: usize,
     /// Time-to-live in bars. `None` = Good-Till-Canceled.
     pub ttl: Option<usize>,
+    /// Per-order stop loss, applied when the entry order fills.
+    pub stop_loss: Option<ExitModifier>,
+    /// Per-order profit target, applied when the entry order fills.
+    pub profit_target: Option<ExitModifier>,
+    /// Per-order trailing stop, stored on position at fill time.
+    pub trailing_stop: Option<ExitModifier>,
 }
 
 impl PendingOrder {

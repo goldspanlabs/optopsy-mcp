@@ -1,0 +1,61 @@
+# Wheel Strategy (DSL)
+# Sell puts, get assigned, sell covered calls, repeat.
+# Uses a state machine: selling_puts -> holding_stock -> selling_calls -> selling_puts
+
+strategy "Wheel Strategy (DSL)"
+  symbol SPY
+  capital CAPITAL
+  interval daily
+  data ohlcv, options
+  slippage mid
+  expiration_filter monthly
+  max_positions 1
+  category options
+  description "Sell puts, get assigned, sell covered calls, repeat"
+  hypothesis "Selling premium via wheel strategy captures theta decay in range-bound markets"
+  tags wheel, premium_selling, covered_call, cash_secured_put
+  regime sideways, low_volatility
+
+extern PUT_DELTA = 0.30 "Target delta for short puts"
+extern PUT_DTE = 45 "Days to expiration for puts"
+extern CALL_DELTA = 0.30 "Target delta for covered calls"
+extern CALL_DTE = 30 "Days to expiration for calls"
+extern SLIPPAGE = "mid" "Slippage model" choices mid, spread
+extern MULTIPLIER = 100 "Contract multiplier"
+
+state phase = "selling_puts"
+state cycles_completed = 0
+state adjusted_basis = 0.0
+state total_premium = 0.0
+state _group = "Cycle 1"
+
+on each bar
+  when phase == "selling_puts" then
+    skip when has positions
+    open short_put(PUT_DELTA, PUT_DTE)
+  when phase == "holding_stock" then
+    skip when has positions
+    # Build covered call, verify strike is above adjusted cost basis
+    # to avoid locking in a loss if called away, then open
+    try open covered_call(CALL_DELTA, CALL_DTE) as spread
+      skip when spread.spread.legs[0].strike < adjusted_basis
+      set phase to "selling_calls"
+
+on exit check
+  hold position
+
+on position closed
+  when phase == "selling_puts" then
+    when exit_type == "assignment" then
+      set adjusted_basis to pos.legs[0].strike - pos.legs[0].entry_price
+      add pos.legs[0].entry_price to total_premium
+      set phase to "holding_stock"
+  when phase == "selling_calls" then
+    when exit_type == "called_away" then
+      add 1 to cycles_completed
+      set _group to concat("Cycle ", cycles_completed + 1)
+      set phase to "selling_puts"
+    otherwise
+      subtract pos.legs[0].entry_price from adjusted_basis
+      add pos.legs[0].entry_price to total_premium
+      set phase to "holding_stock"

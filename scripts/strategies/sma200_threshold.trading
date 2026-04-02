@@ -1,0 +1,36 @@
+# SMA 200 Threshold Strategy
+# Buys when price breaks above SMA(200) * 1.04, sells when below SMA(200) * 0.97.
+
+strategy "SMA 200 Threshold (DSL)"
+  symbol SYMBOL
+  capital CAPITAL
+  interval daily
+  category stock
+  description "Enter when close > SMA(200) * 1.04, exit when close < SMA(200) * 0.97"
+  hypothesis "Sustained momentum above the 200-day SMA signals trend continuation"
+  tags trend_following, momentum, sma
+  regime trending, bullish
+
+extern ENTRY_THRESHOLD = 0.04 "Entry threshold above SMA (e.g. 0.04 = +4%)"
+extern EXIT_THRESHOLD = 0.03 "Exit threshold below SMA (e.g. 0.03 = -3%)"
+
+on each bar
+  require sma:200
+
+  set upper to sma(200) * (1 + ENTRY_THRESHOLD)
+  set lower to sma(200) * (1 - EXIT_THRESHOLD)
+  plot "Entry Threshold (+4%)" at upper
+  plot "Exit Threshold (-3%)" at lower
+
+  skip when has positions
+
+  when close > upper then
+    Buy size_by_equity(1.0) shares next bar at market
+
+on exit check
+  set lower to sma(200) * (1 - EXIT_THRESHOLD)
+
+  when close < lower then
+    close position "below_sma_threshold"
+  otherwise
+    hold position
