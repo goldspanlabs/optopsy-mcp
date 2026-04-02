@@ -59,6 +59,20 @@ impl DataLoader for TestDataLoader {
     ) -> Result<DataFrame> {
         Ok(DataFrame::empty())
     }
+
+    fn load_splits(
+        &self,
+        _symbol: &str,
+    ) -> Result<Vec<optopsy_mcp::data::adjustment_store::SplitRow>> {
+        Ok(vec![])
+    }
+
+    fn load_dividends(
+        &self,
+        _symbol: &str,
+    ) -> Result<Vec<optopsy_mcp::data::adjustment_store::DividendRow>> {
+        Ok(vec![])
+    }
 }
 
 fn default_params() -> std::collections::HashMap<String, serde_json::Value> {
@@ -251,7 +265,7 @@ async fn dsl_sma_crossover_runs_backtest() {
     let rhai_source = dsl::transpile(&trading_source).unwrap();
 
     let params = default_params();
-    let result = run_script_backtest(&rhai_source, &params, &loader).await;
+    let result = run_script_backtest(&rhai_source, &params, &loader, None, None, None).await;
     assert!(
         result.is_ok(),
         "SMA crossover backtest should succeed: {:?}",

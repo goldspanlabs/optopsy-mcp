@@ -525,7 +525,7 @@ fn parse_statements(lines: &[Line]) -> Result<Vec<Stmt>, DslError> {
                 line.num,
                 "'otherwise' without a preceding 'when'",
             ));
-        } else if let Some(rest) = content.strip_prefix("buy ") {
+        } else if let Some(rest) = strip_prefix_ci(content, "Buy ") {
             let (qty_expr, order_type) = parse_order_statement(rest, line.num)?;
             stmts.push(Stmt::Buy {
                 qty_expr,
@@ -533,7 +533,7 @@ fn parse_statements(lines: &[Line]) -> Result<Vec<Stmt>, DslError> {
                 line: line.num,
             });
             i += 1;
-        } else if let Some(rest) = content.strip_prefix("sell ") {
+        } else if let Some(rest) = strip_prefix_ci(content, "Sell ") {
             let (qty_expr, order_type) = parse_order_statement(rest, line.num)?;
             stmts.push(Stmt::Sell {
                 qty_expr,
@@ -541,7 +541,7 @@ fn parse_statements(lines: &[Line]) -> Result<Vec<Stmt>, DslError> {
                 line: line.num,
             });
             i += 1;
-        } else if content == "cancel all orders" {
+        } else if content == "cancel all orders" || content == "Cancel all orders" {
             stmts.push(Stmt::CancelOrders {
                 signal: None,
                 line: line.num,
@@ -927,44 +927,49 @@ fn parse_for_each_header(rest: &str, line_num: usize) -> Result<(String, String)
     Ok((var, iterable))
 }
 
+/// Case-insensitive prefix strip (checks both "Buy " and "buy ").
+fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
+    if let Some(rest) = s.strip_prefix(prefix) {
+        Some(rest)
+    } else {
+        let lower = prefix.to_lowercase();
+        s.strip_prefix(lower.as_str())
+    }
+}
+
 /// Parse a buy/sell statement body, extracting qty and optional order modifier.
 ///
-/// Formats:
-/// - `100 shares`                      → Market order
-/// - `size_by_equity(1.0) shares`      → Market order with expression
-/// - `100 shares at 150.00 limit`      → Limit order
-/// - `100 shares at 155.00 stop`       → Stop order
-/// - `100 shares at market`            → Explicit market order
+/// Accepted forms (all fill at next bar):
+/// - `100 shares next bar at market`           → Market order (canonical)
+/// - `100 shares next bar at 150.00 limit`     → Limit order (canonical)
+/// - `100 shares next bar at 155.00 stop`      → Stop order (canonical)
+/// - `100 shares at market`                    → Market order (shorthand)
+/// - `100 shares at 150.00 limit`              → Limit order (shorthand)
+/// - `100 shares`                              → Market order (implicit)
 fn parse_order_statement(rest: &str, line_num: usize) -> Result<(String, OrderModifier), DslError> {
-    // Check for "at PRICE limit/stop" suffix after "shares"
-    if let Some(shares_pos) = rest.find(" shares at ") {
+    // Canonical form: "N shares next bar at ..."
+    if let Some(shares_pos) = rest.find(" shares next bar at ") {
         let qty_expr = rest[..shares_pos].trim().to_string();
-        let after_at = rest[shares_pos + " shares at ".len()..].trim();
-
-        let order_type = if after_at == "market" {
-            OrderModifier::Market
-        } else if let Some(price_str) = after_at.strip_suffix(" limit") {
-            OrderModifier::Limit {
-                price: price_str.trim().to_string(),
-            }
-        } else if let Some(price_str) = after_at.strip_suffix(" stop") {
-            OrderModifier::Stop {
-                price: price_str.trim().to_string(),
-            }
-        } else {
-            return Err(DslError::new(
-                line_num,
-                "order type must be 'market', 'PRICE limit', or 'PRICE stop'",
-            ));
-        };
-
+        let after_at = rest[shares_pos + " shares next bar at ".len()..].trim();
+        let order_type = parse_order_type(after_at, line_num)?;
         if qty_expr.is_empty() {
-            return Err(DslError::new(line_num, "buy/sell requires a quantity"));
+            return Err(DslError::new(line_num, "Buy/Sell requires a quantity"));
         }
         return Ok((qty_expr, order_type));
     }
 
-    // No order modifier — plain "N shares" or bare expression
+    // Shorthand: "N shares at ..."
+    if let Some(shares_pos) = rest.find(" shares at ") {
+        let qty_expr = rest[..shares_pos].trim().to_string();
+        let after_at = rest[shares_pos + " shares at ".len()..].trim();
+        let order_type = parse_order_type(after_at, line_num)?;
+        if qty_expr.is_empty() {
+            return Err(DslError::new(line_num, "Buy/Sell requires a quantity"));
+        }
+        return Ok((qty_expr, order_type));
+    }
+
+    // Implicit market: "N shares" or bare expression
     let qty_expr = rest
         .strip_suffix(" shares")
         .unwrap_or(rest)
@@ -972,10 +977,30 @@ fn parse_order_statement(rest: &str, line_num: usize) -> Result<(String, OrderMo
         .to_string();
 
     if qty_expr.is_empty() {
-        return Err(DslError::new(line_num, "buy/sell requires a quantity"));
+        return Err(DslError::new(line_num, "Buy/Sell requires a quantity"));
     }
 
     Ok((qty_expr, OrderModifier::Market))
+}
+
+/// Parse the order type after "at": "market", "PRICE limit", or "PRICE stop".
+fn parse_order_type(after_at: &str, line_num: usize) -> Result<OrderModifier, DslError> {
+    if after_at == "market" {
+        Ok(OrderModifier::Market)
+    } else if let Some(price_str) = after_at.strip_suffix(" limit") {
+        Ok(OrderModifier::Limit {
+            price: price_str.trim().to_string(),
+        })
+    } else if let Some(price_str) = after_at.strip_suffix(" stop") {
+        Ok(OrderModifier::Stop {
+            price: price_str.trim().to_string(),
+        })
+    } else {
+        Err(DslError::new(
+            line_num,
+            "order type must be 'market', 'PRICE limit', or 'PRICE stop'",
+        ))
+    }
 }
 
 /// Extract a `"quoted string"` value from the start of a string.

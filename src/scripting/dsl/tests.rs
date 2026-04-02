@@ -716,3 +716,69 @@ on each bar
         "Dynamic limit price should be rewritten.\nGenerated:\n{rhai}"
     );
 }
+
+#[test]
+fn test_capitalized_buy_next_bar_at_market() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  Buy 100 shares next bar at market
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("buy_stock(100)"),
+        "Capitalized Buy + next bar at market should work.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_capitalized_sell_next_bar_at_limit() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  Sell 50 shares next bar at 200.00 limit
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("sell_limit("),
+        "Capitalized Sell + next bar at limit should work.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_both_cases_accepted() {
+    // Lowercase still works (backward compat)
+    let dsl_lower = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  buy 100 shares
+"#;
+
+    // Uppercase (TradeStation-style)
+    let dsl_upper = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  Buy 100 shares next bar at market
+"#;
+
+    let rhai_lower = transpile(dsl_lower).unwrap();
+    let rhai_upper = transpile(dsl_upper).unwrap();
+
+    // Both should generate buy_stock
+    assert!(rhai_lower.contains("buy_stock(100)"));
+    assert!(rhai_upper.contains("buy_stock(100)"));
+}
