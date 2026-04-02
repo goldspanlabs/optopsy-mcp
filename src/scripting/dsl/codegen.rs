@@ -14,6 +14,181 @@ use std::collections::HashSet;
 use super::parser::*;
 
 // ---------------------------------------------------------------------------
+// Auto-detection of indicators from DSL body expressions
+// ---------------------------------------------------------------------------
+
+/// Indicators that require pre-computation (must appear in config.data.indicators).
+const PRECOMPUTED_INDICATORS: &[&str] = &[
+    "sma",
+    "ema",
+    "rsi",
+    "atr",
+    "macd_line",
+    "macd_signal",
+    "macd_hist",
+    "bbands_upper",
+    "bbands_mid",
+    "bbands_lower",
+    "stochastic",
+    "cci",
+    "obv",
+    "adx",
+    "plus_di",
+    "minus_di",
+    "psar",
+    "supertrend",
+    "keltner_upper",
+    "keltner_lower",
+    "donchian_upper",
+    "donchian_mid",
+    "donchian_lower",
+    "tr",
+    "williams_r",
+    "mfi",
+    "rank",
+    "iv_rank",
+];
+
+/// Walk all statement blocks in the program and collect `"name:period"` indicator
+/// specs from expression text and `require` directives.
+fn collect_indicators(program: &DslProgram) -> Vec<String> {
+    let mut specs = Vec::new();
+    let mut seen = HashSet::new();
+
+    // Helper to process an Option<Vec<Stmt>>
+    let mut process = |stmts: &Option<Vec<Stmt>>| {
+        if let Some(ref s) = stmts {
+            collect_from_stmts(s, &mut specs, &mut seen);
+        }
+    };
+
+    process(&program.on_bar);
+    process(&program.on_exit_check);
+    process(&program.on_position_opened);
+    process(&program.on_position_closed);
+    process(&program.on_end);
+
+    // Procedural body
+    collect_from_stmts(&program.body, &mut specs, &mut seen);
+
+    specs
+}
+
+/// Recursively walk statements, scanning every expression string for indicator
+/// call patterns and collecting `require` indicator lists.
+fn collect_from_stmts(stmts: &[Stmt], specs: &mut Vec<String>, seen: &mut HashSet<String>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Require { indicators, .. } => {
+                for ind in indicators {
+                    if seen.insert(ind.clone()) {
+                        specs.push(ind.clone());
+                    }
+                }
+            }
+            Stmt::SkipWhen { condition, .. } => scan_expr(condition, specs, seen),
+            Stmt::Set { expr, .. } => scan_expr(expr, specs, seen),
+            Stmt::When {
+                condition,
+                then_body,
+                else_body,
+                ..
+            } => {
+                scan_expr(condition, specs, seen);
+                collect_from_stmts(then_body, specs, seen);
+                if let Some(ref eb) = else_body {
+                    collect_from_stmts(eb, specs, seen);
+                }
+            }
+            Stmt::Buy {
+                qty_expr,
+                order_type,
+                ..
+            } => {
+                scan_expr(qty_expr, specs, seen);
+                scan_order_modifier(order_type, specs, seen);
+            }
+            Stmt::Sell {
+                qty_expr,
+                order_type,
+                ..
+            } => {
+                scan_expr(qty_expr, specs, seen);
+                scan_order_modifier(order_type, specs, seen);
+            }
+            Stmt::OpenStrategy { call, .. } => scan_expr(call, specs, seen),
+            Stmt::Plot { expr, .. } => scan_expr(expr, specs, seen),
+            Stmt::AddTo { expr, .. } => scan_expr(expr, specs, seen),
+            Stmt::SubtractFrom { expr, .. } => scan_expr(expr, specs, seen),
+            Stmt::MultiplyBy { expr, .. } => scan_expr(expr, specs, seen),
+            Stmt::DivideBy { expr, .. } => scan_expr(expr, specs, seen),
+            Stmt::ForEach { iterable, body, .. } => {
+                scan_expr(iterable, specs, seen);
+                collect_from_stmts(body, specs, seen);
+            }
+            Stmt::Return { expr, .. } => scan_expr(expr, specs, seen),
+            Stmt::Raw { code, .. } => scan_expr(code, specs, seen),
+            // Variants with no expressions to scan
+            Stmt::HoldPosition { .. }
+            | Stmt::ClosePosition { .. }
+            | Stmt::ClosePositionById { .. }
+            | Stmt::StopBacktest { .. }
+            | Stmt::CancelOrders { .. } => {}
+        }
+    }
+}
+
+/// Scan an order modifier for indicator patterns in price expressions.
+fn scan_order_modifier(om: &OrderModifier, specs: &mut Vec<String>, seen: &mut HashSet<String>) {
+    match om {
+        OrderModifier::Limit { price } | OrderModifier::Stop { price } => {
+            scan_expr(price, specs, seen);
+        }
+        OrderModifier::Market => {}
+    }
+}
+
+/// Character-level scanner that finds `WORD(NUMBER)` patterns where WORD is in
+/// `PRECOMPUTED_INDICATORS`. Extracts as `"word:number"`. Also handles `WORD()`
+/// for zero-arg indicators (emitted as just `"word"`).
+fn scan_expr(expr: &str, specs: &mut Vec<String>, seen: &mut HashSet<String>) {
+    let bytes = expr.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        // Look for the start of an identifier
+        if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
+            let start = i;
+            while i < len && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            let word = &expr[start..i];
+
+            // Check if this word is a known indicator followed by '('
+            if i < len && bytes[i] == b'(' && PRECOMPUTED_INDICATORS.contains(&word) {
+                let paren_start = i + 1;
+                // Find the matching ')'
+                if let Some(paren_end) = expr[paren_start..].find(')') {
+                    let arg = expr[paren_start..paren_start + paren_end].trim();
+                    let spec = if arg.is_empty() {
+                        word.to_string()
+                    } else {
+                        format!("{word}:{arg}")
+                    };
+                    if seen.insert(spec.clone()) {
+                        specs.push(spec);
+                    }
+                    i = paren_start + paren_end + 1;
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
@@ -51,7 +226,7 @@ pub fn generate(program: &DslProgram) -> String {
 
     // config()
     if let Some(ref strat) = program.strategy {
-        generate_config(&mut out, strat);
+        generate_config(&mut out, strat, program);
         out.push('\n');
     }
 
@@ -148,7 +323,7 @@ fn config_value(val: &str) -> String {
     }
 }
 
-fn generate_config(out: &mut String, s: &StrategyBlock) {
+fn generate_config(out: &mut String, s: &StrategyBlock, program: &DslProgram) {
     out.push_str("fn config() {\n");
     out.push_str("    #{\n");
     out.push_str(&format!("        symbol: {},\n", config_value(&s.symbol)));
@@ -159,8 +334,18 @@ fn generate_config(out: &mut String, s: &StrategyBlock) {
     out.push_str("        data: #{\n");
     out.push_str(&format!("            ohlcv: {},\n", s.data_ohlcv));
     out.push_str(&format!("            options: {},\n", s.data_options));
-    if !s.indicators.is_empty() {
-        let ind_list: Vec<String> = s.indicators.iter().map(|i| format!("\"{i}\"")).collect();
+
+    // Merge explicit indicators with auto-detected ones
+    let auto_detected = collect_indicators(program);
+    let mut merged: Vec<String> = s.indicators.clone();
+    let explicit_set: HashSet<&str> = s.indicators.iter().map(|s| s.as_str()).collect();
+    for spec in &auto_detected {
+        if !explicit_set.contains(spec.as_str()) {
+            merged.push(spec.clone());
+        }
+    }
+    if !merged.is_empty() {
+        let ind_list: Vec<String> = merged.iter().map(|i| format!("\"{i}\"")).collect();
         out.push_str(&format!(
             "            indicators: [{}],\n",
             ind_list.join(", ")

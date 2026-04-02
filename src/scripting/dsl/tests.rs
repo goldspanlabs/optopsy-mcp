@@ -937,3 +937,82 @@ when counter > 10 and no positions then
     assert!(rhai.contains("fn on_bar(ctx)"));
     assert!(rhai.contains("counter += 1;"));
 }
+
+// ---------------------------------------------------------------------------
+// Auto-detect indicators tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_auto_detect_indicators_from_body() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  when sma(200) > ema(50) and rsi(14) < 30 then
+    buy 100 shares
+"#;
+    let rhai = transpile(dsl).unwrap();
+    assert!(rhai.contains("\"sma:200\""), "Missing sma:200.\n{rhai}");
+    assert!(rhai.contains("\"ema:50\""), "Missing ema:50.\n{rhai}");
+    assert!(rhai.contains("\"rsi:14\""), "Missing rsi:14.\n{rhai}");
+}
+
+#[test]
+fn test_auto_detect_merges_with_explicit() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+  indicators atr:14
+
+on each bar
+  when sma(200) > 0 then
+    buy 100 shares
+"#;
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("\"atr:14\""),
+        "Missing explicit atr:14.\n{rhai}"
+    );
+    assert!(
+        rhai.contains("\"sma:200\""),
+        "Missing auto-detected sma:200.\n{rhai}"
+    );
+}
+
+#[test]
+fn test_auto_detect_from_lookback_and_crossover() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  when sma(50)[1] > sma(200)[1] and rsi(14) crosses above 30 then
+    buy 100 shares
+"#;
+    let rhai = transpile(dsl).unwrap();
+    assert!(rhai.contains("\"sma:50\""), "Missing sma:50.\n{rhai}");
+    assert!(rhai.contains("\"sma:200\""), "Missing sma:200.\n{rhai}");
+    assert!(rhai.contains("\"rsi:14\""), "Missing rsi:14.\n{rhai}");
+}
+
+#[test]
+fn test_no_indicators_line_needed_procedural() {
+    let dsl = r#"
+strategy "Test" procedural
+  symbol SPY
+  interval daily
+
+require sma:50
+when sma(50) > close then
+  buy 100 shares
+"#;
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("\"sma:50\""),
+        "Missing auto-detected sma:50.\n{rhai}"
+    );
+}
