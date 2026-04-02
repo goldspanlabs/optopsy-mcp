@@ -1194,3 +1194,60 @@ on each bar
         "Should not have category.\n{rhai}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Dotted-path support tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_set_dotted_path() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+state stock = #{price: 0.0, basis: 0.0}
+
+on each bar
+  set stock.price to close
+  set stock.basis to close * 0.95
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    // Dotted path should be assignment, not let declaration
+    assert!(
+        rhai.contains("stock.price = ctx.close;"),
+        "Should assign dotted path.\n{rhai}"
+    );
+    assert!(
+        !rhai.contains("let stock.price"),
+        "Should NOT declare dotted path.\n{rhai}"
+    );
+}
+
+#[test]
+fn test_compound_assignment_dotted_path() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+state totals = #{premium: 0.0, count: 0}
+
+on each bar
+  add 1.5 to totals.premium
+  add 1 to totals.count
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("totals.premium += 1.5;"),
+        "Should compound-assign dotted path.\n{rhai}"
+    );
+    assert!(
+        rhai.contains("totals.count += 1;"),
+        "Should compound-assign dotted path.\n{rhai}"
+    );
+}

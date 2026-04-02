@@ -563,8 +563,8 @@ fn generate_stmts(
 
             Stmt::Set { name, expr, .. } => {
                 let rhs = rewrite_expr(expr);
-                if scope_vars.contains(name) {
-                    // Reassign existing top-level state/param variable
+                if scope_vars.contains(name) || name.contains('.') {
+                    // Reassign existing top-level state/param variable or dotted path
                     out.push_str(&format!("{indent}{name} = {rhs};\n"));
                 } else {
                     // Declare new local variable
