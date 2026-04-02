@@ -758,6 +758,7 @@ pub async fn run_script_backtest(
         // Snapshot the pending count before processing for accurate callback contexts
         let phase_a_pending_count = orders_to_process.len();
         let mut unfilled_orders: Vec<PendingOrder> = Vec::new();
+        let mut auto_exit_orders: Vec<PendingOrder> = Vec::new();
         for order in orders_to_process {
             if let Some(fill_price) = order.try_fill(bar.open, bar.high, bar.low, bar.close) {
                 match &order.action {
@@ -790,6 +791,7 @@ pub async fn run_script_backtest(
                             source: "script".to_string(),
                             implicit: false,
                             group: read_group(&scope),
+                            trailing_stop: order.trailing_stop.clone(),
                         };
                         realized_equity -= compute_commission(&config.commission, &pos);
                         next_id += 1;
@@ -821,6 +823,49 @@ pub async fn run_script_backtest(
                         }
 
                         positions.push(pos);
+
+                        // Create per-order exit orders (stop loss / profit target)
+                        let pos_id = next_id - 1;
+                        if let Some(ref sl) = order.stop_loss {
+                            let stop_price = match sl {
+                                ExitModifier::Percent(pct) => adjusted_fill * (1.0 - pct),
+                                ExitModifier::Dollar(amt) => adjusted_fill - amt,
+                            };
+                            auto_exit_orders.push(PendingOrder {
+                                action: ScriptAction::Close {
+                                    position_id: Some(pos_id),
+                                    reason: "stop_loss".to_string(),
+                                },
+                                order_type: OrderType::Stop { price: stop_price },
+                                is_buy: false,
+                                signal: Some("__auto_stop".to_string()),
+                                submitted_bar: bar_idx,
+                                ttl: None,
+                                stop_loss: None,
+                                profit_target: None,
+                                trailing_stop: None,
+                            });
+                        }
+                        if let Some(ref pt) = order.profit_target {
+                            let limit_price = match pt {
+                                ExitModifier::Percent(pct) => adjusted_fill * (1.0 + pct),
+                                ExitModifier::Dollar(amt) => adjusted_fill + amt,
+                            };
+                            auto_exit_orders.push(PendingOrder {
+                                action: ScriptAction::Close {
+                                    position_id: Some(pos_id),
+                                    reason: "take_profit".to_string(),
+                                },
+                                order_type: OrderType::Limit { price: limit_price },
+                                is_buy: false,
+                                signal: Some("__auto_target".to_string()),
+                                submitted_bar: bar_idx,
+                                ttl: None,
+                                stop_loss: None,
+                                profit_target: None,
+                                trailing_stop: None,
+                            });
+                        }
                     }
                     ScriptAction::Close {
                         position_id: Some(pid),
@@ -882,10 +927,21 @@ pub async fn run_script_backtest(
                             max_profit_tracker.remove(pid);
                             max_loss_tracker.remove(pid);
                             positions.swap_remove(idx);
+
+                            // Cancel other auto-generated exit orders for this position
+                            unfilled_orders.retain(|o| {
+                                if let ScriptAction::Close {
+                                    position_id: Some(opid),
+                                    ..
+                                } = &o.action
+                                {
+                                    *opid != *pid
+                                } else {
+                                    true
+                                }
+                            });
                         } else {
-                            warnings.push(format!(
-                                "Pending close order: position_id {pid} not found (may have been closed already)"
-                            ));
+                            // Silently skip — position already closed (e.g., sibling auto-exit)
                         }
                     }
                     ScriptAction::Close {
@@ -946,6 +1002,21 @@ pub async fn run_script_backtest(
                             pnl_dirty = true;
                             max_profit_tracker.remove(&closed_pos.id);
                             max_loss_tracker.remove(&closed_pos.id);
+
+                            // Cancel auto-generated exit orders for this position
+                            let cid = closed_pos.id;
+                            unfilled_orders.retain(|o| {
+                                if let ScriptAction::Close {
+                                    position_id: Some(opid),
+                                    ..
+                                } = &o.action
+                                {
+                                    *opid != cid
+                                } else {
+                                    true
+                                }
+                            });
+
                             positions.swap_remove(idx);
                         } else {
                             warnings.push(
@@ -985,6 +1056,7 @@ pub async fn run_script_backtest(
                             source: "script".to_string(),
                             implicit: false,
                             group: read_group(&scope),
+                            trailing_stop: None,
                         };
                         realized_equity -= compute_commission(&config.commission, &pos);
                         next_id += 1;
@@ -1024,6 +1096,7 @@ pub async fn run_script_backtest(
             }
         }
         pending_orders = unfilled_orders;
+        pending_orders.extend(auto_exit_orders);
 
         // --- Phase B: Exits (immediate processing) ---
 
@@ -1063,6 +1136,28 @@ pub async fn run_script_backtest(
                     should_close = true;
                     // Determine if any leg is ITM to classify as assignment/called_away
                     exit_reason = classify_expiration(legs, bar.close);
+                }
+            }
+
+            // Per-order trailing stop check
+            if !should_close && pos.days_held > 0 {
+                if let Some(ref ts) = pos.trailing_stop {
+                    if let Some(&max_p) = max_profit_tracker.get(&pos.id) {
+                        if max_p > 0.0 {
+                            let drawdown = max_p - pos.unrealized_pnl;
+                            let triggered = match ts {
+                                ExitModifier::Percent(pct) => {
+                                    let entry_cost = pos.entry_cost.abs();
+                                    entry_cost > 0.0 && drawdown / entry_cost >= *pct
+                                }
+                                ExitModifier::Dollar(amt) => drawdown >= *amt,
+                            };
+                            if triggered {
+                                should_close = true;
+                                exit_reason = "trailing_stop".to_string();
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1153,6 +1248,20 @@ pub async fn run_script_backtest(
                 positions.swap_remove(i);
                 positions_dirty = true; // positions changed, Arc needs rebuild
 
+                // Cancel auto-generated stop/target orders for this position
+                let closed_id = closed_pos.id;
+                pending_orders.retain(|o| {
+                    if let ScriptAction::Close {
+                        position_id: Some(pid),
+                        ..
+                    } = &o.action
+                    {
+                        *pid != closed_id
+                    } else {
+                        true
+                    }
+                });
+
                 // Handle implicit stock transitions for wheel-like strategies.
                 // "assignment": short put expired ITM → open an implicit long stock at the strike.
                 // "called_away": short call expired ITM → close any implicit long stock at the strike.
@@ -1190,6 +1299,7 @@ pub async fn run_script_backtest(
                                         source: "assignment".to_string(),
                                         implicit: true,
                                         group: closed_pos.group.clone(),
+                                        trailing_stop: None,
                                     };
                                     next_id += 1;
                                     positions.push(implicit);
@@ -1319,6 +1429,9 @@ pub async fn run_script_backtest(
                                 signal: pa.signal,
                                 submitted_bar: bar_idx,
                                 ttl: pa.ttl,
+                                stop_loss: pa.stop_loss,
+                                profit_target: pa.profit_target,
+                                trailing_stop: pa.trailing_stop,
                             });
                         }
                     }
@@ -2481,6 +2594,9 @@ struct ParsedAction {
     is_buy: bool,
     signal: Option<String>,
     ttl: Option<usize>,
+    stop_loss: Option<ExitModifier>,
+    profit_target: Option<ExitModifier>,
+    trailing_stop: Option<ExitModifier>,
 }
 
 /// Parse the result of `on_bar` into a list of `ParsedAction`s.
@@ -2653,12 +2769,21 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ParsedAction> {
 
             let order_type = extract_order_type(&map);
 
+            let stop_loss = extract_exit_modifier(&map, "stop_loss_pct", "stop_loss_dollar");
+            let profit_target =
+                extract_exit_modifier(&map, "profit_target_pct", "profit_target_dollar");
+            let trailing_stop =
+                extract_exit_modifier(&map, "trailing_stop_pct", "trailing_stop_dollar");
+
             Some(ParsedAction {
                 action,
                 order_type,
                 is_buy,
                 signal,
                 ttl,
+                stop_loss,
+                profit_target,
+                trailing_stop,
             })
         })
         .collect()
@@ -2703,6 +2828,20 @@ fn extract_order_type(map: &rhai::Map) -> OrderType {
         }
         _ => OrderType::Market,
     }
+}
+
+fn extract_exit_modifier(map: &rhai::Map, pct_key: &str, dollar_key: &str) -> Option<ExitModifier> {
+    if let Some(v) = map.get(pct_key) {
+        if let Ok(pct) = v.as_float() {
+            return Some(ExitModifier::Percent(pct));
+        }
+    }
+    if let Some(v) = map.get(dollar_key) {
+        if let Ok(amt) = v.as_float() {
+            return Some(ExitModifier::Dollar(amt));
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------

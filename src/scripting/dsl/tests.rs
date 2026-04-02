@@ -1016,3 +1016,107 @@ when sma(50) > close then
         "Missing auto-detected sma:50.\n{rhai}"
     );
 }
+
+#[test]
+fn test_transpile_per_order_stop_loss() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  Buy 100 shares next bar at market
+    stop_loss 5%
+    profit_target 10%
+"#;
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("let __order = buy_stock(100)"),
+        "Should use __order.\n{rhai}"
+    );
+    assert!(
+        rhai.contains("__order.stop_loss_pct = 0.05"),
+        "Missing stop_loss_pct.\n{rhai}"
+    );
+    assert!(
+        rhai.contains("__order.profit_target_pct = 0.1"),
+        "Missing profit_target_pct.\n{rhai}"
+    );
+    assert!(
+        rhai.contains("__actions.push(__order)"),
+        "Should push __order.\n{rhai}"
+    );
+}
+
+#[test]
+fn test_transpile_per_order_dollar_stop() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  Buy 100 shares next bar at market
+    stop_loss $500
+"#;
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("__order.stop_loss_dollar = 500"),
+        "Missing stop_loss_dollar.\n{rhai}"
+    );
+}
+
+#[test]
+fn test_transpile_per_order_trailing_stop() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  Buy 100 shares next bar at market
+    trailing_stop 3%
+"#;
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("__order.trailing_stop_pct = 0.03"),
+        "Missing trailing_stop_pct.\n{rhai}"
+    );
+}
+
+#[test]
+fn test_transpile_buy_without_modifiers_unchanged() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  Buy 100 shares next bar at market
+"#;
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("__actions.push(buy_stock(100))"),
+        "Should use direct push.\n{rhai}"
+    );
+    assert!(!rhai.contains("__order"), "Should not use __order.\n{rhai}");
+}
+
+#[test]
+fn test_transpile_procedural_with_per_order_stops() {
+    let dsl = r#"
+strategy "Test" procedural
+  symbol SPY
+  interval daily
+
+when no positions and close > sma(200) then
+  Buy 100 shares next bar at market
+    stop_loss 5%
+    profit_target 10%
+    trailing_stop 3%
+"#;
+    let rhai = transpile(dsl).unwrap();
+    assert!(rhai.contains("__order.stop_loss_pct = 0.05"));
+    assert!(rhai.contains("__order.profit_target_pct = 0.1"));
+    assert!(rhai.contains("__order.trailing_stop_pct = 0.03"));
+}

@@ -826,6 +826,7 @@ mod tests {
                 source: String::new(),
                 implicit: false,
                 group: None,
+                trailing_stop: None,
             },
             ScriptPosition {
                 id: 2,
@@ -843,6 +844,7 @@ mod tests {
                 source: String::new(),
                 implicit: false,
                 group: None,
+                trailing_stop: None,
             },
         ];
         let mut ctx = make_ctx_with_positions(&bars, 0, positions);
@@ -1429,6 +1431,7 @@ mod tests {
                 source: String::new(),
                 implicit: false,
                 group: None,
+                trailing_stop: None,
             },
             ScriptPosition {
                 id: 2,
@@ -1446,6 +1449,7 @@ mod tests {
                 source: String::new(),
                 implicit: false,
                 group: None,
+                trailing_stop: None,
             },
         ];
         let mut ctx = make_ctx_with_positions(&bars, 0, positions);
@@ -1576,6 +1580,9 @@ mod tests {
             signal: None,
             submitted_bar: 0,
             ttl: None,
+            stop_loss: None,
+            profit_target: None,
+            trailing_stop: None,
         };
 
         // Market orders always fill at the open
@@ -1598,6 +1605,9 @@ mod tests {
             signal: None,
             submitted_bar: 0,
             ttl: None,
+            stop_loss: None,
+            profit_target: None,
+            trailing_stop: None,
         };
 
         // Low reaches limit → fills at limit price
@@ -1628,6 +1638,9 @@ mod tests {
             signal: None,
             submitted_bar: 0,
             ttl: None,
+            stop_loss: None,
+            profit_target: None,
+            trailing_stop: None,
         };
 
         // High reaches stop → fills at stop price
@@ -1658,6 +1671,9 @@ mod tests {
             signal: None,
             submitted_bar: 0,
             ttl: None,
+            stop_loss: None,
+            profit_target: None,
+            trailing_stop: None,
         };
 
         // Low reaches stop → fills at stop price
@@ -1684,6 +1700,9 @@ mod tests {
             signal: Some("test".to_string()),
             submitted_bar: 5,
             ttl: Some(3),
+            stop_loss: None,
+            profit_target: None,
+            trailing_stop: None,
         };
 
         assert!(!order.is_expired(6));
@@ -1706,6 +1725,9 @@ mod tests {
             signal: None,
             submitted_bar: 0,
             ttl: None, // GTC
+            stop_loss: None,
+            profit_target: None,
+            trailing_stop: None,
         };
 
         assert!(!order.is_expired(1000));
@@ -1729,6 +1751,9 @@ mod tests {
             signal: None,
             submitted_bar: 0,
             ttl: None,
+            stop_loss: None,
+            profit_target: None,
+            trailing_stop: None,
         };
 
         // Both conditions met: high >= stop AND low <= limit
@@ -1773,6 +1798,7 @@ mod tests {
             source: "script".to_string(),
             implicit: false,
             group: None,
+            trailing_stop: None,
         };
 
         let awareness = compute_position_awareness(&[pos], 2, 10);

@@ -5,7 +5,6 @@ strategy "RSI Mean Reversion" procedural
   symbol SYMBOL
   capital CAPITAL
   interval daily
-  indicators rsi:14, sma:200
 
 extern OVERSOLD = 30 "RSI oversold threshold"
 extern OVERBOUGHT = 70 "RSI overbought threshold"
@@ -14,6 +13,8 @@ require rsi:14, sma:200
 
 when no positions and rsi(14) crosses above OVERSOLD and close > sma(200) then
   Buy size_by_equity(1.0) shares next bar at market
+    stop_loss 5%
+    profit_target 10%
 
 when has positions and rsi(14) crosses below OVERBOUGHT then
   close position "overbought_exit"

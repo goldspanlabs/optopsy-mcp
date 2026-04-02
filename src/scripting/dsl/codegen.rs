@@ -460,6 +460,43 @@ fn generate_callback(
 }
 
 // ---------------------------------------------------------------------------
+// Exit modifier emission
+// ---------------------------------------------------------------------------
+
+fn emit_exit_modifiers(out: &mut String, mods: &ExitModifiers, indent: &str) {
+    if let Some(ref sl) = mods.stop_loss {
+        match sl {
+            OrderExitSpec::Percent(v) => {
+                out.push_str(&format!("{indent}__order.stop_loss_pct = {v};\n"));
+            }
+            OrderExitSpec::Dollar(v) => {
+                out.push_str(&format!("{indent}__order.stop_loss_dollar = {v};\n"));
+            }
+        }
+    }
+    if let Some(ref pt) = mods.profit_target {
+        match pt {
+            OrderExitSpec::Percent(v) => {
+                out.push_str(&format!("{indent}__order.profit_target_pct = {v};\n"));
+            }
+            OrderExitSpec::Dollar(v) => {
+                out.push_str(&format!("{indent}__order.profit_target_dollar = {v};\n"));
+            }
+        }
+    }
+    if let Some(ref ts) = mods.trailing_stop {
+        match ts {
+            OrderExitSpec::Percent(v) => {
+                out.push_str(&format!("{indent}__order.trailing_stop_pct = {v};\n"));
+            }
+            OrderExitSpec::Dollar(v) => {
+                out.push_str(&format!("{indent}__order.trailing_stop_dollar = {v};\n"));
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Statement generation (recursive)
 // ---------------------------------------------------------------------------
 
@@ -551,6 +588,7 @@ fn generate_stmts(
             Stmt::Buy {
                 qty_expr,
                 order_type,
+                exit_modifiers,
                 ..
             } => {
                 let qty = rewrite_expr(qty_expr);
@@ -565,12 +603,23 @@ fn generate_stmts(
                         format!("buy_stop({qty}, {p})")
                     }
                 };
-                match kind {
-                    CallbackKind::ActionArray => {
-                        out.push_str(&format!("{indent}__actions.push({call});\n"));
-                    }
-                    _ => {
-                        out.push_str(&format!("{indent}{call};\n"));
+
+                let has_mods = exit_modifiers.stop_loss.is_some()
+                    || exit_modifiers.profit_target.is_some()
+                    || exit_modifiers.trailing_stop.is_some();
+
+                if has_mods && kind == CallbackKind::ActionArray {
+                    out.push_str(&format!("{indent}let __order = {call};\n"));
+                    emit_exit_modifiers(out, exit_modifiers, &indent);
+                    out.push_str(&format!("{indent}__actions.push(__order);\n"));
+                } else {
+                    match kind {
+                        CallbackKind::ActionArray => {
+                            out.push_str(&format!("{indent}__actions.push({call});\n"));
+                        }
+                        _ => {
+                            out.push_str(&format!("{indent}{call};\n"));
+                        }
                     }
                 }
             }
@@ -578,6 +627,7 @@ fn generate_stmts(
             Stmt::Sell {
                 qty_expr,
                 order_type,
+                exit_modifiers,
                 ..
             } => {
                 let qty = rewrite_expr(qty_expr);
@@ -592,11 +642,20 @@ fn generate_stmts(
                         format!("sell_stop({qty}, {p})")
                     }
                 };
+
+                let has_mods = exit_modifiers.stop_loss.is_some()
+                    || exit_modifiers.profit_target.is_some()
+                    || exit_modifiers.trailing_stop.is_some();
+
                 // Emit quantity validation guard
                 let call_with_guard = call.replace(&qty, "__sell_qty");
                 out.push_str(&format!("{indent}let __sell_qty = {qty};\n"));
                 out.push_str(&format!("{indent}if __sell_qty > 0 {{\n"));
-                if kind == CallbackKind::ActionArray {
+                if has_mods && kind == CallbackKind::ActionArray {
+                    out.push_str(&format!("{indent}    let __order = {call_with_guard};\n"));
+                    emit_exit_modifiers(out, exit_modifiers, &format!("{indent}    "));
+                    out.push_str(&format!("{indent}    __actions.push(__order);\n"));
+                } else if kind == CallbackKind::ActionArray {
                     out.push_str(&format!("{indent}    __actions.push({call_with_guard});\n"));
                 } else {
                     out.push_str(&format!("{indent}    {call_with_guard};\n"));

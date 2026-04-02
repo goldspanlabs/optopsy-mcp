@@ -80,6 +80,21 @@ pub enum OrderModifier {
     Stop { price: String },
 }
 
+/// Exit modifiers attached to a Buy/Sell order.
+#[derive(Debug, Default)]
+pub struct ExitModifiers {
+    pub stop_loss: Option<OrderExitSpec>,
+    pub profit_target: Option<OrderExitSpec>,
+    pub trailing_stop: Option<OrderExitSpec>,
+}
+
+/// A single exit specification on an order.
+#[derive(Debug, Clone)]
+pub enum OrderExitSpec {
+    Percent(f64), // 5% stored as 0.05
+    Dollar(f64),  // $500
+}
+
 /// A statement inside an event block.
 #[derive(Debug)]
 pub enum Stmt {
@@ -105,11 +120,13 @@ pub enum Stmt {
     Buy {
         qty_expr: String,
         order_type: OrderModifier,
+        exit_modifiers: ExitModifiers,
         line: usize,
     },
     Sell {
         qty_expr: String,
         order_type: OrderModifier,
+        exit_modifiers: ExitModifiers,
         line: usize,
     },
     CancelOrders {
@@ -397,7 +414,6 @@ fn parse_strategy_block(lines: &[Line], start: usize) -> Result<(StrategyBlock, 
     Ok((block, i))
 }
 
-#[allow(dead_code)] // Will be reused for per-order exit modifiers
 pub(crate) fn parse_exit_threshold_dsl(
     s: &str,
     line_num: usize,
@@ -420,6 +436,47 @@ pub(crate) fn parse_exit_threshold_dsl(
             format!("exit threshold must be N% or $N, got: {s}"),
         ))
     }
+}
+
+/// Parse optional indented exit modifiers after a Buy/Sell line.
+/// Returns (modifiers, count of consumed lines).
+fn parse_exit_modifiers(
+    lines: &[Line],
+    buy_idx: usize,
+) -> Result<(ExitModifiers, usize), DslError> {
+    let buy_indent = lines[buy_idx].indent;
+    let mut mods = ExitModifiers::default();
+    let mut consumed = 0;
+    let mut j = buy_idx + 1;
+    while j < lines.len() && lines[j].indent > buy_indent {
+        let content = &lines[j].content;
+        if let Some(rest) = content.strip_prefix("stop_loss ") {
+            let (mode, value) = parse_exit_threshold_dsl(rest.trim(), lines[j].num)?;
+            mods.stop_loss = Some(match mode.as_str() {
+                "percent" => OrderExitSpec::Percent(value),
+                _ => OrderExitSpec::Dollar(value),
+            });
+            consumed += 1;
+        } else if let Some(rest) = content.strip_prefix("profit_target ") {
+            let (mode, value) = parse_exit_threshold_dsl(rest.trim(), lines[j].num)?;
+            mods.profit_target = Some(match mode.as_str() {
+                "percent" => OrderExitSpec::Percent(value),
+                _ => OrderExitSpec::Dollar(value),
+            });
+            consumed += 1;
+        } else if let Some(rest) = content.strip_prefix("trailing_stop ") {
+            let (mode, value) = parse_exit_threshold_dsl(rest.trim(), lines[j].num)?;
+            mods.trailing_stop = Some(match mode.as_str() {
+                "percent" => OrderExitSpec::Percent(value),
+                _ => OrderExitSpec::Dollar(value),
+            });
+            consumed += 1;
+        } else {
+            break;
+        }
+        j += 1;
+    }
+    Ok((mods, consumed))
 }
 
 // ---------------------------------------------------------------------------
@@ -586,20 +643,24 @@ fn parse_statements(lines: &[Line]) -> Result<Vec<Stmt>, DslError> {
             ));
         } else if let Some(rest) = strip_prefix_ci(content, "Buy ") {
             let (qty_expr, order_type) = parse_order_statement(rest, line.num)?;
+            let (exit_modifiers, consumed) = parse_exit_modifiers(lines, i)?;
             stmts.push(Stmt::Buy {
                 qty_expr,
                 order_type,
+                exit_modifiers,
                 line: line.num,
             });
-            i += 1;
+            i += 1 + consumed;
         } else if let Some(rest) = strip_prefix_ci(content, "Sell ") {
             let (qty_expr, order_type) = parse_order_statement(rest, line.num)?;
+            let (exit_modifiers, consumed) = parse_exit_modifiers(lines, i)?;
             stmts.push(Stmt::Sell {
                 qty_expr,
                 order_type,
+                exit_modifiers,
                 line: line.num,
             });
-            i += 1;
+            i += 1 + consumed;
         } else if content == "cancel all orders" || content == "Cancel all orders" {
             stmts.push(Stmt::CancelOrders {
                 signal: None,
