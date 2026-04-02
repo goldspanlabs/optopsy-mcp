@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike};
+use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike, Weekday};
 use rhai::Dynamic;
 
 use super::config::{CrossSymbolBar, OhlcvBar, ScriptConfig};
@@ -333,6 +333,102 @@ impl BarContext {
     }
     pub fn week_of_year(&mut self) -> i64 {
         self.datetime.date().iso_week().week() as i64
+    }
+
+    /// Returns the time of day as "HH:MM" string (lexicographic comparison friendly).
+    pub fn time(&mut self) -> String {
+        format!(
+            "{:02}:{:02}",
+            self.datetime.time().hour(),
+            self.datetime.time().minute()
+        )
+    }
+
+    /// True if this is the first bar in the dataset (or first bar of the trading day for intraday).
+    pub fn is_first_bar(&mut self) -> bool {
+        if self.bar_idx == 0 {
+            return true;
+        }
+        // For intraday: check if previous bar was a different date
+        let prev = &self.price_history[self.bar_idx - 1];
+        prev.datetime.date() != self.datetime.date()
+    }
+
+    /// True if this is the last bar in the dataset (or last bar of the trading day for intraday).
+    pub fn is_last_bar(&mut self) -> bool {
+        let total = self.price_history.len();
+        if self.bar_idx >= total - 1 {
+            return true;
+        }
+        // For intraday: check if next bar is a different date
+        let next = &self.price_history[self.bar_idx + 1];
+        next.datetime.date() != self.datetime.date()
+    }
+
+    /// True if the current bar falls in options expiration week (week of 3rd Friday).
+    pub fn is_expiry_week(&mut self) -> bool {
+        let date = self.datetime.date();
+        // Find the 3rd Friday of this month
+        let first_of_month = NaiveDate::from_ymd_opt(date.year(), date.month(), 1).unwrap_or(date);
+        // Days until first Friday: (Friday=4 - weekday) mod 7
+        let first_day_wd = first_of_month.weekday().num_days_from_monday(); // 0=Mon
+        let days_to_first_fri = (4 + 7 - first_day_wd) % 7;
+        let third_friday_day = 1 + days_to_first_fri + 14; // 1-indexed day of month
+        if let Some(third_friday) =
+            NaiveDate::from_ymd_opt(date.year(), date.month(), third_friday_day)
+        {
+            let expiry_week = third_friday.iso_week().week();
+            date.iso_week().week() == expiry_week
+        } else {
+            false
+        }
+    }
+
+    /// True if the current bar is the last trading day of a calendar quarter.
+    pub fn is_quarter_end(&mut self) -> bool {
+        let date = self.datetime.date();
+        let m = date.month();
+        // Quarter-end months: 3, 6, 9, 12
+        if m != 3 && m != 6 && m != 9 && m != 12 {
+            return false;
+        }
+        // Check if next trading bar is in a different quarter
+        let total = self.price_history.len();
+        if self.bar_idx >= total - 1 {
+            return true; // Last bar of dataset in a quarter-end month
+        }
+        let next_date = self.price_history[self.bar_idx + 1].datetime.date();
+        let next_q = (next_date.month() - 1) / 3;
+        let curr_q = (m - 1) / 3;
+        next_q != curr_q
+    }
+
+    /// Approximate trading days remaining in the current month.
+    pub fn trading_days_left(&mut self) -> i64 {
+        let date = self.datetime.date();
+        let mut count = 0i64;
+        let mut d = date.succ_opt().unwrap_or(date);
+        let target_month = date.month();
+        while d.month() == target_month {
+            let wd = d.weekday();
+            if wd != Weekday::Sat && wd != Weekday::Sun {
+                count += 1;
+            }
+            d = d.succ_opt().unwrap_or(d);
+            if count > 25 {
+                break;
+            } // safety
+        }
+        count
+    }
+
+    /// Minutes elapsed since market open (assumes 09:30 ET open).
+    pub fn minutes_since_open(&mut self) -> i64 {
+        let h = self.datetime.time().hour() as i64;
+        let m = self.datetime.time().minute() as i64;
+        let total_mins = h * 60 + m;
+        let open_mins = 9 * 60 + 30; // 09:30
+        (total_mins - open_mins).max(0)
     }
 
     // --- Generic indicator accessor ---

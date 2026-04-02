@@ -128,6 +128,13 @@ fn register_bar_context(engine: &mut Engine) {
     engine.register_fn("hour", BarContext::hour);
     engine.register_fn("minute", BarContext::minute);
     engine.register_fn("week_of_year", BarContext::week_of_year);
+    engine.register_fn("time", BarContext::time);
+    engine.register_fn("is_first_bar", BarContext::is_first_bar);
+    engine.register_fn("is_last_bar", BarContext::is_last_bar);
+    engine.register_fn("is_expiry_week", BarContext::is_expiry_week);
+    engine.register_fn("is_quarter_end", BarContext::is_quarter_end);
+    engine.register_fn("trading_days_left", BarContext::trading_days_left);
+    engine.register_fn("minutes_since_open", BarContext::minutes_since_open);
 
     // Indicator lookback (for crossover detection)
     engine.register_fn("sma_at", BarContext::sma_at);

@@ -870,6 +870,58 @@ fn generate_stmts(
 // Expression rewriting
 // ---------------------------------------------------------------------------
 
+/// Context methods that can be used without parentheses in DSL.
+/// Unlike CTX_PROPERTIES (which emit `ctx.X`), these emit `ctx.X()` since
+/// they are Rhai functions, not getters.
+const CTX_CALLABLE_PROPERTIES: &[&str] = &[
+    "day_of_week",
+    "month",
+    "day_of_month",
+    "hour",
+    "minute",
+    "week_of_year",
+    "time",
+    "is_first_bar",
+    "is_last_bar",
+    "is_expiry_week",
+    "is_quarter_end",
+    "trading_days_left",
+    "minutes_since_open",
+];
+
+/// Map day names to their numeric value (1=Monday..7=Sunday).
+fn day_name_to_number(word: &str) -> Option<i64> {
+    match word {
+        "monday" => Some(1),
+        "tuesday" => Some(2),
+        "wednesday" => Some(3),
+        "thursday" => Some(4),
+        "friday" => Some(5),
+        "saturday" => Some(6),
+        "sunday" => Some(7),
+        _ => None,
+    }
+}
+
+/// Map month names to their numeric value (1=January..12=December).
+fn month_name_to_number(word: &str) -> Option<i64> {
+    match word {
+        "january" => Some(1),
+        "february" => Some(2),
+        "march" => Some(3),
+        "april" => Some(4),
+        "may" => Some(5),
+        "june" => Some(6),
+        "july" => Some(7),
+        "august" => Some(8),
+        "september" => Some(9),
+        "october" => Some(10),
+        "november" => Some(11),
+        "december" => Some(12),
+        _ => None,
+    }
+}
+
 /// Known `ctx` properties (accessed without parentheses).
 const CTX_PROPERTIES: &[&str] = &[
     "close",
@@ -957,6 +1009,14 @@ const CTX_METHODS: &[&str] = &[
     "hour",
     "minute",
     "week_of_year",
+    // Time/session
+    "time",
+    "is_first_bar",
+    "is_last_bar",
+    "is_expiry_week",
+    "is_quarter_end",
+    "trading_days_left",
+    "minutes_since_open",
     // Portfolio
     "has_positions",
     "positions",
@@ -1360,10 +1420,92 @@ fn preprocess_crossovers(expr: &str) -> String {
     result
 }
 
+/// Pre-process time literals (`HH:MM`) into quoted strings (`"HH:MM"`).
+///
+/// Matches `\d{1,2}:\d{2}` that are NOT inside string literals and NOT preceded
+/// by an alphanumeric/underscore character (to avoid matching Rhai map syntax etc.).
+fn preprocess_time_literals(expr: &str) -> String {
+    let chars: Vec<char> = expr.chars().collect();
+    let mut result = String::with_capacity(expr.len() + 16);
+    let mut i = 0;
+
+    while i < chars.len() {
+        // Skip string literals
+        if chars[i] == '"' {
+            result.push(chars[i]);
+            i += 1;
+            while i < chars.len() && chars[i] != '"' {
+                if chars[i] == '\\' {
+                    result.push(chars[i]);
+                    i += 1;
+                }
+                if i < chars.len() {
+                    result.push(chars[i]);
+                    i += 1;
+                }
+            }
+            if i < chars.len() {
+                result.push(chars[i]);
+                i += 1;
+            }
+            continue;
+        }
+
+        // Check for time literal: 1-2 digits, ':', exactly 2 digits
+        if chars[i].is_ascii_digit() {
+            // Must not be preceded by alphanumeric/underscore (would be part of identifier)
+            let preceded_by_alnum =
+                i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_');
+            if !preceded_by_alnum {
+                // Try to parse as time literal
+                let start = i;
+                let mut j = i;
+                // 1-2 digits for hour
+                while j < chars.len() && chars[j].is_ascii_digit() && j - start < 2 {
+                    j += 1;
+                }
+                let hour_len = j - start;
+                if hour_len >= 1 && j < chars.len() && chars[j] == ':' {
+                    let colon_pos = j;
+                    j += 1; // skip ':'
+                    let min_start = j;
+                    while j < chars.len() && chars[j].is_ascii_digit() && j - min_start < 2 {
+                        j += 1;
+                    }
+                    let min_len = j - min_start;
+                    // Must be exactly 2 digits after colon, and NOT followed by more digits or ':'
+                    let followed_by_more =
+                        j < chars.len() && (chars[j].is_ascii_digit() || chars[j] == ':');
+                    if min_len == 2 && !followed_by_more {
+                        let hour_str: String = chars[start..colon_pos].iter().collect();
+                        let min_str: String = chars[min_start..j].iter().collect();
+                        let hour: u32 = hour_str.parse().unwrap_or(0);
+                        let min: u32 = min_str.parse().unwrap_or(0);
+                        if hour < 24 && min < 60 {
+                            result.push_str(&format!("\"{hour:02}:{min:02}\""));
+                            i = j;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        result.push(chars[i]);
+        i += 1;
+    }
+
+    result
+}
+
 /// Rewrite a DSL expression into a valid Rhai expression.
 ///
 /// - Bare context properties (`close`, `equity`) → `ctx.close`, `ctx.equity`
 /// - Bare context methods (`sma(200)`) → `ctx.sma(200)`
+/// - Callable properties (`day_of_week`, `time`) → `ctx.day_of_week()`, `ctx.time()`
+/// - Day names (`monday`..`sunday`) → numeric values (1..7)
+/// - Month names (`january`..`december`) → numeric values (1..12)
+/// - Time literals (`10:00`, `15:30`) → quoted strings (`"10:00"`, `"15:30"`)
 /// - `has positions` → `ctx.has_positions()`
 /// - `no positions` → `!ctx.has_positions()`
 /// - `and` → `&&`, `or` → `||`
@@ -1371,6 +1513,7 @@ fn preprocess_crossovers(expr: &str) -> String {
 pub fn rewrite_expr(expr: &str) -> String {
     let expr = preprocess_crossovers(expr);
     let expr = preprocess_concat(&expr);
+    let expr = preprocess_time_literals(&expr);
     let chars: Vec<char> = expr.chars().collect();
     let mut result = String::with_capacity(expr.len() + 32);
     let mut i = 0;
@@ -1411,6 +1554,15 @@ pub fn rewrite_expr(expr: &str) -> String {
 
             if preceded_by_dot {
                 result.push_str(&word);
+            } else if let Some(num) = day_name_to_number(&word) {
+                result.push_str(&num.to_string());
+            } else if let Some(num) = month_name_to_number(&word) {
+                result.push_str(&num.to_string());
+            } else if CTX_CALLABLE_PROPERTIES.contains(&word.as_str())
+                && !is_followed_by_paren(&chars, i)
+            {
+                // Callable properties without parens: `day_of_week` → `ctx.day_of_week()`
+                result.push_str(&format!("ctx.{word}()"));
             } else if word == "has" {
                 if let Some(end) = matches_word_at(&chars, i, "positions") {
                     // "has positions" → ctx.has_positions()

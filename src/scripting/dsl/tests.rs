@@ -1314,3 +1314,291 @@ try open short_put(0.30, 45) as order
         "Missing auto-push.\n{rhai}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Time-based DSL features
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_day_of_week_with_name() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  skip when day_of_week == monday
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("ctx.day_of_week() == 1"),
+        "day_of_week should map to ctx method, monday to 1.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_month_name_mapping() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  skip when month == january
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("ctx.month() == 1"),
+        "month should map to ctx method, january to 1.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_time_literal_intraday() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval 5m
+
+on each bar
+  skip when time < 10:00
+  skip when time > 15:30
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains(r#"ctx.time() < "10:00""#),
+        "time literal should be quoted string.\nGenerated:\n{rhai}"
+    );
+    assert!(
+        rhai.contains(r#"ctx.time() > "15:30""#),
+        "time literal should be quoted string.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_is_first_bar_intraday() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval 15m
+
+on each bar
+  skip when is_first_bar
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("ctx.is_first_bar()"),
+        "is_first_bar should map to ctx method.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_is_expiry_week_daily() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  skip when is_expiry_week
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("ctx.is_expiry_week()"),
+        "is_expiry_week should work on daily.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_trading_days_left_daily() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  skip when trading_days_left < 3
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("ctx.trading_days_left() < 3"),
+        "trading_days_left should map to ctx method.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_is_quarter_end_daily() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  when is_quarter_end then
+    close position "quarter_rebalance"
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("ctx.is_quarter_end()"),
+        "is_quarter_end should map to ctx method.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_intraday_keyword_error_on_daily() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  skip when time < 10:00
+  buy 100 shares
+"#;
+
+    let err = transpile(dsl).unwrap_err();
+    assert!(
+        err.message.contains("`time`"),
+        "Error should mention `time`.\nGot: {err}"
+    );
+    assert!(
+        err.message.contains("intraday"),
+        "Error should mention intraday.\nGot: {err}"
+    );
+}
+
+#[test]
+fn test_intraday_keyword_error_is_first_bar_daily() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  skip when is_first_bar
+  buy 100 shares
+"#;
+
+    let err = transpile(dsl).unwrap_err();
+    assert!(
+        err.message.contains("`is_first_bar`"),
+        "Error should mention is_first_bar.\nGot: {err}"
+    );
+}
+
+#[test]
+fn test_intraday_keyword_error_minutes_since_open_weekly() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval weekly
+
+on each bar
+  skip when minutes_since_open < 30
+  buy 100 shares
+"#;
+
+    let err = transpile(dsl).unwrap_err();
+    assert!(
+        err.message.contains("`minutes_since_open`"),
+        "Error should mention minutes_since_open.\nGot: {err}"
+    );
+}
+
+#[test]
+fn test_day_names_all_map_correctly() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  skip when day_of_week == friday
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("ctx.day_of_week() == 5"),
+        "friday should map to 5.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_multiple_time_keywords_combined() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  skip when day_of_week == monday
+  skip when month == december
+  skip when is_expiry_week
+  when trading_days_left < 3 and day_of_month > 25 then
+    close position "month_end"
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(rhai.contains("ctx.day_of_week() == 1"));
+    assert!(rhai.contains("ctx.month() == 12"));
+    assert!(rhai.contains("ctx.is_expiry_week()"));
+    assert!(rhai.contains("ctx.trading_days_left() < 3"));
+    assert!(rhai.contains("ctx.day_of_month() > 25"));
+}
+
+#[test]
+fn test_time_literal_single_digit_hour() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval 5m
+
+on each bar
+  skip when time < 9:30
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains(r#"ctx.time() < "09:30""#),
+        "Single-digit hour should be zero-padded.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_callable_properties_with_parens_also_work() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval 5m
+
+on each bar
+  skip when time() < 10:00
+  skip when minutes_since_open() < 30
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("ctx.time()"),
+        "time() with parens should work.\nGenerated:\n{rhai}"
+    );
+    assert!(
+        rhai.contains("ctx.minutes_since_open()"),
+        "minutes_since_open() with parens should work.\nGenerated:\n{rhai}"
+    );
+}
