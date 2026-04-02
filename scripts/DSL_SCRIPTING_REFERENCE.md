@@ -29,7 +29,7 @@ strategy "Name"
   data ohlcv           # or: ohlcv, options
   indicators sma:50, sma:200, rsi:14
 
-param NAME = DEFAULT "description"
+extern NAME = DEFAULT "description"
 state NAME = DEFAULT
 
 on each bar                    # available: ctx (implicit via expression rewriting)
@@ -70,13 +70,13 @@ All properties except `symbol` and `capital` are optional (sensible defaults app
 ## Parameters and State
 
 ```
-param THRESHOLD = 0.04 "Entry threshold percentage"
-param MODE = "fast" "Execution mode" choices fast, slow, balanced
+extern THRESHOLD = 0.04 "Entry threshold percentage"
+extern MODE = "fast" "Execution mode" choices fast, slow, balanced
 state consecutive_losses = 0
 state in_trade = false
 ```
 
-- `param` → generates `extern()` call (visible in UI, overridable at runtime)
+- `extern` → generates `extern()` call (visible in UI, overridable at runtime)
 - `state` → generates `let` (top-level, persists across bars)
 - State variables can be mutated with `set NAME to EXPR` or `add EXPR to NAME`
 - Params are read-only after initialization
@@ -345,8 +345,8 @@ strategy "RSI Mean Reversion"
   data ohlcv
   indicators rsi:14, sma:200
 
-param RSI_ENTRY = 30 "RSI threshold for entry"
-param RSI_EXIT = 50 "RSI threshold for exit"
+extern RSI_ENTRY = 30 "RSI threshold for entry"
+extern RSI_EXIT = 50 "RSI threshold for exit"
 
 on each bar
   require rsi:14, sma:200
@@ -376,9 +376,9 @@ strategy "Short Put Spread"
   expiration_filter monthly
   max_positions 2
 
-param SHORT_DELTA = 0.25 "Short put delta"
-param LONG_DELTA = 0.10 "Long put delta"
-param DTE = 45 "Target DTE"
+extern SHORT_DELTA = 0.25 "Short put delta"
+extern LONG_DELTA = 0.10 "Long put delta"
+extern DTE = 45 "Target DTE"
 
 on each bar
   require rsi:14

@@ -12,12 +12,12 @@ strategy "Iron Condor Income"
   expiration_filter monthly
   max_positions 1
 
-param SHORT_PUT_DELTA = 0.20 "Short put delta target"
-param SHORT_CALL_DELTA = 0.20 "Short call delta target"
-param DTE = 45 "Target days to expiration"
-param PROFIT_TARGET = 0.50 "Take profit at this P&L percentage"
-param MAX_HOLD_DAYS = 35 "Maximum days to hold before closing"
-param MAX_CONSECUTIVE_LOSSES = 3 "Pause after this many losses"
+extern SHORT_PUT_DELTA = 0.20 "Short put delta target"
+extern SHORT_CALL_DELTA = 0.20 "Short call delta target"
+extern DTE = 45 "Target days to expiration"
+extern PROFIT_TARGET = 0.50 "Take profit at this P&L percentage"
+extern MAX_HOLD_DAYS = 35 "Maximum days to hold before closing"
+extern MAX_CONSECUTIVE_LOSSES = 3 "Pause after this many losses"
 
 state wins = 0
 state losses = 0

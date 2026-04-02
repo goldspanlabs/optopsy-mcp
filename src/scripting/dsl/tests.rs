@@ -40,7 +40,7 @@ strategy "SMA Crossover"
   data ohlcv
   indicators sma:50, sma:200
 
-param THRESHOLD = 0.04 "Entry threshold"
+extern THRESHOLD = 0.04 "Entry threshold"
 state wins = 0
 state losses = 0
 
@@ -106,10 +106,10 @@ strategy "Iron Condor Income"
   expiration_filter monthly
   max_positions 1
 
-param PUT_DELTA = 0.30 "Short put delta"
-param CALL_DELTA = 0.30 "Short call delta"
-param DTE = 45 "Target DTE"
-param PROFIT_TARGET = 0.50 "Take profit percentage"
+extern PUT_DELTA = 0.30 "Short put delta"
+extern CALL_DELTA = 0.30 "Short call delta"
+extern DTE = 45 "Target DTE"
+extern PROFIT_TARGET = 0.50 "Take profit percentage"
 
 on each bar
   require rsi:14
@@ -276,13 +276,13 @@ on each bar
 }
 
 #[test]
-fn test_transpile_param_with_choices() {
+fn test_transpile_extern_with_choices() {
     let dsl = r#"
 strategy "Test"
   symbol SPY
   interval daily
 
-param MODE = "fast" "Execution mode" choices fast, slow
+extern MODE = "fast" "Execution mode" choices fast, slow
 
 on each bar
   buy 100 shares

@@ -10,10 +10,10 @@ strategy "Mean Reversion Pairs"
   indicators sma:20, atr:14, rsi:14
   cross_symbols QQQ
 
-param LOOKBACK = 20 "Z-score lookback period"
-param ENTRY_Z = 2.0 "Z-score threshold for entry"
-param EXIT_Z = 0.5 "Z-score threshold for exit"
-param RISK_PCT = 0.02 "Risk per trade as fraction of equity"
+extern LOOKBACK = 20 "Z-score lookback period"
+extern ENTRY_Z = 2.0 "Z-score threshold for entry"
+extern EXIT_Z = 0.5 "Z-score threshold for exit"
+extern RISK_PCT = 0.02 "Risk per trade as fraction of equity"
 
 state in_trade = false
 state spread_sum = 0.0

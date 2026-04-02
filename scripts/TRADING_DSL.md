@@ -53,8 +53,8 @@ strategy "Name"
   max_positions 1                        # integer
   cross_symbols QQQ, IWM                 # comma-separated symbols
 
-param NAME = DEFAULT "description"
-param NAME = DEFAULT "description" choices VAL1, VAL2
+extern NAME = DEFAULT "description"
+extern NAME = DEFAULT "description" choices VAL1, VAL2
 
 state NAME = DEFAULT
 ```
@@ -239,7 +239,7 @@ strategy "SMA Crossover"
   data ohlcv
   indicators sma:50, sma:200, rsi:14
 
-param THRESHOLD = 0.04 "Entry threshold"
+extern THRESHOLD = 0.04 "Entry threshold"
 state consecutive_losses = 0
 
 on each bar

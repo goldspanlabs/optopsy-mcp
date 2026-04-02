@@ -9,9 +9,9 @@ strategy "SMA Crossover"
   data ohlcv
   indicators sma:50, sma:200, rsi:14
 
-param ENTRY_THRESHOLD = 0.04 "Percentage above SMA to trigger entry"
-param EXIT_THRESHOLD = 0.03 "Percentage below SMA to trigger exit"
-param RSI_FLOOR = 30 "Minimum RSI to allow entry"
+extern ENTRY_THRESHOLD = 0.04 "Percentage above SMA to trigger entry"
+extern EXIT_THRESHOLD = 0.03 "Percentage below SMA to trigger exit"
+extern RSI_FLOOR = 30 "Minimum RSI to allow entry"
 
 state consecutive_losses = 0
 

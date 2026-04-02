@@ -213,8 +213,8 @@ pub fn parse(source: &str) -> Result<DslProgram, DslError> {
             }
             program.strategy = Some(block);
             i = next;
-        } else if content.starts_with("param ") {
-            program.params.push(parse_param(line)?);
+        } else if content.starts_with("extern ") {
+            program.params.push(parse_extern(line)?);
             i += 1;
         } else if content.starts_with("state ") {
             program.states.push(parse_state(line)?);
@@ -364,18 +364,18 @@ fn parse_strategy_block(lines: &[Line], start: usize) -> Result<(StrategyBlock, 
 }
 
 // ---------------------------------------------------------------------------
-// Param and state declarations
+// Extern and state declarations
 // ---------------------------------------------------------------------------
 
-fn parse_param(line: &Line) -> Result<ParamDecl, DslError> {
-    // param NAME = DEFAULT "description"
-    // param NAME = DEFAULT "description" choices VAL1, VAL2
-    let rest = line.content.strip_prefix("param ").unwrap();
+fn parse_extern(line: &Line) -> Result<ParamDecl, DslError> {
+    // extern NAME = DEFAULT "description"
+    // extern NAME = DEFAULT "description" choices VAL1, VAL2
+    let rest = line.content.strip_prefix("extern ").unwrap();
 
     let eq_pos = rest.find('=').ok_or_else(|| {
         DslError::new(
             line.num,
-            "param requires '=' (e.g., param NAME = 42 \"desc\")",
+            "extern requires '=' (e.g., extern NAME = 42 \"desc\")",
         )
     })?;
 
@@ -394,7 +394,7 @@ fn parse_param(line: &Line) -> Result<ParamDecl, DslError> {
         // Unquoted default: everything up to the first quote (description)
         let quote_pos = after_eq
             .find('"')
-            .ok_or_else(|| DslError::new(line.num, "param requires a quoted description"))?;
+            .ok_or_else(|| DslError::new(line.num, "extern requires a quoted description"))?;
         let val = after_eq[..quote_pos].trim().to_string();
         (val, quote_pos)
     };
@@ -404,7 +404,7 @@ fn parse_param(line: &Line) -> Result<ParamDecl, DslError> {
     if !desc_region.starts_with('"') {
         return Err(DslError::new(
             line.num,
-            "param requires a quoted description after the default value",
+            "extern requires a quoted description after the default value",
         ));
     }
     let desc_inner = &desc_region[1..];
@@ -427,7 +427,7 @@ fn parse_param(line: &Line) -> Result<ParamDecl, DslError> {
     if name.is_empty() || default.is_empty() {
         return Err(DslError::new(
             line.num,
-            "param requires NAME = DEFAULT \"description\"",
+            "extern requires NAME = DEFAULT \"description\"",
         ));
     }
 
@@ -1047,13 +1047,13 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_param() {
+    fn test_parse_extern() {
         let line = Line {
             indent: 0,
-            content: "param THRESHOLD = 0.04 \"Entry threshold\"".to_string(),
+            content: "extern THRESHOLD = 0.04 \"Entry threshold\"".to_string(),
             num: 1,
         };
-        let p = parse_param(&line).unwrap();
+        let p = parse_extern(&line).unwrap();
         assert_eq!(p.name, "THRESHOLD");
         assert_eq!(p.default, "0.04");
         assert_eq!(p.description, "Entry threshold");
@@ -1061,14 +1061,14 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_param_with_choices() {
+    fn test_parse_extern_with_choices() {
         let line = Line {
             indent: 0,
-            content: "param MODE = \"fast\" \"Execution mode\" choices fast, slow, balanced"
+            content: "extern MODE = \"fast\" \"Execution mode\" choices fast, slow, balanced"
                 .to_string(),
             num: 1,
         };
-        let p = parse_param(&line).unwrap();
+        let p = parse_extern(&line).unwrap();
         assert_eq!(p.name, "MODE");
         assert_eq!(p.default, "\"fast\"");
         assert_eq!(p.choices.len(), 3);
