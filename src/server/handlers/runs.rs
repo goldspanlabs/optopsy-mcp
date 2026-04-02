@@ -148,3 +148,32 @@ pub async fn set_sweep_analysis(
         Err((StatusCode::NOT_FOUND, "Sweep not found".to_string()))
     }
 }
+
+/// `PATCH /runs/sweep/{sweepId}/wf-analysis` — Save AI-generated walk-forward analysis text for a sweep.
+#[allow(clippy::implicit_hasher)]
+pub async fn set_walk_forward_analysis(
+    State(state): State<AppState>,
+    Path(sweep_id): Path<String>,
+    Json(body): Json<HashMap<String, String>>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let analysis = body
+        .get("analysis")
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                "Missing 'analysis' field".to_string(),
+            )
+        })?
+        .clone();
+    let store = state.run_store.clone();
+    let found =
+        tokio::task::spawn_blocking(move || store.set_walk_forward_analysis(&sweep_id, &analysis))
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if found {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err((StatusCode::NOT_FOUND, "Sweep not found".to_string()))
+    }
+}

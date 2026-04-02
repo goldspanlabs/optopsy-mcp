@@ -104,6 +104,10 @@ pub fn build_api_router(state: AppState) -> Router {
             axum::routing::patch(runs::set_sweep_analysis),
         )
         .route(
+            "/runs/sweep/{sweepId}/wf-analysis",
+            axum::routing::patch(runs::set_walk_forward_analysis),
+        )
+        .route(
             "/walk-forward",
             axum::routing::post(crate::server::handlers::walk_forward::run_walk_forward),
         )
@@ -116,6 +120,10 @@ pub fn build_api_router(state: AppState) -> Router {
             axum::routing::post(tasks::submit_backtest),
         )
         .route("/tasks/sweep", axum::routing::post(tasks::submit_sweep))
+        .route(
+            "/tasks/walk-forward",
+            axum::routing::post(tasks::submit_walk_forward),
+        )
         .route(
             "/tasks/{id}",
             axum::routing::get(tasks::get_task).delete(tasks::cancel_task),
