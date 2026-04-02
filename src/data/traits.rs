@@ -153,6 +153,9 @@ pub enum RunRow {
         /// Swept parameter ranges extracted from `sweep_config`
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sweep_params: Option<Vec<SweepParamRange>>,
+        /// Base strategy parameters (non-swept) from `sweep_config`
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base_params: Option<serde_json::Map<String, serde_json::Value>>,
         /// Best WFE across all validations (for badge display)
         #[serde(skip_serializing_if = "Option::is_none")]
         wf_best_efficiency: Option<f64>,
@@ -196,6 +199,8 @@ pub struct WalkForwardValidation {
     pub analysis: Option<String>,
     pub status: String,
     pub execution_time_ms: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_results: Option<Value>,
     pub created_at: String,
 }
 
@@ -314,6 +319,7 @@ pub trait RunStore: Send + Sync {
         param_stability: Option<&str>,
         status: &str,
         execution_time_ms: Option<i64>,
+        window_results: Option<&str>,
     ) -> Result<String>;
 
     /// Get all walk-forward validations for a sweep.

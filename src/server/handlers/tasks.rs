@@ -614,6 +614,9 @@ pub async fn submit_walk_forward(
                 };
                 let validation_id = uuid::Uuid::new_v4().to_string();
 
+                // Serialize per-window results to JSON for persistence
+                let window_results_json = serde_json::to_string(&wf_response.windows).ok();
+
                 match run_store.insert_walk_forward_validation(
                     &validation_id,
                     &req.sweep_id,
@@ -627,6 +630,7 @@ pub async fn submit_walk_forward(
                     Some(&wf_response.param_stability),
                     status,
                     Some(wf_response.execution_time_ms as i64),
+                    window_results_json.as_deref(),
                 ) {
                     Ok(_) => {
                         if task.cancellation_token.is_cancelled() {
@@ -664,6 +668,7 @@ pub async fn submit_walk_forward(
                         None,
                         None,
                         "failed",
+                        None,
                         None,
                     );
                     tm.mark_failed(&task.id, e.to_string());

@@ -344,15 +344,15 @@ impl RunStore for SqliteRunStore {
 
             let sweep_rows = stmt
                 .query_map([], |row| {
-                    // Extract sweep_params from sweep_config JSON
-                    let sweep_params: Option<Vec<SweepParamRange>> = row
+                    // Parse sweep_config JSON once
+                    let config: Option<Value> = row
                         .get::<_, Option<String>>(18)?
-                        .and_then(|config_str| serde_json::from_str::<Value>(&config_str).ok())
-                        .and_then(|config| {
-                            config.get("sweep_params").and_then(|sp| {
-                                serde_json::from_value::<Vec<Value>>(sp.clone()).ok()
-                            })
-                        })
+                        .and_then(|s| serde_json::from_str(&s).ok());
+
+                    let sweep_params: Option<Vec<SweepParamRange>> = config
+                        .as_ref()
+                        .and_then(|c| c.get("sweep_params"))
+                        .and_then(|sp| serde_json::from_value::<Vec<Value>>(sp.clone()).ok())
                         .map(|params| {
                             params
                                 .into_iter()
@@ -365,6 +365,11 @@ impl RunStore for SqliteRunStore {
                                 })
                                 .collect()
                         });
+
+                    let base_params: Option<serde_json::Map<String, Value>> = config
+                        .as_ref()
+                        .and_then(|c| c.get("params"))
+                        .and_then(|p| p.as_object().cloned());
 
                     Ok(RunRow::Sweep {
                         sweep_id: row.get(0)?,
@@ -386,6 +391,7 @@ impl RunStore for SqliteRunStore {
                         thread_id: row.get(14)?,
                         created_at: row.get(15)?,
                         sweep_params,
+                        base_params,
                         wf_best_efficiency: row.get(16)?,
                         wf_validation_count: row.get(17)?,
                     })
@@ -580,7 +586,7 @@ impl RunStore for SqliteRunStore {
                     "SELECT id, sweep_id, n_windows, train_pct, mode, objective,
                             efficiency_ratio, profitable_windows, total_windows,
                             param_stability, analysis, status, execution_time_ms,
-                            created_at
+                            window_results, created_at
                      FROM walk_forward_validations
                      WHERE sweep_id = ?1
                      ORDER BY created_at DESC",
@@ -589,6 +595,9 @@ impl RunStore for SqliteRunStore {
 
             detail.validations = wfv_stmt
                 .query_map(rusqlite::params![id], |row| {
+                    let window_results_str: Option<String> = row.get(13)?;
+                    let window_results = window_results_str
+                        .and_then(|s| serde_json::from_str(&s).ok());
                     Ok(WalkForwardValidation {
                         id: row.get(0)?,
                         sweep_id: row.get(1)?,
@@ -603,7 +612,8 @@ impl RunStore for SqliteRunStore {
                         analysis: row.get(10)?,
                         status: row.get(11)?,
                         execution_time_ms: row.get(12)?,
-                        created_at: row.get(13)?,
+                        window_results,
+                        created_at: row.get(14)?,
                     })
                 })
                 .context("Failed to query walk-forward validations")?
@@ -715,6 +725,7 @@ impl RunStore for SqliteRunStore {
         param_stability: Option<&str>,
         status: &str,
         execution_time_ms: Option<i64>,
+        window_results: Option<&str>,
     ) -> Result<String> {
         let created_at = chrono::Utc::now().to_rfc3339();
         let conn = self.conn.lock().expect("mutex poisoned");
@@ -722,8 +733,8 @@ impl RunStore for SqliteRunStore {
             "INSERT INTO walk_forward_validations
                 (id, sweep_id, n_windows, train_pct, mode, objective,
                  efficiency_ratio, profitable_windows, total_windows,
-                 param_stability, status, execution_time_ms, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                 param_stability, status, execution_time_ms, window_results, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             rusqlite::params![
                 id,
                 sweep_id,
@@ -737,6 +748,7 @@ impl RunStore for SqliteRunStore {
                 param_stability,
                 status,
                 execution_time_ms,
+                window_results,
                 created_at,
             ],
         )
@@ -751,7 +763,7 @@ impl RunStore for SqliteRunStore {
                 "SELECT id, sweep_id, n_windows, train_pct, mode, objective,
                         efficiency_ratio, profitable_windows, total_windows,
                         param_stability, analysis, status, execution_time_ms,
-                        created_at
+                        window_results, created_at
                  FROM walk_forward_validations
                  WHERE sweep_id = ?1
                  ORDER BY created_at DESC",
@@ -760,6 +772,9 @@ impl RunStore for SqliteRunStore {
 
         let rows = stmt
             .query_map(rusqlite::params![sweep_id], |row| {
+                let window_results_str: Option<String> = row.get(13)?;
+                let window_results = window_results_str
+                    .and_then(|s| serde_json::from_str(&s).ok());
                 Ok(WalkForwardValidation {
                     id: row.get(0)?,
                     sweep_id: row.get(1)?,
@@ -774,7 +789,8 @@ impl RunStore for SqliteRunStore {
                     analysis: row.get(10)?,
                     status: row.get(11)?,
                     execution_time_ms: row.get(12)?,
-                    created_at: row.get(13)?,
+                    window_results,
+                    created_at: row.get(14)?,
                 })
             })
             .context("Failed to query walk-forward validations")?
