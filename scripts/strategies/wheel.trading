@@ -1,0 +1,60 @@
+# Wheel Strategy
+# Sell puts, get assigned, sell covered calls, repeat.
+# Uses a state machine: selling_puts -> holding_stock -> selling_calls -> selling_puts
+
+strategy "Wheel Strategy"
+  symbol SPY
+  capital CAPITAL
+  interval daily
+  data ohlcv, options
+  slippage mid
+  expiration_filter monthly
+  max_positions 1
+
+extern PUT_DELTA = 0.30 "Target delta for short puts"
+extern PUT_DTE = 45 "Days to expiration for puts"
+extern CALL_DELTA = 0.30 "Target delta for covered calls"
+extern CALL_DTE = 30 "Days to expiration for calls"
+extern SLIPPAGE = "mid" "Slippage model" choices mid, spread
+extern MULTIPLIER = 100 "Contract multiplier"
+
+state phase = "selling_puts"
+state cycles_completed = 0
+state _group = "Cycle 1"
+state stock = #{entry_price: 0.0, adjusted_basis: 0.0, quantity: 0, entry_date: "", total_premium: 0.0}
+
+on each bar
+  when phase == "selling_puts" then
+    skip when has positions
+    open short_put(PUT_DELTA, PUT_DTE)
+  when phase == "holding_stock" then
+    skip when has positions
+    raw let spread = ctx.covered_call(CALL_DELTA, CALL_DTE);
+    raw if spread == () { return []; }
+    raw let spread_map = spread;
+    raw let spread_inner = spread_map["spread"];
+    raw if spread_inner.legs[0].strike < stock.adjusted_basis { return []; }
+    raw phase = "selling_calls";
+    raw __actions.push(spread_map);
+
+on exit check
+  hold position
+
+on position closed
+  when phase == "selling_puts" then
+    when exit_type == "assignment" then
+      raw stock.entry_price = pos.legs[0].strike;
+      raw stock.adjusted_basis = pos.legs[0].strike - pos.legs[0].entry_price;
+      raw stock.quantity = MULTIPLIER;
+      raw stock.entry_date = ctx.date;
+      raw stock.total_premium += pos.legs[0].entry_price;
+      set phase to "holding_stock"
+  when phase == "selling_calls" then
+    when exit_type == "called_away" then
+      add 1 to cycles_completed
+      raw _group = "Cycle " + (cycles_completed + 1).to_string();
+      set phase to "selling_puts"
+    otherwise
+      raw stock.adjusted_basis -= pos.legs[0].entry_price;
+      raw stock.total_premium += pos.legs[0].entry_price;
+      set phase to "holding_stock"

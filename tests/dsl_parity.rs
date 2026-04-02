@@ -3,8 +3,9 @@
 use anyhow::Result;
 use chrono::NaiveDate;
 use polars::prelude::*;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
+use optopsy_mcp::data::parquet::DATETIME_COL;
 use optopsy_mcp::scripting::dsl;
 use optopsy_mcp::scripting::engine::{run_script_backtest, DataLoader, ScriptBacktestResult};
 use optopsy_mcp::scripting::types::OhlcvBar;
@@ -430,4 +431,321 @@ async fn parity_bb_mean_reversion_equity_curve() {
     );
 
     eprintln!("BB equity parity: rhai={rhai_final:.2}, dsl={dsl_final:.2}");
+}
+
+// ===========================================================================
+// Wheel strategy parity tests
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Helpers for options-based tests
+// ---------------------------------------------------------------------------
+
+fn d(y: i32, m: u32, day: u32) -> NaiveDate {
+    NaiveDate::from_ymd_opt(y, m, day).unwrap()
+}
+
+fn dt(y: i32, m: u32, day: u32) -> chrono::NaiveDateTime {
+    d(y, m, day).and_hms_opt(0, 0, 0).unwrap()
+}
+
+/// Build a synthetic options `DataFrame`.
+fn make_options_df(
+    rows: &[(chrono::NaiveDateTime, NaiveDate, &str, f64, f64, f64, f64)],
+) -> DataFrame {
+    let dates: Vec<chrono::NaiveDateTime> = rows.iter().map(|r| r.0).collect();
+    let expirations: Vec<NaiveDate> = rows.iter().map(|r| r.1).collect();
+    let opt_types: Vec<&str> = rows.iter().map(|r| r.2).collect();
+    let strikes: Vec<f64> = rows.iter().map(|r| r.3).collect();
+    let bids: Vec<f64> = rows.iter().map(|r| r.4).collect();
+    let asks: Vec<f64> = rows.iter().map(|r| r.5).collect();
+    let deltas: Vec<f64> = rows.iter().map(|r| r.6).collect();
+
+    let mut df = df! {
+        DATETIME_COL => &dates,
+        "option_type" => &opt_types,
+        "strike" => &strikes,
+        "bid" => &bids,
+        "ask" => &asks,
+        "delta" => &deltas,
+    }
+    .unwrap();
+
+    let exp_col =
+        DateChunked::from_naive_date(PlSmallStr::from("expiration"), expirations).into_column();
+    df.with_column(exp_col).unwrap();
+    df
+}
+
+/// Test `DataLoader` that returns pre-built OHLCV and options `DataFrame`s.
+struct OptionsTestDataLoader {
+    ohlcv_df: DataFrame,
+    options_df: DataFrame,
+}
+
+#[async_trait::async_trait]
+impl DataLoader for OptionsTestDataLoader {
+    async fn load_ohlcv(
+        &self,
+        _symbol: &str,
+        _start: Option<NaiveDate>,
+        _end: Option<NaiveDate>,
+    ) -> Result<DataFrame> {
+        Ok(self.ohlcv_df.clone())
+    }
+
+    async fn load_options(
+        &self,
+        _symbol: &str,
+        _start: Option<NaiveDate>,
+        _end: Option<NaiveDate>,
+    ) -> Result<DataFrame> {
+        Ok(self.options_df.clone())
+    }
+
+    fn load_splits(
+        &self,
+        _symbol: &str,
+    ) -> Result<Vec<optopsy_mcp::data::adjustment_store::SplitRow>> {
+        Ok(Vec::new())
+    }
+
+    fn load_dividends(
+        &self,
+        _symbol: &str,
+    ) -> Result<Vec<optopsy_mcp::data::adjustment_store::DividendRow>> {
+        Ok(Vec::new())
+    }
+}
+
+fn make_bars_from_closes(closes: &BTreeMap<NaiveDate, f64>) -> Vec<OhlcvBar> {
+    closes
+        .iter()
+        .map(|(&date, &close)| OhlcvBar {
+            datetime: date.and_hms_opt(0, 0, 0).unwrap(),
+            open: close,
+            high: close * 1.01,
+            low: close * 0.99,
+            close,
+            volume: 1_000_000.0,
+        })
+        .collect()
+}
+
+fn wheel_params() -> HashMap<String, serde_json::Value> {
+    let mut params = HashMap::new();
+    params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
+    params.insert("CAPITAL".to_string(), serde_json::json!(100_000));
+    params.insert("PUT_DELTA".to_string(), serde_json::json!(0.30));
+    params.insert("PUT_DTE".to_string(), serde_json::json!(45));
+    params.insert("CALL_DELTA".to_string(), serde_json::json!(0.30));
+    params.insert("CALL_DTE".to_string(), serde_json::json!(30));
+    params.insert("EXIT_DTE".to_string(), serde_json::json!(5));
+    params.insert("SLIPPAGE".to_string(), serde_json::json!("mid"));
+    params.insert("MULTIPLIER".to_string(), serde_json::json!(100));
+    params.insert("STOP_LOSS".to_string(), serde_json::json!(null));
+    params.insert("TAKE_PROFIT".to_string(), serde_json::json!(null));
+    params
+}
+
+/// Run either .rhai or .trading script with options data and return result.
+async fn run_options_strategy(
+    script_path: &str,
+    params: &HashMap<String, serde_json::Value>,
+    bars: &[OhlcvBar],
+    options_df: &DataFrame,
+) -> ScriptBacktestResult {
+    let source = std::fs::read_to_string(script_path)
+        .unwrap_or_else(|e| panic!("Failed to read {script_path}: {e}"));
+
+    let script = if dsl::is_trading_dsl(&source) {
+        dsl::transpile(&source)
+            .unwrap_or_else(|e| panic!("DSL transpile failed for {script_path}: {e}"))
+    } else {
+        source
+    };
+
+    let loader = OptionsTestDataLoader {
+        ohlcv_df: bars_to_df(bars),
+        options_df: options_df.clone(),
+    };
+
+    run_script_backtest(&script, params, &loader, None, None, None)
+        .await
+        .unwrap_or_else(|e| panic!("Backtest failed for {script_path}: {e}"))
+}
+
+// ===== WHEEL PUT EXPIRES OTM PARITY =====
+
+#[tokio::test(flavor = "multi_thread")]
+async fn parity_wheel_put_expires_otm() {
+    let put_exp = d(2024, 2, 16);
+
+    let options_df = make_options_df(&[
+        (dt(2024, 1, 2), put_exp, "p", 100.0, 3.00, 3.50, -0.30),
+        (dt(2024, 1, 3), put_exp, "p", 100.0, 3.00, 3.50, -0.30),
+    ]);
+
+    let mut closes = BTreeMap::new();
+    closes.insert(d(2024, 1, 2), 105.0);
+    closes.insert(d(2024, 1, 3), 105.0);
+    closes.insert(put_exp, 105.0); // above strike -> OTM
+
+    let bars = make_bars_from_closes(&closes);
+    let params = wheel_params();
+
+    let rhai_result =
+        run_options_strategy("scripts/strategies/wheel.rhai", &params, &bars, &options_df).await;
+
+    let dsl_result = run_options_strategy(
+        "scripts/strategies/wheel.trading",
+        &params,
+        &bars,
+        &options_df,
+    )
+    .await;
+
+    // Trade count parity
+    assert!(
+        rhai_result.result.trade_count > 0,
+        "Rhai should produce trades. Warnings: {:?}",
+        rhai_result.result.warnings,
+    );
+    assert_eq!(
+        rhai_result.result.trade_count, dsl_result.result.trade_count,
+        "Trade count mismatch: rhai={}, dsl={}. DSL warnings: {:?}",
+        rhai_result.result.trade_count, dsl_result.result.trade_count, dsl_result.result.warnings,
+    );
+
+    // Equity curve length parity
+    assert_eq!(
+        rhai_result.result.equity_curve.len(),
+        dsl_result.result.equity_curve.len(),
+        "Equity curve length mismatch: rhai={}, dsl={}",
+        rhai_result.result.equity_curve.len(),
+        dsl_result.result.equity_curve.len(),
+    );
+
+    eprintln!(
+        "Wheel put OTM parity: both produced {} trade(s), {} equity points",
+        rhai_result.result.trade_count,
+        rhai_result.result.equity_curve.len(),
+    );
+}
+
+// ===== WHEEL FULL CYCLE PARITY =====
+
+#[tokio::test(flavor = "multi_thread")]
+async fn parity_wheel_full_cycle() {
+    let put_exp = d(2024, 2, 16);
+    let call_exp = d(2024, 3, 15);
+
+    let options_df = make_options_df(&[
+        (dt(2024, 1, 2), put_exp, "p", 100.0, 3.00, 3.50, -0.30),
+        (dt(2024, 1, 3), put_exp, "p", 100.0, 3.00, 3.50, -0.30),
+        (dt(2024, 2, 16), call_exp, "c", 102.0, 2.00, 2.50, 0.30),
+        (dt(2024, 2, 17), call_exp, "c", 102.0, 2.00, 2.50, 0.30),
+        (dt(2024, 3, 15), call_exp, "c", 102.0, 0.10, 0.20, 0.02),
+    ]);
+
+    let bars = vec![
+        OhlcvBar {
+            datetime: dt(2024, 1, 2),
+            open: 101.0,
+            high: 102.0,
+            low: 100.0,
+            close: 101.0,
+            volume: 1e6,
+        },
+        OhlcvBar {
+            datetime: dt(2024, 1, 3),
+            open: 101.0,
+            high: 102.0,
+            low: 100.0,
+            close: 101.0,
+            volume: 1e6,
+        },
+        OhlcvBar {
+            datetime: dt(2024, 2, 16),
+            open: 98.0,
+            high: 99.0,
+            low: 97.0,
+            close: 98.0, // below 100 strike -> put ITM -> assignment
+            volume: 1e6,
+        },
+        OhlcvBar {
+            datetime: dt(2024, 2, 17),
+            open: 98.0,
+            high: 99.0,
+            low: 97.0,
+            close: 98.0,
+            volume: 1e6,
+        },
+        OhlcvBar {
+            datetime: dt(2024, 3, 15),
+            open: 105.0,
+            high: 106.0,
+            low: 104.0,
+            close: 105.0, // above 102 strike -> call ITM -> called away
+            volume: 1e6,
+        },
+    ];
+
+    let params = wheel_params();
+
+    let rhai_result =
+        run_options_strategy("scripts/strategies/wheel.rhai", &params, &bars, &options_df).await;
+
+    let dsl_result = run_options_strategy(
+        "scripts/strategies/wheel.trading",
+        &params,
+        &bars,
+        &options_df,
+    )
+    .await;
+
+    // Trade count parity
+    assert!(
+        rhai_result.result.trade_count >= 2,
+        "Rhai should have at least 2 trades (put assignment + stock called away), got {}. Warnings: {:?}",
+        rhai_result.result.trade_count,
+        rhai_result.result.warnings,
+    );
+    assert_eq!(
+        rhai_result.result.trade_count, dsl_result.result.trade_count,
+        "Trade count mismatch: rhai={}, dsl={}. DSL warnings: {:?}",
+        rhai_result.result.trade_count, dsl_result.result.trade_count, dsl_result.result.warnings,
+    );
+
+    // Exit type parity
+    let rhai_exits: Vec<String> = rhai_result
+        .result
+        .trade_log
+        .iter()
+        .map(|t| format!("{:?}", t.exit_type))
+        .collect();
+    let dsl_exits: Vec<String> = dsl_result
+        .result
+        .trade_log
+        .iter()
+        .map(|t| format!("{:?}", t.exit_type))
+        .collect();
+    assert_eq!(
+        rhai_exits, dsl_exits,
+        "Exit types mismatch.\n  rhai: {rhai_exits:?}\n  dsl:  {dsl_exits:?}"
+    );
+
+    // Equity curve length parity
+    assert_eq!(
+        rhai_result.result.equity_curve.len(),
+        dsl_result.result.equity_curve.len(),
+        "Equity curve length mismatch: rhai={}, dsl={}",
+        rhai_result.result.equity_curve.len(),
+        dsl_result.result.equity_curve.len(),
+    );
+
+    eprintln!(
+        "Wheel full cycle parity: both produced {} trade(s), exit types: {:?}",
+        rhai_result.result.trade_count, rhai_exits,
+    );
 }
