@@ -19,7 +19,7 @@ use std::sync::Arc;
 use crate::engine::bayesian::{run_bayesian, BayesianConfig};
 use crate::engine::sweep::{run_grid_sweep, GridSweepConfig};
 use crate::engine::walk_forward::{WalkForwardParams, WfMode, WfObjective};
-use crate::scripting::engine::{CachingDataLoader, CancelCallback};
+use crate::scripting::engine::{CachingDataLoader, CancelCallback, DataLoader};
 use crate::server::handlers::sweeps::{
     build_grid, persist_sweep_to_store, resolve_strategy_source_from_store, CreateSweepRequest,
     SweepParamDef,
@@ -342,8 +342,10 @@ pub async fn submit_sweep(
 
         let script_meta =
             crate::scripting::stdlib::parse_script_meta(&strategy_key, &script_source);
-        let loader =
-            CachingDataLoader::new(Arc::clone(&server.cache), server.adjustment_store.clone());
+        let loader: Arc<dyn DataLoader> = Arc::new(CachingDataLoader::new(
+            Arc::clone(&server.cache),
+            server.adjustment_store.clone(),
+        ));
 
         // Build cancellation check from task token
         let token = task.cancellation_token.clone();
@@ -369,7 +371,7 @@ pub async fn submit_sweep(
                     param_grid,
                     objective: req.objective.clone(),
                 };
-                run_grid_sweep(&config, &loader, &is_cancelled, &on_progress).await
+                run_grid_sweep(&config, Arc::clone(&loader), &is_cancelled, &on_progress).await
             }
             "bayesian" => {
                 let continuous_params: Vec<(String, f64, f64, bool)> = req
@@ -386,7 +388,7 @@ pub async fn submit_sweep(
                     initial_samples,
                     objective: req.objective.clone(),
                 };
-                run_bayesian(&config, &loader, &is_cancelled, &on_progress).await
+                run_bayesian(&config, loader.as_ref(), &is_cancelled, &on_progress).await
             }
             other => {
                 tm.mark_failed(&task.id, format!("Invalid sweep mode '{other}'"));

@@ -1,6 +1,12 @@
 //! Grid parameter sweep — Cartesian product of param ranges, compile-once execution.
+//!
+//! After the first combo runs (to build precomputed options data and warm the
+//! data cache), remaining combos are executed concurrently via `tokio::JoinSet`
+//! with a configurable concurrency limit.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
@@ -8,7 +14,7 @@ use serde_json::Value;
 
 use crate::engine::walk_forward::cartesian_product;
 use crate::scripting::engine::{
-    run_script_backtest, CancelCallback, DataLoader, PrecomputedOptionsData,
+    run_script_backtest, CancelCallback, DataLoader, PrecomputedOptionsData, ScriptBacktestResult,
 };
 use crate::tools::response_types::sweep::{DimensionStat, SweepResponse, SweepResult};
 
@@ -20,67 +26,178 @@ pub struct GridSweepConfig {
     pub objective: String,
 }
 
+/// Max concurrent backtest tasks.  Kept moderate to avoid excessive memory use
+/// (each task holds its own Rhai engine + intermediate DataFrames).
+const MAX_CONCURRENT: usize = 8;
+
 /// Run a grid sweep over the Cartesian product of `param_grid`.
+///
+/// Accepts `Arc<dyn DataLoader>` so that backtest tasks can be spawned onto the
+/// tokio runtime for true concurrency (the `CachingDataLoader` is `Send + Sync`).
+#[allow(clippy::too_many_lines)]
 pub async fn run_grid_sweep(
     config: &GridSweepConfig,
-    data_loader: &dyn DataLoader,
+    data_loader: Arc<dyn DataLoader>,
     is_cancelled: &CancelCallback,
     on_progress: impl Fn(usize, usize),
 ) -> Result<SweepResponse> {
     let start = Instant::now();
     let combos = cartesian_product(&config.param_grid);
     let total = combos.len();
-    let mut results: Vec<SweepResult> = Vec::new();
-    let mut full_results: Vec<crate::scripting::engine::ScriptBacktestResult> = Vec::new();
-    let mut failed = 0usize;
 
-    // Pre-build options data on the first combo so subsequent combos skip the
-    // expensive build_price_table + DatePartitionedOptions::from_df work.
+    if total == 0 {
+        return Ok(SweepResponse {
+            mode: "grid".to_string(),
+            objective: config.objective.clone(),
+            combinations_total: 0,
+            combinations_run: 0,
+            combinations_failed: 0,
+            best_result: None,
+            ranked_results: Vec::new(),
+            dimension_sensitivity: HashMap::new(),
+            convergence_trace: None,
+            execution_time_ms: start.elapsed().as_millis() as u64,
+            full_results: Vec::new(),
+        });
+    }
+
+    let mut combos_iter = combos.into_iter();
+
+    // ── Phase 1: Run the first combo sequentially ─────────────────────────
+    // This populates the precomputed options data and warms the data cache so
+    // that subsequent parallel tasks hit memory instead of disk.
+    let mut results: Vec<SweepResult> = Vec::with_capacity(total);
+    let mut full_results: Vec<ScriptBacktestResult> = Vec::with_capacity(total);
+    let mut failed = 0usize;
     let mut precomputed: Option<PrecomputedOptionsData> = None;
 
-    for (idx, combo) in combos.iter().enumerate() {
-        if is_cancelled() {
-            break; // CancelCallback is Box<dyn Fn() -> bool>
-        }
-        on_progress(idx, total);
-        let mut run_params = config.base_params.clone();
-        run_params.extend(combo.clone());
+    let first_combo = combos_iter.next().unwrap(); // total > 0
+    on_progress(0, total);
 
-        match run_script_backtest(
-            &config.script_source,
-            &run_params,
-            data_loader,
-            None,
-            precomputed.as_ref(),
-            Some(is_cancelled),
-        )
-        .await
-        {
-            Ok(bt) => {
-                // After the first successful run, capture precomputed options data
-                // so subsequent combos can skip the expensive rebuild.
-                if precomputed.is_none() {
-                    precomputed.clone_from(&bt.precomputed_options);
+    let mut run_params = config.base_params.clone();
+    run_params.extend(first_combo.iter().map(|(k, v)| (k.clone(), v.clone())));
+
+    match run_script_backtest(
+        &config.script_source,
+        &run_params,
+        data_loader.as_ref(),
+        None,
+        None,
+        Some(is_cancelled),
+    )
+    .await
+    {
+        Ok(bt) => {
+            precomputed.clone_from(&bt.precomputed_options);
+            let m = &bt.result.metrics;
+            results.push(SweepResult {
+                rank: 0,
+                params: first_combo,
+                sharpe: m.sharpe,
+                sortino: m.sortino,
+                pnl: bt.result.total_pnl,
+                trades: bt.result.trade_count,
+                win_rate: m.win_rate,
+                max_drawdown: m.max_drawdown,
+                profit_factor: m.profit_factor,
+                cagr: m.cagr,
+                calmar: m.calmar,
+            });
+            full_results.push(bt);
+        }
+        Err(_) => {
+            failed += 1;
+        }
+    }
+
+    // ── Phase 2: Run remaining combos concurrently ────────────────────────
+    let remaining: Vec<_> = combos_iter.enumerate().collect();
+    if !remaining.is_empty() && !is_cancelled() {
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT));
+        let progress_counter = Arc::new(AtomicUsize::new(1)); // first combo already done
+        let cancel_flag = Arc::new(is_cancelled());
+
+        // Wrap shared read-only state in Arcs for spawned tasks
+        let script_source = Arc::new(config.script_source.clone());
+        let base_params = Arc::new(config.base_params.clone());
+        let precomputed_arc = precomputed.clone(); // PrecomputedOptionsData is cheap (all Arcs)
+
+        let mut join_set = tokio::task::JoinSet::<(
+            usize,
+            HashMap<String, Value>,
+            Result<ScriptBacktestResult>,
+        )>::new();
+
+        for (offset, combo) in remaining {
+            let sem = Arc::clone(&semaphore);
+            let dl = Arc::clone(&data_loader);
+            let src = Arc::clone(&script_source);
+            let bp = Arc::clone(&base_params);
+            let pre = precomputed_arc.clone();
+            let ctr = Arc::clone(&progress_counter);
+            let cancelled = Arc::clone(&cancel_flag);
+
+            join_set.spawn(async move {
+                let _permit = sem.acquire().await.expect("semaphore closed");
+
+                // Check cancellation before doing expensive work
+                if *cancelled {
+                    return (offset, combo, Err(anyhow::anyhow!("cancelled")));
                 }
 
-                let m = &bt.result.metrics;
-                results.push(SweepResult {
-                    rank: 0,
-                    params: combo.clone(),
-                    sharpe: m.sharpe,
-                    sortino: m.sortino,
-                    pnl: bt.result.total_pnl,
-                    trades: bt.result.trade_count,
-                    win_rate: m.win_rate,
-                    max_drawdown: m.max_drawdown,
-                    profit_factor: m.profit_factor,
-                    cagr: m.cagr,
-                    calmar: m.calmar,
-                });
-                full_results.push(bt);
-            }
-            Err(_) => {
-                failed += 1;
+                let mut params = HashMap::clone(&bp);
+                params.extend(combo.iter().map(|(k, v)| (k.clone(), v.clone())));
+
+                // Build a local cancel callback that checks the shared flag
+                let cancel_cb: CancelCallback = Box::new(move || *cancelled);
+
+                let result = run_script_backtest(
+                    &src,
+                    &params,
+                    dl.as_ref(),
+                    None,
+                    pre.as_ref(),
+                    Some(&cancel_cb),
+                )
+                .await;
+
+                ctr.fetch_add(1, Ordering::Relaxed);
+
+                (offset, combo, result)
+            });
+        }
+
+        // Collect results as tasks complete
+        while let Some(join_result) = join_set.join_next().await {
+            // Report progress
+            let done = progress_counter.load(Ordering::Relaxed);
+            on_progress(done, total);
+
+            match join_result {
+                Ok((_, combo, Ok(bt))) => {
+                    let m = &bt.result.metrics;
+                    results.push(SweepResult {
+                        rank: 0,
+                        params: combo,
+                        sharpe: m.sharpe,
+                        sortino: m.sortino,
+                        pnl: bt.result.total_pnl,
+                        trades: bt.result.trade_count,
+                        win_rate: m.win_rate,
+                        max_drawdown: m.max_drawdown,
+                        profit_factor: m.profit_factor,
+                        cagr: m.cagr,
+                        calmar: m.calmar,
+                    });
+                    full_results.push(bt);
+                }
+                Ok((_, _, Err(_))) => {
+                    failed += 1;
+                }
+                Err(join_err) => {
+                    tracing::warn!("Sweep task panicked: {join_err}");
+                    failed += 1;
+                }
             }
         }
     }

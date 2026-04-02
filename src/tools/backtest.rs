@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::engine::bayesian::{run_bayesian, BayesianConfig};
 use crate::engine::sweep::{run_grid_sweep, GridSweepConfig};
-use crate::scripting::engine::{CachingDataLoader, CancelCallback};
+use crate::scripting::engine::{CachingDataLoader, CancelCallback, DataLoader};
 use crate::server::handlers::sweeps::{
     build_grid, persist_sweep_to_store, resolve_strategy_source_from_store, CreateSweepRequest,
     SweepParamDef,
@@ -223,8 +223,11 @@ async fn execute_sweep(
     // 2. Parse script meta
     let script_meta = crate::scripting::stdlib::parse_script_meta(&strategy_key, &script_source);
 
-    // 3. Create data loader
-    let loader = CachingDataLoader::new(Arc::clone(&server.cache), server.adjustment_store.clone());
+    // 3. Create data loader (Arc-wrapped for concurrent sweep tasks)
+    let loader: Arc<dyn DataLoader> = Arc::new(CachingDataLoader::new(
+        Arc::clone(&server.cache),
+        server.adjustment_store.clone(),
+    ));
 
     // 4. Extract symbol from params
     let symbol = params
@@ -257,7 +260,7 @@ async fn execute_sweep(
                 param_grid,
                 objective: req.objective.clone(),
             };
-            run_grid_sweep(&config, &loader, &is_cancelled, |_, _| {}).await?
+            run_grid_sweep(&config, Arc::clone(&loader), &is_cancelled, |_, _| {}).await?
         }
         "bayesian" => {
             let continuous_params: Vec<(String, f64, f64, bool)> = req
@@ -274,7 +277,7 @@ async fn execute_sweep(
                 initial_samples,
                 objective: req.objective.clone(),
             };
-            run_bayesian(&config, &loader, &is_cancelled, |_, _| {}).await?
+            run_bayesian(&config, loader.as_ref(), &is_cancelled, |_, _| {}).await?
         }
         other => {
             return Err(anyhow::anyhow!(
