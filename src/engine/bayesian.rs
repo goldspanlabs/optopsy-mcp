@@ -19,8 +19,10 @@ use crate::tools::response_types::sweep::{SweepResponse, SweepResult};
 pub struct BayesianConfig {
     pub script_source: String,
     pub base_params: HashMap<String, Value>,
-    /// Each entry: (`param_name`, min, max, `is_int`).
-    pub continuous_params: Vec<(String, f64, f64, bool)>,
+    /// Each entry: (`param_name`, min, max, `is_int`, step).
+    /// `step` controls rounding precision — e.g. 0.01 for delta, 1.0 for DTE.
+    /// When `None`, defaults to 1.0 for ints, 0.01 for floats.
+    pub continuous_params: Vec<(String, f64, f64, bool, Option<f64>)>,
     pub max_evaluations: usize,
     pub initial_samples: usize,
     pub objective: String,
@@ -67,6 +69,14 @@ pub async fn run_bayesian(
 
     let trace_val = |best: f64| if best.is_finite() { best } else { 0.0 };
 
+    // Early stopping: halt when best objective hasn't improved for `patience`
+    // consecutive GP-guided iterations (i.e., after the initial random phase).
+    let patience = (config.max_evaluations / 3).max(5);
+    let mut stale_iters = 0usize;
+    let mut consecutive_cache_hits = 0usize;
+    // Max consecutive cache hits before stopping (GP is stuck in explored space)
+    let cache_hit_patience = patience;
+
     // Run all iterations (phase 1 random + phase 2 GP-EI)
     for i in 0..config.max_evaluations {
         if is_cancelled() {
@@ -92,8 +102,22 @@ pub async fn run_bayesian(
             }
             convergence_trace.push(trace_val(best_so_far));
             results.push(SweepResult::clone(cached_result));
+
+            // Track consecutive cache hits — if the GP keeps suggesting
+            // already-evaluated points, the search space is exhausted.
+            consecutive_cache_hits += 1;
+            if i >= config.initial_samples && consecutive_cache_hits >= cache_hit_patience {
+                tracing::info!(
+                    "Bayesian early stop: {consecutive_cache_hits} consecutive cache hits \
+                     (search space likely exhausted)"
+                );
+                break;
+            }
             continue;
         }
+        consecutive_cache_hits = 0;
+
+        let prev_best = best_so_far;
 
         if let Ok((result, pre)) = evaluate(
             &config.script_source,
@@ -120,6 +144,21 @@ pub async fn run_bayesian(
             }
             convergence_trace.push(trace_val(best_so_far));
             results.push(Arc::try_unwrap(result_arc).unwrap_or_else(|a| SweepResult::clone(&a)));
+
+            // Early stopping check (only after initial random phase)
+            if i >= config.initial_samples {
+                if best_so_far <= prev_best {
+                    stale_iters += 1;
+                    if stale_iters >= patience {
+                        tracing::info!(
+                            "Bayesian early stop: no improvement for {patience} GP iterations"
+                        );
+                        break;
+                    }
+                } else {
+                    stale_iters = 0;
+                }
+            }
         } else {
             failed += 1;
             convergence_trace.push(trace_val(best_so_far));
@@ -424,16 +463,30 @@ fn maximize_ei(gp: &GaussianProcess, best_y: f64, dim: usize) -> Vec<f64> {
 // ---------------------------------------------------------------------------
 
 /// Decode normalized [0,1]^dim values to actual parameter values.
-pub fn decode_params(x: &[f64], continuous: &[(String, f64, f64, bool)]) -> HashMap<String, Value> {
+///
+/// Each parameter is rounded to its configured step size (e.g. 0.01 for delta,
+/// 1.0 for DTE). This dramatically reduces the number of unique parameter
+/// combinations, increasing Bayesian eval-cache hit rate.
+pub fn decode_params(
+    x: &[f64],
+    continuous: &[(String, f64, f64, bool, Option<f64>)],
+) -> HashMap<String, Value> {
     x.iter()
         .zip(continuous)
-        .map(|(xi, (name, min, max, is_int))| {
+        .map(|(xi, (name, min, max, is_int, step))| {
             let val = min + xi * (max - min);
             let json_val = if *is_int {
-                serde_json::json!(val.round() as i64)
+                let s = step.unwrap_or(1.0);
+                let snapped = (val / s).round() * s;
+                serde_json::json!(snapped as i64)
             } else {
-                let rounded = (val * 10_000.0).round() / 10_000.0;
-                serde_json::json!(rounded)
+                let s = step.unwrap_or(0.01);
+                let snapped = (val / s).round() * s;
+                // Round to avoid floating-point noise (e.g. 0.30000000000000004)
+                let decimals = (-s.log10()).ceil().max(0.0) as u32 + 1;
+                let factor = 10_f64.powi(decimals as i32);
+                let clean = (snapped * factor).round() / factor;
+                serde_json::json!(clean)
             };
             (name.clone(), json_val)
         })
