@@ -350,7 +350,7 @@ pub(crate) fn update_last_known(
         for key in keys {
             if let Some(snap) = price_table.get(key) {
                 let carry_key = (key.1, key.2, key.3);
-                last_known.insert(carry_key, snap.clone());
+                last_known.insert(carry_key, *snap);
             }
         }
     }

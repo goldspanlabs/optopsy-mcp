@@ -16,7 +16,7 @@ use uuid;
 
 use crate::engine::bayesian::{run_bayesian, BayesianConfig};
 use crate::engine::sweep::{run_grid_sweep, GridSweepConfig};
-use crate::scripting::engine::{CachingDataLoader, CancelCallback};
+use crate::scripting::engine::{CachingDataLoader, CancelCallback, DataLoader};
 use crate::server::sanitize::{sanitize, trade_row_from_record};
 use crate::server::state::AppState;
 use crate::tools::response_types::sweep::SweepResponse;
@@ -293,10 +293,10 @@ pub async fn create_sweep(
         };
         let script_meta =
             crate::scripting::stdlib::parse_script_meta(&strategy_key, &script_source);
-        let loader = CachingDataLoader::new(
+        let loader: Arc<dyn DataLoader> = Arc::new(CachingDataLoader::new(
             Arc::clone(&state.server.cache),
             state.server.adjustment_store.clone(),
-        );
+        ));
         let symbol = req
             .params
             .get("SYMBOL")
@@ -360,13 +360,21 @@ pub async fn create_sweep(
                     param_grid,
                     objective: req.objective.clone(),
                 };
-                run_grid_sweep(&config, &loader, &is_cancelled, &on_progress).await
+                run_grid_sweep(&config, Arc::clone(&loader), &is_cancelled, &on_progress).await
             }
             "bayesian" => {
-                let continuous_params: Vec<(String, f64, f64, bool)> = req
+                let continuous_params: Vec<(String, f64, f64, bool, Option<f64>)> = req
                     .sweep_params
                     .iter()
-                    .map(|sp| (sp.name.clone(), sp.start, sp.stop, sp.param_type == "int"))
+                    .map(|sp| {
+                        (
+                            sp.name.clone(),
+                            sp.start,
+                            sp.stop,
+                            sp.param_type == "int",
+                            sp.step,
+                        )
+                    })
                     .collect();
                 let initial_samples = (req.max_evaluations / 3).max(2);
                 let config = BayesianConfig {
@@ -377,7 +385,7 @@ pub async fn create_sweep(
                     initial_samples,
                     objective: req.objective.clone(),
                 };
-                run_bayesian(&config, &loader, &is_cancelled, &on_progress).await
+                run_bayesian(&config, loader.as_ref(), &is_cancelled, &on_progress).await
             }
             other => {
                 let _ = tx

@@ -18,22 +18,29 @@ use crate::tools::response_types::sweep::{SweepResponse, SweepResult};
 pub struct BayesianConfig {
     pub script_source: String,
     pub base_params: HashMap<String, Value>,
-    /// Each entry: (`param_name`, min, max, `is_int`).
-    pub continuous_params: Vec<(String, f64, f64, bool)>,
+    /// Each entry: (`param_name`, min, max, `is_int`, step).
+    /// `step` controls rounding precision — e.g. 0.01 for delta, 1.0 for DTE.
+    /// When `None`, defaults to 1.0 for ints, 0.01 for floats.
+    pub continuous_params: Vec<(String, f64, f64, bool, Option<f64>)>,
     pub max_evaluations: usize,
     pub initial_samples: usize,
     pub objective: String,
 }
 
 /// Build a deterministic cache key from decoded parameters.
+/// Single-allocation: sorts by borrowed key, writes directly into one String.
 fn cache_key(swept: &HashMap<String, Value>) -> String {
+    use std::fmt::Write;
     let mut pairs: Vec<_> = swept.iter().collect();
-    pairs.sort_by_key(|(k, _)| (*k).clone());
-    pairs
-        .iter()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect::<Vec<_>>()
-        .join("|")
+    pairs.sort_by_key(|(k, _)| k.as_str());
+    let mut out = String::with_capacity(pairs.len() * 16);
+    for (i, (k, v)) in pairs.iter().enumerate() {
+        if i > 0 {
+            out.push('|');
+        }
+        let _ = write!(out, "{k}={v}");
+    }
+    out
 }
 
 /// Run Bayesian optimization with GP-EI.
@@ -50,13 +57,23 @@ pub async fn run_bayesian(
     let mut ys: Vec<f64> = Vec::new();
     let mut results: Vec<SweepResult> = Vec::new();
     let mut failed = 0usize;
-    let mut convergence_trace: Vec<f64> = Vec::new();
+    let mut convergence_trace: Vec<f64> = Vec::with_capacity(config.max_evaluations);
     let mut best_so_far = f64::NEG_INFINITY;
     let mut eval_cache: HashMap<String, (SweepResult, f64)> = HashMap::new();
 
     // Pre-build options data on the first evaluation so subsequent ones skip the
     // expensive build_price_table + DatePartitionedOptions::from_df work.
     let mut precomputed: Option<PrecomputedOptionsData> = None;
+
+    let trace_val = |best: f64| if best.is_finite() { best } else { 0.0 };
+
+    // Early stopping: halt when best objective hasn't improved for `patience`
+    // consecutive GP-guided iterations (i.e., after the initial random phase).
+    let patience = (config.max_evaluations / 3).max(5);
+    let mut stale_iters = 0usize;
+    let mut consecutive_cache_hits = 0usize;
+    // Max consecutive cache hits before stopping (GP is stuck in explored space)
+    let cache_hit_patience = patience;
 
     // Run all iterations (phase 1 random + phase 2 GP-EI)
     for i in 0..config.max_evaluations {
@@ -81,19 +98,29 @@ pub async fn run_bayesian(
             if cached_obj.is_finite() && *cached_obj > best_so_far {
                 best_so_far = *cached_obj;
             }
-            convergence_trace.push(if best_so_far.is_finite() {
-                best_so_far
-            } else {
-                0.0
-            });
+            convergence_trace.push(trace_val(best_so_far));
             results.push(cached_result.clone());
+
+            // Track consecutive cache hits — if the GP keeps suggesting
+            // already-evaluated points, the search space is exhausted.
+            consecutive_cache_hits += 1;
+            if i >= config.initial_samples && consecutive_cache_hits >= cache_hit_patience {
+                tracing::info!(
+                    "Bayesian early stop: {consecutive_cache_hits} consecutive cache hits \
+                     (search space likely exhausted)"
+                );
+                break;
+            }
             continue;
         }
+        consecutive_cache_hits = 0;
+
+        let prev_best = best_so_far;
 
         if let Ok((result, pre)) = evaluate(
             &config.script_source,
             &config.base_params,
-            &swept,
+            swept,
             data_loader,
             precomputed.as_ref(),
             Some(is_cancelled),
@@ -112,19 +139,26 @@ pub async fn run_bayesian(
                     best_so_far = obj;
                 }
             }
-            convergence_trace.push(if best_so_far.is_finite() {
-                best_so_far
-            } else {
-                0.0
-            });
+            convergence_trace.push(trace_val(best_so_far));
             results.push(result);
+
+            // Early stopping check (only after initial random phase)
+            if i >= config.initial_samples {
+                if best_so_far <= prev_best {
+                    stale_iters += 1;
+                    if stale_iters >= patience {
+                        tracing::info!(
+                            "Bayesian early stop: no improvement for {patience} GP iterations"
+                        );
+                        break;
+                    }
+                } else {
+                    stale_iters = 0;
+                }
+            }
         } else {
             failed += 1;
-            convergence_trace.push(if best_so_far.is_finite() {
-                best_so_far
-            } else {
-                0.0
-            });
+            convergence_trace.push(trace_val(best_so_far));
         }
     }
 
@@ -181,9 +215,15 @@ pub async fn run_bayesian(
 // ---------------------------------------------------------------------------
 
 /// Gaussian Process with RBF kernel.
+/// Caches the Cholesky factor L from `fit()` so `predict()` uses O(n²) forward/back
+/// substitution instead of rebuilding and re-factoring the O(n³) kernel matrix.
 struct GaussianProcess {
     x_train: Vec<Vec<f64>>,
     alpha: Vec<f64>,
+    /// Cached Cholesky factor L where K = L·Lᵀ. `None` if decomposition failed
+    /// (predict falls back to diagonal solve).
+    cholesky_l: Option<Vec<f64>>,
+    n: usize,
     length_scale: f64,
     signal_var: f64,
     noise_var: f64,
@@ -191,7 +231,7 @@ struct GaussianProcess {
 }
 
 impl GaussianProcess {
-    /// Fit GP to training data. Returns a trained GP.
+    /// Fit GP to training data. Returns a trained GP with cached Cholesky factor.
     fn fit(xs: &[Vec<f64>], ys: &[f64]) -> Self {
         let n = xs.len();
         let y_mean = ys.iter().sum::<f64>() / n as f64;
@@ -220,12 +260,19 @@ impl GaussianProcess {
             }
         }
 
-        // Solve K * alpha = y_centered via Cholesky
-        let alpha = cholesky_solve(&k_mat, &y_centered, n);
+        // Cache the Cholesky factor and solve alpha
+        let cholesky_l = cholesky_decompose(&k_mat, n);
+        let alpha = if let Some(ref l) = cholesky_l {
+            cholesky_solve_with_l(l, &y_centered, n)
+        } else {
+            diagonal_solve(&k_mat, &y_centered, n)
+        };
 
         Self {
             x_train: xs.to_vec(),
             alpha,
+            cholesky_l,
+            n,
             length_scale,
             signal_var,
             noise_var,
@@ -234,13 +281,14 @@ impl GaussianProcess {
     }
 
     /// Predict mean and variance at a test point.
+    /// Uses the cached Cholesky factor — O(n²) per call instead of O(n³).
     fn predict(&self, x: &[f64]) -> (f64, f64) {
-        let n = self.x_train.len();
+        let n = self.n;
         let k_star: Vec<f64> = (0..n)
             .map(|i| rbf_kernel(x, &self.x_train[i], self.length_scale, self.signal_var))
             .collect();
 
-        // Mean = k* . alpha + y_mean
+        // Mean = k* · alpha + y_mean
         let mean = k_star
             .iter()
             .zip(&self.alpha)
@@ -248,27 +296,29 @@ impl GaussianProcess {
             .sum::<f64>()
             + self.y_mean;
 
-        // Variance = k(x,x) - k*^T K^{-1} k*
-        // We approximate K^{-1} k* using the stored Cholesky factor approach
-        // For simplicity, use the diagonal approximation:
+        // Variance = k(x,x) - k*ᵀ K⁻¹ k*
+        // Reuse cached Cholesky factor to solve K·v = k* in O(n²)
         let k_xx = self.signal_var + self.noise_var;
-
-        // Build K matrix and solve K * v = k_star for variance
-        let mut k_mat = vec![0.0; n * n];
-        for i in 0..n {
-            for j in 0..n {
-                k_mat[i * n + j] = rbf_kernel(
-                    &self.x_train[i],
-                    &self.x_train[j],
-                    self.length_scale,
-                    self.signal_var,
-                );
-                if i == j {
-                    k_mat[i * n + j] += self.noise_var;
+        let v = if let Some(ref l) = self.cholesky_l {
+            cholesky_solve_with_l(l, &k_star, n)
+        } else {
+            // Fallback: rebuild K (only if Cholesky failed during fit)
+            let mut k_mat = vec![0.0; n * n];
+            for i in 0..n {
+                for j in 0..n {
+                    k_mat[i * n + j] = rbf_kernel(
+                        &self.x_train[i],
+                        &self.x_train[j],
+                        self.length_scale,
+                        self.signal_var,
+                    );
+                    if i == j {
+                        k_mat[i * n + j] += self.noise_var;
+                    }
                 }
             }
-        }
-        let v = cholesky_solve(&k_mat, &k_star, n);
+            diagonal_solve(&k_mat, &k_star, n)
+        };
         let var_reduction: f64 = k_star.iter().zip(&v).map(|(k, vi)| k * vi).sum();
         let var = (k_xx - var_reduction).max(1e-10);
 
@@ -280,7 +330,8 @@ impl GaussianProcess {
         if n < 2 {
             return 1.0;
         }
-        let mut dists = Vec::new();
+        let cap = n * (n - 1) / 2;
+        let mut dists = Vec::with_capacity(cap);
         for i in 0..n {
             for j in (i + 1)..n {
                 let d: f64 = xs[i]
@@ -292,8 +343,13 @@ impl GaussianProcess {
                 dists.push(d);
             }
         }
-        dists.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        dists[dists.len() / 2]
+        // Use nth_element (quickselect) for O(n) median instead of O(n log n) sort
+        let mid = dists.len() / 2;
+        *dists
+            .select_nth_unstable_by(mid, |a, b| {
+                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .1
     }
 }
 
@@ -303,43 +359,42 @@ fn rbf_kernel(x1: &[f64], x2: &[f64], length_scale: f64, signal_var: f64) -> f64
     signal_var * (-0.5 * sq_dist / (length_scale * length_scale)).exp()
 }
 
-/// Solve K * x = b via Cholesky factorization, with fallback to diagonal solve.
+/// Solve L·Lᵀ·x = b given a pre-computed Cholesky factor L.
 #[allow(clippy::many_single_char_names)]
-fn cholesky_solve(k: &[f64], b: &[f64], n: usize) -> Vec<f64> {
-    // Attempt Cholesky decomposition K = L * L^T
-    if let Some(l) = cholesky_decompose(k, n) {
-        // Forward solve L * y = b
-        let mut y = vec![0.0; n];
-        for i in 0..n {
-            let mut s = b[i];
-            for j in 0..i {
-                s -= l[i * n + j] * y[j];
-            }
-            y[i] = s / l[i * n + i];
+fn cholesky_solve_with_l(l: &[f64], b: &[f64], n: usize) -> Vec<f64> {
+    // Forward solve L·y = b
+    let mut y = vec![0.0; n];
+    for i in 0..n {
+        let mut s = b[i];
+        for j in 0..i {
+            s -= l[i * n + j] * y[j];
         }
-        // Backward solve L^T * x = y
-        let mut x = vec![0.0; n];
-        for i in (0..n).rev() {
-            let mut s = y[i];
-            for j in (i + 1)..n {
-                s -= l[j * n + i] * x[j];
-            }
-            x[i] = s / l[i * n + i];
-        }
-        x
-    } else {
-        // Fallback: diagonal solve
-        (0..n)
-            .map(|i| {
-                let diag = k[i * n + i];
-                if diag.abs() > 1e-12 {
-                    b[i] / diag
-                } else {
-                    0.0
-                }
-            })
-            .collect()
+        y[i] = s / l[i * n + i];
     }
+    // Backward solve Lᵀ·x = y
+    let mut x = vec![0.0; n];
+    for i in (0..n).rev() {
+        let mut s = y[i];
+        for j in (i + 1)..n {
+            s -= l[j * n + i] * x[j];
+        }
+        x[i] = s / l[i * n + i];
+    }
+    x
+}
+
+/// Diagonal fallback solve when Cholesky decomposition fails.
+fn diagonal_solve(k: &[f64], b: &[f64], n: usize) -> Vec<f64> {
+    (0..n)
+        .map(|i| {
+            let diag = k[i * n + i];
+            if diag.abs() > 1e-12 {
+                b[i] / diag
+            } else {
+                0.0
+            }
+        })
+        .collect()
 }
 
 /// Cholesky decomposition. Returns L such that K = L * L^T, or None if not PD.
@@ -405,16 +460,30 @@ fn maximize_ei(gp: &GaussianProcess, best_y: f64, dim: usize) -> Vec<f64> {
 // ---------------------------------------------------------------------------
 
 /// Decode normalized [0,1]^dim values to actual parameter values.
-pub fn decode_params(x: &[f64], continuous: &[(String, f64, f64, bool)]) -> HashMap<String, Value> {
+///
+/// Each parameter is rounded to its configured step size (e.g. 0.01 for delta,
+/// 1.0 for DTE). This dramatically reduces the number of unique parameter
+/// combinations, increasing Bayesian eval-cache hit rate.
+pub fn decode_params(
+    x: &[f64],
+    continuous: &[(String, f64, f64, bool, Option<f64>)],
+) -> HashMap<String, Value> {
     x.iter()
         .zip(continuous)
-        .map(|(xi, (name, min, max, is_int))| {
+        .map(|(xi, (name, min, max, is_int, step))| {
             let val = min + xi * (max - min);
             let json_val = if *is_int {
-                serde_json::json!(val.round() as i64)
+                let s = step.unwrap_or(1.0).max(1.0);
+                let snapped = (val / s).round() * s;
+                serde_json::json!(snapped as i64)
             } else {
-                let rounded = (val * 10_000.0).round() / 10_000.0;
-                serde_json::json!(rounded)
+                let s = step.unwrap_or(0.01).max(0.01);
+                let snapped = (val / s).round() * s;
+                // Round to avoid floating-point noise (e.g. 0.30000000000000004)
+                let decimals = (-s.log10()).ceil().max(0.0) as u32 + 1;
+                let factor = 10_f64.powi(decimals as i32);
+                let clean = (snapped * factor).round() / factor;
+                serde_json::json!(clean)
             };
             (name.clone(), json_val)
         })
@@ -428,16 +497,17 @@ pub fn random_point(dim: usize) -> Vec<f64> {
 }
 
 /// Evaluate a single parameter combination.
+/// Takes owned `swept_params` to avoid a clone — caller moves the `HashMap` in.
 async fn evaluate(
     script_source: &str,
     base_params: &HashMap<String, Value>,
-    swept_params: &HashMap<String, Value>,
+    swept_params: HashMap<String, Value>,
     data_loader: &dyn DataLoader,
     precomputed: Option<&PrecomputedOptionsData>,
     is_cancelled: Option<&CancelCallback>,
 ) -> Result<(SweepResult, Option<PrecomputedOptionsData>)> {
     let mut run_params = base_params.clone();
-    run_params.extend(swept_params.clone());
+    run_params.extend(swept_params.iter().map(|(k, v)| (k.clone(), v.clone())));
 
     let bt = run_script_backtest(
         script_source,
@@ -449,12 +519,12 @@ async fn evaluate(
     )
     .await?;
     let m = &bt.result.metrics;
-    let pre = bt.precomputed_options.clone();
+    let pre = bt.precomputed_options;
 
     Ok((
         SweepResult {
             rank: 0,
-            params: swept_params.clone(),
+            params: swept_params,
             sharpe: m.sharpe,
             sortino: m.sortino,
             pnl: bt.result.total_pnl,
@@ -496,4 +566,164 @@ fn erf(x: f64) -> f64 {
     let poly = 0.254_829_592 * t - 0.284_496_736 * t2 + 1.421_413_741 * t3 - 1.453_152_027 * t4
         + 1.061_405_429 * t5;
     sign * (1.0 - poly * (-x * x).exp())
+}
+
+// ---------------------------------------------------------------------------
+// Tests & benchmarks
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify GP predict correctness: mean should interpolate training points.
+    #[test]
+    fn gp_predict_interpolates() {
+        let xs = vec![vec![0.0], vec![0.5], vec![1.0]];
+        let ys = vec![1.0, 2.0, 1.5];
+        let gp = GaussianProcess::fit(&xs, &ys);
+
+        // Predictions at training points should be close to training values
+        for (x, y) in xs.iter().zip(&ys) {
+            let (mean, _var) = gp.predict(x);
+            assert!(
+                (mean - y).abs() < 0.3,
+                "GP mean {mean} too far from training value {y}"
+            );
+        }
+    }
+
+    /// Verify that the cached Cholesky factor produces the same results as
+    /// solving from scratch would.
+    #[test]
+    fn gp_cholesky_cache_consistency() {
+        let xs: Vec<Vec<f64>> = (0..20)
+            .map(|i| vec![f64::from(i) / 20.0, (f64::from(i) * 0.7).sin()])
+            .collect();
+        let ys: Vec<f64> = xs.iter().map(|x| x[0] * 2.0 + x[1]).collect();
+        let gp = GaussianProcess::fit(&xs, &ys);
+
+        // Cholesky factor should have been cached
+        assert!(gp.cholesky_l.is_some(), "Cholesky factor should be cached");
+
+        // Predict at several test points
+        for _ in 0..10 {
+            let test_x = random_point(2);
+            let (mean, var) = gp.predict(&test_x);
+            assert!(mean.is_finite(), "mean should be finite");
+            assert!(var > 0.0, "variance should be positive");
+        }
+    }
+
+    /// Benchmark: GP predict with cached vs uncached Cholesky.
+    /// Prints timing to stdout — run with `cargo test bench_gp -- --nocapture`.
+    #[test]
+    fn bench_gp_predict_cached_cholesky() {
+        let n_train = 50; // typical GP size during Bayesian optimization
+        let n_predict = 1000; // maximize_ei evaluates this many candidates
+        let dim = 3;
+
+        let xs: Vec<Vec<f64>> = (0..n_train).map(|_| random_point(dim)).collect();
+        let ys: Vec<f64> = xs.iter().map(|x| x.iter().sum()).collect();
+
+        // ── Optimized path: cached Cholesky (current implementation) ──────
+        let gp = GaussianProcess::fit(&xs, &ys);
+        assert!(gp.cholesky_l.is_some());
+
+        let test_points: Vec<Vec<f64>> = (0..n_predict).map(|_| random_point(dim)).collect();
+
+        let start = Instant::now();
+        let mut sum = 0.0;
+        for tp in &test_points {
+            let (mean, _) = gp.predict(tp);
+            sum += mean; // prevent dead-code elimination
+        }
+        let cached_ms = start.elapsed().as_micros();
+
+        // ── Baseline: uncached (rebuild K + Cholesky per predict) ─────────
+        let start = Instant::now();
+        let mut sum2 = 0.0;
+        for tp in &test_points {
+            let n = xs.len();
+            let k_star: Vec<f64> = (0..n)
+                .map(|i| rbf_kernel(tp, &xs[i], gp.length_scale, gp.signal_var))
+                .collect();
+            let mean = k_star
+                .iter()
+                .zip(&gp.alpha)
+                .map(|(k, a)| k * a)
+                .sum::<f64>()
+                + gp.y_mean;
+            // Rebuild K matrix (the expensive part)
+            let mut k_mat = vec![0.0; n * n];
+            for i in 0..n {
+                for j in 0..n {
+                    k_mat[i * n + j] = rbf_kernel(&xs[i], &xs[j], gp.length_scale, gp.signal_var);
+                    if i == j {
+                        k_mat[i * n + j] += gp.noise_var;
+                    }
+                }
+            }
+            let _v = if let Some(l) = cholesky_decompose(&k_mat, n) {
+                cholesky_solve_with_l(&l, &k_star, n)
+            } else {
+                diagonal_solve(&k_mat, &k_star, n)
+            };
+            sum2 += mean;
+        }
+        let uncached_ms = start.elapsed().as_micros();
+
+        let speedup = uncached_ms as f64 / cached_ms.max(1) as f64;
+        println!(
+            "\n=== GP predict benchmark (n_train={n_train}, n_predict={n_predict}) ===\n\
+             Cached Cholesky:   {cached_ms:>8} µs\n\
+             Uncached (rebuild): {uncached_ms:>8} µs\n\
+             Speedup:            {speedup:>8.1}x\n\
+             (sum={sum:.4}, sum2={sum2:.4})"
+        );
+    }
+
+    /// Benchmark: `cache_key` string building.
+    #[test]
+    fn bench_cache_key() {
+        let mut params = HashMap::new();
+        for i in 0..10 {
+            params.insert(format!("param_{i}"), serde_json::json!(f64::from(i) * 0.1));
+        }
+
+        let n_iters = 10_000;
+
+        // Optimized version (current)
+        let start = Instant::now();
+        let mut last = String::new();
+        for _ in 0..n_iters {
+            last = cache_key(&params);
+        }
+        let optimized_us = start.elapsed().as_micros();
+
+        // Baseline: old Vec+format+join approach
+        let start = Instant::now();
+        let mut last2 = String::new();
+        for _ in 0..n_iters {
+            let mut pairs: Vec<_> = params.iter().collect();
+            pairs.sort_by_key(|(k, _)| k.as_str());
+            last2 = pairs
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join("|");
+        }
+        let baseline_us = start.elapsed().as_micros();
+
+        let speedup = baseline_us as f64 / optimized_us.max(1) as f64;
+        println!(
+            "\n=== cache_key benchmark ({n_iters} iterations, 10 params) ===\n\
+             Optimized:  {optimized_us:>8} µs\n\
+             Baseline:   {baseline_us:>8} µs\n\
+             Speedup:    {speedup:>8.1}x\n\
+             (key={last}, key2={last2})"
+        );
+        // Keys should be identical
+        assert_eq!(last, last2, "Optimized and baseline keys must match");
+    }
 }

@@ -24,7 +24,7 @@ pub fn build_carry_index(price_table: &PriceTable) -> CarryIndex {
         index
             .entry((*exp, *strike, *opt))
             .or_default()
-            .insert(*date, snap.clone());
+            .insert(*date, *snap);
     }
     index
 }
