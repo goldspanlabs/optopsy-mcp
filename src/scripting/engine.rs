@@ -422,12 +422,16 @@ pub async fn run_script_backtest(
     // 1. Compile
     let mut engine = build_engine();
 
-    // Register extern() with captured params for runtime resolution (3-arg)
-    let params_clone = params.clone();
+    // Register extern() with captured params for runtime resolution.
+    // Arc-shared to avoid cloning the full HashMap for each overload.
+    let params_arc = Arc::new(params.clone());
+
+    // 3-arg overload
+    let p = Arc::clone(&params_arc);
     engine.register_fn(
         "extern",
         move |name: &str, default: Dynamic, _desc: &str| -> Dynamic {
-            if let Some(value) = params_clone.get(name) {
+            if let Some(value) = p.get(name) {
                 super::stdlib::json_to_dynamic(value)
             } else if default.is_unit() {
                 Dynamic::from(format!("ERROR: Required parameter '{name}' not provided"))
@@ -437,12 +441,12 @@ pub async fn run_script_backtest(
         },
     );
 
-    // Register extern() 4-arg overload (with options array — ignored at runtime)
-    let params_clone4 = params.clone();
+    // 4-arg overload (with options array — ignored at runtime)
+    let p = Arc::clone(&params_arc);
     engine.register_fn(
         "extern",
         move |name: &str, default: Dynamic, _desc: &str, _opts: rhai::Array| -> Dynamic {
-            if let Some(value) = params_clone4.get(name) {
+            if let Some(value) = p.get(name) {
                 super::stdlib::json_to_dynamic(value)
             } else if default.is_unit() {
                 Dynamic::from(format!("ERROR: Required parameter '{name}' not provided"))
@@ -557,43 +561,49 @@ pub async fn run_script_backtest(
             .collect()
     };
 
-    // Build fully-adjusted bars for indicator computation (split + dividend adjusted
-    // to avoid false signals at corporate action dates)
-    let indicator_bars = if adjustment_timeline.is_empty() {
-        bars.clone()
+    // 5. Pre-compute indicators
+    // Build price_history Arc first so indicator_bars can share it (zero-cost
+    // Arc::clone) when no dividend adjustments are needed, avoiding a full
+    // Vec<OhlcvBar> clone.
+    let price_history = Arc::new(bars);
+    let indicator_bars: Arc<Vec<OhlcvBar>> = if adjustment_timeline.is_empty() {
+        Arc::clone(&price_history)
     } else {
-        bars.iter()
-            .map(|b| {
-                // bars are already split-adjusted, so only apply dividend adjustment
-                // by dividing out the split factor and applying the full factor
-                let split_factor = split_timeline.factor_at(b.datetime.date());
-                let full_factor = adjustment_timeline.factor_at(b.datetime.date());
-                // dividend-only factor = full / split
-                let div_factor = if split_factor.abs() > f64::EPSILON {
-                    full_factor / split_factor
-                } else {
-                    1.0
-                };
-                OhlcvBar {
-                    datetime: b.datetime,
-                    open: b.open * div_factor,
-                    high: b.high * div_factor,
-                    low: b.low * div_factor,
-                    close: b.close * div_factor,
-                    volume: b.volume,
-                }
-            })
-            .collect()
+        // Build fully-adjusted bars for indicator computation (split + dividend adjusted
+        // to avoid false signals at corporate action dates)
+        Arc::new(
+            price_history
+                .iter()
+                .map(|b| {
+                    // bars are already split-adjusted, so only apply dividend adjustment
+                    // by dividing out the split factor and applying the full factor
+                    let split_factor = split_timeline.factor_at(b.datetime.date());
+                    let full_factor = adjustment_timeline.factor_at(b.datetime.date());
+                    // dividend-only factor = full / split
+                    let div_factor = if split_factor.abs() > f64::EPSILON {
+                        full_factor / split_factor
+                    } else {
+                        1.0
+                    };
+                    OhlcvBar {
+                        datetime: b.datetime,
+                        open: b.open * div_factor,
+                        high: b.high * div_factor,
+                        low: b.low * div_factor,
+                        close: b.close * div_factor,
+                        volume: b.volume,
+                    }
+                })
+                .collect(),
+        )
     };
 
-    // 5. Pre-compute indicators
     let indicator_store = Arc::new(IndicatorStore::build(
         &config.declared_indicators,
         &indicator_bars,
     )?);
 
     // 6. Run main simulation loop
-    let price_history = Arc::new(bars);
     // Load cross-symbol data (forward-filled to primary timeline)
     let cross_symbol_data = if config.cross_symbols.is_empty() {
         Arc::new(HashMap::new())

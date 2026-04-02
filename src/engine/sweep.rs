@@ -27,7 +27,7 @@ pub struct GridSweepConfig {
 }
 
 /// Max concurrent backtest tasks.  Kept moderate to avoid excessive memory use
-/// (each task holds its own Rhai engine + intermediate DataFrames).
+/// (each task holds its own Rhai engine + intermediate data frames).
 const MAX_CONCURRENT: usize = 8;
 
 /// Run a grid sweep over the Cartesian product of `param_grid`.

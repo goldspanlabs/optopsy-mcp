@@ -26,7 +26,8 @@ pub type PriceTable = HashMap<PriceKey, QuoteSnapshot, FxBuildHasher>;
 pub type DateIndex = HashMap<NaiveDate, Vec<PriceKey>>;
 
 /// Bid/ask/delta snapshot for a single option contract at a point in time.
-#[derive(Debug, Clone)]
+/// `Copy` — only 24 bytes (3 × f64), cheaper to copy than ref-count.
+#[derive(Debug, Clone, Copy)]
 pub struct QuoteSnapshot {
     pub bid: f64,
     pub ask: f64,

@@ -23,14 +23,34 @@ pub struct DatePartitionedOptions {
 impl DatePartitionedOptions {
     /// Build from a full options DataFrame by grouping on the date portion of `datetime`.
     ///
-    /// After partitioning each daily slice:
-    /// - Pre-computes the `dte` column so `filter_leg_candidates` can skip it.
-    /// - Applies the `expiration_filter` to remove non-matching expirations early.
+    /// Computes the `dte` column once on the full DataFrame, applies the
+    /// `expiration_filter`, then partitions by date — avoiding per-slice
+    /// `lazy().collect()` overhead (previously thousands of collects).
     pub fn from_df(df: &DataFrame, expiration_filter: &ExpirationFilter) -> Result<Self> {
-        let dt_col = df.column("datetime")?;
+        let ms_per_day = 86_400_000i64;
+
+        // 1. Compute DTE once on the full DataFrame
+        let df_with_dte = df
+            .clone()
+            .lazy()
+            .with_column(
+                ((col("expiration").cast(DataType::Date) - col(DATETIME_COL).cast(DataType::Date))
+                    .dt()
+                    .total_milliseconds(false)
+                    / lit(ms_per_day))
+                .cast(DataType::Int32)
+                .alias("dte"),
+            )
+            .collect()?;
+
+        // 2. Apply expiration filter once on the full DataFrame
+        let df_filtered = filters::filter_expiration_type(df_with_dte, expiration_filter)?;
+
+        // 3. Partition by date using index gather (no per-slice lazy/collect)
+        let dt_col = df_filtered.column("datetime")?;
         let dt_ca = dt_col.datetime()?;
         let tu = dt_ca.time_unit();
-        let n = df.height();
+        let n = df_filtered.height();
         let mut date_indices: HashMap<NaiveDate, Vec<u32>> = HashMap::new();
 
         for i in 0..n {
@@ -41,29 +61,10 @@ impl DatePartitionedOptions {
             }
         }
 
-        let ms_per_day = 86_400_000i64;
         let mut by_date = HashMap::with_capacity(date_indices.len());
         for (date, indices) in date_indices {
             let idx = IdxCa::new("idx".into(), &indices);
-            let slice = df.take(&idx)?;
-
-            // Pre-compute DTE column on the daily slice
-            let slice = slice
-                .lazy()
-                .with_column(
-                    ((col("expiration").cast(DataType::Date)
-                        - col(DATETIME_COL).cast(DataType::Date))
-                    .dt()
-                    .total_milliseconds(false)
-                        / lit(ms_per_day))
-                    .cast(DataType::Int32)
-                    .alias("dte"),
-                )
-                .collect()?;
-
-            // Pre-filter by expiration type (Optimization 5)
-            let slice = filters::filter_expiration_type(slice, expiration_filter)?;
-
+            let slice = df_filtered.take(&idx)?;
             if slice.height() > 0 {
                 by_date.insert(date, slice);
             }

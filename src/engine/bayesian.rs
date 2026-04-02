@@ -179,7 +179,7 @@ pub async fn run_bayesian(
 // ---------------------------------------------------------------------------
 
 /// Gaussian Process with RBF kernel.
-/// Caches the Cholesky factor L from fit() so predict() uses O(n²) forward/back
+/// Caches the Cholesky factor L from `fit()` so `predict()` uses O(n²) forward/back
 /// substitution instead of rebuilding and re-factoring the O(n³) kernel matrix.
 struct GaussianProcess {
     x_train: Vec<Vec<f64>>,
@@ -447,7 +447,7 @@ pub fn random_point(dim: usize) -> Vec<f64> {
 }
 
 /// Evaluate a single parameter combination.
-/// Takes owned `swept_params` to avoid a clone — caller moves the HashMap in.
+/// Takes owned `swept_params` to avoid a clone — caller moves the `HashMap` in.
 async fn evaluate(
     script_source: &str,
     base_params: &HashMap<String, Value>,
@@ -548,7 +548,7 @@ mod tests {
     #[test]
     fn gp_cholesky_cache_consistency() {
         let xs: Vec<Vec<f64>> = (0..20)
-            .map(|i| vec![i as f64 / 20.0, (i as f64 * 0.7).sin()])
+            .map(|i| vec![f64::from(i) / 20.0, (f64::from(i) * 0.7).sin()])
             .collect();
         let ys: Vec<f64> = xs.iter().map(|x| x[0] * 2.0 + x[1]).collect();
         let gp = GaussianProcess::fit(&xs, &ys);
@@ -637,12 +637,12 @@ mod tests {
         );
     }
 
-    /// Benchmark: cache_key string building.
+    /// Benchmark: `cache_key` string building.
     #[test]
     fn bench_cache_key() {
         let mut params = HashMap::new();
         for i in 0..10 {
-            params.insert(format!("param_{i}"), serde_json::json!(i as f64 * 0.1));
+            params.insert(format!("param_{i}"), serde_json::json!(f64::from(i) * 0.1));
         }
 
         let n_iters = 10_000;
@@ -660,7 +660,7 @@ mod tests {
         let mut last2 = String::new();
         for _ in 0..n_iters {
             let mut pairs: Vec<_> = params.iter().collect();
-            pairs.sort_by_key(|(k, _)| k.clone());
+            pairs.sort_by_key(|(k, _)| k.as_str());
             last2 = pairs
                 .iter()
                 .map(|(k, v)| format!("{k}={v}"))
