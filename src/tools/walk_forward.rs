@@ -13,7 +13,7 @@ use serde_json::Value;
 use crate::data::adjustment_store::SqliteAdjustmentStore;
 use crate::data::cache::CachedStore;
 use crate::engine::walk_forward::{self as wf_engine, WalkForwardParams, WfMode, WfObjective};
-use crate::scripting::engine::CachingDataLoader;
+use crate::scripting::engine::{CachingDataLoader, CancelCallback};
 use crate::tools::response_types::walk_forward::{WalkForwardResponse, WalkForwardWindowResult};
 
 /// Execute walk-forward optimization with AI-formatted response.
@@ -74,7 +74,8 @@ pub async fn execute(
     let sym = engine_params.symbol.clone();
 
     let loader = CachingDataLoader::new(Arc::clone(cache), adjustment_store);
-    let result = wf_engine::execute(engine_params, &loader).await?;
+    let no_cancel: CancelCallback = Box::new(|| false);
+    let result = wf_engine::execute(engine_params, &loader, &no_cancel, |_, _| {}).await?;
 
     // Map engine window results to tool response type
     let windows: Vec<WalkForwardWindowResult> = result

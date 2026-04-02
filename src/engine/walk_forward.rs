@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::engine::types::{BacktestResult, EquityPoint, PerformanceMetrics};
-use crate::scripting::engine::{run_script_backtest, DataLoader}; // signature: (src, params, loader, progress, precomputed, is_cancelled)
+use crate::scripting::engine::{run_script_backtest, CancelCallback, DataLoader};
 
 /// Walk-forward mode.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -216,6 +216,9 @@ pub struct WalkForwardResponse {
     pub objective: String,
     pub mode: String,
     pub execution_time_ms: u64,
+    pub profitable_windows: usize,
+    pub total_windows: usize,
+    pub param_stability: String,
 }
 
 /// Extract the target metric from a backtest result.
@@ -233,6 +236,8 @@ fn extract_metric(result: &BacktestResult, objective: &WfObjective) -> f64 {
 pub async fn execute(
     params: WalkForwardParams,
     data_loader: &dyn DataLoader,
+    is_cancelled: &CancelCallback,
+    on_progress: impl Fn(usize, usize),
 ) -> Result<WalkForwardResponse> {
     let start = std::time::Instant::now();
 
@@ -293,7 +298,13 @@ pub async fn execute(
     let mut is_metrics_sum = 0.0_f64;
     let mut oos_metrics_sum = 0.0_f64;
 
+    let total_steps = windows.len() * 2;
+
     for (idx, window) in windows.iter().enumerate() {
+        if is_cancelled() {
+            break;
+        }
+
         // --- Training phase: sweep all combos ---
         let mut best_metric = f64::NEG_INFINITY;
         let mut best_params = combos[0].clone();
@@ -323,6 +334,11 @@ pub async fn execute(
         }
 
         let is_metric = best_metric;
+        on_progress(idx * 2 + 1, total_steps);
+
+        if is_cancelled() {
+            break;
+        }
 
         // --- Test phase: run best params on OOS window ---
         let mut oos_params = base_params.clone();
@@ -363,6 +379,8 @@ pub async fn execute(
             in_sample_metric: is_metric,
             out_of_sample_metric: oos_metric,
         });
+
+        on_progress(idx * 2 + 2, total_steps);
     }
 
     let efficiency_ratio = if is_metrics_sum.abs() > f64::EPSILON {
@@ -380,6 +398,29 @@ pub async fn execute(
     let objective_str = format!("{:?}", params.objective).to_lowercase();
     let mode_str = format!("{:?}", params.mode).to_lowercase();
 
+    // Compute new summary fields
+    let profitable_windows = window_results
+        .iter()
+        .filter(|w| w.out_of_sample_metric > 0.0)
+        .count();
+    let total_windows = window_results.len();
+
+    let param_stability = {
+        use std::collections::HashSet;
+        let unique_params: HashSet<String> = window_results
+            .iter()
+            .map(|w| serde_json::to_string(&w.best_params).unwrap_or_default())
+            .collect();
+        let n_unique = unique_params.len();
+        if n_unique <= 1 {
+            "stable".to_string()
+        } else if n_unique <= total_windows / 2 {
+            "moderate".to_string()
+        } else {
+            "unstable".to_string()
+        }
+    };
+
     Ok(WalkForwardResponse {
         windows: window_results,
         stitched_equity: all_oos_equity,
@@ -388,6 +429,9 @@ pub async fn execute(
         objective: objective_str,
         mode: mode_str,
         execution_time_ms: start.elapsed().as_millis() as u64,
+        profitable_windows,
+        total_windows,
+        param_stability,
     })
 }
 

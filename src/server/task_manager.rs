@@ -18,6 +18,7 @@ use tokio_util::sync::CancellationToken;
 pub enum TaskKind {
     Single,
     Sweep,
+    WalkForward,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
