@@ -35,6 +35,36 @@ fn validate_end_date_after_start(
     }
 }
 
+/// Validate that `objective` is one of the accepted values (or None for default).
+#[allow(clippy::trivially_copy_pass_by_ref, clippy::ref_option)]
+fn validate_wf_objective(value: &Option<String>, _ctx: &()) -> garde::Result {
+    if let Some(v) = value {
+        match v.as_str() {
+            "sharpe" | "sortino" | "profit_factor" | "cagr" => Ok(()),
+            _ => Err(garde::Error::new(format!(
+                "invalid objective '{v}', expected: sharpe, sortino, profit_factor, cagr"
+            ))),
+        }
+    } else {
+        Ok(())
+    }
+}
+
+/// Validate that `mode` is one of the accepted values (or None for default).
+#[allow(clippy::trivially_copy_pass_by_ref, clippy::ref_option)]
+fn validate_wf_mode(value: &Option<String>, _ctx: &()) -> garde::Result {
+    if let Some(v) = value {
+        match v.as_str() {
+            "rolling" | "anchored" => Ok(()),
+            _ => Err(garde::Error::new(format!(
+                "invalid mode '{v}', expected: rolling, anchored"
+            ))),
+        }
+    } else {
+        Ok(())
+    }
+}
+
 /// Format a tool execution error for MCP responses.
 pub(crate) fn tool_err(e: impl std::fmt::Display) -> String {
     format!("Error: {e}")
@@ -559,7 +589,7 @@ pub struct WalkForwardToolParams {
 
     /// Objective metric to optimize: `sharpe` (default), `sortino`, `profit_factor`, `cagr`.
     #[serde(default)]
-    #[garde(skip)]
+    #[garde(custom(validate_wf_objective))]
     pub objective: Option<String>,
 
     /// Number of walk-forward windows (default: 5).
@@ -569,7 +599,7 @@ pub struct WalkForwardToolParams {
 
     /// Walk-forward mode: `rolling` (default) or `anchored`.
     #[serde(default)]
-    #[garde(skip)]
+    #[garde(custom(validate_wf_mode))]
     pub mode: Option<String>,
 
     /// Fraction of each window used for training (default: 0.70).
