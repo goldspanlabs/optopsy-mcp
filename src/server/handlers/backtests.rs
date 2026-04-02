@@ -13,12 +13,12 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use crate::data::traits::{RunDetail, TradeRow};
+use crate::data::traits::TradeRow;
 use crate::server::sanitize::{sanitize, trade_row_from_record};
 use crate::server::state::AppState;
 use crate::tools::run_script::RunScriptParams;
 
-/// Request body for `POST /backtests`.
+/// Request body for `POST /runs`.
 #[derive(Debug, Deserialize)]
 pub struct CreateBacktestRequest {
     pub strategy: String,
@@ -58,7 +58,7 @@ fn strip_trades_from_result_json(response: &crate::tools::run_script::RunScriptR
 /// Insert a backtest result into the run store, returning `(id, created_at)`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn persist_backtest(
-    state: &AppState,
+    run_store: &dyn crate::data::traits::RunStore,
     strategy_key: &str,
     symbol: &str,
     capital: f64,
@@ -89,8 +89,7 @@ pub(crate) fn persist_backtest(
         .and_then(|m| m.regime.as_ref())
         .map(|r| r.join(","));
 
-    let created_at = state
-        .run_store
+    let created_at = run_store
         .insert_run(
             &id,
             None, // no sweep
@@ -122,8 +121,7 @@ pub(crate) fn persist_backtest(
         )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    state
-        .run_store
+    run_store
         .insert_trades(&id, &trades)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -134,68 +132,11 @@ pub(crate) fn persist_backtest(
 // Handlers
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// `POST /backtests` — Run a strategy and persist the result.
-#[allow(clippy::too_many_lines)]
-pub async fn create_backtest(
-    State(state): State<AppState>,
-    Json(req): Json<CreateBacktestRequest>,
-) -> Result<(StatusCode, Json<RunDetail>), (StatusCode, String)> {
-    let run_params = RunScriptParams {
-        strategy: Some(req.strategy.clone()),
-        script: None,
-        params: req.params.clone(),
-        profile: req.profile.clone(),
-    };
-
-    let exec_result = crate::server::handlers::run_script::execute(&state.server, run_params)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let strategy_key = exec_result
-        .resolved_strategy_id
-        .unwrap_or_else(|| req.strategy.clone());
-    let response = exec_result.response;
-
-    let symbol = req
-        .params
-        .get("SYMBOL")
-        .and_then(Value::as_str)
-        .unwrap_or("UNKNOWN")
-        .to_owned();
-
-    let capital = req
-        .params
-        .get("CAPITAL")
-        .and_then(Value::as_f64)
-        .unwrap_or(0.0);
-
-    let (id, _created_at) = persist_backtest(
-        &state,
-        &strategy_key,
-        &symbol,
-        capital,
-        &req.params,
-        &response,
-        "manual",
-        None,
-    )?;
-
-    let detail = state
-        .run_store
-        .get_run(&id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Run inserted but not found".to_string(),
-            )
-        })?;
-
-    Ok((StatusCode::CREATED, Json(detail)))
-}
-
-/// `POST /backtests/stream` — Run a strategy with SSE progress updates.
+/// `POST /runs` — Run a strategy with SSE progress updates (legacy endpoint).
+///
+/// Cancellation is handled via `/tasks/*` endpoints; this endpoint runs to completion.
 #[allow(clippy::unused_async, clippy::too_many_lines)]
-pub async fn create_backtest_stream(
+pub async fn create_backtest(
     State(state): State<AppState>,
     Json(req): Json<CreateBacktestRequest>,
 ) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
@@ -243,9 +184,13 @@ pub async fn create_backtest_stream(
             profile: req.profile.clone(),
         };
 
-        let result =
-            super::run_script::execute_with_progress(&state.server, run_params, Some(progress_cb))
-                .await;
+        let result = super::run_script::execute_with_progress(
+            &state.server,
+            run_params,
+            Some(progress_cb),
+            None,
+        )
+        .await;
 
         // Stop the progress ticker
         ticker.abort();
@@ -271,7 +216,7 @@ pub async fn create_backtest_stream(
                     .unwrap_or(0.0);
 
                 match persist_backtest(
-                    &state,
+                    &*state.run_store,
                     &strategy_key,
                     &symbol,
                     capital,

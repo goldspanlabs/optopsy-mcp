@@ -54,6 +54,20 @@ impl DataLoader for TestDataLoader {
     ) -> Result<DataFrame> {
         Ok(DataFrame::empty())
     }
+
+    fn load_splits(
+        &self,
+        _symbol: &str,
+    ) -> Result<Vec<optopsy_mcp::data::adjustment_store::SplitRow>> {
+        Ok(Vec::new())
+    }
+
+    fn load_dividends(
+        &self,
+        _symbol: &str,
+    ) -> Result<Vec<optopsy_mcp::data::adjustment_store::DividendRow>> {
+        Ok(Vec::new())
+    }
 }
 
 fn sma200_params() -> HashMap<String, serde_json::Value> {
@@ -105,7 +119,7 @@ async fn sma200_threshold_runs_and_produces_trades() {
     let script = std::fs::read_to_string("scripts/strategies/sma200_threshold.rhai")
         .expect("sma200_threshold.rhai should exist");
 
-    let result = run_script_backtest(&script, &sma200_params(), &loader)
+    let result = run_script_backtest(&script, &sma200_params(), &loader, None, None, None)
         .await
         .expect("backtest should complete without error");
 
@@ -162,7 +176,7 @@ async fn sma200_threshold_no_trades_before_warmup() {
     let script = std::fs::read_to_string("scripts/strategies/sma200_threshold.rhai")
         .expect("sma200_threshold.rhai should exist");
 
-    let result = run_script_backtest(&script, &sma200_params(), &loader)
+    let result = run_script_backtest(&script, &sma200_params(), &loader, None, None, None)
         .await
         .expect("backtest should complete without error");
 

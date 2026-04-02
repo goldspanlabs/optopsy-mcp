@@ -5,8 +5,10 @@
 
 pub mod handlers;
 mod params;
+pub mod router;
 pub(crate) mod sanitize;
 pub mod state;
+pub mod task_manager;
 
 pub use params::{AggMetric, CorrelateMode, FactorProxies, GroupBy, RegimeMethod, RollingMetric};
 
@@ -28,12 +30,13 @@ use crate::tools::response_types::{
     AggregatePricesResponse, BenchmarkAnalysisResponse, CointegrationResponse, CorrelateResponse,
     DistributionResponse, DrawdownAnalysisResponse, FactorAttributionResponse, HypothesisParams,
     HypothesisResponse, MonteCarloResponse, PortfolioOptimizeResponse, RegimeDetectResponse,
-    RollingMetricResponse,
+    RollingMetricResponse, WalkForwardResponse,
 };
 use params::{
     tool_err, validation_err, AggregatePricesParams, BenchmarkAnalysisParams, CointegrationParams,
     CorrelateParams, DistributionParams, DrawdownAnalysisParams, FactorAttributionParams,
     MonteCarloParams, PortfolioOptimizeParams, RegimeDetectParams, RollingMetricParams,
+    WalkForwardToolParams,
 };
 use sanitize::SanitizedResult;
 
@@ -51,6 +54,8 @@ pub struct OptopsyServer {
     pub strategy_store: Option<Arc<dyn StrategyStore>>,
     /// Run/sweep persistence store (set in HTTP mode; `None` in stdio-only mode).
     pub run_store: Option<Arc<dyn RunStore>>,
+    /// Adjustment factor store (splits/dividends) for correct options backtesting.
+    pub adjustment_store: Option<Arc<crate::data::adjustment_store::SqliteAdjustmentStore>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -62,6 +67,7 @@ impl OptopsyServer {
             cache,
             strategy_store: None,
             run_store: None,
+            adjustment_store: None,
             tool_router: Self::tool_router(),
         }
     }
@@ -76,6 +82,7 @@ impl OptopsyServer {
             cache,
             strategy_store: Some(strategy_store),
             run_store: None,
+            adjustment_store: None,
             tool_router: Self::tool_router(),
         }
     }
@@ -91,6 +98,24 @@ impl OptopsyServer {
             cache,
             strategy_store: Some(strategy_store),
             run_store: Some(run_store),
+            adjustment_store: None,
+            tool_router: Self::tool_router(),
+        }
+    }
+
+    /// Create a new server instance with all stores including adjustment factors.
+    pub fn with_all_stores(
+        cache: Arc<CachedStore>,
+        strategy_store: Arc<dyn StrategyStore>,
+        run_store: Arc<dyn RunStore>,
+        adjustment_store: Arc<crate::data::adjustment_store::SqliteAdjustmentStore>,
+    ) -> Self {
+        Self {
+            data: Arc::new(RwLock::new(HashMap::new())),
+            cache,
+            strategy_store: Some(strategy_store),
+            run_store: Some(run_store),
+            adjustment_store: Some(adjustment_store),
             tool_router: Self::tool_router(),
         }
     }
@@ -548,9 +573,66 @@ impl OptopsyServer {
             .map_err(|e| format!("Failed to read scripting reference: {e}"))
     }
 
+    /// Run walk-forward optimization: split data into train/test windows, optimize parameters
+    /// on each training window, and validate on the out-of-sample test window.
+    ///
+    /// **When to use**: After finding a profitable strategy via backtest + sweep, to verify
+    /// that optimized parameters generalize to unseen data. The efficiency ratio (OOS/IS metric)
+    /// measures how well the strategy avoids overfitting.
+    ///
+    /// **Output**: Per-window IS/OOS metrics, best params per window, stitched OOS equity curve,
+    /// and efficiency ratio.
+    ///
+    /// **Example**:
+    /// ```json
+    /// {
+    ///   "strategy": "short_put",
+    ///   "symbol": "SPY",
+    ///   "capital": 100000,
+    ///   "params_grid": {
+    ///     "DELTA_TARGET": [0.20, 0.30, 0.40],
+    ///     "DTE_TARGET": [30, 45, 60]
+    ///   },
+    ///   "n_windows": 5,
+    ///   "objective": "sharpe"
+    /// }
+    /// ```
+    #[tool(name = "walk_forward", annotations(read_only_hint = true))]
+    async fn walk_forward(
+        &self,
+        Parameters(params): Parameters<WalkForwardToolParams>,
+    ) -> SanitizedResult<WalkForwardResponse, String> {
+        SanitizedResult(
+            async {
+                params
+                    .validate()
+                    .map_err(|e| validation_err("walk_forward", e))?;
+                tools::walk_forward::execute(
+                    &self.cache,
+                    self.adjustment_store.clone(),
+                    &params.strategy,
+                    &params.symbol,
+                    params.capital,
+                    params.params_grid,
+                    params.objective,
+                    Some(params.n_windows),
+                    params.mode,
+                    Some(params.train_pct),
+                    params.start_date,
+                    params.end_date,
+                    params.profile,
+                )
+                .await
+                .map_err(tool_err)
+            }
+            .await,
+        )
+    }
+
     /// Run a backtest or parameter sweep. Pass a saved strategy by display name.
     ///
-    /// Omit `sweep_params` for a single backtest, or provide ranges for a grid/bayesian sweep.
+    /// Omit `sweep_params` for a single backtest (returns full equity curve, trade log, metrics).
+    /// Provide `sweep_params` for a grid/bayesian sweep (returns ranked results).
     /// Results are persisted to the runs database.
     ///
     /// **Example (single backtest)**:
@@ -628,6 +710,7 @@ impl ServerHandler for OptopsyServer {
                 \n  - factor_attribution — decompose returns into factor exposures\
                 \n  - benchmark_analysis — compare vs. benchmark (alpha, beta, capture ratios)\
                 \n  - distribution — P&L or return distribution + normality tests\
+                \n  - walk_forward — walk-forward optimization to validate parameter robustness\
                 \n\
                 \n### 4. Market Analysis Tools\
                 \n  - aggregate_prices — seasonal/time-bucket return patterns\

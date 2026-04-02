@@ -28,6 +28,7 @@ use super::types::*;
 /// loads data, pre-computes indicators, and runs the unified simulation loop.
 /// Optional progress callback: receives (current_bar, total_bars).
 pub type ProgressCallback = Box<dyn Fn(usize, usize) + Send + Sync>;
+pub type CancelCallback = Box<dyn Fn() -> bool + Send + Sync>;
 
 /// Pre-computed options data that can be shared across sweep iterations.
 ///
@@ -41,14 +42,6 @@ pub struct PrecomputedOptionsData {
     pub options_by_date: Arc<DatePartitionedOptions>,
     pub price_table: Arc<crate::engine::sim_types::PriceTable>,
     pub date_index: Arc<crate::engine::sim_types::DateIndex>,
-}
-
-pub async fn run_script_backtest(
-    script_source: &str,
-    params: &HashMap<String, serde_json::Value>,
-    data_loader: &dyn DataLoader,
-) -> Result<ScriptBacktestResult> {
-    run_script_backtest_with_progress(script_source, params, data_loader, None, None).await
 }
 
 // ---------------------------------------------------------------------------
@@ -416,12 +409,13 @@ pub fn validate_script(
     }
 }
 
-pub async fn run_script_backtest_with_progress(
+pub async fn run_script_backtest(
     script_source: &str,
     params: &HashMap<String, serde_json::Value>,
     data_loader: &dyn DataLoader,
     progress: Option<ProgressCallback>,
     precomputed_options: Option<&PrecomputedOptionsData>,
+    is_cancelled: Option<&CancelCallback>,
 ) -> Result<ScriptBacktestResult> {
     let backtest_start = std::time::Instant::now();
 
@@ -522,10 +516,81 @@ pub async fn run_script_backtest_with_progress(
     // 4b. Convert DataFrame → Vec<OhlcvBar> for the simulation loop
     let bars = ohlcv_bars_from_df(&ohlcv_df)?;
 
+    // Load adjustment factors (splits + dividends)
+    let splits = data_loader.load_splits(&config.symbol)?;
+    let dividends = data_loader.load_dividends(&config.symbol)?;
+    let closes: Vec<(NaiveDate, f64)> = bars.iter().map(|b| (b.datetime.date(), b.close)).collect();
+
+    // Split-only timeline: matches options data (which is split-adjusted by data provider).
+    // Used for the simulation bars so strike-vs-price comparisons are correct.
+    let split_timeline = Arc::new(crate::engine::adjustments::AdjustmentTimeline::build(
+        &splits,
+        &[],
+        &[],
+    ));
+
+    // Full timeline (splits + dividends): used for indicators and ctx.adjusted_close
+    // so returns/metrics are fully adjusted.
+    let adjustment_timeline = Arc::new(crate::engine::adjustments::AdjustmentTimeline::build(
+        &splits, &dividends, &closes,
+    ));
+
     let config = Arc::new(config);
 
+    // Apply split-only adjustment to simulation bars so OHLCV prices match
+    // the split-adjusted options strikes from the data provider.
+    let bars = if split_timeline.is_empty() {
+        bars
+    } else {
+        bars.iter()
+            .map(|b| {
+                let factor = split_timeline.factor_at(b.datetime.date());
+                OhlcvBar {
+                    datetime: b.datetime,
+                    open: b.open * factor,
+                    high: b.high * factor,
+                    low: b.low * factor,
+                    close: b.close * factor,
+                    volume: b.volume,
+                }
+            })
+            .collect()
+    };
+
+    // Build fully-adjusted bars for indicator computation (split + dividend adjusted
+    // to avoid false signals at corporate action dates)
+    let indicator_bars = if adjustment_timeline.is_empty() {
+        bars.clone()
+    } else {
+        bars.iter()
+            .map(|b| {
+                // bars are already split-adjusted, so only apply dividend adjustment
+                // by dividing out the split factor and applying the full factor
+                let split_factor = split_timeline.factor_at(b.datetime.date());
+                let full_factor = adjustment_timeline.factor_at(b.datetime.date());
+                // dividend-only factor = full / split
+                let div_factor = if split_factor.abs() > f64::EPSILON {
+                    full_factor / split_factor
+                } else {
+                    1.0
+                };
+                OhlcvBar {
+                    datetime: b.datetime,
+                    open: b.open * div_factor,
+                    high: b.high * div_factor,
+                    low: b.low * div_factor,
+                    close: b.close * div_factor,
+                    volume: b.volume,
+                }
+            })
+            .collect()
+    };
+
     // 5. Pre-compute indicators
-    let indicator_store = Arc::new(IndicatorStore::build(&config.declared_indicators, &bars)?);
+    let indicator_store = Arc::new(IndicatorStore::build(
+        &config.declared_indicators,
+        &indicator_bars,
+    )?);
 
     // 6. Run main simulation loop
     let price_history = Arc::new(bars);
@@ -636,7 +701,15 @@ pub async fn run_script_backtest_with_progress(
         config: Arc::clone(&config),
         options_by_date: options_by_date.clone(),
         custom_series: Arc::clone(&custom_series),
+        adjustment_timeline: Arc::clone(&adjustment_timeline),
+        split_timeline: Arc::clone(&split_timeline),
     };
+
+    // Pending order queue for next-bar execution model
+    let mut pending_orders: Vec<PendingOrder> = Vec::new();
+    // Max profit/loss tracking per position id
+    let mut max_profit_tracker: HashMap<usize, f64> = HashMap::new();
+    let mut max_loss_tracker: HashMap<usize, f64> = HashMap::new();
 
     for (bar_idx, bar) in price_history.iter().enumerate() {
         if stop_requested {
@@ -645,6 +718,12 @@ pub async fn run_script_backtest_with_progress(
 
         // Wall-clock timeout check (every 100 bars to minimize overhead)
         if bar_idx % 100 == 0 {
+            if let Some(cancel_fn) = is_cancelled {
+                if cancel_fn() {
+                    warnings.push("Backtest cancelled by user".to_string());
+                    break;
+                }
+            }
             if loop_start.elapsed() > timeout {
                 warnings.push(format!(
                     "Backtest exceeded {}s timeout at bar {bar_idx}",
@@ -664,7 +743,303 @@ pub async fn run_script_backtest_with_progress(
 
         let today = bar.datetime.date();
 
-        // --- Phase A: Exits (immediate processing) ---
+        // Note: stock position quantities are NOT adjusted at split dates because
+        // OHLCV bars are already split-adjusted before entering the simulation loop.
+        // With split-adjusted prices there is no discontinuity, so positions remain
+        // correct without runtime adjustment. The "100 shares at $100" in split-adjusted
+        // terms is economically equivalent to "200 shares at $100" in unadjusted terms.
+
+        // --- Phase A: Fill pending orders from previous bar ---
+        // Orders submitted on bar N are filled on bar N+1.
+        // Remove expired orders first, then attempt to fill remaining orders.
+        pending_orders.retain(|order| !order.is_expired(bar_idx));
+
+        let orders_to_process = std::mem::take(&mut pending_orders);
+        // Snapshot the pending count before processing for accurate callback contexts
+        let phase_a_pending_count = orders_to_process.len();
+        let mut unfilled_orders: Vec<PendingOrder> = Vec::new();
+        for order in orders_to_process {
+            if let Some(fill_price) = order.try_fill(bar.open, bar.high, bar.low, bar.close) {
+                match &order.action {
+                    ScriptAction::OpenStock { side, qty } => {
+                        // Stagger check
+                        if let Some(min_days) = config.min_days_between_entries {
+                            if let Some(last) = last_entry_date {
+                                if (today - last).num_days() < i64::from(min_days) {
+                                    unfilled_orders.push(order);
+                                    continue;
+                                }
+                            }
+                        }
+
+                        let adjusted_fill =
+                            apply_stock_slippage(fill_price, *side, &config.slippage);
+                        let pos = ScriptPosition {
+                            id: next_id,
+                            entry_date: today,
+                            inner: ScriptPositionInner::Stock {
+                                side: *side,
+                                qty: *qty,
+                                entry_price: adjusted_fill,
+                            },
+                            entry_cost: adjusted_fill * *qty as f64 * side.multiplier(),
+                            unrealized_pnl: 0.0,
+                            days_held: 0,
+                            current_date: today,
+                            entry_bar_idx: bar_idx,
+                            source: "script".to_string(),
+                            implicit: false,
+                            group: read_group(&scope),
+                        };
+                        realized_equity -= compute_commission(&config.commission, &pos);
+                        next_id += 1;
+                        last_entry_date = Some(today);
+
+                        if has_on_position_opened {
+                            let positions_arc = Arc::new(positions.clone());
+                            let awareness = compute_position_awareness(
+                                &positions,
+                                phase_a_pending_count,
+                                bar_idx,
+                            );
+                            let ctx = ctx_factory.build(
+                                bar,
+                                bar_idx,
+                                &positions_arc,
+                                realized_equity,
+                                &pnl_history_arc,
+                                &awareness,
+                            );
+                            let pos_dyn = Dynamic::from(pos.clone());
+                            let _ = call_fn_persistent(
+                                &engine,
+                                &mut scope,
+                                &ast,
+                                "on_position_opened",
+                                (ctx, pos_dyn),
+                            );
+                        }
+
+                        positions.push(pos);
+                    }
+                    ScriptAction::Close {
+                        position_id: Some(pid),
+                        reason,
+                    } => {
+                        if let Some(idx) = positions.iter().position(|p| p.id == *pid) {
+                            let closed_pos = positions[idx].clone();
+                            // Apply slippage: closing a position is the opposite direction
+                            // Closing is the opposite direction: long→sell, short→buy
+                            let exit_side = match &closed_pos.inner {
+                                ScriptPositionInner::Stock {
+                                    side: Side::Long, ..
+                                } => Side::Short,
+                                ScriptPositionInner::Stock {
+                                    side: Side::Short, ..
+                                } => Side::Long,
+                                _ => Side::Short, // default: sell
+                            };
+                            let exit_fill =
+                                apply_stock_slippage(fill_price, exit_side, &config.slippage);
+                            let pnl = compute_close_pnl_at_price(&closed_pos, exit_fill);
+                            let exit_comm = compute_commission(&config.commission, &closed_pos);
+                            realized_equity += pnl - exit_comm;
+
+                            if has_on_position_closed {
+                                let positions_arc = Arc::new(positions.clone());
+                                let awareness = compute_position_awareness(
+                                    &positions,
+                                    unfilled_orders.len(),
+                                    bar_idx,
+                                );
+                                let ctx = ctx_factory.build(
+                                    bar,
+                                    bar_idx,
+                                    &positions_arc,
+                                    realized_equity,
+                                    &pnl_history_arc,
+                                    &awareness,
+                                );
+                                let pos_dyn = Dynamic::from(closed_pos.clone());
+                                let exit_dyn = Dynamic::from(reason.clone());
+                                let _ = call_fn_persistent(
+                                    &engine,
+                                    &mut scope,
+                                    &ast,
+                                    "on_position_closed",
+                                    (ctx, pos_dyn, exit_dyn),
+                                );
+                            }
+
+                            trade_log.push(build_script_trade_record(
+                                &closed_pos,
+                                bar.datetime,
+                                pnl,
+                                reason,
+                            ));
+                            pnl_history.push(pnl);
+                            pnl_dirty = true;
+                            max_profit_tracker.remove(pid);
+                            max_loss_tracker.remove(pid);
+                            positions.swap_remove(idx);
+                        } else {
+                            warnings.push(format!(
+                                "Pending close order: position_id {pid} not found (may have been closed already)"
+                            ));
+                        }
+                    }
+                    ScriptAction::Close {
+                        position_id: None,
+                        reason,
+                    } => {
+                        // Close without position_id: close the first non-implicit position
+                        if let Some(idx) = positions.iter().position(|p| !p.implicit) {
+                            let closed_pos = positions[idx].clone();
+                            let exit_side = match &closed_pos.inner {
+                                ScriptPositionInner::Stock {
+                                    side: Side::Long, ..
+                                } => Side::Short,
+                                ScriptPositionInner::Stock {
+                                    side: Side::Short, ..
+                                } => Side::Long,
+                                _ => Side::Short,
+                            };
+                            let exit_fill =
+                                apply_stock_slippage(fill_price, exit_side, &config.slippage);
+                            let pnl = compute_close_pnl_at_price(&closed_pos, exit_fill);
+                            let exit_comm = compute_commission(&config.commission, &closed_pos);
+                            realized_equity += pnl - exit_comm;
+
+                            if has_on_position_closed {
+                                let positions_arc = Arc::new(positions.clone());
+                                let awareness = compute_position_awareness(
+                                    &positions,
+                                    unfilled_orders.len(),
+                                    bar_idx,
+                                );
+                                let ctx = ctx_factory.build(
+                                    bar,
+                                    bar_idx,
+                                    &positions_arc,
+                                    realized_equity,
+                                    &pnl_history_arc,
+                                    &awareness,
+                                );
+                                let pos_dyn = Dynamic::from(closed_pos.clone());
+                                let exit_dyn = Dynamic::from(reason.clone());
+                                let _ = call_fn_persistent(
+                                    &engine,
+                                    &mut scope,
+                                    &ast,
+                                    "on_position_closed",
+                                    (ctx, pos_dyn, exit_dyn),
+                                );
+                            }
+
+                            trade_log.push(build_script_trade_record(
+                                &closed_pos,
+                                bar.datetime,
+                                pnl,
+                                reason,
+                            ));
+                            pnl_history.push(pnl);
+                            pnl_dirty = true;
+                            max_profit_tracker.remove(&closed_pos.id);
+                            max_loss_tracker.remove(&closed_pos.id);
+                            positions.swap_remove(idx);
+                        } else {
+                            warnings.push(
+                                "Pending close order (no position_id): no open positions to close"
+                                    .to_string(),
+                            );
+                        }
+                    }
+                    ScriptAction::OpenOptions { legs, qty } => {
+                        let resolved = resolve_option_legs(legs, &options_by_date, today, &config);
+                        if resolved.is_empty() {
+                            warnings.push(format!(
+                                "OpenOptions pending order skipped on {today}: no option contracts \
+                                 could be resolved (check data.options coverage for this date)"
+                            ));
+                            continue;
+                        }
+                        let effective_qty = qty.unwrap_or(1);
+                        let (entry_cost, script_legs, expiration) =
+                            compute_options_entry(&resolved, &config, effective_qty);
+                        let pos = ScriptPosition {
+                            id: next_id,
+                            entry_date: today,
+                            inner: ScriptPositionInner::Options {
+                                legs: script_legs,
+                                expiration,
+                                secondary_expiration: None,
+                                multiplier: config.multiplier,
+                            },
+                            entry_cost: entry_cost
+                                * effective_qty as f64
+                                * config.multiplier as f64,
+                            unrealized_pnl: 0.0,
+                            days_held: 0,
+                            current_date: today,
+                            entry_bar_idx: bar_idx,
+                            source: "script".to_string(),
+                            implicit: false,
+                            group: read_group(&scope),
+                        };
+                        realized_equity -= compute_commission(&config.commission, &pos);
+                        next_id += 1;
+                        last_entry_date = Some(today);
+
+                        if has_on_position_opened {
+                            let positions_arc = Arc::new(positions.clone());
+                            let awareness = compute_position_awareness(
+                                &positions,
+                                phase_a_pending_count,
+                                bar_idx,
+                            );
+                            let ctx = ctx_factory.build(
+                                bar,
+                                bar_idx,
+                                &positions_arc,
+                                realized_equity,
+                                &pnl_history_arc,
+                                &awareness,
+                            );
+                            let pos_dyn = Dynamic::from(pos.clone());
+                            let _ = call_fn_persistent(
+                                &engine,
+                                &mut scope,
+                                &ast,
+                                "on_position_opened",
+                                (ctx, pos_dyn),
+                            );
+                        }
+
+                        positions.push(pos);
+                    }
+                    _ => {} // Hold, Stop, CancelOrders handled elsewhere
+                }
+            } else {
+                unfilled_orders.push(order);
+            }
+        }
+        pending_orders = unfilled_orders;
+
+        // --- Phase B: Exits (immediate processing) ---
+
+        // Compute position awareness for this bar
+        let mut awareness = compute_position_awareness(&positions, pending_orders.len(), bar_idx);
+        // Apply tracked max profit/loss only for the chosen awareness position
+        if let Some(pid) = awareness.chosen_position_id {
+            if let Some(&mp) = max_profit_tracker.get(&pid) {
+                awareness.max_profit = mp;
+            }
+            if let Some(&ml) = max_loss_tracker.get(&pid) {
+                awareness.max_loss = ml;
+            }
+        }
+
+        // --- Phase B: Exits (immediate processing) ---
 
         // Build an Arc snapshot of positions for exit checks.
         // This is cheap (one Arc::new) and shared across all on_exit_check calls
@@ -704,6 +1079,7 @@ pub async fn run_script_backtest_with_progress(
                     &positions_arc,
                     realized_equity,
                     &pnl_history_arc,
+                    &awareness,
                 );
                 let pos_dyn = Dynamic::from(positions[i].clone());
 
@@ -750,6 +1126,7 @@ pub async fn run_script_backtest_with_progress(
                         &positions_arc,
                         realized_equity,
                         &pnl_history_arc,
+                        &awareness,
                     );
                     let pos_dyn = Dynamic::from(closed_pos.clone());
                     let exit_type_dyn = Dynamic::from(exit_reason.clone());
@@ -771,6 +1148,8 @@ pub async fn run_script_backtest_with_progress(
                 pnl_history.push(pnl);
                 pnl_dirty = true;
 
+                max_profit_tracker.remove(&closed_pos.id);
+                max_loss_tracker.remove(&closed_pos.id);
                 positions.swap_remove(i);
                 positions_dirty = true; // positions changed, Arc needs rebuild
 
@@ -807,6 +1186,7 @@ pub async fn run_script_backtest_with_progress(
                                             * f64::from(shares),
                                         days_held: 0,
                                         current_date: today,
+                                        entry_bar_idx: bar_idx,
                                         source: "assignment".to_string(),
                                         implicit: true,
                                         group: closed_pos.group.clone(),
@@ -879,188 +1259,68 @@ pub async fn run_script_backtest_with_progress(
             break;
         }
 
-        // --- Phase B: Entries (sees post-exit state) ---
+        // --- Phase C: Entries (queue orders for next-bar execution) ---
+        //
+        // Actions from on_bar() are queued as pending orders. They will be
+        // filled on the next bar (bar N+1). This eliminates look-ahead bias.
 
-        // Build ONE context for Phase B (reused by on_bar and callbacks)
-        let phase_b_positions = Arc::new(positions.clone());
+        // Update awareness after exits
+        awareness = compute_position_awareness(&positions, pending_orders.len(), bar_idx);
+        if let Some(chosen_id) = awareness.chosen_position_id {
+            if let Some(&mp) = max_profit_tracker.get(&chosen_id) {
+                awareness.max_profit = mp;
+            }
+            if let Some(&ml) = max_loss_tracker.get(&chosen_id) {
+                awareness.max_loss = ml;
+            }
+        }
+
+        let phase_c_positions = Arc::new(positions.clone());
         let ctx = ctx_factory.build(
             bar,
             bar_idx,
-            &phase_b_positions,
+            &phase_c_positions,
             realized_equity,
             &pnl_history_arc,
+            &awareness,
         );
 
-        // Call on_bar(ctx)
+        // Call on_bar(ctx) — actions are queued, not immediately executed
         match call_fn_persistent(&engine, &mut scope, &ast, "on_bar", (ctx,)) {
             Ok(result) => {
-                let actions = parse_bar_actions(&result);
-                for action in actions {
-                    match action {
+                let parsed = parse_bar_actions(&result);
+                let is_last_bar = bar_idx == price_history.len() - 1;
+                for pa in parsed {
+                    match &pa.action {
                         ScriptAction::Stop { reason } => {
                             stop_requested = true;
                             warnings.push(format!("Script requested stop: {reason}"));
                             break;
                         }
-                        ScriptAction::OpenStock { side, qty } => {
-                            // Stagger check
-                            if let Some(min_days) = config.min_days_between_entries {
-                                if let Some(last) = last_entry_date {
-                                    if (today - last).num_days() < i64::from(min_days) {
-                                        continue;
-                                    }
-                                }
-                            }
-
-                            let pos = ScriptPosition {
-                                id: next_id,
-                                entry_date: today,
-                                inner: ScriptPositionInner::Stock {
-                                    side,
-                                    qty,
-                                    entry_price: bar.close,
-                                },
-                                entry_cost: bar.close * qty as f64 * side.multiplier(),
-                                unrealized_pnl: 0.0,
-                                days_held: 0,
-                                current_date: today,
-                                source: "script".to_string(),
-                                implicit: false,
-                                group: read_group(&scope),
-                            };
-                            // Deduct entry commission for stock
-                            realized_equity -= compute_commission(&config.commission, &pos);
-                            next_id += 1;
-                            last_entry_date = Some(today);
-
-                            if has_on_position_opened {
-                                // Reuse Phase B positions Arc for callback
-                                let ctx = ctx_factory.build(
-                                    bar,
-                                    bar_idx,
-                                    &phase_b_positions,
-                                    realized_equity,
-                                    &pnl_history_arc,
-                                );
-                                let pos_dyn = Dynamic::from(pos.clone());
-                                let _ = call_fn_persistent(
-                                    &engine,
-                                    &mut scope,
-                                    &ast,
-                                    "on_position_opened",
-                                    (ctx, pos_dyn),
-                                );
-                            }
-
-                            positions.push(pos);
-                        }
-                        ScriptAction::Close {
-                            position_id,
-                            reason,
-                        } => {
-                            if let Some(pid) = position_id {
-                                if let Some(idx) = positions.iter().position(|p| p.id == pid) {
-                                    let pnl = compute_close_pnl(&positions[idx], bar);
-                                    let exit_comm =
-                                        compute_commission(&config.commission, &positions[idx]);
-                                    realized_equity += pnl - exit_comm;
-
-                                    if has_on_position_closed {
-                                        // Reuse Phase B positions Arc for callback
-                                        let ctx = ctx_factory.build(
-                                            bar,
-                                            bar_idx,
-                                            &phase_b_positions,
-                                            realized_equity,
-                                            &pnl_history_arc,
-                                        );
-                                        let pos_dyn = Dynamic::from(positions[idx].clone());
-                                        let exit_dyn = Dynamic::from(reason.clone());
-                                        let _ = call_fn_persistent(
-                                            &engine,
-                                            &mut scope,
-                                            &ast,
-                                            "on_position_closed",
-                                            (ctx, pos_dyn, exit_dyn),
-                                        );
-                                    }
-
-                                    trade_log.push(build_script_trade_record(
-                                        &positions[idx],
-                                        bar.datetime,
-                                        pnl,
-                                        &reason,
-                                    ));
-                                    pnl_history.push(pnl);
-                                    pnl_dirty = true;
-                                    positions.swap_remove(idx);
-                                } else {
-                                    warnings
-                                        .push(format!("Close action: position_id {pid} not found"));
-                                }
-                            }
-                        }
-                        ScriptAction::OpenOptions { legs, qty } => {
-                            // Resolve unresolved legs via find_option pipeline
-                            let resolved =
-                                resolve_option_legs(&legs, &options_by_date, today, &config);
-
-                            if resolved.is_empty() {
-                                continue; // no valid legs found
-                            }
-
-                            let effective_qty = qty.unwrap_or(1);
-
-                            // Compute entry cost from resolved legs
-                            let (entry_cost, script_legs, expiration) =
-                                compute_options_entry(&resolved, &config, effective_qty);
-
-                            let pos = ScriptPosition {
-                                id: next_id,
-                                entry_date: today,
-                                inner: ScriptPositionInner::Options {
-                                    legs: script_legs,
-                                    expiration,
-                                    secondary_expiration: None,
-                                    multiplier: config.multiplier,
-                                },
-                                entry_cost: entry_cost
-                                    * effective_qty as f64
-                                    * config.multiplier as f64,
-                                unrealized_pnl: 0.0,
-                                days_held: 0,
-                                current_date: today,
-                                source: "script".to_string(),
-                                implicit: false,
-                                group: read_group(&scope),
-                            };
-                            // Deduct entry commission for options
-                            realized_equity -= compute_commission(&config.commission, &pos);
-                            next_id += 1;
-                            last_entry_date = Some(today);
-
-                            if has_on_position_opened {
-                                // Reuse Phase B positions Arc for callback
-                                let ctx = ctx_factory.build(
-                                    bar,
-                                    bar_idx,
-                                    &phase_b_positions,
-                                    realized_equity,
-                                    &pnl_history_arc,
-                                );
-                                let pos_dyn = Dynamic::from(pos.clone());
-                                let _ = call_fn_persistent(
-                                    &engine,
-                                    &mut scope,
-                                    &ast,
-                                    "on_position_opened",
-                                    (ctx, pos_dyn),
-                                );
-                            }
-
-                            positions.push(pos);
-                        }
                         ScriptAction::Hold => {}
+                        ScriptAction::CancelOrders { signal } => {
+                            if let Some(sig) = signal {
+                                pending_orders
+                                    .retain(|o| o.signal.as_deref() != Some(sig.as_str()));
+                            } else {
+                                pending_orders.clear();
+                            }
+                        }
+                        _ => {
+                            // Don't queue orders on the final bar — there's no N+1 to fill them
+                            if is_last_bar {
+                                continue;
+                            }
+
+                            pending_orders.push(PendingOrder {
+                                action: pa.action,
+                                order_type: pa.order_type,
+                                is_buy: pa.is_buy,
+                                signal: pa.signal,
+                                submitted_bar: bar_idx,
+                                ttl: pa.ttl,
+                            });
+                        }
                     }
                 }
             }
@@ -1069,7 +1329,7 @@ pub async fn run_script_backtest_with_progress(
             }
         }
 
-        // --- Phase C: Bookkeeping ---
+        // --- Phase D: Bookkeeping ---
 
         // Update days_held and current_date for all open positions
         for pos in &mut positions {
@@ -1124,6 +1384,17 @@ pub async fn run_script_backtest_with_progress(
                     unrealized += pos_pnl;
                 }
             }
+
+            // Track max profit and max loss for position awareness
+            let current_pnl = pos.unrealized_pnl;
+            let mp = max_profit_tracker.entry(pos.id).or_insert(0.0);
+            if current_pnl > *mp {
+                *mp = current_pnl;
+            }
+            let ml = max_loss_tracker.entry(pos.id).or_insert(0.0);
+            if current_pnl < *ml {
+                *ml = current_pnl;
+            }
         }
 
         equity_curve.push(EquityPoint {
@@ -1155,12 +1426,18 @@ pub async fn run_script_backtest_with_progress(
         let end_positions_arc = Arc::new(positions.clone());
         let pnl_history_arc = Arc::new(pnl_history.clone());
         let ctx = if let Some(last_bar) = price_history.last() {
+            let end_awareness = compute_position_awareness(
+                &positions,
+                pending_orders.len(),
+                price_history.len().saturating_sub(1),
+            );
             ctx_factory.build(
                 last_bar,
                 price_history.len() - 1,
                 &end_positions_arc,
                 realized_equity,
                 &pnl_history_arc,
+                &end_awareness,
             )
         } else {
             // Empty bars — shouldn't reach here due to early bail
@@ -1588,6 +1865,68 @@ struct BarContextFactory {
     config: Arc<ScriptConfig>,
     options_by_date: Option<Arc<DatePartitionedOptions>>,
     custom_series: Arc<Mutex<CustomSeriesStore>>,
+    adjustment_timeline: Arc<crate::engine::adjustments::AdjustmentTimeline>,
+    split_timeline: Arc<crate::engine::adjustments::AdjustmentTimeline>,
+}
+
+/// Position awareness snapshot for the `BarContext`.
+#[derive(Clone, Default)]
+pub struct PositionAwareness {
+    pub market_position: i64,
+    pub entry_price: f64,
+    pub bars_since_entry: i64,
+    pub current_shares: i64,
+    pub open_profit: f64,
+    pub max_profit: f64,
+    pub max_loss: f64,
+    pub pending_orders_count: i64,
+    /// The position id chosen for awareness (used to apply tracked max values).
+    pub chosen_position_id: Option<usize>,
+}
+
+/// Compute position awareness from the current positions vector (stock-only for now).
+pub fn compute_position_awareness(
+    positions: &[ScriptPosition],
+    pending_orders_count: usize,
+    current_bar_idx: usize,
+) -> PositionAwareness {
+    // Find the first non-implicit stock position for awareness
+    // Prefer non-implicit stock; fall back to implicit (e.g., assignment-created)
+    let stock_pos = positions
+        .iter()
+        .find(|p| !p.implicit && p.is_stock())
+        .or_else(|| positions.iter().find(|p| p.implicit && p.is_stock()));
+
+    if let Some(pos) = stock_pos {
+        if let ScriptPositionInner::Stock {
+            side,
+            qty,
+            entry_price,
+            ..
+        } = &pos.inner
+        {
+            let mp = match side {
+                Side::Long => 1i64,
+                Side::Short => -1i64,
+            };
+            return PositionAwareness {
+                market_position: mp,
+                entry_price: *entry_price,
+                bars_since_entry: current_bar_idx.saturating_sub(pos.entry_bar_idx) as i64,
+                current_shares: *qty as i64,
+                open_profit: pos.unrealized_pnl,
+                max_profit: 0.0, // tracked externally
+                max_loss: 0.0,   // tracked externally
+                pending_orders_count: pending_orders_count as i64,
+                chosen_position_id: Some(pos.id),
+            };
+        }
+    }
+
+    PositionAwareness {
+        pending_orders_count: pending_orders_count as i64,
+        ..Default::default()
+    }
 }
 
 impl BarContextFactory {
@@ -1598,6 +1937,7 @@ impl BarContextFactory {
         positions_arc: &Arc<Vec<ScriptPosition>>,
         equity: f64,
         pnl_history: &Arc<Vec<f64>>,
+        awareness: &PositionAwareness,
     ) -> BarContext {
         let cash = equity - positions_arc.iter().map(|p| p.unrealized_pnl).sum::<f64>();
         BarContext {
@@ -1618,6 +1958,26 @@ impl BarContextFactory {
             config: Arc::clone(&self.config),
             pnl_history: Arc::clone(pnl_history),
             custom_series: Arc::clone(&self.custom_series),
+            // bar.close is already split-adjusted; apply dividend-only factor
+            // for the fully-adjusted close (dividend factor = full / split)
+            adjusted_close: {
+                let split_f = self.split_timeline.factor_at(bar.datetime.date());
+                let full_f = self.adjustment_timeline.factor_at(bar.datetime.date());
+                let div_f = if split_f.abs() > f64::EPSILON {
+                    full_f / split_f
+                } else {
+                    1.0
+                };
+                bar.close * div_f
+            },
+            market_position: awareness.market_position,
+            entry_price: awareness.entry_price,
+            bars_since_entry: awareness.bars_since_entry,
+            current_shares: awareness.current_shares,
+            open_profit: awareness.open_profit,
+            max_profit: awareness.max_profit,
+            max_loss: awareness.max_loss,
+            pending_orders_count: awareness.pending_orders_count,
         }
     }
 }
@@ -1796,11 +2156,11 @@ fn compute_options_entry(
 ///
 /// For stocks, uses the current bar's close price.
 /// For options, recomputes P&L from each leg's cached `current_price`
-/// (updated in Phase C) and `entry_price`, including the contract multiplier.
-/// Both `leg.current_price` and `leg.entry_price` are per-contract premiums
-/// (e.g., $2.50 for a $2.50 premium option); the contract multiplier (typically
-/// 100) converts them to per-position dollar P&L.
-/// Note: Phase A closes happen before Phase C MTM update, so `current_price`
+/// (updated in Phase D bookkeeping) and `entry_price`, including the contract
+/// multiplier. Both `leg.current_price` and `leg.entry_price` are per-contract
+/// premiums (e.g., $2.50 for a $2.50 premium option); the contract multiplier
+/// (typically 100) converts them to per-position dollar P&L.
+/// Note: Phase B closes happen before Phase D MTM update, so `current_price`
 /// reflects the previous bar — this matches the native engine behavior where
 /// exit prices are determined at the close trigger bar.
 fn compute_close_pnl(pos: &ScriptPosition, bar: &OhlcvBar) -> f64 {
@@ -1810,6 +2170,51 @@ fn compute_close_pnl(pos: &ScriptPosition, bar: &OhlcvBar) -> f64 {
             qty,
             entry_price,
         } => (bar.close - entry_price) * *qty as f64 * side.multiplier(),
+        ScriptPositionInner::Options {
+            legs, multiplier, ..
+        } => legs
+            .iter()
+            .map(|leg| {
+                (leg.current_price - leg.entry_price)
+                    * leg.side.multiplier()
+                    * f64::from(leg.qty)
+                    * f64::from(*multiplier)
+            })
+            .sum(),
+    }
+}
+
+/// Apply slippage to a stock fill price.
+///
+/// For `PerLeg`, adds a fixed cost per share (adverse direction).
+/// For `Mid`, no adjustment (fill at computed price).
+/// Other models are options-specific and don't apply to stock fills.
+fn apply_stock_slippage(fill_price: f64, side: Side, slippage: &Slippage) -> f64 {
+    match slippage {
+        Slippage::PerLeg { per_leg } => {
+            // Buy: price worsens upward, Sell: price worsens downward
+            match side {
+                Side::Long => fill_price + per_leg,
+                Side::Short => fill_price - per_leg,
+            }
+        }
+        // Mid / Spread / Liquidity / BidAskTravel are options-specific (need bid/ask)
+        _ => fill_price,
+    }
+}
+
+/// Compute P&L for closing a position at a specific fill price.
+///
+/// Used by the next-bar execution model where orders fill at computed prices
+/// (open, limit, stop) rather than bar close.
+fn compute_close_pnl_at_price(pos: &ScriptPosition, exit_price: f64) -> f64 {
+    match &pos.inner {
+        ScriptPositionInner::Stock {
+            side,
+            qty,
+            entry_price,
+        } => (exit_price - entry_price) * f64::from(*qty) * side.multiplier(),
+        // For options, use the current_price from MTM (same as compute_close_pnl)
         ScriptPositionInner::Options {
             legs, multiplier, ..
         } => legs
@@ -2065,7 +2470,21 @@ fn parse_exit_action(result: &Dynamic) -> Option<ScriptAction> {
 }
 
 /// Parse the result of `on_bar` into a list of `ScriptAction`s.
-fn parse_bar_actions(result: &Dynamic) -> Vec<ScriptAction> {
+/// A parsed action from `on_bar()` with associated order metadata.
+struct ParsedAction {
+    action: ScriptAction,
+    order_type: OrderType,
+    /// `true` = buy direction, `false` = sell direction for fill logic.
+    is_buy: bool,
+    signal: Option<String>,
+    ttl: Option<usize>,
+}
+
+/// Parse the result of `on_bar` into a list of `ParsedAction`s.
+///
+/// Each action is paired with its order metadata (order type, signal, TTL)
+/// extracted from the same map, ensuring metadata is tied to the correct item.
+fn parse_bar_actions(result: &Dynamic) -> Vec<ParsedAction> {
     let Some(arr) = result.clone().try_cast::<rhai::Array>() else {
         return vec![];
     };
@@ -2073,9 +2492,9 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ScriptAction> {
     arr.into_iter()
         .filter_map(|item| {
             let map = item.try_cast::<rhai::Map>()?;
-            let action = map.get("action")?.clone().into_immutable_string().ok()?;
+            let action_str = map.get("action")?.clone().into_immutable_string().ok()?;
 
-            match action.as_str() {
+            let (action, is_buy) = match action_str.as_str() {
                 "open_stock" => {
                     let side_str = map.get("side")?.clone().into_immutable_string().ok()?;
                     let side = match side_str.as_str() {
@@ -2084,7 +2503,8 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ScriptAction> {
                         _ => return None,
                     };
                     let qty = map.get("qty")?.as_int().ok()? as i32;
-                    Some(ScriptAction::OpenStock { side, qty })
+                    let is_buy = side == Side::Long;
+                    (ScriptAction::OpenStock { side, qty }, is_buy)
                 }
                 "close" => {
                     let position_id = map
@@ -2096,10 +2516,20 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ScriptAction> {
                         .and_then(|v| v.clone().into_immutable_string().ok())
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| "script_close".to_string());
-                    Some(ScriptAction::Close {
-                        position_id,
-                        reason,
-                    })
+                    // Close a long position = sell (is_buy=false),
+                    // close a short position = buy-to-cover (is_buy=true).
+                    // Default to sell (most common: closing a long).
+                    let side_str = map
+                        .get("side")
+                        .and_then(|v| v.clone().into_immutable_string().ok());
+                    let is_buy = side_str.as_deref() == Some("short");
+                    (
+                        ScriptAction::Close {
+                            position_id,
+                            reason,
+                        },
+                        is_buy,
+                    )
                 }
                 "stop" => {
                     let reason = map
@@ -2107,12 +2537,16 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ScriptAction> {
                         .and_then(|v| v.clone().into_immutable_string().ok())
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| "stop".to_string());
-                    Some(ScriptAction::Stop { reason })
+                    (ScriptAction::Stop { reason }, false)
+                }
+                "cancel_orders" => {
+                    let signal = map
+                        .get("signal")
+                        .and_then(|v| v.clone().into_immutable_string().ok())
+                        .map(|s| s.to_string());
+                    (ScriptAction::CancelOrders { signal }, false)
                 }
                 "open_options" | "open_spread" => {
-                    // Support two shapes:
-                    // 1. #{ action: "open_options", legs: [...] }
-                    // 2. #{ action: "open_spread", spread: #{ legs: [...], ... } }
                     let legs_arr = if let Some(legs) = map.get("legs") {
                         legs.clone().try_cast::<rhai::Array>()?
                     } else if let Some(spread) = map.get("spread") {
@@ -2145,9 +2579,7 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ScriptAction> {
                                 _ => return None,
                             };
 
-                            // Check if resolved (has strike/expiration) or unresolved (has delta/dte)
                             if let Some(strike_val) = leg.get("strike") {
-                                // Resolved leg
                                 let strike = strike_val.as_float().ok()?;
                                 let exp_str = leg
                                     .get("expiration")?
@@ -2173,7 +2605,6 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ScriptAction> {
                                     ask,
                                 })
                             } else {
-                                // Unresolved leg — needs delta/dte
                                 let delta = leg
                                     .get("delta")
                                     .and_then(|v| v.as_float().ok())
@@ -2193,12 +2624,82 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ScriptAction> {
                     if legs.is_empty() {
                         return None;
                     }
-                    Some(ScriptAction::OpenOptions { legs, qty })
+                    // Options: buy = long first leg (net debit), sell = short first leg
+                    let is_buy =
+                        legs.first()
+                            .map(|l| match l {
+                                LegSpec::Unresolved { side, .. }
+                                | LegSpec::Resolved { side, .. } => *side == Side::Long,
+                            })
+                            .unwrap_or(true);
+                    (ScriptAction::OpenOptions { legs, qty }, is_buy)
                 }
-                _ => None,
-            }
+                _ => return None,
+            };
+
+            // Extract order metadata from the same map (tied to this exact action)
+            let signal = map
+                .get("signal")
+                .and_then(|v| v.clone().into_immutable_string().ok())
+                .map(|s| s.to_string());
+
+            let ttl = map
+                .get("ttl")
+                .and_then(|v| v.as_int().ok())
+                .map(|v| v as usize);
+
+            let order_type = extract_order_type(&map);
+
+            Some(ParsedAction {
+                action,
+                order_type,
+                is_buy,
+                signal,
+                ttl,
+            })
         })
         .collect()
+}
+
+/// Extract `OrderType` from an action map. Falls back to `Market` with a warning
+/// if required price fields are missing.
+fn extract_order_type(map: &rhai::Map) -> OrderType {
+    let order_type_str = map
+        .get("order_type")
+        .and_then(|v| v.clone().into_immutable_string().ok());
+
+    match order_type_str.as_deref() {
+        Some("limit") => {
+            if let Some(price) = map.get("limit_price").and_then(|v| v.as_float().ok()) {
+                OrderType::Limit { price }
+            } else {
+                tracing::warn!("Missing `limit_price` for limit order; falling back to market");
+                OrderType::Market
+            }
+        }
+        Some("stop") => {
+            if let Some(price) = map.get("stop_price").and_then(|v| v.as_float().ok()) {
+                OrderType::Stop { price }
+            } else {
+                tracing::warn!("Missing `stop_price` for stop order; falling back to market");
+                OrderType::Market
+            }
+        }
+        Some("stop_limit") => {
+            if let (Some(stop), Some(limit)) = (
+                map.get("stop_price").and_then(|v| v.as_float().ok()),
+                map.get("limit_price").and_then(|v| v.as_float().ok()),
+            ) {
+                OrderType::StopLimit { stop, limit }
+            } else {
+                tracing::warn!(
+                    "Missing `stop_price`/`limit_price` for stop_limit order; falling back to market"
+                );
+                OrderType::Market
+            }
+        }
+        _ => OrderType::Market,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2222,6 +2723,15 @@ pub trait DataLoader: Send + Sync {
         start: Option<NaiveDate>,
         end: Option<NaiveDate>,
     ) -> Result<polars::prelude::DataFrame>;
+
+    /// Load splits for a symbol. Returns empty vec if no adjustment store available.
+    fn load_splits(&self, symbol: &str) -> Result<Vec<crate::data::adjustment_store::SplitRow>>;
+
+    /// Load dividends for a symbol. Returns empty vec if no adjustment store available.
+    fn load_dividends(
+        &self,
+        symbol: &str,
+    ) -> Result<Vec<crate::data::adjustment_store::DividendRow>>;
 }
 
 /// `DataLoader` backed by `CachedStore` — the production implementation.
@@ -2230,6 +2740,7 @@ pub trait DataLoader: Send + Sync {
 /// DataFrame via `stock_sim::load_ohlcv_df`.
 pub struct CachedDataLoader {
     pub cache: Arc<crate::data::cache::CachedStore>,
+    pub adjustment_store: Option<Arc<crate::data::adjustment_store::SqliteAdjustmentStore>>,
 }
 
 #[async_trait::async_trait]
@@ -2270,6 +2781,23 @@ impl DataLoader for CachedDataLoader {
             .load_options(&symbol.to_uppercase(), start, end)
             .await
     }
+
+    fn load_splits(&self, symbol: &str) -> Result<Vec<crate::data::adjustment_store::SplitRow>> {
+        match &self.adjustment_store {
+            Some(store) => store.splits(symbol),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    fn load_dividends(
+        &self,
+        symbol: &str,
+    ) -> Result<Vec<crate::data::adjustment_store::DividendRow>> {
+        match &self.adjustment_store {
+            Some(store) => store.dividends(symbol),
+            None => Ok(Vec::new()),
+        }
+    }
 }
 
 /// `DataLoader` wrapper that caches full DataFrames in memory by symbol.
@@ -2284,9 +2812,15 @@ pub struct CachingDataLoader {
 }
 
 impl CachingDataLoader {
-    pub fn new(cache: Arc<crate::data::cache::CachedStore>) -> Self {
+    pub fn new(
+        cache: Arc<crate::data::cache::CachedStore>,
+        adjustment_store: Option<Arc<crate::data::adjustment_store::SqliteAdjustmentStore>>,
+    ) -> Self {
         Self {
-            inner: CachedDataLoader { cache },
+            inner: CachedDataLoader {
+                cache,
+                adjustment_store,
+            },
             ohlcv_cache: tokio::sync::Mutex::new(HashMap::new()),
             options_cache: tokio::sync::Mutex::new(HashMap::new()),
         }
@@ -2383,6 +2917,17 @@ impl DataLoader for CachingDataLoader {
         }
 
         filter_df_by_date(&arc_df, start, end)
+    }
+
+    fn load_splits(&self, symbol: &str) -> Result<Vec<crate::data::adjustment_store::SplitRow>> {
+        self.inner.load_splits(symbol)
+    }
+
+    fn load_dividends(
+        &self,
+        symbol: &str,
+    ) -> Result<Vec<crate::data::adjustment_store::DividendRow>> {
+        self.inner.load_dividends(symbol)
     }
 }
 

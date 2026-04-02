@@ -9,15 +9,12 @@
 use anyhow::{Context, Result};
 use rmcp::ServiceExt;
 use std::sync::Arc;
-use tower_http::cors::CorsLayer;
 use tracing_subscriber::{self, EnvFilter};
 
 use optopsy_mcp::data::database::Database;
 use optopsy_mcp::data::traits::{self, StrategyStore};
-use optopsy_mcp::server::handlers::{
-    backtests, chat as chat_handlers, profiles, runs, strategies, sweeps,
-};
 use optopsy_mcp::server::state::AppState;
+use optopsy_mcp::server::task_manager::TaskManager;
 use optopsy_mcp::{data, server};
 
 /// Query parameters for the `/prices/{symbol}` REST endpoint.
@@ -83,6 +80,7 @@ async fn main() -> Result<()> {
         let db = Database::open(&db_path)?;
 
         let run_store: Arc<dyn optopsy_mcp::data::traits::RunStore> = Arc::new(db.runs());
+        let adjustment_store = Arc::new(db.adjustments());
 
         let strategy_store: Arc<dyn StrategyStore> = Arc::new(db.strategies());
         let seeded = traits::seed_strategies_if_empty(
@@ -95,89 +93,54 @@ async fn main() -> Result<()> {
 
         let chat_store: Arc<dyn optopsy_mcp::data::traits::ChatStore> = Arc::new(db.chat());
 
+        let max_concurrent_tasks = std::env::var("MAX_CONCURRENT_TASKS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1usize);
+        let task_manager = Arc::new(TaskManager::new(max_concurrent_tasks));
+
+        let server = server::OptopsyServer::with_all_stores(
+            cache.clone(),
+            strategy_store.clone(),
+            run_store.clone(),
+            adjustment_store.clone(),
+        );
+
         let app_state = AppState {
-            server: server::OptopsyServer::with_stores(
-                cache.clone(),
-                strategy_store.clone(),
-                run_store.clone(),
-            ),
+            server,
             run_store,
             chat_store,
-            sweep_cancellations: std::sync::Arc::new(std::sync::Mutex::new(
-                std::collections::HashSet::new(),
-            )),
+            task_manager: Arc::clone(&task_manager),
         };
 
         let strategy_store_for_mcp = strategy_store.clone();
         let run_store_for_mcp = app_state.run_store.clone();
+        let adjustment_store_for_mcp = adjustment_store.clone();
         let service = StreamableHttpService::new(
             move || {
-                Ok(server::OptopsyServer::with_stores(
+                let srv = server::OptopsyServer::with_all_stores(
                     cache.clone(),
                     strategy_store_for_mcp.clone(),
                     run_store_for_mcp.clone(),
-                ))
+                    adjustment_store_for_mcp.clone(),
+                );
+                Ok(srv)
             },
             LocalSessionManager::default().into(),
             StreamableHttpServerConfig::default(),
         );
 
-        let strategy_routes = axum::Router::new()
-            .route(
-                "/strategies",
-                axum::routing::get(strategies::list_strategies).post(strategies::create_strategy),
-            )
-            .route(
-                "/strategies/validate",
-                axum::routing::post(strategies::validate_script),
-            )
-            .route(
-                "/strategies/{id}",
-                axum::routing::get(strategies::get_strategy)
-                    .put(strategies::update_strategy)
-                    .delete(strategies::delete_strategy),
-            )
-            .route(
-                "/strategies/{id}/source",
-                axum::routing::get(strategies::get_strategy_source),
-            )
-            .route(
-                "/strategies/{id}/validate",
-                axum::routing::post(strategies::validate_stored_strategy),
-            )
-            .with_state(app_state.clone());
+        // Spawn background task cleanup (remove terminal tasks older than 10 minutes)
+        let cleanup_tm = Arc::clone(&task_manager);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                cleanup_tm.cleanup(chrono::Duration::minutes(10));
+            }
+        });
 
-        let chat_routes = axum::Router::new()
-            .route(
-                "/threads",
-                axum::routing::get(chat_handlers::list_threads).post(chat_handlers::create_thread),
-            )
-            .route(
-                "/threads/{id}",
-                axum::routing::get(chat_handlers::get_thread)
-                    .patch(chat_handlers::update_thread)
-                    .delete(chat_handlers::delete_thread),
-            )
-            .route(
-                "/threads/{id}/messages",
-                axum::routing::get(chat_handlers::get_messages)
-                    .post(chat_handlers::upsert_message)
-                    .delete(chat_handlers::delete_messages),
-            )
-            .route(
-                "/threads/{id}/results",
-                axum::routing::get(chat_handlers::get_results)
-                    .put(chat_handlers::replace_results)
-                    .post(chat_handlers::replace_results),
-            )
-            .route(
-                "/threads/{id}/results/{key}",
-                axum::routing::delete(chat_handlers::delete_result),
-            )
-            .with_state(app_state.clone());
-
-        let misc_routes = axum::Router::new()
-            .route("/profiles", axum::routing::get(profiles::list_profiles))
+        let app = server::router::build_api_router(app_state)
             .route(
                 "/prices/{symbol}",
                 axum::routing::get({
@@ -185,60 +148,7 @@ async fn main() -> Result<()> {
                     move |path, query| prices_handler(cache.clone(), path, query)
                 }),
             )
-            .route("/health", axum::routing::get(|| async { "ok" }))
-            .with_state(app_state.clone());
-
-        let run_routes = axum::Router::new()
-            .route(
-                "/runs",
-                axum::routing::get(runs::list_runs).post(backtests::create_backtest),
-            )
-            .route(
-                "/runs/stream",
-                axum::routing::post(backtests::create_backtest_stream),
-            )
-            .route(
-                "/runs/{id}",
-                axum::routing::get(runs::get_run).delete(runs::delete_run),
-            )
-            .route(
-                "/runs/{id}/analysis",
-                axum::routing::patch(runs::set_run_analysis),
-            )
-            // Sweep routes under /runs/sweep
-            .route(
-                "/runs/sweep",
-                axum::routing::post(sweeps::create_sweep),
-            )
-            .route(
-                "/runs/sweep/stream",
-                axum::routing::post(sweeps::create_sweep_stream),
-            )
-            .route(
-                "/runs/sweep/cancel",
-                axum::routing::post(sweeps::cancel_sweeps),
-            )
-            .route(
-                "/runs/sweep/{sweepId}",
-                axum::routing::get(runs::get_sweep_detail).delete(runs::delete_sweep),
-            )
-            .route(
-                "/runs/sweep/{sweepId}/analysis",
-                axum::routing::patch(runs::set_sweep_analysis),
-            )
-            .route(
-                "/walk-forward",
-                axum::routing::post(optopsy_mcp::server::handlers::walk_forward::run_walk_forward),
-            )
-            .with_state(app_state);
-
-        let app = axum::Router::new()
-            .merge(strategy_routes)
-            .merge(chat_routes)
-            .merge(run_routes)
-            .merge(misc_routes)
-            .nest_service("/mcp", service)
-            .layer(CorsLayer::permissive());
+            .nest_service("/mcp", service);
 
         let addr = format!("0.0.0.0:{port}");
         tracing::info!("Starting optopsy-mcp HTTP server on {addr}");
@@ -264,12 +174,18 @@ async fn main() -> Result<()> {
         let db = Database::open(&db_path)?;
         let strategy_store: Arc<dyn StrategyStore> = Arc::new(db.strategies());
         let run_store: Arc<dyn traits::RunStore> = Arc::new(db.runs());
+        let adjustment_store = Arc::new(db.adjustments());
         traits::seed_strategies_if_empty(
             strategy_store.as_ref(),
             std::path::Path::new("scripts/strategies"),
         )?;
 
-        let server = server::OptopsyServer::with_stores(cache, strategy_store, run_store);
+        let server = server::OptopsyServer::with_all_stores(
+            cache,
+            strategy_store,
+            run_store,
+            adjustment_store,
+        );
         let service = server.serve(rmcp::transport::stdio()).await?;
         service.waiting().await?;
     }

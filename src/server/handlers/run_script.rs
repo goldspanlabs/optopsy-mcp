@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use crate::scripting::engine::{CachingDataLoader, ProgressCallback, ScriptBacktestResult};
+use crate::scripting::engine::{
+    CachingDataLoader, CancelCallback, ProgressCallback, ScriptBacktestResult,
+};
 use crate::scripting::stdlib::parse_script_meta;
 use crate::server::OptopsyServer;
 use crate::tools::run_script::{format_indicator_data, RunScriptParams, RunScriptResponse};
@@ -18,7 +20,7 @@ pub struct ExecuteResult {
 
 /// Execute a Rhai backtest script.
 pub async fn execute(server: &OptopsyServer, params: RunScriptParams) -> Result<ExecuteResult> {
-    execute_with_progress(server, params, None).await
+    execute_with_progress(server, params, None, None).await
 }
 
 /// Execute a Rhai backtest script with an optional progress callback.
@@ -26,6 +28,7 @@ pub async fn execute_with_progress(
     server: &OptopsyServer,
     params: RunScriptParams,
     progress: Option<ProgressCallback>,
+    is_cancelled: Option<&CancelCallback>,
 ) -> Result<ExecuteResult> {
     let start = std::time::Instant::now();
 
@@ -38,7 +41,7 @@ pub async fn execute_with_progress(
         .or(params.strategy.as_deref())
         .map(|id| parse_script_meta(id, &source));
 
-    let loader = CachingDataLoader::new(Arc::clone(&server.cache));
+    let loader = CachingDataLoader::new(Arc::clone(&server.cache), server.adjustment_store.clone());
 
     // Merge profile params if a profile was requested
     let effective_params = if let Some(ref profile_name) = params.profile {
@@ -56,12 +59,13 @@ pub async fn execute_with_progress(
         indicator_data,
         custom_series,
         ..
-    } = crate::scripting::engine::run_script_backtest_with_progress(
+    } = crate::scripting::engine::run_script_backtest(
         &source,
         &effective_params,
         &loader,
         progress,
         None,
+        is_cancelled,
     )
     .await?;
 

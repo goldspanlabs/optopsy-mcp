@@ -58,11 +58,22 @@ fn register_bar_context(engine: &mut Engine) {
     engine.register_get("low", BarContext::get_low);
     engine.register_get("close", BarContext::get_close);
     engine.register_get("volume", BarContext::get_volume);
+    engine.register_get("adjusted_close", BarContext::get_adjusted_close);
     engine.register_get("bar_idx", BarContext::get_bar_idx);
 
     // Portfolio getters
     engine.register_get("cash", BarContext::get_cash);
     engine.register_get("equity", BarContext::get_equity);
+
+    // Position awareness (next-bar execution model)
+    engine.register_get("market_position", BarContext::get_market_position);
+    engine.register_get("entry_price", BarContext::get_entry_price);
+    engine.register_get("bars_since_entry", BarContext::get_bars_since_entry);
+    engine.register_get("current_shares", BarContext::get_current_shares);
+    engine.register_get("open_profit", BarContext::get_open_profit);
+    engine.register_get("max_profit", BarContext::get_max_profit);
+    engine.register_get("max_loss", BarContext::get_max_loss);
+    engine.register_get("pending_orders_count", BarContext::get_pending_orders_count);
 
     // Methods
     engine.register_fn("price", BarContext::price);
@@ -213,6 +224,16 @@ fn register_action_helpers(engine: &mut Engine) {
     engine.register_fn("stop_backtest", helpers::stop_backtest);
     engine.register_fn("buy_stock", helpers::buy_stock);
     engine.register_fn("sell_stock", helpers::sell_stock);
+
+    // Order-type helpers (next-bar execution model)
+    engine.register_fn("buy_limit", helpers::buy_limit);
+    engine.register_fn("buy_stop", helpers::buy_stop);
+    engine.register_fn("buy_stop_limit", helpers::buy_stop_limit);
+    engine.register_fn("sell_limit", helpers::sell_limit);
+    engine.register_fn("sell_stop", helpers::sell_stop);
+    engine.register_fn("sell_stop_limit", helpers::sell_stop_limit);
+    engine.register_fn("cancel_orders", helpers::cancel_orders as fn() -> Dynamic);
+    engine.register_fn("cancel_orders", helpers::cancel_orders_by_signal);
 }
 
 /// Register strategy helper methods on `BarContext`.

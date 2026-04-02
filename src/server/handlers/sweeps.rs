@@ -14,10 +14,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use uuid;
 
-use crate::data::traits::SweepDetail;
 use crate::engine::bayesian::{run_bayesian, BayesianConfig};
 use crate::engine::sweep::{run_grid_sweep, GridSweepConfig};
-use crate::scripting::engine::CachingDataLoader;
+use crate::scripting::engine::{CachingDataLoader, CancelCallback};
 use crate::server::sanitize::{sanitize, trade_row_from_record};
 use crate::server::state::AppState;
 use crate::tools::response_types::sweep::SweepResponse;
@@ -276,107 +275,9 @@ pub(crate) fn persist_sweep(
 // Handlers
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// `POST /sweeps` — Run a parameter sweep and persist the result.
-#[allow(clippy::too_many_lines)]
-pub async fn create_sweep(
-    State(state): State<AppState>,
-    Json(req): Json<CreateSweepRequest>,
-) -> Result<(StatusCode, Json<SweepDetail>), (StatusCode, String)> {
-    let (strategy_key, script_source) = resolve_strategy_source(&state, &req.strategy)?;
-    let script_meta = crate::scripting::stdlib::parse_script_meta(&strategy_key, &script_source);
-    let loader = CachingDataLoader::new(Arc::clone(&state.server.cache));
-
-    let symbol = req
-        .params
-        .get("SYMBOL")
-        .and_then(Value::as_str)
-        .unwrap_or("UNKNOWN")
-        .to_owned();
-
-    // Generate a run ID upfront so the cancel endpoint can target it
-    let run_id = uuid::Uuid::new_v4().to_string();
-    let cancellations = Arc::clone(&state.sweep_cancellations);
-    let cancel_run_id = run_id.clone();
-    let is_cancelled = move || {
-        cancellations
-            .lock()
-            .is_ok_and(|set| set.contains(&cancel_run_id) || set.contains("__cancel_all__"))
-    };
-
-    let sweep_response = match req.mode.as_str() {
-        "grid" => {
-            let param_grid = build_grid(&req.sweep_params);
-            let config = GridSweepConfig {
-                script_source,
-                base_params: req.params.clone(),
-                param_grid,
-                objective: req.objective.clone(),
-            };
-            run_grid_sweep(&config, &loader, &is_cancelled, |_, _| {})
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        }
-        "bayesian" => {
-            let continuous_params: Vec<(String, f64, f64, bool)> = req
-                .sweep_params
-                .iter()
-                .map(|sp| (sp.name.clone(), sp.start, sp.stop, sp.param_type == "int"))
-                .collect();
-            let initial_samples = (req.max_evaluations / 3).max(2);
-            let config = BayesianConfig {
-                script_source,
-                base_params: req.params.clone(),
-                continuous_params,
-                max_evaluations: req.max_evaluations,
-                initial_samples,
-                objective: req.objective.clone(),
-            };
-            run_bayesian(&config, &loader, &is_cancelled, |_, _| {})
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        }
-        other => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                format!("Invalid mode '{other}', expected 'grid' or 'bayesian'"),
-            ));
-        }
-    };
-
-    // Clean up cancellation flags
-    if let Ok(mut set) = state.sweep_cancellations.lock() {
-        set.remove(&run_id);
-        set.remove("__cancel_all__");
-    }
-
-    let sweep_id = persist_sweep(
-        &state,
-        &strategy_key,
-        &symbol,
-        &req,
-        &sweep_response,
-        &script_meta,
-        "manual",
-        None,
-    )?;
-
-    let detail = state
-        .run_store
-        .get_sweep(&sweep_id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Sweep inserted but not found".to_string(),
-            )
-        })?;
-
-    Ok((StatusCode::CREATED, Json(detail)))
-}
-
-/// `POST /sweeps/stream` — Run a sweep with SSE progress updates.
+/// `POST /runs/sweep` — Run a sweep with SSE progress updates.
 #[allow(clippy::too_many_lines, clippy::unused_async)]
-pub async fn create_sweep_stream(
+pub async fn create_sweep(
     State(state): State<AppState>,
     Json(req): Json<CreateSweepRequest>,
 ) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
@@ -392,7 +293,10 @@ pub async fn create_sweep_stream(
         };
         let script_meta =
             crate::scripting::stdlib::parse_script_meta(&strategy_key, &script_source);
-        let loader = CachingDataLoader::new(Arc::clone(&state.server.cache));
+        let loader = CachingDataLoader::new(
+            Arc::clone(&state.server.cache),
+            state.server.adjustment_store.clone(),
+        );
         let symbol = req
             .params
             .get("SYMBOL")
@@ -430,15 +334,8 @@ pub async fn create_sweep_stream(
             }
         });
 
-        // Cancellation
-        let run_id = uuid::Uuid::new_v4().to_string();
-        let cancellations = Arc::clone(&state.sweep_cancellations);
-        let cancel_run_id = run_id.clone();
-        let is_cancelled = move || {
-            cancellations
-                .lock()
-                .is_ok_and(|set| set.contains(&cancel_run_id) || set.contains("__cancel_all__"))
-        };
+        // No-op cancellation — cancellation is now handled via /tasks/* endpoints
+        let is_cancelled: CancelCallback = Box::new(|| false);
 
         // Progress callback
         let cur_cb = Arc::clone(&current);
@@ -494,12 +391,6 @@ pub async fn create_sweep_stream(
             }
         };
 
-        // Clean up cancellation flags
-        if let Ok(mut set) = state.sweep_cancellations.lock() {
-            set.remove(&run_id);
-            set.remove("__cancel_all__");
-        }
-
         ticker.abort();
 
         match sweep_result {
@@ -541,13 +432,4 @@ pub async fn create_sweep_stream(
     });
 
     Sse::new(tokio_stream::wrappers::ReceiverStream::new(rx).map(Ok))
-}
-
-/// `POST /sweeps/cancel` — Cancel all running sweeps.
-#[allow(clippy::unused_async)]
-pub async fn cancel_sweeps(State(state): State<AppState>) -> StatusCode {
-    if let Ok(mut set) = state.sweep_cancellations.lock() {
-        set.insert("__cancel_all__".to_string());
-    }
-    StatusCode::NO_CONTENT
 }

@@ -20,6 +20,9 @@ pub struct ScriptPosition {
     pub days_held: i64,
     /// Current simulation date — used by `get_dte()` to compute days to expiration.
     pub current_date: NaiveDate,
+    /// Bar index at which this position was opened. Used for `bars_since_entry`
+    /// which counts bars (not calendar days) for correct intraday behavior.
+    pub entry_bar_idx: usize,
     /// `"script"` for positions opened by the script, `"assignment"` for
     /// positions auto-created by the engine on ITM put expiration.
     pub source: String,

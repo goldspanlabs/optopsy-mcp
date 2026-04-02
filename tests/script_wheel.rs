@@ -79,6 +79,20 @@ impl DataLoader for TestDataLoader {
     ) -> Result<DataFrame> {
         Ok(self.options_df.clone())
     }
+
+    fn load_splits(
+        &self,
+        _symbol: &str,
+    ) -> Result<Vec<optopsy_mcp::data::adjustment_store::SplitRow>> {
+        Ok(Vec::new())
+    }
+
+    fn load_dividends(
+        &self,
+        _symbol: &str,
+    ) -> Result<Vec<optopsy_mcp::data::adjustment_store::DividendRow>> {
+        Ok(Vec::new())
+    }
 }
 
 /// Convert `Vec<OhlcvBar>` to a Polars `DataFrame` for test data loaders.
@@ -216,15 +230,23 @@ async fn wheel_script_compiles_and_configures() {
 }
 
 /// Run wheel.rhai with synthetic data: put expires OTM (premium collected).
+///
+/// Next-bar execution: order queued on bar 0, fills on bar 1, expires on bar 2.
 #[tokio::test(flavor = "multi_thread")]
 async fn wheel_script_put_expires_otm() {
     let entry_date = d(2024, 1, 2);
+    let fill_date = d(2024, 1, 3); // bar 1: order fills here
     let put_exp = d(2024, 2, 16);
 
-    let options_df = make_options_df(&[(dt(2024, 1, 2), put_exp, "p", 100.0, 3.00, 3.50, -0.30)]);
+    // Provide options data on both entry_date and fill_date so the order can resolve
+    let options_df = make_options_df(&[
+        (dt(2024, 1, 2), put_exp, "p", 100.0, 3.00, 3.50, -0.30),
+        (dt(2024, 1, 3), put_exp, "p", 100.0, 3.00, 3.50, -0.30),
+    ]);
 
     let mut closes = BTreeMap::new();
     closes.insert(entry_date, 105.0);
+    closes.insert(fill_date, 105.0);
     closes.insert(put_exp, 105.0); // above strike → OTM
 
     let bars = make_bars_from_closes(&closes);
@@ -237,7 +259,7 @@ async fn wheel_script_put_expires_otm() {
     let mut params = wheel_params();
     params.insert("TAKE_PROFIT".to_string(), serde_json::json!(null));
 
-    let result = run_script_backtest(&script_source, &params, &loader).await;
+    let result = run_script_backtest(&script_source, &params, &loader, None, None, None).await;
     assert!(
         result.is_ok(),
         "Script backtest should succeed: {:?}",
@@ -246,23 +268,28 @@ async fn wheel_script_put_expires_otm() {
 
     let result = result.unwrap();
 
-    // Should have opened a short put on bar 0 and it expired on bar 1
+    // Should have opened a short put on bar 1 (filled from bar 0 order) and it expired on bar 2
     assert_eq!(
         result.result.trade_count, 1,
         "Should have 1 trade (put expiration). Warnings: {:?}",
         result.result.warnings,
     );
-    assert_eq!(result.result.equity_curve.len(), 2);
 
     // Equity curve should have entries for each bar
     assert_eq!(
         result.result.equity_curve.len(),
-        2,
-        "Should have 2 equity points"
+        3,
+        "Should have 3 equity points"
     );
 }
 
 /// Minimal test: just open a stock position to verify the engine loop works.
+///
+/// Next-bar execution model:
+/// - Bar 0: `on_bar` queues buy order (market order)
+/// - Bar 1: order fills at bar 1's open (100.0), `days_held`=0
+/// - Bar 2: `days_held`=1, `on_exit_check` triggers close at bar 2's close
+/// - Bar 3: needed so bar 2 isn't the last bar (final bar orders are cancelled)
 #[tokio::test(flavor = "multi_thread")]
 async fn wheel_script_stock_only_smoke_test() {
     let bars = vec![
@@ -288,6 +315,14 @@ async fn wheel_script_stock_only_smoke_test() {
             high: 103.0,
             low: 100.0,
             close: 102.0,
+            volume: 1e6,
+        },
+        OhlcvBar {
+            datetime: dt(2024, 1, 5),
+            open: 102.0,
+            high: 104.0,
+            low: 101.0,
+            close: 103.0,
             volume: 1e6,
         },
     ];
@@ -327,31 +362,45 @@ async fn wheel_script_stock_only_smoke_test() {
     params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
     params.insert("CAPITAL".to_string(), serde_json::json!(100_000.0));
 
-    let result = run_script_backtest(script, &params, &loader).await.unwrap();
+    let result = run_script_backtest(script, &params, &loader, None, None, None)
+        .await
+        .unwrap();
 
     assert_eq!(result.result.trade_count, 1, "Should have 1 closed trade");
     assert_eq!(
         result.result.equity_curve.len(),
-        3,
-        "Should have 3 equity points"
+        4,
+        "Should have 4 equity points"
     );
 
-    // P&L: bought at 100 on bar 0, closed at 102 on bar 2 (days_held becomes 1 after bar 1)
-    // Exit fires on bar 2 when days_held=1 (updated at end of bar 1)
-    // P&L = (102 - 100) * 100 = 200
+    // Next-bar execution: buy order queued on bar 0, fills at bar 1 open (100.0)
+    // days_held becomes 1 after bar 2, exit fires on bar 3 at close (103.0)
+    // P&L = (103 - 100) * 100 = 300
     let pnl = result.result.trade_log[0].pnl;
-    assert!((pnl - 200.0).abs() < 1.0, "Expected ~200 PnL, got {pnl}");
+    assert!((pnl - 300.0).abs() < 1.0, "Expected ~300 PnL, got {pnl}");
 }
 
 /// Open an options position via inline script with synthetic data.
 #[tokio::test(flavor = "multi_thread")]
 async fn script_opens_options_position() {
     let put_exp = d(2024, 2, 16);
-    let options_df = make_options_df(&[(dt(2024, 1, 2), put_exp, "p", 100.0, 3.00, 3.50, -0.30)]);
+    // Provide options data on both bars so the order can fill on bar 1
+    let options_df = make_options_df(&[
+        (dt(2024, 1, 2), put_exp, "p", 100.0, 3.00, 3.50, -0.30),
+        (dt(2024, 1, 3), put_exp, "p", 100.0, 3.00, 3.50, -0.30),
+    ]);
 
     let bars = vec![
         OhlcvBar {
             datetime: dt(2024, 1, 2),
+            open: 105.0,
+            high: 106.0,
+            low: 104.0,
+            close: 105.0,
+            volume: 1e6,
+        },
+        OhlcvBar {
+            datetime: dt(2024, 1, 3),
             open: 105.0,
             high: 106.0,
             low: 104.0,
@@ -399,12 +448,14 @@ async fn script_opens_options_position() {
     params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
     params.insert("CAPITAL".to_string(), serde_json::json!(100_000.0));
 
-    let result = run_script_backtest(script, &params, &loader).await.unwrap();
+    let result = run_script_backtest(script, &params, &loader, None, None, None)
+        .await
+        .unwrap();
 
-    // Should have opened a position on bar 0
+    // Should have equity points for all 3 bars
     assert!(
-        result.result.equity_curve.len() == 2,
-        "Should have 2 equity points"
+        result.result.equity_curve.len() == 3,
+        "Should have 3 equity points"
     );
 }
 
@@ -412,12 +463,17 @@ async fn script_opens_options_position() {
 #[tokio::test(flavor = "multi_thread")]
 async fn wheel_script_result_has_expected_fields() {
     let entry_date = d(2024, 1, 2);
+    let fill_date = d(2024, 1, 3); // next-bar fill
     let put_exp = d(2024, 2, 16);
 
-    let options_df = make_options_df(&[(dt(2024, 1, 2), put_exp, "p", 100.0, 3.00, 3.50, -0.30)]);
+    let options_df = make_options_df(&[
+        (dt(2024, 1, 2), put_exp, "p", 100.0, 3.00, 3.50, -0.30),
+        (dt(2024, 1, 3), put_exp, "p", 100.0, 3.00, 3.50, -0.30),
+    ]);
 
     let mut closes = BTreeMap::new();
     closes.insert(entry_date, 105.0);
+    closes.insert(fill_date, 105.0);
     closes.insert(put_exp, 105.0);
 
     let bars = make_bars_from_closes(&closes);
@@ -430,9 +486,10 @@ async fn wheel_script_result_has_expected_fields() {
     let mut params = wheel_params();
     params.insert("TAKE_PROFIT".to_string(), serde_json::json!(null));
 
-    let ScriptBacktestResult { result, .. } = run_script_backtest(&script_source, &params, &loader)
-        .await
-        .unwrap();
+    let ScriptBacktestResult { result, .. } =
+        run_script_backtest(&script_source, &params, &loader, None, None, None)
+            .await
+            .unwrap();
 
     // Verify all fields the FE needs are present and serializable
     let json = serde_json::to_value(&result.metrics).unwrap();
@@ -462,18 +519,24 @@ async fn wheel_script_result_has_expected_fields() {
 
 /// Full wheel cycle: sell put → assigned (ITM) → sell call → called away (ITM).
 /// Verifies the engine creates implicit stock on assignment and closes it on `called_away`.
+///
+/// Next-bar execution: extra bars added so orders queue on bar N and fill on bar N+1.
 #[tokio::test(flavor = "multi_thread")]
 async fn wheel_full_cycle_assignment_and_called_away() {
     let put_exp = d(2024, 2, 16); // 45 DTE from 2024-01-02
     let call_exp = d(2024, 3, 15); // ~28 DTE from put_exp
 
     // Options data:
-    // Bar 0 (entry): put available at strike 100
-    // Bar 1 (put exp): call available at strike 102
-    // Bar 2 (call exp): call row for close reference
+    // Bar 0 (signal): put available at strike 100
+    // Bar 1 (fill): put fills here, also needs options for resolution
+    // Bar 2 (put exp): call available at strike 102
+    // Bar 3 (call fill): call fills here
+    // Bar 4 (call exp): call row for close reference
     let options_df = make_options_df(&[
         (dt(2024, 1, 2), put_exp, "p", 100.0, 3.00, 3.50, -0.30),
+        (dt(2024, 1, 3), put_exp, "p", 100.0, 3.00, 3.50, -0.30),
         (dt(2024, 2, 16), call_exp, "c", 102.0, 2.00, 2.50, 0.30),
+        (dt(2024, 2, 17), call_exp, "c", 102.0, 2.00, 2.50, 0.30),
         (dt(2024, 3, 15), call_exp, "c", 102.0, 0.10, 0.20, 0.02),
     ]);
 
@@ -488,11 +551,27 @@ async fn wheel_full_cycle_assignment_and_called_away() {
             volume: 1e6,
         },
         OhlcvBar {
+            datetime: dt(2024, 1, 3),
+            open: 101.0,
+            high: 102.0,
+            low: 100.0,
+            close: 101.0,
+            volume: 1e6,
+        },
+        OhlcvBar {
             datetime: dt(2024, 2, 16),
             open: 98.0,
             high: 99.0,
             low: 97.0,
             close: 98.0, // below 100 strike → put ITM → assignment
+            volume: 1e6,
+        },
+        OhlcvBar {
+            datetime: dt(2024, 2, 17),
+            open: 98.0,
+            high: 99.0,
+            low: 97.0,
+            close: 98.0,
             volume: 1e6,
         },
         OhlcvBar {
@@ -515,7 +594,7 @@ async fn wheel_full_cycle_assignment_and_called_away() {
     let mut params = wheel_params();
     params.insert("TAKE_PROFIT".to_string(), serde_json::json!(null));
 
-    let result = run_script_backtest(&script_source, &params, &loader).await;
+    let result = run_script_backtest(&script_source, &params, &loader, None, None, None).await;
     assert!(
         result.is_ok(),
         "Wheel backtest should succeed: {:?}",
@@ -545,10 +624,10 @@ async fn wheel_full_cycle_assignment_and_called_away() {
         "Should have an Assignment exit. Got: {exit_types:?}"
     );
 
-    // Equity curve should span all 3 bars
+    // Equity curve should span all 5 bars
     assert_eq!(
         result.result.equity_curve.len(),
-        3,
-        "Should have 3 equity points"
+        5,
+        "Should have 5 equity points"
     );
 }

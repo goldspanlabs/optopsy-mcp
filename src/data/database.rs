@@ -49,6 +49,12 @@ impl Database {
         Ok(db)
     }
 
+    /// Create a [`SqliteAdjustmentStore`](super::adjustment_store::SqliteAdjustmentStore)
+    /// backed by this database's connection.
+    pub fn adjustments(&self) -> super::adjustment_store::SqliteAdjustmentStore {
+        super::adjustment_store::SqliteAdjustmentStore::new(self.conn.clone())
+    }
+
     /// Create a [`SqliteRunStore`](super::run_store::SqliteRunStore)
     /// backed by this database's connection.
     pub fn runs(&self) -> super::run_store::SqliteRunStore {
@@ -112,6 +118,8 @@ mod tests {
         assert!(tables.contains(&"threads".to_string()));
         assert!(tables.contains(&"messages".to_string()));
         assert!(tables.contains(&"results".to_string()));
+        assert!(tables.contains(&"splits".to_string()));
+        assert!(tables.contains(&"dividends".to_string()));
     }
 
     #[test]

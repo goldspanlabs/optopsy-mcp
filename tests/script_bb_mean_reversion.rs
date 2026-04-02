@@ -57,6 +57,20 @@ impl DataLoader for TestDataLoader {
     ) -> Result<DataFrame> {
         Ok(DataFrame::empty())
     }
+
+    fn load_splits(
+        &self,
+        _symbol: &str,
+    ) -> Result<Vec<optopsy_mcp::data::adjustment_store::SplitRow>> {
+        Ok(Vec::new())
+    }
+
+    fn load_dividends(
+        &self,
+        _symbol: &str,
+    ) -> Result<Vec<optopsy_mcp::data::adjustment_store::DividendRow>> {
+        Ok(Vec::new())
+    }
 }
 
 fn bb_params() -> std::collections::HashMap<String, serde_json::Value> {
@@ -216,7 +230,7 @@ async fn bb_entry_on_breakout_exit_on_reversion() {
         std::fs::read_to_string("scripts/strategies/bb_mean_reversion.rhai").unwrap();
     let params = bb_params();
 
-    let result = run_script_backtest(&script_source, &params, &loader).await;
+    let result = run_script_backtest(&script_source, &params, &loader, None, None, None).await;
     assert!(
         result.is_ok(),
         "BB mean reversion backtest should succeed: {:?}",
@@ -306,7 +320,7 @@ async fn bb_max_hold_exit() {
         std::fs::read_to_string("scripts/strategies/bb_mean_reversion.rhai").unwrap();
     let params = bb_params();
 
-    let result = run_script_backtest(&script_source, &params, &loader).await;
+    let result = run_script_backtest(&script_source, &params, &loader, None, None, None).await;
     assert!(
         result.is_ok(),
         "BB max-hold backtest should succeed: {:?}",
