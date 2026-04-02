@@ -653,15 +653,17 @@ fn generate_stmts(
                 ..
             } => {
                 let qty = rewrite_expr(qty_expr);
-                let call = match order_type {
-                    OrderModifier::Market => format!("sell_stock({qty})"),
+                // Build the guarded call with __sell_qty directly to avoid
+                // string-replace corruption when qty appears in price expressions.
+                let call_with_guard = match order_type {
+                    OrderModifier::Market => "sell_stock(__sell_qty)".to_string(),
                     OrderModifier::Limit { price } => {
                         let p = rewrite_expr(price);
-                        format!("sell_limit({qty}, {p})")
+                        format!("sell_limit(__sell_qty, {p})")
                     }
                     OrderModifier::Stop { price } => {
                         let p = rewrite_expr(price);
-                        format!("sell_stop({qty}, {p})")
+                        format!("sell_stop(__sell_qty, {p})")
                     }
                 };
 
@@ -670,7 +672,6 @@ fn generate_stmts(
                     || exit_modifiers.trailing_stop.is_some();
 
                 // Emit quantity validation guard
-                let call_with_guard = call.replace(&qty, "__sell_qty");
                 out.push_str(&format!("{indent}let __sell_qty = {qty};\n"));
                 out.push_str(&format!("{indent}if __sell_qty > 0 {{\n"));
                 if has_mods && kind == CallbackKind::ActionArray {
@@ -1316,14 +1317,22 @@ pub fn rewrite_expr(expr: &str) -> String {
 
             if preceded_by_dot {
                 result.push_str(&word);
-            } else if word == "has" && matches_word_at(&chars, i, "positions") {
-                // "has positions" → ctx.has_positions()
-                i += "positions".len() + 1; // skip space + "positions"
-                result.push_str("ctx.has_positions()");
-            } else if word == "no" && matches_word_at(&chars, i, "positions") {
-                // "no positions" → !ctx.has_positions()
-                i += "positions".len() + 1;
-                result.push_str("!ctx.has_positions()");
+            } else if word == "has" {
+                if let Some(end) = matches_word_at(&chars, i, "positions") {
+                    // "has positions" → ctx.has_positions()
+                    i = end;
+                    result.push_str("ctx.has_positions()");
+                } else {
+                    result.push_str(&word);
+                }
+            } else if word == "no" {
+                if let Some(end) = matches_word_at(&chars, i, "positions") {
+                    // "no positions" → !ctx.has_positions()
+                    i = end;
+                    result.push_str("!ctx.has_positions()");
+                } else {
+                    result.push('!');
+                }
             } else if word == "and" {
                 result.push_str("&&");
             } else if word == "or" {
@@ -1421,7 +1430,9 @@ fn is_followed_by_paren(chars: &[char], pos: usize) -> bool {
 }
 
 /// Check if `expected` word appears at `pos` (after optional whitespace).
-fn matches_word_at(chars: &[char], pos: usize, expected: &str) -> bool {
+/// Check if `expected` word appears at `pos` (after optional whitespace).
+/// Returns `Some(end_pos)` if matched, where `end_pos` is the position after the word.
+fn matches_word_at(chars: &[char], pos: usize, expected: &str) -> Option<usize> {
     let mut j = pos;
     // Skip whitespace
     while j < chars.len() && chars[j] == ' ' {
@@ -1429,16 +1440,19 @@ fn matches_word_at(chars: &[char], pos: usize, expected: &str) -> bool {
     }
     let expected_chars: Vec<char> = expected.chars().collect();
     if j + expected_chars.len() > chars.len() {
-        return false;
+        return None;
     }
     for (k, &ec) in expected_chars.iter().enumerate() {
         if chars[j + k] != ec {
-            return false;
+            return None;
         }
     }
     // Ensure it's a full word (not a prefix of a longer identifier)
     let end = j + expected_chars.len();
-    end >= chars.len() || (!chars[end].is_alphanumeric() && chars[end] != '_')
+    if end < chars.len() && (chars[end].is_alphanumeric() || chars[end] == '_') {
+        return None;
+    }
+    Some(end)
 }
 
 // ---------------------------------------------------------------------------
