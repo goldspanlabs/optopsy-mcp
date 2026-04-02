@@ -1087,6 +1087,19 @@ pub async fn run_script_backtest(
                             group: read_group(&scope),
                             trailing_stop: None,
                         };
+
+                        // Per-order exit modifiers are not yet supported for options entries
+                        if order.stop_loss.is_some()
+                            || order.profit_target.is_some()
+                            || order.trailing_stop.is_some()
+                        {
+                            warnings.push(
+                                "Per-order stop_loss/profit_target/trailing_stop modifiers \
+                                 are not supported for options entries and will be ignored"
+                                    .to_string(),
+                            );
+                        }
+
                         realized_equity -= compute_commission(&config.commission, &pos);
                         next_id += 1;
                         last_entry_date = Some(today);
