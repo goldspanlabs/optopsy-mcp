@@ -324,6 +324,9 @@ pub async fn execute(
         let mut best_params = combos[0].clone();
 
         for combo in &combos {
+            if is_cancelled() {
+                break;
+            }
             let mut run_params = base_params.clone();
             run_params.extend(combo.clone());
             run_params.insert(
@@ -422,14 +425,22 @@ pub async fn execute(
         crate::engine::metrics::calculate_metrics(&all_oos_equity, &[], params.capital, 252.0)?
     };
 
-    let objective_str = format!("{:?}", params.objective).to_lowercase();
-    let mode_str = format!("{:?}", params.mode).to_lowercase();
+    let objective_str = match params.objective {
+        WfObjective::Sharpe => "sharpe",
+        WfObjective::Sortino => "sortino",
+        WfObjective::ProfitFactor => "profit_factor",
+        WfObjective::Cagr => "cagr",
+    };
+    let mode_str = match params.mode {
+        WfMode::Rolling => "rolling",
+        WfMode::Anchored => "anchored",
+    };
 
     // Compute new summary fields
     let profitable_windows = window_results
         .iter()
-        .filter(|w| match objective_str.as_str() {
-            "profitfactor" => w.out_of_sample_metric > 1.0,
+        .filter(|w| match objective_str {
+            "profit_factor" => w.out_of_sample_metric > 1.0,
             _ => w.out_of_sample_metric > 0.0,
         })
         .count();
@@ -445,9 +456,14 @@ pub async fn execute(
             })
             .collect();
         let n_unique = unique_params.len();
+        let ratio = if total_windows > 0 {
+            n_unique as f64 / total_windows as f64
+        } else {
+            0.0
+        };
         if n_unique <= 1 {
             "stable".to_string()
-        } else if n_unique <= total_windows / 2 {
+        } else if ratio <= 0.5 {
             "moderate".to_string()
         } else {
             "unstable".to_string()
@@ -459,8 +475,8 @@ pub async fn execute(
         stitched_equity: all_oos_equity,
         stitched_metrics,
         efficiency_ratio,
-        objective: objective_str,
-        mode: mode_str,
+        objective: objective_str.to_string(),
+        mode: mode_str.to_string(),
         execution_time_ms: start.elapsed().as_millis() as u64,
         profitable_windows,
         total_windows,
