@@ -53,7 +53,7 @@ pub fn filter_option_type(df: DataFrame, option_type: &str) -> Result<DataFrame>
 /// Select the closest option to a target delta within a range.
 /// Groups by (`datetime`, expiration) and picks the row closest to target delta.
 pub fn select_closest_delta(df: DataFrame, target: &TargetRange) -> Result<DataFrame> {
-    let result = df
+    let filtered = df
         .lazy()
         .filter(
             col("delta")
@@ -61,6 +61,14 @@ pub fn select_closest_delta(df: DataFrame, target: &TargetRange) -> Result<DataF
                 .gt_eq(lit(target.min))
                 .and(col("delta").abs().lt_eq(lit(target.max))),
         )
+        .collect()?;
+
+    if filtered.height() == 0 {
+        return Ok(filtered);
+    }
+
+    let result = filtered
+        .lazy()
         .with_column(
             (col("delta").abs() - lit(target.target))
                 .abs()
