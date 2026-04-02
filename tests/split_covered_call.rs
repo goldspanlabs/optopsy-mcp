@@ -207,7 +207,7 @@ async fn covered_call_spanning_split() {
     "#;
 
     let params = std::collections::HashMap::new();
-    let result = run_script_backtest(script, &params, &loader).await;
+    let result = run_script_backtest(script, &params, &loader, None, None, None).await;
 
     assert!(
         result.is_ok(),
@@ -366,7 +366,7 @@ async fn wheel_cycle_spanning_split() {
     "#;
 
     let params = std::collections::HashMap::new();
-    let result = run_script_backtest(script, &params, &loader).await;
+    let result = run_script_backtest(script, &params, &loader, None, None, None).await;
 
     assert!(
         result.is_ok(),
@@ -476,7 +476,7 @@ async fn stock_only_across_split() {
     "#;
 
     let params = std::collections::HashMap::new();
-    let result = run_script_backtest(script, &params, &loader).await;
+    let result = run_script_backtest(script, &params, &loader, None, None, None).await;
 
     assert!(
         result.is_ok(),
