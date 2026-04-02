@@ -475,6 +475,18 @@ pub async fn run_script_backtest(
     let config_map: Dynamic = call_fn_persistent(&engine, &mut scope, &ast, "config", ())?;
     let mut config = parse_config(config_map).context("Failed to parse config() return value")?;
 
+    // 3a. Override date bounds from params (used by walk-forward to set window dates)
+    if let Some(s) = params.get("START_DATE").and_then(|v| v.as_str()) {
+        if let Ok(d) = s.parse::<chrono::NaiveDate>() {
+            config.start_date = Some(d);
+        }
+    }
+    if let Some(s) = params.get("END_DATE").and_then(|v| v.as_str()) {
+        if let Ok(d) = s.parse::<chrono::NaiveDate>() {
+            config.end_date = Some(d);
+        }
+    }
+
     // 4. Load data
     let mut early_warnings: Vec<String> = Vec::new();
 
