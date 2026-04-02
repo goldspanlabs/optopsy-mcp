@@ -47,16 +47,11 @@ strategy "Name"
   capital CAPITAL                        # variable or literal
   interval daily                         # daily|1min|5min|15min|30min|1h|2h|4h
   data ohlcv                             # ohlcv|options|ohlcv, options
-  indicators sma:50, sma:200, rsi:14     # comma-separated indicator specs
+  indicators sma:50, sma:200, rsi:14     # optional — auto-detected from body
   slippage mid                           # mid|spread|per_leg:N
   expiration_filter monthly              # monthly|weekly|all
   max_positions 1                        # integer
   cross_symbols QQQ, IWM                 # comma-separated symbols
-  stop_loss 5%                           # percentage-based stop loss
-  profit_target 10%                      # percentage-based take profit
-  trailing_stop 3%                       # percentage-based trailing stop
-  stop_loss $500                         # dollar-based stop loss (alternative)
-  profit_target $1000                    # dollar-based take profit (alternative)
 
 extern NAME = DEFAULT "description"
 extern NAME = DEFAULT "description" choices VAL1, VAL2
@@ -64,16 +59,32 @@ extern NAME = DEFAULT "description" choices VAL1, VAL2
 state NAME = DEFAULT
 ```
 
-### Declarative Exits
+### Indicators (auto-detected)
 
-`stop_loss`, `profit_target`, and `trailing_stop` are strategy-level properties.
-The engine evaluates them on every bar **before** `on_exit_check`. When triggered,
-exit type is set to `"stop_loss"`, `"take_profit"`, or `"trailing_stop"` respectively.
+The `indicators` line is **optional**. Indicators referenced in body expressions
+(e.g., `sma(50)`, `rsi(14)`) are automatically detected and included in the
+generated config. An explicit `indicators` line is merged with auto-detected
+ones; duplicates are removed.
 
-Percentage form (`5%`) checks against the position's P&L as a fraction of entry cost.
-Dollar form (`$500`) checks against the absolute unrealized P&L value.
+### Per-Order Exit Modifiers
 
-Transpilation: these properties are emitted into the `config()` function's return map.
+`stop_loss`, `profit_target`, and `trailing_stop` are attached to individual
+Buy/Sell orders as indented lines immediately after the order statement:
+
+```
+Buy 100 shares next bar at market
+  stop_loss 5%
+  profit_target 10%
+  trailing_stop 3%
+```
+
+Supported formats: `N%` (percentage of fill price) and `$N` (dollar amount).
+
+The engine evaluates exit modifiers on every bar **before** `on_exit_check`.
+When triggered, exit type is set to `"stop_loss"`, `"take_profit"`, or
+`"trailing_stop"` respectively.
+
+Transpilation: exit modifiers are emitted into the action map for each order.
 
 ### Strategy Modes
 
@@ -306,8 +317,6 @@ strategy "SMA Crossover"
   interval daily
   data ohlcv
   indicators sma:50, sma:200, rsi:14
-  stop_loss 8%
-  trailing_stop 3%
 
 extern THRESHOLD = 0.04 "Entry threshold"
 state consecutive_losses = 0
@@ -318,6 +327,8 @@ on each bar
   skip when consecutive_losses >= 3
   when close > sma(200) * (1 + THRESHOLD) and sma(50) > sma(200) then
     buy size_by_equity(1.0) shares
+      stop_loss 8%
+      trailing_stop 3%
 
 on exit check
   when close < sma(200) then
@@ -340,7 +351,6 @@ strategy "Golden Cross" procedural
   capital CAPITAL
   interval daily
   indicators sma:50, sma:200
-  stop_loss 5%
 
 extern FAST = 50 "Fast MA"
 
@@ -348,6 +358,7 @@ require sma:50, sma:200
 
 when no positions and sma(50) crosses above sma(200) then
   buy size_by_equity(1.0) shares
+    stop_loss 5%
 
 when has positions and close crosses below sma(50) then
   close position "signal_exit"
@@ -372,8 +383,6 @@ fn config() {
             options: false,
             indicators: ["sma:50", "sma:200", "rsi:14"],
         },
-        stop_loss_pct: 0.08,
-        trailing_stop_pct: 0.03,
     }
 }
 
@@ -423,7 +432,6 @@ fn config() {
             options: false,
             indicators: ["sma:50", "sma:200"],
         },
-        stop_loss_pct: 0.05,
     }
 }
 

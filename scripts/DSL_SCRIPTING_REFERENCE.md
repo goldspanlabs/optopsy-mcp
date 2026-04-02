@@ -29,10 +29,7 @@ strategy "Name"
   capital CAPITAL      # or a literal like 100000
   interval daily
   data ohlcv           # or: ohlcv, options
-  indicators sma:50, sma:200, rsi:14
-  stop_loss 5%         # optional declarative exit
-  profit_target 10%    # optional declarative exit
-  trailing_stop 3%     # optional declarative exit
+  indicators sma:50, sma:200, rsi:14   # optional — auto-detected from body
 
 extern NAME = DEFAULT "description"
 extern NAME = DEFAULT "description" choices VAL1, VAL2
@@ -66,7 +63,6 @@ strategy "SMA Cross" procedural
   capital CAPITAL
   interval daily
   indicators sma:50, sma:200
-  stop_loss 5%
 
 extern FAST = 50 "Fast MA"
 
@@ -74,6 +70,7 @@ require sma:50, sma:200
 
 when no positions and sma(50) crosses above sma(200) then
   Buy size_by_equity(1.0) shares next bar at market
+    stop_loss 5%
 
 when has positions and close crosses below sma(50) then
   close position "signal_exit"
@@ -93,19 +90,38 @@ strategy "Iron Condor Income"
   capital CAPITAL                     # maps to params.CAPITAL
   interval daily                      # daily|1min|5min|15min|30min|1h|2h|4h
   data ohlcv, options                 # ohlcv|options (comma-separated)
-  indicators rsi:14, atr:14, sma:50   # comma-separated indicator specs
+  indicators sma:50, sma:200, rsi:14   # optional — auto-detected from body
   slippage mid                        # mid|spread|per_leg:N
   expiration_filter monthly           # monthly|weekly|any
   max_positions 1                     # integer
   cross_symbols QQQ, IWM             # for price_of() access
-  stop_loss 5%                        # percentage-based stop loss
-  profit_target 10%                   # percentage-based take profit
-  trailing_stop 3%                    # percentage-based trailing stop
-  stop_loss $500                      # dollar-based stop loss (alternative)
-  profit_target $1000                 # dollar-based take profit (alternative)
 ```
 
 All properties except `symbol` and `capital` are optional (sensible defaults apply).
+
+### Indicators (auto-detected)
+
+The `indicators` line is **optional**. Indicators used in body expressions (e.g.,
+`sma(50)`, `rsi(14)`, `atr(14)`) are automatically detected and included in the
+generated config. If you do provide an explicit `indicators` line, it is merged
+with auto-detected ones — duplicates are removed.
+
+```
+# These two are equivalent:
+strategy "Example"
+  indicators sma:50, sma:200
+
+on each bar
+  when sma(50) > sma(200) then
+    buy 100 shares
+
+# Auto-detect — no indicators line needed:
+strategy "Example"
+
+on each bar
+  when sma(50) > sma(200) then
+    buy 100 shares
+```
 
 Add `procedural` after the strategy name to use procedural mode:
 
@@ -211,26 +227,37 @@ when macd_line() crosses below 0 then         # MACD goes negative
 The `crossed_above`/`crossed_below` context methods compare the current bar's indicator
 value against the previous bar's value to detect the crossover event.
 
-### Declarative Exits
+### Per-Order Exit Modifiers
 
-Declare stop loss, profit target, and trailing stop directly in the strategy block.
-The engine evaluates these before `on_exit_check` on every bar:
+Attach stop loss, profit target, and trailing stop to individual Buy/Sell orders
+as indented lines immediately after the order statement:
 
 ```
-strategy "My Strategy"
-  stop_loss 5%              # exit if position loses 5% of entry cost
-  profit_target 10%         # exit if position gains 10% of entry cost
-  trailing_stop 3%          # trail from peak, exit if drops 3%
-  stop_loss $500            # dollar-based: exit if unrealized loss exceeds $500
-  profit_target $1000       # dollar-based: exit if unrealized gain exceeds $1000
+Buy 100 shares next bar at market
+  stop_loss 5%
+  profit_target 10%
+  trailing_stop 3%
 ```
 
-Use percentage (`%`) or dollar (`$`) notation. When a declarative exit triggers,
-the exit type is set accordingly: `"stop_loss"`, `"take_profit"`, or `"trailing_stop"`.
-These values appear in `exit_type` in the `on position closed` callback.
+Dollar-based modifiers are also supported:
 
-Declarative exits are checked before any `on_exit_check` logic, so they act as
-hard limits that always apply.
+```
+Buy size_by_equity(1.0) shares next bar at market
+  stop_loss $500
+  profit_target $1000
+```
+
+Supported formats:
+- `N%` — percentage of fill price (e.g., `stop_loss 5%` exits if position loses 5% of entry cost)
+- `$N` — dollar amount (e.g., `stop_loss $500` exits if unrealized loss exceeds $500)
+
+The engine evaluates exit modifiers on every bar **before** `on_exit_check`. When
+triggered, the exit type is set accordingly: `"stop_loss"`, `"take_profit"`, or
+`"trailing_stop"`. These values appear in `exit_type` in the `on position closed`
+callback.
+
+Each order can have its own set of exit modifiers, allowing different risk profiles
+for different entry signals within the same strategy.
 
 ### Actions
 
@@ -360,7 +387,7 @@ range queries (`highest_high`, `lowest_low`), crossovers (`crossed_above`,
 
 ## Available Context Methods
 
-### Indicators (declare in `indicators` first)
+### Indicators (auto-detected, or declare in `indicators`)
 ```
 sma(period)            ema(period)            rsi(period)
 atr(period)            cci(period)            obv()
@@ -594,13 +621,13 @@ strategy "Golden Cross" procedural
   capital CAPITAL
   interval daily
   indicators sma:50, sma:200
-  stop_loss 5%
-  trailing_stop 3%
 
 require sma:50, sma:200
 
 when no positions and sma(50) crosses above sma(200) then
   buy size_by_equity(1.0) shares
+    stop_loss 5%
+    trailing_stop 3%
 
 when has positions and sma(50) crosses below sma(200) then
   close position "death_cross"
@@ -613,8 +640,6 @@ strategy "RSI Reversal"
   capital CAPITAL
   interval daily
   indicators rsi:14, sma:200
-  profit_target 8%
-  stop_loss 4%
 
 extern RSI_ENTRY = 30 "Oversold threshold"
 
@@ -624,6 +649,8 @@ on each bar
   # Enter when RSI crosses above oversold AND was below it yesterday
   when rsi(14) crosses above RSI_ENTRY and close > sma(200) then
     buy size_by_equity(0.5) shares
+      profit_target 8%
+      stop_loss 4%
 
 on exit check
   # Exit when RSI was overbought and starts falling
@@ -679,10 +706,11 @@ when has positions and sma(50) crosses below sma(200) then
 | PineScript | Trading DSL |
 |------------|-------------|
 | `input.int(50, "Fast MA")` | `extern FAST = 50 "Fast MA"` |
-| `ta.sma(close, 50)` | `sma(50)` (declared in `indicators`) |
+| `ta.sma(close, 50)` | `sma(50)` (auto-detected or declared in `indicators`) |
 | `ta.crossover(a, b)` | `a crosses above b` |
 | `ta.crossunder(a, b)` | `a crosses below b` |
 | `strategy.entry("Long", strategy.long)` | `buy size_by_equity(1.0) shares` |
+| `strategy.exit("Exit", stop=close*0.95, limit=close*1.10)` | `stop_loss 5%` + `profit_target 10%` (indented after Buy) |
 | `strategy.close("Long")` | `close position "reason"` |
 | `close[1]` | `close[1]` (same syntax) |
 | `ta.sma(close, 50)[1]` | `sma(50)[1]` |
@@ -719,7 +747,6 @@ strategy "SMA Cross" procedural
   capital CAPITAL
   interval daily
   indicators sma:50, sma:200
-  stop_loss 5%
 
 extern FAST_LEN = 50 "Fast period"
 extern SLOW_LEN = 200 "Slow period"
@@ -728,6 +755,7 @@ require sma:50, sma:200
 
 when no positions and sma(50) crosses above sma(200) then
   buy size_by_equity(1.0) shares
+    stop_loss 5%
 
 when has positions and sma(50) crosses below sma(200) then
   close position "signal_exit"
@@ -737,12 +765,12 @@ when has positions and sma(50) crosses below sma(200) then
 | EasyLanguage | Trading DSL |
 |--------------|-------------|
 | `inputs: FastLen(50)` | `extern FAST_LEN = 50 "Fast period"` |
-| `Average(Close, 50)` | `sma(50)` (declared in `indicators`) |
+| `Average(Close, 50)` | `sma(50)` (auto-detected or declared in `indicators`) |
 | `crosses above` | `crosses above` (same keywords) |
 | `crosses below` | `crosses below` (same keywords) |
 | `Buy next bar at market` | `buy size_by_equity(1.0) shares` |
 | `Sell next bar at market` | `close position "reason"` |
-| `SetStopPercent(5)` | `stop_loss 5%` (in strategy block) |
-| `SetPercentTrailing(3)` | `trailing_stop 3%` (in strategy block) |
-| `SetProfitTarget(1000)` | `profit_target $1000` (dollar-based) |
+| `SetStopPercent(5)` | `stop_loss 5%` (indented after Buy/Sell) |
+| `SetPercentTrailing(3)` | `trailing_stop 3%` (indented after Buy/Sell) |
+| `SetProfitTarget(1000)` | `profit_target $1000` (indented after Buy/Sell) |
 | `Close[1]` | `close[1]` (same syntax) |
