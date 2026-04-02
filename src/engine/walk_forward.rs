@@ -525,12 +525,11 @@ mod tests {
     #[test]
     fn test_many_windows_with_small_data() {
         let dates = make_dates(20);
-        let result = compute_windows(&dates, 10, 0.70, &WfMode::Rolling);
-        if let Ok(windows) = result {
-            assert!(windows.len() <= 10);
-            for w in &windows {
-                assert!(w.train_end < w.test_start);
-            }
+        let windows =
+            compute_windows(&dates, 10, 0.70, &WfMode::Rolling).expect("should produce windows");
+        assert!(windows.len() <= 10);
+        for w in &windows {
+            assert!(w.train_end < w.test_start);
         }
     }
 

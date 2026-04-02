@@ -70,7 +70,6 @@ pub async fn execute(
 
     let obj_str = engine_params.objective.clone();
     let mode_str = engine_params.mode.clone();
-    let n_win = engine_params.n_windows;
     let strat = engine_params.strategy.clone();
     let sym = engine_params.symbol.clone();
 
@@ -107,6 +106,7 @@ pub async fn execute(
     }
     .to_string();
     let er = result.efficiency_ratio;
+    let n_actual = windows.len();
 
     // Build AI summary
     let er_assessment = if er >= 0.7 {
@@ -120,7 +120,7 @@ pub async fn execute(
     };
 
     let summary = format!(
-        "Walk-forward optimization for {strat} on {upper}: {n_win} {mode_label} windows, \
+        "Walk-forward optimization for {strat} on {upper}: {n_actual} {mode_label} windows, \
          optimizing {obj_label}. Efficiency ratio={er:.2} ({er_assessment}). \
          Stitched OOS Sharpe={:.2}, max drawdown={:.1}%.",
         result.stitched_metrics.sharpe,
@@ -192,7 +192,7 @@ pub async fn execute(
         symbol: upper,
         mode: mode_label,
         objective: obj_label,
-        n_windows: n_win,
+        n_windows: n_actual,
         efficiency_ratio: result.efficiency_ratio,
         windows,
         stitched_equity: result.stitched_equity,
