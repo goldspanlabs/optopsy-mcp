@@ -1211,6 +1211,73 @@ fn make_lookback_expr(expr: &str) -> String {
 }
 
 /// Returns true if the string looks like a numeric literal (integer or float).
+/// Pre-process `concat(arg1, arg2, ...)` into Rhai string concatenation.
+/// Each argument is converted to string via `.to_string()` (unless it's already a string literal),
+/// then joined with ` + `.
+fn preprocess_concat(expr: &str) -> String {
+    let mut result = expr.to_string();
+    while let Some(start) = result.find("concat(") {
+        // Find matching closing paren
+        let after = start + "concat(".len();
+        let mut depth = 1;
+        let mut end = after;
+        let bytes = result.as_bytes();
+        while end < bytes.len() && depth > 0 {
+            if bytes[end] == b'(' {
+                depth += 1;
+            } else if bytes[end] == b')' {
+                depth -= 1;
+            }
+            end += 1;
+        }
+        if depth != 0 {
+            break; // Unmatched paren, leave as-is
+        }
+        let args_str = &result[after..end - 1];
+        // Split on commas (respecting nested parens)
+        let args = split_concat_args(args_str);
+        let parts: Vec<String> = args
+            .iter()
+            .map(|a| {
+                let a = a.trim();
+                if a.starts_with('"') {
+                    a.to_string()
+                } else {
+                    format!("({a}).to_string()")
+                }
+            })
+            .collect();
+        let replacement = parts.join(" + ");
+        result = format!("{}{}{}", &result[..start], replacement, &result[end..]);
+    }
+    result
+}
+
+/// Split concat arguments on top-level commas (respecting nested parens).
+fn split_concat_args(s: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0;
+    for ch in s.chars() {
+        if ch == '(' {
+            depth += 1;
+            current.push(ch);
+        } else if ch == ')' {
+            depth -= 1;
+            current.push(ch);
+        } else if ch == ',' && depth == 0 {
+            args.push(current.clone());
+            current.clear();
+        } else {
+            current.push(ch);
+        }
+    }
+    if !current.is_empty() {
+        args.push(current);
+    }
+    args
+}
+
 fn is_numeric_literal(s: &str) -> bool {
     let s = s.trim();
     if s.is_empty() {
@@ -1303,6 +1370,7 @@ fn preprocess_crossovers(expr: &str) -> String {
 /// - `X crosses above Y` / `X crosses below Y` → crossover expressions
 pub fn rewrite_expr(expr: &str) -> String {
     let expr = preprocess_crossovers(expr);
+    let expr = preprocess_concat(&expr);
     let chars: Vec<char> = expr.chars().collect();
     let mut result = String::with_capacity(expr.len() + 32);
     let mut i = 0;
@@ -1546,6 +1614,22 @@ mod tests {
     fn test_rewrite_user_vars_untouched() {
         assert_eq!(rewrite_expr("THRESHOLD * 2"), "THRESHOLD * 2");
         assert_eq!(rewrite_expr("my_counter + 1"), "my_counter + 1");
+    }
+
+    #[test]
+    fn test_rewrite_concat() {
+        assert_eq!(
+            rewrite_expr(r#"concat("Cycle ", count + 1)"#),
+            r#""Cycle " + (count + 1).to_string()"#
+        );
+    }
+
+    #[test]
+    fn test_rewrite_concat_all_strings() {
+        assert_eq!(
+            rewrite_expr(r#"concat("hello", " ", "world")"#),
+            r#""hello" + " " + "world""#
+        );
     }
 
     #[test]

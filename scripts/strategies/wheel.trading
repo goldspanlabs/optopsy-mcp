@@ -53,8 +53,7 @@ on position closed
   when phase == "selling_calls" then
     when exit_type == "called_away" then
       add 1 to cycles_completed
-      # String concatenation requires raw — DSL has no string interpolation
-      raw _group = "Cycle " + (cycles_completed + 1).to_string();
+      set _group to concat("Cycle ", cycles_completed + 1)
       set phase to "selling_puts"
     otherwise
       subtract pos.legs[0].entry_price from adjusted_basis
