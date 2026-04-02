@@ -165,7 +165,7 @@ async fn market_order_fills_at_next_bar_open() {
         }
     "#;
 
-    let result = run_script_backtest(script, &default_params(), &loader)
+    let result = run_script_backtest(script, &default_params(), &loader, None, None, None)
         .await
         .unwrap();
 
@@ -266,7 +266,7 @@ async fn limit_buy_fills_at_limit_price() {
         }
     "#;
 
-    let result = run_script_backtest(script, &default_params(), &loader)
+    let result = run_script_backtest(script, &default_params(), &loader, None, None, None)
         .await
         .unwrap();
 
@@ -370,7 +370,7 @@ async fn stop_buy_fills_on_breakout() {
         }
     "#;
 
-    let result = run_script_backtest(script, &default_params(), &loader)
+    let result = run_script_backtest(script, &default_params(), &loader, None, None, None)
         .await
         .unwrap();
 
@@ -502,7 +502,7 @@ async fn cancel_orders_prevents_fill() {
         }
     "#;
 
-    let result = run_script_backtest(script, &default_params(), &loader)
+    let result = run_script_backtest(script, &default_params(), &loader, None, None, None)
         .await
         .unwrap();
 
@@ -624,7 +624,7 @@ async fn position_awareness_exposed_to_script() {
         }
     "#;
 
-    let result = run_script_backtest(script, &default_params(), &loader)
+    let result = run_script_backtest(script, &default_params(), &loader, None, None, None)
         .await
         .unwrap();
 
@@ -719,7 +719,7 @@ async fn multiple_orders_same_bar_both_fill() {
         }
     "#;
 
-    let result = run_script_backtest(script, &default_params(), &loader)
+    let result = run_script_backtest(script, &default_params(), &loader, None, None, None)
         .await
         .unwrap();
 
