@@ -312,18 +312,26 @@ pub async fn execute(
     let mut is_metrics_sum = 0.0_f64;
     let mut oos_metrics_sum = 0.0_f64;
 
-    let total_steps = windows.len() * 2;
+    // Total steps: each window has (combos training runs + 1 OOS run)
+    let steps_per_window = combos.len() + 1;
+    let total_steps = windows.len() * steps_per_window;
+
+    // Precomputed options data — captured from the first backtest run and
+    // reused for all subsequent runs to avoid reloading parquet every time.
+    let mut precomputed: Option<crate::scripting::engine::PrecomputedOptionsData> = None;
 
     for (idx, window) in windows.iter().enumerate() {
         if is_cancelled() {
             break;
         }
 
+        let window_base = idx * steps_per_window;
+
         // --- Training phase: sweep all combos ---
         let mut best_metric = f64::NEG_INFINITY;
         let mut best_params = combos[0].clone();
 
-        for combo in &combos {
+        for (combo_idx, combo) in combos.iter().enumerate() {
             if is_cancelled() {
                 break;
             }
@@ -343,21 +351,26 @@ pub async fn execute(
                 &run_params,
                 data_loader,
                 None,
-                None,
+                precomputed.as_ref(),
                 Some(is_cancelled),
             )
             .await
             {
+                // Capture precomputed data from the first successful run
+                if precomputed.is_none() {
+                    precomputed = result.precomputed_options;
+                }
                 let metric = extract_metric(&result.result, &params.objective);
                 if metric.is_finite() && metric > best_metric {
                     best_metric = metric;
                     best_params = combo.clone();
                 }
             }
+
+            on_progress(window_base + combo_idx + 1, total_steps);
         }
 
         let is_metric = best_metric;
-        on_progress(idx * 2 + 1, total_steps);
 
         if is_cancelled() {
             break;
@@ -380,7 +393,7 @@ pub async fn execute(
             &oos_params,
             data_loader,
             None,
-            None,
+            precomputed.as_ref(),
             Some(is_cancelled),
         )
         .await?;
@@ -410,7 +423,7 @@ pub async fn execute(
             out_of_sample_metric: oos_metric,
         });
 
-        on_progress(idx * 2 + 2, total_steps);
+        on_progress(window_base + steps_per_window, total_steps);
     }
 
     let efficiency_ratio = if is_metrics_sum.abs() > f64::EPSILON {

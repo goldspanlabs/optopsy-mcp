@@ -9,8 +9,8 @@ use serde_json::Value;
 
 use super::database::DbConnection;
 use super::traits::{
-    RunDetail, RunRow, RunStore, RunSummary, RunsListResponse, RunsOverview, SweepDetail, TradeRow,
-    WalkForwardValidation,
+    RunDetail, RunRow, RunStore, RunSummary, RunsListResponse, RunsOverview, SweepDetail,
+    SweepParamRange, TradeRow, WalkForwardValidation,
 };
 use crate::server::sanitize::sanitize_opt;
 
@@ -316,7 +316,8 @@ impl RunStore for SqliteRunStore {
                             br.trade_count as best_trade_count,
                             sw.source, sw.thread_id,
                             sw.created_at,
-                            wfv.best_wfe, wfv.wf_count
+                            wfv.best_wfe, wfv.wf_count,
+                            sw.sweep_config
                      FROM sweeps sw
                      LEFT JOIN strategies s ON s.id = sw.strategy_id
                      LEFT JOIN (
@@ -343,6 +344,30 @@ impl RunStore for SqliteRunStore {
 
             let sweep_rows = stmt
                 .query_map([], |row| {
+                    // Extract sweep_params from sweep_config JSON
+                    let sweep_params: Option<Vec<SweepParamRange>> =
+                        row.get::<_, Option<String>>(18)?
+                            .and_then(|config_str| {
+                                serde_json::from_str::<Value>(&config_str).ok()
+                            })
+                            .and_then(|config| {
+                                config.get("sweep_params").and_then(|sp| {
+                                    serde_json::from_value::<Vec<Value>>(sp.clone()).ok()
+                                })
+                            })
+                            .map(|params| {
+                                params
+                                    .into_iter()
+                                    .filter_map(|p| {
+                                        Some(SweepParamRange {
+                                            name: p.get("name")?.as_str()?.to_string(),
+                                            start: p.get("start")?.as_f64()?,
+                                            stop: p.get("stop")?.as_f64()?,
+                                        })
+                                    })
+                                    .collect()
+                            });
+
                     Ok(RunRow::Sweep {
                         sweep_id: row.get(0)?,
                         strategy_id: row.get(1)?,
@@ -362,6 +387,7 @@ impl RunStore for SqliteRunStore {
                             .unwrap_or_else(|| "manual".to_string()),
                         thread_id: row.get(14)?,
                         created_at: row.get(15)?,
+                        sweep_params,
                         wf_best_efficiency: row.get(16)?,
                         wf_validation_count: row.get(17)?,
                     })

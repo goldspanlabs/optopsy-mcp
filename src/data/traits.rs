@@ -116,6 +116,14 @@ pub struct RunDetail {
     pub created_at: String,
 }
 
+/// Compact sweep parameter range for the runs list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SweepParamRange {
+    pub name: String,
+    pub start: f64,
+    pub stop: f64,
+}
+
 /// A row in the unified list — either a standalone run or a sweep group.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -142,6 +150,9 @@ pub enum RunRow {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         thread_id: Option<String>,
         created_at: String,
+        /// Swept parameter ranges extracted from sweep_config
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sweep_params: Option<Vec<SweepParamRange>>,
         /// Best WFE across all validations (for badge display)
         #[serde(skip_serializing_if = "Option::is_none")]
         wf_best_efficiency: Option<f64>,
