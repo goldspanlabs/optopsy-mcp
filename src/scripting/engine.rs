@@ -825,11 +825,20 @@ pub async fn run_script_backtest(
                         positions.push(pos);
 
                         // Create per-order exit orders (stop loss / profit target)
+                        // Direction-aware: long positions exit with sells, short with buys
                         let pos_id = next_id - 1;
+                        let is_long = *side == Side::Long;
                         if let Some(ref sl) = order.stop_loss {
-                            let stop_price = match sl {
-                                ExitModifier::Percent(pct) => adjusted_fill * (1.0 - pct),
-                                ExitModifier::Dollar(amt) => adjusted_fill - amt,
+                            let stop_price = if is_long {
+                                match sl {
+                                    ExitModifier::Percent(pct) => adjusted_fill * (1.0 - pct),
+                                    ExitModifier::Dollar(amt) => adjusted_fill - amt,
+                                }
+                            } else {
+                                match sl {
+                                    ExitModifier::Percent(pct) => adjusted_fill * (1.0 + pct),
+                                    ExitModifier::Dollar(amt) => adjusted_fill + amt,
+                                }
                             };
                             auto_exit_orders.push(PendingOrder {
                                 action: ScriptAction::Close {
@@ -837,7 +846,7 @@ pub async fn run_script_backtest(
                                     reason: "stop_loss".to_string(),
                                 },
                                 order_type: OrderType::Stop { price: stop_price },
-                                is_buy: false,
+                                is_buy: !is_long,
                                 signal: Some("__auto_stop".to_string()),
                                 submitted_bar: bar_idx,
                                 ttl: None,
@@ -847,9 +856,16 @@ pub async fn run_script_backtest(
                             });
                         }
                         if let Some(ref pt) = order.profit_target {
-                            let limit_price = match pt {
-                                ExitModifier::Percent(pct) => adjusted_fill * (1.0 + pct),
-                                ExitModifier::Dollar(amt) => adjusted_fill + amt,
+                            let limit_price = if is_long {
+                                match pt {
+                                    ExitModifier::Percent(pct) => adjusted_fill * (1.0 + pct),
+                                    ExitModifier::Dollar(amt) => adjusted_fill + amt,
+                                }
+                            } else {
+                                match pt {
+                                    ExitModifier::Percent(pct) => adjusted_fill * (1.0 - pct),
+                                    ExitModifier::Dollar(amt) => adjusted_fill - amt,
+                                }
                             };
                             auto_exit_orders.push(PendingOrder {
                                 action: ScriptAction::Close {
@@ -857,7 +873,7 @@ pub async fn run_script_backtest(
                                     reason: "take_profit".to_string(),
                                 },
                                 order_type: OrderType::Limit { price: limit_price },
-                                is_buy: false,
+                                is_buy: !is_long,
                                 signal: Some("__auto_target".to_string()),
                                 submitted_bar: bar_idx,
                                 ttl: None,
@@ -2832,14 +2848,18 @@ fn extract_order_type(map: &rhai::Map) -> OrderType {
 
 fn extract_exit_modifier(map: &rhai::Map, pct_key: &str, dollar_key: &str) -> Option<ExitModifier> {
     if let Some(v) = map.get(pct_key) {
-        if let Ok(pct) = v.as_float() {
-            return Some(ExitModifier::Percent(pct));
-        }
+        let pct = v
+            .as_float()
+            .ok()
+            .or_else(|| v.as_int().ok().map(|i| i as f64))?;
+        return Some(ExitModifier::Percent(pct));
     }
     if let Some(v) = map.get(dollar_key) {
-        if let Ok(amt) = v.as_float() {
-            return Some(ExitModifier::Dollar(amt));
-        }
+        let amt = v
+            .as_float()
+            .ok()
+            .or_else(|| v.as_int().ok().map(|i| i as f64))?;
+        return Some(ExitModifier::Dollar(amt));
     }
     None
 }

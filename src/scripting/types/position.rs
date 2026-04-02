@@ -33,7 +33,7 @@ pub struct ScriptPosition {
     /// Optional group label from the `_group` scope variable.
     /// Used by the FE to group related trades (e.g., wheel cycles).
     pub group: Option<String>,
-    /// Per-order trailing stop percentage, checked each bar in exit phase.
+    /// Per-order trailing stop (percent or dollar), checked each bar in exit phase.
     pub trailing_stop: Option<ExitModifier>,
 }
 

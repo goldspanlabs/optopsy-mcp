@@ -443,12 +443,24 @@ pub(crate) fn parse_exit_threshold_dsl(
             .trim()
             .parse::<f64>()
             .map_err(|_| DslError::new(line_num, format!("invalid percentage: {s}")))?;
+        if value <= 0.0 {
+            return Err(DslError::new(
+                line_num,
+                "exit threshold percentage must be positive",
+            ));
+        }
         Ok(("percent".to_string(), value / 100.0))
     } else if let Some(dollar_str) = s.strip_prefix('$') {
         let value = dollar_str
             .trim()
             .parse::<f64>()
             .map_err(|_| DslError::new(line_num, format!("invalid dollar amount: {s}")))?;
+        if value <= 0.0 {
+            return Err(DslError::new(
+                line_num,
+                "exit threshold dollar amount must be positive",
+            ));
+        }
         Ok(("dollar".to_string(), value))
     } else {
         Err(DslError::new(
