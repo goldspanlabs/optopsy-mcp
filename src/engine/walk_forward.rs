@@ -255,7 +255,8 @@ pub async fn execute(
         src
     } else {
         let script_path = format!("scripts/strategies/{}.rhai", params.strategy);
-        std::fs::read_to_string(&script_path)
+        tokio::fs::read_to_string(&script_path)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to read strategy script '{script_path}': {e}"))?
     };
 
@@ -334,9 +335,15 @@ pub async fn execute(
                 serde_json::json!(window.train_end.to_string()),
             );
 
-            if let Ok(result) =
-                run_script_backtest(&script_source, &run_params, data_loader, None, None, None)
-                    .await
+            if let Ok(result) = run_script_backtest(
+                &script_source,
+                &run_params,
+                data_loader,
+                None,
+                None,
+                Some(is_cancelled),
+            )
+            .await
             {
                 let metric = extract_metric(&result.result, &params.objective);
                 if metric.is_finite() && metric > best_metric {
@@ -365,8 +372,15 @@ pub async fn execute(
             serde_json::json!(window.test_end.to_string()),
         );
 
-        let oos_result =
-            run_script_backtest(&script_source, &oos_params, data_loader, None, None, None).await?;
+        let oos_result = run_script_backtest(
+            &script_source,
+            &oos_params,
+            data_loader,
+            None,
+            None,
+            Some(is_cancelled),
+        )
+        .await?;
         let oos_metric = extract_metric(&oos_result.result, &params.objective);
 
         all_oos_equity.extend(oos_result.result.equity_curve.clone());
