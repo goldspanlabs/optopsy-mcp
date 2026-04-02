@@ -808,3 +808,24 @@ on each bar
         "Non-lookback should remain normal.\nGenerated:\n{rhai}"
     );
 }
+
+#[test]
+fn test_transpile_crosses_in_when() {
+    let dsl = r#"
+strategy "Cross Test"
+  symbol SPY
+  interval daily
+  indicators sma:50, sma:200
+
+on each bar
+  require sma:50, sma:200
+  when sma(50) crosses above sma(200) then
+    Buy 100 shares next bar at market
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("ctx.crossed_above(\"sma:50\", \"sma:200\")"),
+        "Should contain crossed_above call.\nGenerated:\n{rhai}"
+    );
+}

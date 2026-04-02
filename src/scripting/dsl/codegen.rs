@@ -769,6 +769,225 @@ fn is_followed_by_bracket(chars: &[char], pos: usize) -> bool {
     j < chars.len() && chars[j] == '['
 }
 
+// ---------------------------------------------------------------------------
+// Crossover pre-processing
+// ---------------------------------------------------------------------------
+
+/// Extract the trailing operand from a string (the last expression before a keyword).
+/// Handles `sma(200)` (walk back to find matching `(`), `close` (walk back through
+/// alphanumerics), etc.
+fn extract_trailing_expr(s: &str) -> String {
+    let s = s.trim_end();
+    if s.is_empty() {
+        return String::new();
+    }
+    let chars: Vec<char> = s.chars().collect();
+    let end = chars.len();
+
+    // If it ends with ')' — walk back to find matching '('
+    if chars[end - 1] == ')' {
+        let mut depth = 1;
+        let mut j = end - 2;
+        loop {
+            if chars[j] == ')' {
+                depth += 1;
+            } else if chars[j] == '(' {
+                depth -= 1;
+                if depth == 0 {
+                    // Now walk back through the function name
+                    let paren_start = j;
+                    if paren_start > 0 {
+                        j -= 1;
+                        while j > 0 && (chars[j].is_alphanumeric() || chars[j] == '_') {
+                            j -= 1;
+                        }
+                        if chars[j].is_alphanumeric() || chars[j] == '_' {
+                            return chars[j..end].iter().collect();
+                        }
+                        return chars[j + 1..end].iter().collect();
+                    }
+                    return chars[paren_start..end].iter().collect();
+                }
+            }
+            if j == 0 {
+                break;
+            }
+            j -= 1;
+        }
+        return chars[..end].iter().collect();
+    }
+
+    // Walk back through alphanumerics/underscores
+    let mut j = end - 1;
+    while j > 0 && (chars[j].is_alphanumeric() || chars[j] == '_' || chars[j] == '.') {
+        j -= 1;
+    }
+    if chars[j].is_alphanumeric() || chars[j] == '_' {
+        chars[j..end].iter().collect()
+    } else {
+        chars[j + 1..end].iter().collect()
+    }
+}
+
+/// Extract the leading operand from a string (the first expression after a keyword).
+/// Handles `sma(200)`, `close`, `30`, `70.5`.
+fn extract_leading_expr(s: &str) -> String {
+    let s = s.trim_start();
+    if s.is_empty() {
+        return String::new();
+    }
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+
+    // Walk through the identifier part
+    while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_' || chars[i] == '.') {
+        i += 1;
+    }
+
+    // If followed by '(', consume balanced parens
+    if i < chars.len() && chars[i] == '(' {
+        let mut depth = 1;
+        i += 1;
+        while i < chars.len() && depth > 0 {
+            if chars[i] == '(' {
+                depth += 1;
+            } else if chars[i] == ')' {
+                depth -= 1;
+            }
+            i += 1;
+        }
+    }
+
+    chars[..i].iter().collect()
+}
+
+/// Convert `sma(200)` → `sma:200`, `close` → `close`.
+fn to_indicator_spec(expr: &str) -> String {
+    let expr = expr.trim();
+    if let Some(paren_pos) = expr.find('(') {
+        let name = &expr[..paren_pos];
+        let rest = &expr[paren_pos + 1..];
+        if let Some(close_pos) = rest.find(')') {
+            let args = &rest[..close_pos];
+            return format!("{name}:{args}");
+        }
+    }
+    expr.to_string()
+}
+
+/// Generate the current-bar form: `close` → `ctx.close`, `sma(50)` → `ctx.sma(50)`.
+fn make_current_expr(expr: &str) -> String {
+    let expr = expr.trim();
+    if let Some(paren_pos) = expr.find('(') {
+        let name = &expr[..paren_pos];
+        let rest = &expr[paren_pos..];
+        format!("ctx.{name}{rest}")
+    } else {
+        format!("ctx.{expr}")
+    }
+}
+
+/// Generate the lookback form: `close` → `ctx.close(1)`, `sma(50)` → `ctx.sma_at(50, 1)`.
+fn make_lookback_expr(expr: &str) -> String {
+    let expr = expr.trim();
+    if let Some(paren_pos) = expr.find('(') {
+        let name = &expr[..paren_pos];
+        let rest = &expr[paren_pos + 1..];
+        if let Some(close_pos) = rest.find(')') {
+            let args = &rest[..close_pos];
+            if INDICATORS_WITH_AT.contains(&name) {
+                return format!("ctx.{name}_at({args}, 1)");
+            }
+            return format!("ctx.indicator_at(\"{name}\", {args}, 1)");
+        }
+    }
+    // OHLCV property — close → ctx.close(1)
+    format!("ctx.{expr}(1)")
+}
+
+/// Returns true if the string looks like a numeric literal (integer or float).
+fn is_numeric_literal(s: &str) -> bool {
+    let s = s.trim();
+    if s.is_empty() {
+        return false;
+    }
+    // Try parsing as f64
+    s.parse::<f64>().is_ok()
+}
+
+/// Pre-process `X crosses above Y` and `X crosses below Y` patterns.
+///
+/// For two indicators/properties (right side is NOT a literal number):
+///   `sma(50) crosses above sma(200)` → `crossed_above("sma:50", "sma:200")`
+///
+/// For indicator vs literal (right side IS a number):
+///   `rsi(14) crosses above 30` → `(ctx.rsi(14) > 30 && ctx.rsi_at(14, 1) <= 30)`
+fn preprocess_crossovers(expr: &str) -> String {
+    let mut result = expr.to_string();
+
+    for keyword in &["crosses above", "crosses below"] {
+        // Process all occurrences from left to right
+        loop {
+            let Some(kw_pos) = result.find(keyword) else {
+                break;
+            };
+
+            let before = &result[..kw_pos];
+            let after = &result[kw_pos + keyword.len()..];
+
+            let lhs = extract_trailing_expr(before);
+            let rhs = extract_leading_expr(after);
+
+            if lhs.is_empty() || rhs.is_empty() {
+                break;
+            }
+
+            // Calculate the exact byte range to replace.
+            // before = result[..kw_pos], lhs is at the end of before (possibly with trailing space)
+            let before_trimmed = before.trim_end();
+            let lhs_start = before_trimmed.len() - lhs.len();
+
+            // Find where rhs ends in 'after'
+            let trimmed_after = after.trim_start();
+            let leading_spaces = after.len() - trimmed_after.len();
+            let rhs_end_in_after = leading_spaces + rhs.len();
+            let replace_end = kw_pos + keyword.len() + rhs_end_in_after;
+
+            let is_above = *keyword == "crosses above";
+
+            let replacement = if is_numeric_literal(&rhs) {
+                // Literal number case — emit fully qualified ctx expressions
+                let curr = make_current_expr(&lhs);
+                let lookback = make_lookback_expr(&lhs);
+                if is_above {
+                    format!("({curr} > {rhs} && {lookback} <= {rhs})")
+                } else {
+                    format!("({curr} < {rhs} && {lookback} >= {rhs})")
+                }
+            } else {
+                // Two indicators/properties — emit crossed_above/below call
+                let lhs_spec = to_indicator_spec(&lhs);
+                let rhs_spec = to_indicator_spec(&rhs);
+                let fn_name = if is_above {
+                    "crossed_above"
+                } else {
+                    "crossed_below"
+                };
+                format!("{fn_name}(\"{lhs_spec}\", \"{rhs_spec}\")")
+            };
+
+            result = format!(
+                "{}{}{}",
+                &result[..lhs_start],
+                replacement,
+                &result[replace_end..]
+            );
+        }
+    }
+
+    result
+}
+
 /// Rewrite a DSL expression into a valid Rhai expression.
 ///
 /// - Bare context properties (`close`, `equity`) → `ctx.close`, `ctx.equity`
@@ -776,7 +995,9 @@ fn is_followed_by_bracket(chars: &[char], pos: usize) -> bool {
 /// - `has positions` → `ctx.has_positions()`
 /// - `no positions` → `!ctx.has_positions()`
 /// - `and` → `&&`, `or` → `||`
+/// - `X crosses above Y` / `X crosses below Y` → crossover expressions
 pub fn rewrite_expr(expr: &str) -> String {
+    let expr = preprocess_crossovers(expr);
     let chars: Vec<char> = expr.chars().collect();
     let mut result = String::with_capacity(expr.len() + 32);
     let mut i = 0;
@@ -1070,5 +1291,57 @@ mod tests {
     fn test_rewrite_lookback_no_false_positives() {
         assert_eq!(rewrite_expr("pos.legs[0]"), "pos.legs[0]");
         assert_eq!(rewrite_expr("my_array[1]"), "my_array[1]");
+    }
+
+    // -----------------------------------------------------------------------
+    // Crossover syntax tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_rewrite_crosses_above_two_indicators() {
+        assert_eq!(
+            rewrite_expr("sma(50) crosses above sma(200)"),
+            "ctx.crossed_above(\"sma:50\", \"sma:200\")"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_crosses_below_indicator_and_property() {
+        assert_eq!(
+            rewrite_expr("close crosses below ema(20)"),
+            "ctx.crossed_below(\"close\", \"ema:20\")"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_crosses_above_with_literal() {
+        assert_eq!(
+            rewrite_expr("rsi(14) crosses above 30"),
+            "(ctx.rsi(14) > 30 && ctx.rsi_at(14, 1) <= 30)"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_crosses_below_with_literal() {
+        assert_eq!(
+            rewrite_expr("rsi(14) crosses below 70"),
+            "(ctx.rsi(14) < 70 && ctx.rsi_at(14, 1) >= 70)"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_crosses_above_property_with_literal() {
+        assert_eq!(
+            rewrite_expr("close crosses above 150.0"),
+            "(ctx.close > 150.0 && ctx.close(1) <= 150.0)"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_crosses_in_compound_expression() {
+        // crosses combined with other conditions using 'and'
+        let result = rewrite_expr("sma(50) crosses above sma(200) and rsi(14) > 50");
+        assert!(result.contains("ctx.crossed_above(\"sma:50\", \"sma:200\")"));
+        assert!(result.contains("ctx.rsi(14) > 50"));
     }
 }
