@@ -345,28 +345,26 @@ impl RunStore for SqliteRunStore {
             let sweep_rows = stmt
                 .query_map([], |row| {
                     // Extract sweep_params from sweep_config JSON
-                    let sweep_params: Option<Vec<SweepParamRange>> =
-                        row.get::<_, Option<String>>(18)?
-                            .and_then(|config_str| {
-                                serde_json::from_str::<Value>(&config_str).ok()
+                    let sweep_params: Option<Vec<SweepParamRange>> = row
+                        .get::<_, Option<String>>(18)?
+                        .and_then(|config_str| serde_json::from_str::<Value>(&config_str).ok())
+                        .and_then(|config| {
+                            config.get("sweep_params").and_then(|sp| {
+                                serde_json::from_value::<Vec<Value>>(sp.clone()).ok()
                             })
-                            .and_then(|config| {
-                                config.get("sweep_params").and_then(|sp| {
-                                    serde_json::from_value::<Vec<Value>>(sp.clone()).ok()
-                                })
-                            })
-                            .map(|params| {
-                                params
-                                    .into_iter()
-                                    .filter_map(|p| {
-                                        Some(SweepParamRange {
-                                            name: p.get("name")?.as_str()?.to_string(),
-                                            start: p.get("start")?.as_f64()?,
-                                            stop: p.get("stop")?.as_f64()?,
-                                        })
+                        })
+                        .map(|params| {
+                            params
+                                .into_iter()
+                                .filter_map(|p| {
+                                    Some(SweepParamRange {
+                                        name: p.get("name")?.as_str()?.to_string(),
+                                        start: p.get("start")?.as_f64()?,
+                                        stop: p.get("stop")?.as_f64()?,
                                     })
-                                    .collect()
-                            });
+                                })
+                                .collect()
+                        });
 
                     Ok(RunRow::Sweep {
                         sweep_id: row.get(0)?,
