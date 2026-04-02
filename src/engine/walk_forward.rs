@@ -63,7 +63,11 @@ pub fn compute_windows(
 
     match mode {
         WfMode::Rolling => {
-            let test_size = total / (n_windows + 1).max(2);
+            // Derive sizes so that train_size + n_windows * test_size <= total.
+            // Each window pair is (train_size, test_size) with train_pct = train / (train + test).
+            // Solving: test_size = total * (1 - train_pct) / (train_pct + n_windows * (1 - train_pct))
+            let denom = train_pct + (n_windows as f64) * (1.0 - train_pct);
+            let test_size = ((total as f64) * (1.0 - train_pct) / denom).floor() as usize;
             let train_size = ((test_size as f64) * train_pct / (1.0 - train_pct)).round() as usize;
 
             if train_size < 2 || test_size < 1 {
@@ -466,5 +470,130 @@ mod tests {
         let combos = super::cartesian_product(&grid);
         assert_eq!(combos.len(), 1);
         assert!(combos[0].is_empty());
+    }
+
+    #[test]
+    fn test_empty_dates() {
+        let dates: Vec<NaiveDate> = vec![];
+        assert!(compute_windows(&dates, 3, 0.70, &WfMode::Rolling).is_err());
+    }
+
+    #[test]
+    fn test_single_window_rolling() {
+        let dates = make_dates(100);
+        let windows = compute_windows(&dates, 1, 0.70, &WfMode::Rolling).unwrap();
+        assert_eq!(windows.len(), 1);
+        assert!(windows[0].train_start < windows[0].train_end);
+        assert!(windows[0].train_end < windows[0].test_start);
+    }
+
+    #[test]
+    fn test_single_window_anchored() {
+        let dates = make_dates(100);
+        let windows = compute_windows(&dates, 1, 0.70, &WfMode::Anchored).unwrap();
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].train_start, dates[0]);
+    }
+
+    #[test]
+    fn test_extreme_train_pct_high() {
+        let dates = make_dates(200);
+        let windows = compute_windows(&dates, 3, 0.95, &WfMode::Rolling).unwrap();
+        for w in &windows {
+            assert!(w.train_start < w.train_end);
+            assert!(w.train_end < w.test_start);
+        }
+    }
+
+    #[test]
+    fn test_extreme_train_pct_low() {
+        let dates = make_dates(200);
+        let windows = compute_windows(&dates, 3, 0.10, &WfMode::Rolling).unwrap();
+        for w in &windows {
+            assert!(w.train_start < w.train_end);
+            assert!(w.train_end < w.test_start);
+        }
+    }
+
+    #[test]
+    fn test_train_pct_boundary_rejected() {
+        let dates = make_dates(100);
+        assert!(compute_windows(&dates, 3, 0.05, &WfMode::Rolling).is_err());
+        assert!(compute_windows(&dates, 3, 0.99, &WfMode::Rolling).is_err());
+    }
+
+    #[test]
+    fn test_many_windows_with_small_data() {
+        let dates = make_dates(20);
+        let windows =
+            compute_windows(&dates, 10, 0.70, &WfMode::Rolling).expect("should produce windows");
+        assert!(windows.len() <= 10);
+        for w in &windows {
+            assert!(w.train_end < w.test_start);
+        }
+    }
+
+    #[test]
+    fn test_rolling_windows_no_test_overlap() {
+        let dates = make_dates(500);
+        let windows = compute_windows(&dates, 5, 0.70, &WfMode::Rolling).unwrap();
+        for (i, pair) in windows.windows(2).enumerate() {
+            assert!(
+                pair[0].test_end < pair[1].test_start,
+                "Test periods must not overlap: window {i} ends {:?}, window {} starts {:?}",
+                pair[0].test_end,
+                i + 1,
+                pair[1].test_start,
+            );
+        }
+    }
+
+    #[test]
+    fn test_anchored_train_grows() {
+        let dates = make_dates(500);
+        let windows = compute_windows(&dates, 5, 0.70, &WfMode::Anchored).unwrap();
+        for w in &windows {
+            assert_eq!(w.train_start, dates[0]);
+        }
+        for pair in windows.windows(2) {
+            assert!(pair[1].train_end >= pair[0].train_end);
+        }
+    }
+
+    #[test]
+    fn test_cartesian_product_single_param() {
+        let mut grid = HashMap::new();
+        grid.insert(
+            "x".to_string(),
+            vec![
+                serde_json::json!(1),
+                serde_json::json!(2),
+                serde_json::json!(3),
+            ],
+        );
+        let combos = cartesian_product(&grid);
+        assert_eq!(combos.len(), 3);
+    }
+
+    #[test]
+    fn test_cartesian_product_large_grid() {
+        let mut grid = HashMap::new();
+        grid.insert(
+            "a".to_string(),
+            vec![serde_json::json!(1), serde_json::json!(2)],
+        );
+        grid.insert(
+            "b".to_string(),
+            vec![serde_json::json!(3), serde_json::json!(4)],
+        );
+        grid.insert(
+            "c".to_string(),
+            vec![serde_json::json!(5), serde_json::json!(6)],
+        );
+        let combos = cartesian_product(&grid);
+        assert_eq!(combos.len(), 8);
+        for c in &combos {
+            assert_eq!(c.len(), 3);
+        }
     }
 }

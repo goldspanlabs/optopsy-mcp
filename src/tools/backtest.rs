@@ -89,6 +89,8 @@ pub struct SingleBacktestResponse {
     /// Full backtest result.
     #[serde(flatten)]
     pub result: RunScriptResponse,
+    /// Suggested next analysis steps for the agent.
+    pub suggested_next_steps: Vec<String>,
 }
 
 /// Inner struct for sweep result (boxed to reduce enum variant size).
@@ -101,6 +103,8 @@ pub struct SweepBacktestResponse {
     /// Sweep results (ranked combos, sensitivity, timing).
     #[serde(flatten)]
     pub sweep: SweepResponse,
+    /// Suggested next analysis steps for the agent.
+    pub suggested_next_steps: Vec<String>,
 }
 
 /// Response from the `backtest` tool — either a single run or a sweep.
@@ -180,10 +184,18 @@ async fn execute_single(
     )
     .map_err(|(_status, msg)| anyhow::anyhow!("{msg}"))?;
 
+    let upper = symbol.to_uppercase();
+    let suggested_next_steps = vec![
+        format!("[NEXT] Call drawdown_analysis(symbol=\"{upper}\") to analyze drawdown episodes and risk profile"),
+        format!("[THEN] Call monte_carlo(symbol=\"{upper}\") to simulate forward-looking risk"),
+        format!("[TIP] Call factor_attribution(symbol=\"{upper}\") to check if alpha is genuine or factor exposure"),
+    ];
+
     Ok(BacktestToolResponse::Single(Box::new(
         SingleBacktestResponse {
             run_id,
             result: response,
+            suggested_next_steps,
         },
     )))
 }
@@ -290,12 +302,25 @@ async fn execute_sweep(
         .map(|detail| detail.runs.iter().map(|r| r.id.clone()).collect())
         .unwrap_or_default();
 
-    // 10. Return response
+    // 10. Build suggested next steps
+    let upper = symbol.to_uppercase();
+    let suggested_next_steps = vec![
+        format!(
+            "[NEXT] Call walk_forward(strategy=\"{}\", symbol=\"{upper}\", params_grid=<top param ranges>) to validate parameter robustness on unseen data",
+            params.strategy,
+        ),
+        format!("[THEN] Call drawdown_analysis(symbol=\"{upper}\") to analyze drawdown episodes and risk profile"),
+        format!("[THEN] Call monte_carlo(symbol=\"{upper}\") to simulate forward-looking risk"),
+        format!("[TIP] Call factor_attribution(symbol=\"{upper}\") to check if alpha is genuine or factor exposure"),
+    ];
+
+    // 11. Return response
     Ok(BacktestToolResponse::Sweep(Box::new(
         SweepBacktestResponse {
             sweep_id,
             run_ids,
             sweep: sweep_response,
+            suggested_next_steps,
         },
     )))
 }

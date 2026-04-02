@@ -9,6 +9,8 @@ use garde::Validate;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use std::collections::HashMap;
+
 use crate::engine::types::Interval;
 
 /// Format a garde validation error with the originating tool name for easier debugging.
@@ -29,6 +31,36 @@ fn validate_end_date_after_start(
                 )));
             }
         }
+        Ok(())
+    }
+}
+
+/// Validate that `objective` is one of the accepted values (or None for default).
+#[allow(clippy::trivially_copy_pass_by_ref, clippy::ref_option)]
+fn validate_wf_objective(value: &Option<String>, _ctx: &()) -> garde::Result {
+    if let Some(v) = value {
+        match v.as_str() {
+            "sharpe" | "sortino" | "profit_factor" | "cagr" => Ok(()),
+            _ => Err(garde::Error::new(format!(
+                "invalid objective '{v}', expected: sharpe, sortino, profit_factor, cagr"
+            ))),
+        }
+    } else {
+        Ok(())
+    }
+}
+
+/// Validate that `mode` is one of the accepted values (or None for default).
+#[allow(clippy::trivially_copy_pass_by_ref, clippy::ref_option)]
+fn validate_wf_mode(value: &Option<String>, _ctx: &()) -> garde::Result {
+    if let Some(v) = value {
+        match v.as_str() {
+            "rolling" | "anchored" => Ok(()),
+            _ => Err(garde::Error::new(format!(
+                "invalid mode '{v}', expected: rolling, anchored"
+            ))),
+        }
+    } else {
         Ok(())
     }
 }
@@ -519,6 +551,78 @@ pub struct BenchmarkAnalysisParams {
     pub years: u32,
 }
 
+// ── Walk-forward defaults ────────────────────────────────────────────────
+
+fn default_wf_capital() -> f64 {
+    100_000.0
+}
+
+fn default_wf_n_windows() -> usize {
+    5
+}
+
+fn default_wf_train_pct() -> f64 {
+    0.70
+}
+
+/// Parameters for the `walk_forward` MCP tool.
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+#[garde(context(()))]
+pub struct WalkForwardToolParams {
+    /// Strategy script name (filename without `.rhai` extension from `scripts/strategies/`).
+    #[garde(length(min = 1), pattern(r"^[A-Za-z0-9._-]+$"))]
+    pub strategy: String,
+
+    /// Ticker symbol for data loading.
+    #[garde(length(min = 1, max = 10), pattern(r"^[A-Za-z0-9._-]+$"))]
+    pub symbol: String,
+
+    /// Starting capital for each window's backtest.
+    #[serde(default = "default_wf_capital")]
+    #[garde(range(min = 1.0))]
+    pub capital: f64,
+
+    /// Parameter grid: keys are param names, values are lists of values to sweep.
+    /// Example: `{ "DELTA_TARGET": [0.20, 0.30, 0.40], "DTE_TARGET": [30, 45, 60] }`
+    #[garde(skip)]
+    pub params_grid: HashMap<String, Vec<serde_json::Value>>,
+
+    /// Objective metric to optimize: `sharpe` (default), `sortino`, `profit_factor`, `cagr`.
+    #[serde(default)]
+    #[garde(custom(validate_wf_objective))]
+    pub objective: Option<String>,
+
+    /// Number of walk-forward windows (default: 5).
+    #[serde(default = "default_wf_n_windows")]
+    #[garde(range(min = 1, max = 50))]
+    pub n_windows: usize,
+
+    /// Walk-forward mode: `rolling` (default) or `anchored`.
+    #[serde(default)]
+    #[garde(custom(validate_wf_mode))]
+    pub mode: Option<String>,
+
+    /// Fraction of each window used for training (default: 0.70).
+    #[serde(default = "default_wf_train_pct")]
+    #[garde(range(min = 0.1, max = 0.95))]
+    pub train_pct: f64,
+
+    /// Start date filter (YYYY-MM-DD). Optional.
+    #[serde(default)]
+    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))]
+    pub start_date: Option<String>,
+
+    /// End date filter (YYYY-MM-DD). Optional.
+    #[serde(default)]
+    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")), custom(validate_end_date_after_start(&self.start_date)))]
+    pub end_date: Option<String>,
+
+    /// Profile name for parameter presets. Optional.
+    #[serde(default)]
+    #[garde(skip)]
+    pub profile: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -589,5 +693,104 @@ mod tests {
                 .unwrap_or_else(|e| panic!("interval={s} should parse: {e}"));
             assert_eq!(p.interval, Some(expected), "interval={s}");
         }
+    }
+
+    // ─── WalkForwardToolParams validation ────────────────────────────────
+
+    #[test]
+    fn walk_forward_params_defaults_applied() {
+        let json = serde_json::json!({
+            "strategy": "short_put",
+            "symbol": "SPY",
+            "params_grid": { "DELTA_TARGET": [0.20, 0.30] }
+        });
+        let p: WalkForwardToolParams = serde_json::from_value(json).unwrap();
+        assert_eq!(p.capital, 100_000.0);
+        assert_eq!(p.n_windows, 5);
+        assert!((p.train_pct - 0.70).abs() < f64::EPSILON);
+        assert!(p.objective.is_none());
+        assert!(p.mode.is_none());
+        assert!(p.start_date.is_none());
+        assert!(p.end_date.is_none());
+        assert!(p.profile.is_none());
+        p.validate().unwrap();
+    }
+
+    #[test]
+    fn walk_forward_params_valid_full() {
+        let json = serde_json::json!({
+            "strategy": "short_put",
+            "symbol": "SPY",
+            "capital": 50000.0,
+            "params_grid": { "DTE": [30, 45], "DELTA": [0.2, 0.3] },
+            "objective": "sortino",
+            "n_windows": 10,
+            "mode": "anchored",
+            "train_pct": 0.80,
+            "start_date": "2020-01-01",
+            "end_date": "2024-01-01"
+        });
+        let p: WalkForwardToolParams = serde_json::from_value(json).unwrap();
+        p.validate().unwrap();
+        assert_eq!(p.n_windows, 10);
+        assert!((p.train_pct - 0.80).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn walk_forward_params_rejects_empty_strategy() {
+        let json = serde_json::json!({
+            "strategy": "",
+            "symbol": "SPY",
+            "params_grid": { "X": [1] }
+        });
+        let p: WalkForwardToolParams = serde_json::from_value(json).unwrap();
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn walk_forward_params_rejects_invalid_symbol() {
+        let json = serde_json::json!({
+            "strategy": "short_put",
+            "symbol": "../../etc",
+            "params_grid": { "X": [1] }
+        });
+        let p: WalkForwardToolParams = serde_json::from_value(json).unwrap();
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn walk_forward_params_rejects_train_pct_out_of_range() {
+        let json = serde_json::json!({
+            "strategy": "short_put",
+            "symbol": "SPY",
+            "params_grid": { "X": [1] },
+            "train_pct": 0.99
+        });
+        let p: WalkForwardToolParams = serde_json::from_value(json).unwrap();
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn walk_forward_params_rejects_zero_capital() {
+        let json = serde_json::json!({
+            "strategy": "short_put",
+            "symbol": "SPY",
+            "capital": 0.0,
+            "params_grid": { "X": [1] }
+        });
+        let p: WalkForwardToolParams = serde_json::from_value(json).unwrap();
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn walk_forward_params_rejects_zero_windows() {
+        let json = serde_json::json!({
+            "strategy": "short_put",
+            "symbol": "SPY",
+            "params_grid": { "X": [1] },
+            "n_windows": 0
+        });
+        let p: WalkForwardToolParams = serde_json::from_value(json).unwrap();
+        assert!(p.validate().is_err());
     }
 }
