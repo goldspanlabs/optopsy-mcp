@@ -13,6 +13,7 @@ use crate::engine::types::{Commission, ExpirationFilter, Slippage, TradeSelector
 
 /// Configuration extracted from a script's `config()` callback.
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct ScriptConfig {
     pub symbol: String,
     pub capital: f64,
@@ -38,6 +39,23 @@ pub struct ScriptConfig {
 
     // Script-readable defaults (NOT engine-enforced)
     pub defaults: HashMap<String, ScriptValue>,
+
+    // Declarative exit thresholds (engine-enforced)
+    pub stop_loss: Option<ExitThreshold>,
+    pub profit_target: Option<ExitThreshold>,
+    pub trailing_stop: Option<ExitThreshold>,
+
+    // Mode flags
+    pub procedural: bool,
+}
+
+/// A threshold for declarative exit rules (stop loss, profit target, trailing stop).
+#[derive(Debug, Clone)]
+pub enum ExitThreshold {
+    /// Percentage of entry cost (e.g., 0.05 = 5%).
+    Percent(f64),
+    /// Absolute dollar amount.
+    Dollar(f64),
 }
 
 /// Interval for bar iteration.

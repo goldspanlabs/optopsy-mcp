@@ -829,3 +829,67 @@ on each bar
         "Should contain crossed_above call.\nGenerated:\n{rhai}"
     );
 }
+
+#[test]
+fn test_transpile_stop_loss_percent() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+  stop_loss 5%
+
+on each bar
+  buy 100 shares
+"#;
+    let rhai = transpile(dsl).unwrap();
+    assert!(rhai.contains("stop_loss: #{ mode: \"percent\", value: 0.05 }"));
+}
+
+#[test]
+fn test_transpile_profit_target_dollar() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+  profit_target $1000
+
+on each bar
+  buy 100 shares
+"#;
+    let rhai = transpile(dsl).unwrap();
+    assert!(rhai.contains("profit_target: #{ mode: \"dollar\", value: 1000 }"));
+}
+
+#[test]
+fn test_transpile_trailing_stop() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+  trailing_stop 3%
+
+on each bar
+  buy 100 shares
+"#;
+    let rhai = transpile(dsl).unwrap();
+    assert!(rhai.contains("trailing_stop: #{ mode: \"percent\", value: 0.03 }"));
+}
+
+#[test]
+fn test_transpile_all_exit_thresholds() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+  stop_loss 5%
+  profit_target 10%
+  trailing_stop 3%
+
+on each bar
+  buy 100 shares
+"#;
+    let rhai = transpile(dsl).unwrap();
+    assert!(rhai.contains("stop_loss:"));
+    assert!(rhai.contains("profit_target:"));
+    assert!(rhai.contains("trailing_stop:"));
+}

@@ -635,6 +635,10 @@ mod tests {
             expiration_filter: ExpirationFilter::Any,
             trade_selector: TradeSelector::Nearest,
             defaults: HashMap::new(),
+            stop_loss: None,
+            profit_target: None,
+            trailing_stop: None,
+            procedural: false,
         });
         let indicator_store = Arc::new(IndicatorStore::build(&[], bars).unwrap());
         BarContext {
