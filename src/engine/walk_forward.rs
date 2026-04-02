@@ -11,6 +11,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+// BTreeMap used for stable JSON serialization of param maps
+use std::collections::BTreeMap;
+
 use crate::engine::types::{BacktestResult, EquityPoint, PerformanceMetrics};
 use crate::scripting::engine::{run_script_backtest, CancelCallback, DataLoader};
 
@@ -178,6 +181,12 @@ pub struct WalkForwardParams {
     pub end_date: Option<String>,
     #[serde(default)]
     pub profile: Option<String>,
+    /// Pre-resolved script source; if None, reads from filesystem.
+    #[serde(skip)]
+    pub script_source: Option<String>,
+    /// Base parameters (strategy-specific) to merge before each run.
+    #[serde(default)]
+    pub base_params: Option<HashMap<String, Value>>,
 }
 
 fn default_objective() -> WfObjective {
@@ -241,10 +250,14 @@ pub async fn execute(
 ) -> Result<WalkForwardResponse> {
     let start = std::time::Instant::now();
 
-    // Load script source
-    let script_path = format!("scripts/strategies/{}.rhai", params.strategy);
-    let script_source = std::fs::read_to_string(&script_path)
-        .map_err(|e| anyhow::anyhow!("Failed to read strategy script '{script_path}': {e}"))?;
+    // Load script source (use pre-resolved source if available, else read from filesystem)
+    let script_source = if let Some(src) = params.script_source {
+        src
+    } else {
+        let script_path = format!("scripts/strategies/{}.rhai", params.strategy);
+        std::fs::read_to_string(&script_path)
+            .map_err(|e| anyhow::anyhow!("Failed to read strategy script '{script_path}': {e}"))?
+    };
 
     // Load OHLCV data to get the date range
     let start_date = params
@@ -271,8 +284,8 @@ pub async fn execute(
         bail!("params_grid produced no parameter combinations");
     }
 
-    // Build base params with SYMBOL and CAPITAL
-    let mut base_params: HashMap<String, Value> = HashMap::new();
+    // Build base params: start from caller-provided params, then ensure SYMBOL and CAPITAL
+    let mut base_params: HashMap<String, Value> = params.base_params.unwrap_or_default();
     base_params.insert("SYMBOL".to_string(), serde_json::json!(params.symbol));
     base_params.insert("CAPITAL".to_string(), serde_json::json!(params.capital));
 
@@ -401,7 +414,10 @@ pub async fn execute(
     // Compute new summary fields
     let profitable_windows = window_results
         .iter()
-        .filter(|w| w.out_of_sample_metric > 0.0)
+        .filter(|w| match objective_str.as_str() {
+            "profitfactor" => w.out_of_sample_metric > 1.0,
+            _ => w.out_of_sample_metric > 0.0,
+        })
         .count();
     let total_windows = window_results.len();
 
@@ -409,7 +425,10 @@ pub async fn execute(
         use std::collections::HashSet;
         let unique_params: HashSet<String> = window_results
             .iter()
-            .map(|w| serde_json::to_string(&w.best_params).unwrap_or_default())
+            .map(|w| {
+                let sorted: BTreeMap<_, _> = w.best_params.iter().collect();
+                serde_json::to_string(&sorted).unwrap_or_default()
+            })
             .collect();
         let n_unique = unique_params.len();
         if n_unique <= 1 {

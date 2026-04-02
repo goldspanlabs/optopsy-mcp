@@ -66,6 +66,8 @@ pub async fn execute(
         start_date,
         end_date,
         profile,
+        script_source: None,
+        base_params: None,
     };
 
     let obj_str = engine_params.objective.clone();

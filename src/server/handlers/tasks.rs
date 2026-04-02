@@ -500,7 +500,7 @@ pub async fn submit_walk_forward(
             return;
         };
 
-        let (strategy_key, _script_source) =
+        let (strategy_key, script_source) =
             match resolve_strategy_source_from_store(strategy_store.as_ref(), &req.strategy) {
                 Ok(v) => v,
                 Err((_status, msg)) => {
@@ -528,18 +528,31 @@ pub async fn submit_walk_forward(
                 .store(tot, Ordering::Relaxed);
         };
 
-        // Map mode string to WfMode enum
+        // Map mode string to WfMode enum — reject invalid values
         let wf_mode = match req.mode.as_str() {
+            "rolling" => WfMode::Rolling,
             "anchored" => WfMode::Anchored,
-            _ => WfMode::Rolling,
+            other => {
+                tm.mark_failed(&task.id, format!("Invalid walk-forward mode '{other}'"));
+                drop(permit);
+                return;
+            }
         };
 
-        // Map objective string to WfObjective enum
+        // Map objective string to WfObjective enum — reject invalid values
         let wf_objective = match req.objective.as_str() {
+            "sharpe" => WfObjective::Sharpe,
             "sortino" => WfObjective::Sortino,
             "profit_factor" => WfObjective::ProfitFactor,
             "cagr" => WfObjective::Cagr,
-            _ => WfObjective::Sharpe,
+            other => {
+                tm.mark_failed(
+                    &task.id,
+                    format!("Invalid walk-forward objective '{other}'"),
+                );
+                drop(permit);
+                return;
+            }
         };
 
         let capital = req
@@ -572,6 +585,8 @@ pub async fn submit_walk_forward(
                 .get("PROFILE")
                 .and_then(Value::as_str)
                 .map(String::from),
+            script_source: Some(script_source),
+            base_params: Some(req.params.clone()),
         };
 
         let wf_result =
@@ -580,13 +595,13 @@ pub async fn submit_walk_forward(
 
         drop(permit);
 
-        if task.cancellation_token.is_cancelled() {
-            tm.mark_cancelled(&task.id);
-            return;
-        }
-
         match wf_result {
             Ok(wf_response) => {
+                let status = if task.cancellation_token.is_cancelled() {
+                    "cancelled"
+                } else {
+                    "completed"
+                };
                 let validation_id = uuid::Uuid::new_v4().to_string();
 
                 match run_store.insert_walk_forward_validation(
@@ -600,17 +615,21 @@ pub async fn submit_walk_forward(
                     Some(wf_response.profitable_windows as i64),
                     Some(wf_response.total_windows as i64),
                     Some(&wf_response.param_stability),
-                    "completed",
+                    status,
                     Some(wf_response.execution_time_ms as i64),
                 ) {
                     Ok(_) => {
-                        let result_json = run_store
-                            .get_sweep(&req.sweep_id)
-                            .ok()
-                            .flatten()
-                            .and_then(|d| serde_json::to_value(&d).ok())
-                            .unwrap_or(Value::Null);
-                        tm.mark_completed(&task.id, result_json, validation_id);
+                        if task.cancellation_token.is_cancelled() {
+                            tm.mark_cancelled(&task.id);
+                        } else {
+                            let result_json = run_store
+                                .get_sweep(&req.sweep_id)
+                                .ok()
+                                .flatten()
+                                .and_then(|d| serde_json::to_value(&d).ok())
+                                .unwrap_or(Value::Null);
+                            tm.mark_completed(&task.id, result_json, validation_id);
+                        }
                     }
                     Err(e) => {
                         tm.mark_failed(&task.id, format!("DB insert failed: {e}"));
@@ -618,23 +637,27 @@ pub async fn submit_walk_forward(
                 }
             }
             Err(e) => {
-                // Mark WF as failed in DB too
-                let failed_id = uuid::Uuid::new_v4().to_string();
-                let _ = run_store.insert_walk_forward_validation(
-                    &failed_id,
-                    &req.sweep_id,
-                    req.n_windows as i64,
-                    req.train_pct,
-                    &req.mode,
-                    &req.objective,
-                    None,
-                    None,
-                    None,
-                    None,
-                    "failed",
-                    None,
-                );
-                tm.mark_failed(&task.id, e.to_string());
+                if task.cancellation_token.is_cancelled() {
+                    tm.mark_cancelled(&task.id);
+                } else {
+                    // Mark WF as failed in DB too
+                    let failed_id = uuid::Uuid::new_v4().to_string();
+                    let _ = run_store.insert_walk_forward_validation(
+                        &failed_id,
+                        &req.sweep_id,
+                        req.n_windows as i64,
+                        req.train_pct,
+                        &req.mode,
+                        &req.objective,
+                        None,
+                        None,
+                        None,
+                        None,
+                        "failed",
+                        None,
+                    );
+                    tm.mark_failed(&task.id, e.to_string());
+                }
             }
         }
     });

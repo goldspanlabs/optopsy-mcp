@@ -218,6 +218,8 @@ async fn walk_forward_rolling_end_to_end() {
         start_date: None,
         end_date: None,
         profile: None,
+        script_source: None,
+        base_params: None,
     };
 
     let result = wf_engine::execute(
@@ -316,6 +318,8 @@ async fn walk_forward_anchored_end_to_end() {
         start_date: None,
         end_date: None,
         profile: None,
+        script_source: None,
+        base_params: None,
     };
 
     let result = wf_engine::execute(
@@ -364,6 +368,8 @@ async fn walk_forward_empty_grid_runs_with_base_params() {
         start_date: None,
         end_date: None,
         profile: None,
+        script_source: None,
+        base_params: None,
     };
 
     // Empty grid produces 1 combo (base params only) — should succeed
