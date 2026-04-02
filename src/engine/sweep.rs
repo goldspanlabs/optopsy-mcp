@@ -5,7 +5,7 @@
 //! with a configurable concurrency limit.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -72,7 +72,7 @@ pub async fn run_grid_sweep(
     let mut precomputed: Option<PrecomputedOptionsData> = None;
 
     let first_combo = combos_iter.next().unwrap(); // total > 0
-    on_progress(0, total);
+    on_progress(0, total); // signal total to callers
 
     let mut run_params = config.base_params.clone();
     run_params.extend(first_combo.iter().map(|(k, v)| (k.clone(), v.clone())));
@@ -114,8 +114,9 @@ pub async fn run_grid_sweep(
     let remaining: Vec<_> = combos_iter.enumerate().collect();
     if !remaining.is_empty() && !is_cancelled() {
         let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT));
-        let progress_counter = Arc::new(AtomicUsize::new(1)); // first combo already done
-        let cancel_flag = Arc::new(is_cancelled());
+        // Shared cancellation flag: AtomicBool so spawned tasks observe later
+        // cancellations (not a one-shot snapshot of the initial state).
+        let cancel_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
         // Wrap shared read-only state in Arcs for spawned tasks
         let script_source = Arc::new(config.script_source.clone());
@@ -134,22 +135,21 @@ pub async fn run_grid_sweep(
             let src = Arc::clone(&script_source);
             let bp = Arc::clone(&base_params);
             let pre = precomputed_arc.clone();
-            let ctr = Arc::clone(&progress_counter);
-            let cancelled = Arc::clone(&cancel_flag);
+            let cf = Arc::clone(&cancel_flag);
 
             join_set.spawn(async move {
                 let _permit = sem.acquire().await.expect("semaphore closed");
 
-                // Check cancellation before doing expensive work
-                if *cancelled {
+                if cf.load(Ordering::Relaxed) {
                     return (offset, combo, Err(anyhow::anyhow!("cancelled")));
                 }
 
                 let mut params = HashMap::clone(&bp);
                 params.extend(combo.iter().map(|(k, v)| (k.clone(), v.clone())));
 
-                // Build a local cancel callback that checks the shared flag
-                let cancel_cb: CancelCallback = Box::new(move || *cancelled);
+                // Per-task cancel callback reads the shared AtomicBool
+                let cf2 = Arc::clone(&cf);
+                let cancel_cb: CancelCallback = Box::new(move || cf2.load(Ordering::Relaxed));
 
                 let result = run_script_backtest(
                     &src,
@@ -161,17 +161,20 @@ pub async fn run_grid_sweep(
                 )
                 .await;
 
-                ctr.fetch_add(1, Ordering::Relaxed);
-
                 (offset, combo, result)
             });
         }
 
         // Collect results as tasks complete
+        let mut completed = 1usize; // first combo already done
         while let Some(join_result) = join_set.join_next().await {
-            // Report progress
-            let done = progress_counter.load(Ordering::Relaxed);
-            on_progress(done, total);
+            completed += 1;
+            on_progress(completed, total);
+
+            // Propagate cancellation from the caller into spawned tasks
+            if is_cancelled() {
+                cancel_flag.store(true, Ordering::Relaxed);
+            }
 
             match join_result {
                 Ok((_, combo, Ok(bt))) => {
