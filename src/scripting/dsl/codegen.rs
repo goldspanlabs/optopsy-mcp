@@ -595,6 +595,12 @@ const CTX_PROPERTIES: &[&str] = &[
 
 /// Known `ctx` methods (accessed with parentheses).
 const CTX_METHODS: &[&str] = &[
+    // OHLCV lookback forms: close(1) → ctx.close(1)
+    "close",
+    "open",
+    "high",
+    "low",
+    "volume",
     // Indicators
     "sma",
     "ema",
@@ -697,6 +703,72 @@ const CTX_METHODS: &[&str] = &[
     "plot_with",
 ];
 
+/// Indicators that have `_at(period, bars_ago)` lookback variants.
+const INDICATORS_WITH_AT: &[&str] = &["sma", "ema", "rsi"];
+
+/// OHLCV properties that support lookback via `close[N]` → `ctx.close(N)`.
+const OHLCV_PROPERTIES: &[&str] = &["close", "open", "high", "low", "volume"];
+
+/// Try to parse a `[N]` lookback suffix starting at position `i`.
+/// Returns `Some((N, new_i))` if found, `None` otherwise.
+fn try_parse_lookback(chars: &[char], pos: usize) -> Option<(usize, usize)> {
+    let mut j = pos;
+    // Skip optional whitespace
+    while j < chars.len() && chars[j].is_whitespace() {
+        j += 1;
+    }
+    if j >= chars.len() || chars[j] != '[' {
+        return None;
+    }
+    j += 1; // skip '['
+            // Parse digits
+    let num_start = j;
+    while j < chars.len() && chars[j].is_ascii_digit() {
+        j += 1;
+    }
+    if j == num_start || j >= chars.len() || chars[j] != ']' {
+        return None;
+    }
+    let num_str: String = chars[num_start..j].iter().collect();
+    let n: usize = num_str.parse().ok()?;
+    j += 1; // skip ']'
+    Some((n, j))
+}
+
+/// Consume balanced parentheses starting at position `pos` (which should point to '(').
+/// Returns `(contents_inside_parens, new_i)` where `new_i` is past the closing ')'.
+fn consume_parens(chars: &[char], pos: usize) -> Option<(String, usize)> {
+    if pos >= chars.len() || chars[pos] != '(' {
+        return None;
+    }
+    let mut j = pos + 1;
+    let mut depth = 1;
+    let mut contents = String::new();
+    while j < chars.len() && depth > 0 {
+        if chars[j] == '(' {
+            depth += 1;
+        } else if chars[j] == ')' {
+            depth -= 1;
+            if depth == 0 {
+                j += 1; // skip closing ')'
+                return Some((contents, j));
+            }
+        }
+        contents.push(chars[j]);
+        j += 1;
+    }
+    None // unbalanced
+}
+
+/// Check if `[` follows at current position (skipping whitespace).
+fn is_followed_by_bracket(chars: &[char], pos: usize) -> bool {
+    let mut j = pos;
+    while j < chars.len() && chars[j].is_whitespace() {
+        j += 1;
+    }
+    j < chars.len() && chars[j] == '['
+}
+
 /// Rewrite a DSL expression into a valid Rhai expression.
 ///
 /// - Bare context properties (`close`, `equity`) → `ctx.close`, `ctx.equity`
@@ -760,11 +832,67 @@ pub fn rewrite_expr(expr: &str) -> String {
             } else if word == "not" {
                 result.push('!');
             } else if is_ctx_property(&word) && !is_followed_by_paren(&chars, i) {
-                result.push_str("ctx.");
-                result.push_str(&word);
+                // Check for lookback: close[N] → ctx.close(N), close[0] → ctx.close
+                if OHLCV_PROPERTIES.contains(&word.as_str()) {
+                    if let Some((n, new_i)) = try_parse_lookback(&chars, i) {
+                        if n == 0 {
+                            result.push_str("ctx.");
+                            result.push_str(&word);
+                        } else {
+                            result.push_str(&format!("ctx.{word}({n})"));
+                        }
+                        i = new_i;
+                    } else {
+                        result.push_str("ctx.");
+                        result.push_str(&word);
+                    }
+                } else {
+                    result.push_str("ctx.");
+                    result.push_str(&word);
+                }
             } else if is_ctx_method(&word) && is_followed_by_paren(&chars, i) {
-                result.push_str("ctx.");
-                result.push_str(&word);
+                // Eagerly consume the parenthesized arguments so we can check for [N]
+                let paren_pos = {
+                    let mut j = i;
+                    while j < chars.len() && chars[j].is_whitespace() {
+                        j += 1;
+                    }
+                    j
+                };
+                if let Some((args_inner, after_paren)) = consume_parens(&chars, paren_pos) {
+                    // Rewrite args (they may contain DSL expressions too)
+                    let rewritten_args = rewrite_expr(&args_inner);
+                    // Check for lookback [N] after the closing )
+                    if is_followed_by_bracket(&chars, after_paren) {
+                        if let Some((n, new_i)) = try_parse_lookback(&chars, after_paren) {
+                            if n == 0 {
+                                // sma(200)[0] → ctx.sma(200)
+                                result.push_str(&format!("ctx.{word}({rewritten_args})"));
+                            } else if INDICATORS_WITH_AT.contains(&word.as_str()) {
+                                // sma(200)[1] → ctx.sma_at(200, 1)
+                                result.push_str(&format!("ctx.{word}_at({rewritten_args}, {n})"));
+                            } else {
+                                // Fallback: indicator_at("name", period, N)
+                                result.push_str(&format!(
+                                    "ctx.indicator_at(\"{word}\", {rewritten_args}, {n})"
+                                ));
+                            }
+                            i = new_i;
+                        } else {
+                            // [ but not a valid lookback — emit normally
+                            result.push_str(&format!("ctx.{word}({rewritten_args})"));
+                            i = after_paren;
+                        }
+                    } else {
+                        // No lookback — emit normally
+                        result.push_str(&format!("ctx.{word}({rewritten_args})"));
+                        i = after_paren;
+                    }
+                } else {
+                    // Couldn't parse parens, fall through
+                    result.push_str("ctx.");
+                    result.push_str(&word);
+                }
             } else {
                 result.push_str(&word);
             }
@@ -899,5 +1027,48 @@ mod tests {
             rewrite_expr("size_by_risk(0.02, close - atr(14) * 2)"),
             "ctx.size_by_risk(0.02, ctx.close - ctx.atr(14) * 2)"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Lookback syntax tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_rewrite_property_lookback() {
+        assert_eq!(rewrite_expr("close[1]"), "ctx.close(1)");
+        assert_eq!(rewrite_expr("high[3]"), "ctx.high(3)");
+        assert_eq!(rewrite_expr("volume[2]"), "ctx.volume(2)");
+    }
+
+    #[test]
+    fn test_rewrite_property_lookback_zero_optimized() {
+        assert_eq!(rewrite_expr("close[0]"), "ctx.close");
+        assert_eq!(rewrite_expr("high[0]"), "ctx.high");
+    }
+
+    #[test]
+    fn test_rewrite_indicator_lookback() {
+        assert_eq!(rewrite_expr("sma(200)[1]"), "ctx.sma_at(200, 1)");
+        assert_eq!(rewrite_expr("ema(20)[2]"), "ctx.ema_at(20, 2)");
+        assert_eq!(rewrite_expr("rsi(14)[1]"), "ctx.rsi_at(14, 1)");
+    }
+
+    #[test]
+    fn test_rewrite_indicator_lookback_zero_optimized() {
+        assert_eq!(rewrite_expr("sma(200)[0]"), "ctx.sma(200)");
+    }
+
+    #[test]
+    fn test_rewrite_lookback_in_expression() {
+        assert_eq!(
+            rewrite_expr("close[1] > close[2]"),
+            "ctx.close(1) > ctx.close(2)"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_lookback_no_false_positives() {
+        assert_eq!(rewrite_expr("pos.legs[0]"), "pos.legs[0]");
+        assert_eq!(rewrite_expr("my_array[1]"), "my_array[1]");
     }
 }

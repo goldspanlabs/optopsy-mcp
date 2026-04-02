@@ -782,3 +782,29 @@ on each bar
     assert!(rhai_lower.contains("buy_stock(100)"));
     assert!(rhai_upper.contains("buy_stock(100)"));
 }
+
+#[test]
+fn test_transpile_lookback_strategy() {
+    let dsl = r#"
+strategy "Lookback Test"
+  symbol SPY
+  interval daily
+  data ohlcv
+  indicators sma:50, rsi:14
+
+on each bar
+  require sma:50
+  when close[1] > sma(50)[1] and close < sma(50) then
+    Buy size_by_equity(1.0) shares next bar at market
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("ctx.close(1) > ctx.sma_at(50, 1)"),
+        "Lookback syntax should be transpiled.\nGenerated:\n{rhai}"
+    );
+    assert!(
+        rhai.contains("ctx.close < ctx.sma(50)"),
+        "Non-lookback should remain normal.\nGenerated:\n{rhai}"
+    );
+}
