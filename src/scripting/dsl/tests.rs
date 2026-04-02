@@ -542,3 +542,177 @@ on each bar
     assert!(rhai.contains("let bb_width = (ctx.bbands_upper(20)"));
     assert!(rhai.contains("let regime = if bb_width > 0.08"));
 }
+
+// ---------------------------------------------------------------------------
+// Next-bar execution / order type tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_buy_limit_order() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  buy 100 shares at 150.00 limit
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("buy_limit(100, 150.00)"),
+        "Should generate buy_limit call.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_buy_stop_order() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  buy 100 shares at 155.00 stop
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("buy_stop(100, 155.00)"),
+        "Should generate buy_stop call.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_sell_limit_order() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  sell 50 shares at 200.00 limit
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("sell_limit(__sell_qty, 200.00)"),
+        "Should generate sell_limit call with guard.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_sell_stop_order() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  sell 50 shares at entry_price - 2.0 stop
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("sell_stop("),
+        "Should generate sell_stop call.\nGenerated:\n{rhai}"
+    );
+    assert!(
+        rhai.contains("ctx.entry_price - 2.0"),
+        "entry_price should be rewritten to ctx.entry_price.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_buy_at_market_explicit() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  buy 100 shares at market
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("buy_stock(100)"),
+        "Explicit 'at market' should generate buy_stock.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_cancel_all_orders() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  cancel all orders
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("cancel_orders()"),
+        "Should generate cancel_orders().\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_cancel_orders_by_signal() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  cancel orders "old_entry"
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("cancel_orders(\"old_entry\")"),
+        "Should generate cancel_orders with signal.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_position_awareness_properties() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  skip when market_position != 0
+  when entry_price > 0 and bars_since_entry > 5 then
+    sell current_shares shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(rhai.contains("ctx.market_position != 0"));
+    assert!(rhai.contains("ctx.entry_price > 0"));
+    assert!(rhai.contains("ctx.bars_since_entry > 5"));
+    assert!(rhai.contains("ctx.current_shares"));
+}
+
+#[test]
+fn test_dynamic_limit_price_expression() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  buy 100 shares at close - atr(14) * 2 limit
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("buy_limit(100, ctx.close - ctx.atr(14) * 2)"),
+        "Dynamic limit price should be rewritten.\nGenerated:\n{rhai}"
+    );
+}

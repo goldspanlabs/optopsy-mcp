@@ -351,35 +351,82 @@ fn generate_stmts(
                 out.push('\n');
             }
 
-            Stmt::Buy { qty_expr, .. } => {
+            Stmt::Buy {
+                qty_expr,
+                order_type,
+                ..
+            } => {
                 let qty = rewrite_expr(qty_expr);
+                let call = match order_type {
+                    OrderModifier::Market => format!("buy_stock({qty})"),
+                    OrderModifier::Limit { price } => {
+                        let p = rewrite_expr(price);
+                        format!("buy_limit({qty}, {p})")
+                    }
+                    OrderModifier::Stop { price } => {
+                        let p = rewrite_expr(price);
+                        format!("buy_stop({qty}, {p})")
+                    }
+                };
                 match kind {
                     CallbackKind::ActionArray => {
-                        out.push_str(&format!("{indent}__actions.push(buy_stock({qty}));\n"));
+                        out.push_str(&format!("{indent}__actions.push({call});\n"));
                     }
                     _ => {
-                        out.push_str(&format!("{indent}buy_stock({qty});\n"));
+                        out.push_str(&format!("{indent}{call};\n"));
                     }
                 }
             }
 
-            Stmt::Sell { qty_expr, .. } => {
+            Stmt::Sell {
+                qty_expr,
+                order_type,
+                ..
+            } => {
                 let qty = rewrite_expr(qty_expr);
+                let call = match order_type {
+                    OrderModifier::Market => format!("sell_stock({qty})"),
+                    OrderModifier::Limit { price } => {
+                        let p = rewrite_expr(price);
+                        format!("sell_limit({qty}, {p})")
+                    }
+                    OrderModifier::Stop { price } => {
+                        let p = rewrite_expr(price);
+                        format!("sell_stop({qty}, {p})")
+                    }
+                };
                 // Emit quantity validation guard
+                let call_with_guard = call.replace(&qty, "__sell_qty");
                 out.push_str(&format!("{indent}let __sell_qty = {qty};\n"));
                 out.push_str(&format!("{indent}if __sell_qty > 0 {{\n"));
-                match kind {
-                    CallbackKind::ActionArray => {
-                        out.push_str(&format!(
-                            "{indent}    __actions.push(sell_stock(__sell_qty));\n"
-                        ));
-                    }
-                    _ => {
-                        out.push_str(&format!("{indent}    sell_stock(__sell_qty);\n"));
-                    }
+                if kind == CallbackKind::ActionArray {
+                    out.push_str(&format!("{indent}    __actions.push({call_with_guard});\n"));
+                } else {
+                    out.push_str(&format!("{indent}    {call_with_guard};\n"));
                 }
                 out.push_str(&format!("{indent}}}\n"));
             }
+
+            Stmt::CancelOrders { signal, .. } => match signal {
+                Some(s) => match kind {
+                    CallbackKind::ActionArray => {
+                        out.push_str(&format!(
+                            "{indent}__actions.push(cancel_orders(\"{s}\"));\n"
+                        ));
+                    }
+                    _ => {
+                        out.push_str(&format!("{indent}cancel_orders(\"{s}\");\n"));
+                    }
+                },
+                None => match kind {
+                    CallbackKind::ActionArray => {
+                        out.push_str(&format!("{indent}__actions.push(cancel_orders());\n"));
+                    }
+                    _ => {
+                        out.push_str(&format!("{indent}cancel_orders();\n"));
+                    }
+                },
+            },
 
             Stmt::HoldPosition { .. } => match kind {
                 CallbackKind::SingleAction => {
@@ -534,6 +581,16 @@ const CTX_PROPERTIES: &[&str] = &[
     "bar_idx",
     "date",
     "datetime",
+    "adjusted_close",
+    // Position awareness (next-bar execution model)
+    "market_position",
+    "entry_price",
+    "bars_since_entry",
+    "current_shares",
+    "open_profit",
+    "max_profit",
+    "max_loss",
+    "pending_orders_count",
 ];
 
 /// Known `ctx` methods (accessed with parentheses).

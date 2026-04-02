@@ -66,6 +66,17 @@ pub struct StateDecl {
     pub default: String,
 }
 
+/// Order type modifier for buy/sell statements.
+#[derive(Debug, Clone)]
+pub enum OrderModifier {
+    /// Market order (default) — fills at next bar's open.
+    Market,
+    /// Limit order — fills if price reaches the limit.
+    Limit { price: String },
+    /// Stop order — fills if price reaches the stop.
+    Stop { price: String },
+}
+
 /// A statement inside an event block.
 #[derive(Debug)]
 pub enum Stmt {
@@ -90,10 +101,16 @@ pub enum Stmt {
     },
     Buy {
         qty_expr: String,
+        order_type: OrderModifier,
         line: usize,
     },
     Sell {
         qty_expr: String,
+        order_type: OrderModifier,
+        line: usize,
+    },
+    CancelOrders {
+        signal: Option<String>,
         line: usize,
     },
     HoldPosition {
@@ -509,24 +526,31 @@ fn parse_statements(lines: &[Line]) -> Result<Vec<Stmt>, DslError> {
                 "'otherwise' without a preceding 'when'",
             ));
         } else if let Some(rest) = content.strip_prefix("buy ") {
-            let qty_expr = rest
-                .strip_suffix(" shares")
-                .unwrap_or(rest)
-                .trim()
-                .to_string();
+            let (qty_expr, order_type) = parse_order_statement(rest, line.num)?;
             stmts.push(Stmt::Buy {
                 qty_expr,
+                order_type,
                 line: line.num,
             });
             i += 1;
         } else if let Some(rest) = content.strip_prefix("sell ") {
-            let qty_expr = rest
-                .strip_suffix(" shares")
-                .unwrap_or(rest)
-                .trim()
-                .to_string();
+            let (qty_expr, order_type) = parse_order_statement(rest, line.num)?;
             stmts.push(Stmt::Sell {
                 qty_expr,
+                order_type,
+                line: line.num,
+            });
+            i += 1;
+        } else if content == "cancel all orders" {
+            stmts.push(Stmt::CancelOrders {
+                signal: None,
+                line: line.num,
+            });
+            i += 1;
+        } else if let Some(rest) = content.strip_prefix("cancel orders ") {
+            let signal = extract_quoted_value(rest, line.num)?;
+            stmts.push(Stmt::CancelOrders {
+                signal: Some(signal),
                 line: line.num,
             });
             i += 1;
@@ -901,6 +925,57 @@ fn parse_for_each_header(rest: &str, line_num: usize) -> Result<(String, String)
     }
 
     Ok((var, iterable))
+}
+
+/// Parse a buy/sell statement body, extracting qty and optional order modifier.
+///
+/// Formats:
+/// - `100 shares`                      → Market order
+/// - `size_by_equity(1.0) shares`      → Market order with expression
+/// - `100 shares at 150.00 limit`      → Limit order
+/// - `100 shares at 155.00 stop`       → Stop order
+/// - `100 shares at market`            → Explicit market order
+fn parse_order_statement(rest: &str, line_num: usize) -> Result<(String, OrderModifier), DslError> {
+    // Check for "at PRICE limit/stop" suffix after "shares"
+    if let Some(shares_pos) = rest.find(" shares at ") {
+        let qty_expr = rest[..shares_pos].trim().to_string();
+        let after_at = rest[shares_pos + " shares at ".len()..].trim();
+
+        let order_type = if after_at == "market" {
+            OrderModifier::Market
+        } else if let Some(price_str) = after_at.strip_suffix(" limit") {
+            OrderModifier::Limit {
+                price: price_str.trim().to_string(),
+            }
+        } else if let Some(price_str) = after_at.strip_suffix(" stop") {
+            OrderModifier::Stop {
+                price: price_str.trim().to_string(),
+            }
+        } else {
+            return Err(DslError::new(
+                line_num,
+                "order type must be 'market', 'PRICE limit', or 'PRICE stop'",
+            ));
+        };
+
+        if qty_expr.is_empty() {
+            return Err(DslError::new(line_num, "buy/sell requires a quantity"));
+        }
+        return Ok((qty_expr, order_type));
+    }
+
+    // No order modifier — plain "N shares" or bare expression
+    let qty_expr = rest
+        .strip_suffix(" shares")
+        .unwrap_or(rest)
+        .trim()
+        .to_string();
+
+    if qty_expr.is_empty() {
+        return Err(DslError::new(line_num, "buy/sell requires a quantity"));
+    }
+
+    Ok((qty_expr, OrderModifier::Market))
 }
 
 /// Extract a `"quoted string"` value from the start of a string.
