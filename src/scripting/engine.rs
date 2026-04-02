@@ -826,18 +826,25 @@ pub async fn run_script_backtest(
 
                         // Create per-order exit orders (stop loss / profit target)
                         // Direction-aware: long positions exit with sells, short with buys
+                        // Dollar amounts are total P&L (e.g., $500 = exit when loss exceeds $500),
+                        // converted to per-share offset: amt / qty
                         let pos_id = next_id - 1;
                         let is_long = *side == Side::Long;
+                        let shares = *qty as f64;
                         if let Some(ref sl) = order.stop_loss {
                             let stop_price = if is_long {
                                 match sl {
                                     ExitModifier::Percent(pct) => adjusted_fill * (1.0 - pct),
-                                    ExitModifier::Dollar(amt) => adjusted_fill - amt,
+                                    ExitModifier::Dollar(amt) => {
+                                        adjusted_fill - amt / shares.max(1.0)
+                                    }
                                 }
                             } else {
                                 match sl {
                                     ExitModifier::Percent(pct) => adjusted_fill * (1.0 + pct),
-                                    ExitModifier::Dollar(amt) => adjusted_fill + amt,
+                                    ExitModifier::Dollar(amt) => {
+                                        adjusted_fill + amt / shares.max(1.0)
+                                    }
                                 }
                             };
                             auto_exit_orders.push(PendingOrder {
@@ -859,12 +866,16 @@ pub async fn run_script_backtest(
                             let limit_price = if is_long {
                                 match pt {
                                     ExitModifier::Percent(pct) => adjusted_fill * (1.0 + pct),
-                                    ExitModifier::Dollar(amt) => adjusted_fill + amt,
+                                    ExitModifier::Dollar(amt) => {
+                                        adjusted_fill + amt / shares.max(1.0)
+                                    }
                                 }
                             } else {
                                 match pt {
                                     ExitModifier::Percent(pct) => adjusted_fill * (1.0 - pct),
-                                    ExitModifier::Dollar(amt) => adjusted_fill - amt,
+                                    ExitModifier::Dollar(amt) => {
+                                        adjusted_fill - amt / shares.max(1.0)
+                                    }
                                 }
                             };
                             auto_exit_orders.push(PendingOrder {
@@ -944,8 +955,8 @@ pub async fn run_script_backtest(
                             max_loss_tracker.remove(pid);
                             positions.swap_remove(idx);
 
-                            // Cancel other auto-generated exit orders for this position
-                            unfilled_orders.retain(|o| {
+                            // Cancel auto-generated exit orders for this position
+                            let cancel_pid = |o: &PendingOrder| {
                                 if let ScriptAction::Close {
                                     position_id: Some(opid),
                                     ..
@@ -955,7 +966,9 @@ pub async fn run_script_backtest(
                                 } else {
                                     true
                                 }
-                            });
+                            };
+                            unfilled_orders.retain(cancel_pid);
+                            auto_exit_orders.retain(cancel_pid);
                         } else {
                             // Silently skip — position already closed (e.g., sibling auto-exit)
                         }
