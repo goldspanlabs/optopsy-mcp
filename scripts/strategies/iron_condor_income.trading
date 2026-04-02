@@ -11,6 +11,11 @@ strategy "Iron Condor Income"
   slippage mid
   expiration_filter monthly
   max_positions 1
+  category options
+  description "Sell iron condors in low-volatility regimes with RSI filtering"
+  hypothesis "Range-bound markets with compressed Bollinger Bands favor premium selling via iron condors"
+  tags iron_condor, premium_selling, volatility
+  regime range_bound, low_volatility
 
 extern SHORT_PUT_DELTA = 0.20 "Short put delta target"
 extern SHORT_CALL_DELTA = 0.20 "Short call delta target"

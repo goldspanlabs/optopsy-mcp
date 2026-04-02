@@ -5,6 +5,11 @@ strategy "SMA 200 Threshold"
   symbol SYMBOL
   capital CAPITAL
   interval daily
+  category stock
+  description "Enter when close > SMA(200) * 1.04, exit when close < SMA(200) * 0.97"
+  hypothesis "Sustained momentum above the 200-day SMA signals trend continuation"
+  tags trend_following, momentum, sma
+  regime trending, bullish
 
 extern ENTRY_THRESHOLD = 0.04 "Entry threshold above SMA (e.g. 0.04 = +4%)"
 extern EXIT_THRESHOLD = 0.03 "Exit threshold below SMA (e.g. 0.03 = -3%)"

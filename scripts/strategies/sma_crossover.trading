@@ -8,6 +8,11 @@ strategy "SMA Crossover"
   interval daily
   data ohlcv
   indicators sma:50, sma:200, rsi:14
+  category stock
+  description "Buy when price breaks above SMA(200) with SMA(50) > SMA(200) confirmation"
+  hypothesis "Golden cross with momentum filter reduces false breakout entries"
+  tags trend_following, sma, crossover
+  regime trending, bullish
 
 extern ENTRY_THRESHOLD = 0.04 "Percentage above SMA to trigger entry"
 extern EXIT_THRESHOLD = 0.03 "Percentage below SMA to trigger exit"

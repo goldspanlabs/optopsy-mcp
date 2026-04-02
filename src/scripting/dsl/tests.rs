@@ -1120,3 +1120,77 @@ when no positions and close > sma(200) then
     assert!(rhai.contains("__order.profit_target_pct = 0.1"));
     assert!(rhai.contains("__order.trailing_stop_pct = 0.03"));
 }
+
+// ---------------------------------------------------------------------------
+// Metadata keyword tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_transpile_metadata() {
+    let dsl = r#"
+strategy "SMA Threshold"
+  symbol SYMBOL
+  capital CAPITAL
+  interval daily
+  category stock
+  description "Enter when close > SMA(200)"
+  hypothesis "Momentum above 200-day SMA signals continuation"
+  tags trend_following, momentum, sma
+  regime trending, bullish
+
+on each bar
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("//! name: SMA Threshold"),
+        "Missing name.\n{rhai}"
+    );
+    assert!(
+        rhai.contains("//! description: Enter when close > SMA(200)"),
+        "Missing description.\n{rhai}"
+    );
+    assert!(
+        rhai.contains("//! category: stock"),
+        "Missing category.\n{rhai}"
+    );
+    assert!(
+        rhai.contains("//! hypothesis: Momentum above 200-day SMA signals continuation"),
+        "Missing hypothesis.\n{rhai}"
+    );
+    assert!(
+        rhai.contains("//! tags: trend_following, momentum, sma"),
+        "Missing tags.\n{rhai}"
+    );
+    assert!(
+        rhai.contains("//! regime: trending, bullish"),
+        "Missing regime.\n{rhai}"
+    );
+}
+
+#[test]
+fn test_transpile_metadata_optional() {
+    let dsl = r#"
+strategy "Minimal"
+  symbol SYMBOL
+  capital CAPITAL
+  interval daily
+
+on each bar
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    // Name is always emitted
+    assert!(rhai.contains("//! name: Minimal"), "Missing name.\n{rhai}");
+    // Optional fields should not appear
+    assert!(
+        !rhai.contains("//! description:"),
+        "Should not have description.\n{rhai}"
+    );
+    assert!(
+        !rhai.contains("//! category:"),
+        "Should not have category.\n{rhai}"
+    );
+}

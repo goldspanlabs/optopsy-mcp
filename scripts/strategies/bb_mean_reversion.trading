@@ -5,6 +5,11 @@ strategy "BB Mean Reversion"
   symbol SYMBOL
   capital CAPITAL
   interval daily
+  category stock
+  description "Short when price breaks above upper BBand (2σ), exit on reversion to SMA(20) or max 10 bars"
+  hypothesis "Bollinger Band squeezes followed by lower band touches signal mean reversion"
+  tags mean_reversion, bollinger_bands
+  regime range_bound, low_volatility
 
 extern BB_PERIOD = 20 "Bollinger Band period"
 extern RISK_PCT = 0.02 "Fraction of equity to risk per trade"

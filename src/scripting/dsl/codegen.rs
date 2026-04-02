@@ -206,6 +206,27 @@ pub fn generate(program: &DslProgram) -> String {
         scope_vars.insert(s.name.clone());
     }
 
+    // Metadata headers (for ScriptMeta extraction)
+    if let Some(ref strat) = program.strategy {
+        out.push_str(&format!("//! name: {}\n", strat.name));
+        if let Some(ref desc) = strat.description {
+            out.push_str(&format!("//! description: {desc}\n"));
+        }
+        if let Some(ref cat) = strat.category {
+            out.push_str(&format!("//! category: {cat}\n"));
+        }
+        if let Some(ref hyp) = strat.hypothesis {
+            out.push_str(&format!("//! hypothesis: {hyp}\n"));
+        }
+        if !strat.tags.is_empty() {
+            out.push_str(&format!("//! tags: {}\n", strat.tags.join(", ")));
+        }
+        if !strat.regime.is_empty() {
+            out.push_str(&format!("//! regime: {}\n", strat.regime.join(", ")));
+        }
+        out.push('\n');
+    }
+
     out.push_str("// Auto-generated from Trading DSL — do not edit by hand.\n\n");
 
     // Extern params

@@ -10,6 +10,11 @@ strategy "Wheel Strategy"
   slippage mid
   expiration_filter monthly
   max_positions 1
+  category options
+  description "Sell puts, get assigned, sell covered calls, repeat"
+  hypothesis "Selling premium via wheel strategy captures theta decay in range-bound markets"
+  tags wheel, premium_selling, covered_call, cash_secured_put
+  regime sideways, low_volatility
 
 extern PUT_DELTA = 0.30 "Target delta for short puts"
 extern PUT_DTE = 45 "Days to expiration for puts"

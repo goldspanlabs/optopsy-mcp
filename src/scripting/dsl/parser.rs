@@ -51,6 +51,11 @@ pub struct StrategyBlock {
     pub max_positions: Option<i64>,
     pub cross_symbols: Vec<String>,
     pub procedural: bool,
+    pub category: Option<String>,
+    pub description: Option<String>,
+    pub hypothesis: Option<String>,
+    pub tags: Vec<String>,
+    pub regime: Vec<String>,
 }
 
 /// A `param` declaration with default value and description.
@@ -370,6 +375,11 @@ fn parse_strategy_block(lines: &[Line], start: usize) -> Result<(StrategyBlock, 
         max_positions: None,
         cross_symbols: vec![],
         procedural,
+        category: None,
+        description: None,
+        hypothesis: None,
+        tags: vec![],
+        regime: vec![],
     };
 
     let mut i = start + 1;
@@ -401,6 +411,16 @@ fn parse_strategy_block(lines: &[Line], start: usize) -> Result<(StrategyBlock, 
             );
         } else if let Some(rest) = content.strip_prefix("cross_symbols ") {
             block.cross_symbols = rest.split(',').map(|s| s.trim().to_string()).collect();
+        } else if let Some(rest) = content.strip_prefix("category ") {
+            block.category = Some(rest.trim().to_string());
+        } else if let Some(rest) = content.strip_prefix("description ") {
+            block.description = Some(extract_quoted_value(rest.trim(), line.num)?);
+        } else if let Some(rest) = content.strip_prefix("hypothesis ") {
+            block.hypothesis = Some(extract_quoted_value(rest.trim(), line.num)?);
+        } else if let Some(rest) = content.strip_prefix("tags ") {
+            block.tags = rest.split(',').map(|s| s.trim().to_string()).collect();
+        } else if let Some(rest) = content.strip_prefix("regime ") {
+            block.regime = rest.split(',').map(|s| s.trim().to_string()).collect();
         } else {
             return Err(DslError::new(
                 line.num,
