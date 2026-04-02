@@ -2852,14 +2852,18 @@ fn extract_exit_modifier(map: &rhai::Map, pct_key: &str, dollar_key: &str) -> Op
             .as_float()
             .ok()
             .or_else(|| v.as_int().ok().map(|i| i as f64))?;
-        return Some(ExitModifier::Percent(pct));
+        if pct > 0.0 {
+            return Some(ExitModifier::Percent(pct));
+        }
     }
     if let Some(v) = map.get(dollar_key) {
         let amt = v
             .as_float()
             .ok()
             .or_else(|| v.as_int().ok().map(|i| i as f64))?;
-        return Some(ExitModifier::Dollar(amt));
+        if amt > 0.0 {
+            return Some(ExitModifier::Dollar(amt));
+        }
     }
     None
 }

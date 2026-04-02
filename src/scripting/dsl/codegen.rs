@@ -171,13 +171,18 @@ fn scan_expr(expr: &str, specs: &mut Vec<String>, seen: &mut HashSet<String>) {
                 // Find the matching ')'
                 if let Some(paren_end) = expr[paren_start..].find(')') {
                     let arg = expr[paren_start..paren_start + paren_end].trim();
-                    let spec = if arg.is_empty() {
-                        word.to_string()
-                    } else {
-                        format!("{word}:{arg}")
-                    };
-                    if seen.insert(spec.clone()) {
-                        specs.push(spec);
+                    // Only extract if arg is a numeric literal (not a variable like BB_PERIOD)
+                    let is_numeric =
+                        arg.is_empty() || arg.bytes().all(|b| b.is_ascii_digit() || b == b'.');
+                    if is_numeric {
+                        let spec = if arg.is_empty() {
+                            word.to_string()
+                        } else {
+                            format!("{word}:{arg}")
+                        };
+                        if seen.insert(spec.clone()) {
+                            specs.push(spec);
+                        }
                     }
                     i = paren_start + paren_end + 1;
                 }
