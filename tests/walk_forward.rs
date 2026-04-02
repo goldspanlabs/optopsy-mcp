@@ -100,11 +100,11 @@ impl DataLoader for DateFilteringLoader {
     }
 }
 
-/// Generate 250 bars with repeating BB breakout patterns.
+/// Generate 245 bars with repeating BB breakout patterns.
 ///
 /// Pattern: 25 bars of stable prices around a base, then a spike above the upper BB,
-/// then 5 bars of drift, then a reversion. Repeated ~7 times to give enough data
-/// for walk-forward windows.
+/// then 5 bars of drift, then a reversion. Repeated 7 times (35 bars per cycle)
+/// to give enough data for walk-forward windows.
 fn make_walk_forward_bars() -> Vec<OhlcvBar> {
     let mut bars = Vec::new();
     let start = NaiveDate::from_ymd_opt(2023, 1, 2).unwrap();

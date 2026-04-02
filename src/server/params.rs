@@ -540,7 +540,7 @@ fn default_wf_train_pct() -> f64 {
 #[garde(context(()))]
 pub struct WalkForwardToolParams {
     /// Strategy script name (filename without `.rhai` extension from `scripts/strategies/`).
-    #[garde(length(min = 1))]
+    #[garde(length(min = 1), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub strategy: String,
 
     /// Ticker symbol for data loading.
@@ -579,12 +579,12 @@ pub struct WalkForwardToolParams {
 
     /// Start date filter (YYYY-MM-DD). Optional.
     #[serde(default)]
-    #[garde(skip)]
+    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))]
     pub start_date: Option<String>,
 
     /// End date filter (YYYY-MM-DD). Optional.
     #[serde(default)]
-    #[garde(skip)]
+    #[garde(inner(pattern(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")), custom(validate_end_date_after_start(&self.start_date)))]
     pub end_date: Option<String>,
 
     /// Profile name for parameter presets. Optional.

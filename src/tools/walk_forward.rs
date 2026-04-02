@@ -41,11 +41,17 @@ pub async fn execute(
         Some("sortino") => WfObjective::Sortino,
         Some("profit_factor") => WfObjective::ProfitFactor,
         Some("cagr") => WfObjective::Cagr,
-        _ => WfObjective::Sharpe,
+        None | Some("sharpe") => WfObjective::Sharpe,
+        Some(other) => anyhow::bail!(
+            "Invalid objective '{other}', expected: sharpe, sortino, profit_factor, cagr"
+        ),
     };
     let wf_mode = match mode.as_deref() {
         Some("anchored") => WfMode::Anchored,
-        _ => WfMode::Rolling,
+        None | Some("rolling") => WfMode::Rolling,
+        Some(other) => {
+            anyhow::bail!("Invalid mode '{other}', expected: rolling, anchored")
+        }
     };
 
     let engine_params = WalkForwardParams {

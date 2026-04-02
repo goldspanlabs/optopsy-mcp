@@ -4,45 +4,23 @@
 //! return the same `WalkForwardResponse`.
 
 use axum::{extract::State, http::StatusCode, Json};
+use garde::Validate;
 use std::sync::Arc;
 
+use crate::server::params::WalkForwardToolParams;
 use crate::server::state::AppState;
 use crate::tools::response_types::walk_forward::WalkForwardResponse;
 use crate::tools::walk_forward as wf_tool;
 
-/// REST parameters — mirrors the MCP tool params but uses serde defaults directly.
-#[derive(Debug, serde::Deserialize)]
-pub struct RestWalkForwardParams {
-    pub strategy: String,
-    pub symbol: String,
-    #[serde(default = "default_capital")]
-    pub capital: f64,
-    pub params_grid: std::collections::HashMap<String, Vec<serde_json::Value>>,
-    #[serde(default)]
-    pub objective: Option<String>,
-    #[serde(default)]
-    pub n_windows: Option<usize>,
-    #[serde(default)]
-    pub mode: Option<String>,
-    #[serde(default)]
-    pub train_pct: Option<f64>,
-    #[serde(default)]
-    pub start_date: Option<String>,
-    #[serde(default)]
-    pub end_date: Option<String>,
-    #[serde(default)]
-    pub profile: Option<String>,
-}
-
-fn default_capital() -> f64 {
-    100_000.0
-}
-
 /// `POST /walk-forward` — Run walk-forward optimization for a strategy.
 pub async fn run_walk_forward(
     State(state): State<AppState>,
-    Json(params): Json<RestWalkForwardParams>,
+    Json(params): Json<WalkForwardToolParams>,
 ) -> Result<Json<WalkForwardResponse>, (StatusCode, String)> {
+    params
+        .validate()
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Validation error: {e}")))?;
+
     let cache = Arc::clone(&state.server.cache);
     let response = wf_tool::execute(
         &cache,
@@ -52,9 +30,9 @@ pub async fn run_walk_forward(
         params.capital,
         params.params_grid,
         params.objective,
-        params.n_windows,
+        Some(params.n_windows),
         params.mode,
-        params.train_pct,
+        Some(params.train_pct),
         params.start_date,
         params.end_date,
         params.profile,
