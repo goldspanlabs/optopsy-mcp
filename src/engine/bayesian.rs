@@ -476,11 +476,11 @@ pub fn decode_params(
         .map(|(xi, (name, min, max, is_int, step))| {
             let val = min + xi * (max - min);
             let json_val = if *is_int {
-                let s = step.unwrap_or(1.0);
+                let s = step.unwrap_or(1.0).max(1.0);
                 let snapped = (val / s).round() * s;
                 serde_json::json!(snapped as i64)
             } else {
-                let s = step.unwrap_or(0.01);
+                let s = step.unwrap_or(0.01).max(0.01);
                 let snapped = (val / s).round() * s;
                 // Round to avoid floating-point noise (e.g. 0.30000000000000004)
                 let decimals = (-s.log10()).ceil().max(0.0) as u32 + 1;
