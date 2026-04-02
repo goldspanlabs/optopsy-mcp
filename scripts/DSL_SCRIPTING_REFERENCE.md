@@ -20,6 +20,8 @@ or write a full `.rhai` script.
 
 ## File Structure
 
+### Callback Mode (default)
+
 ```
 # Comments start with hash
 strategy "Name"
@@ -28,8 +30,12 @@ strategy "Name"
   interval daily
   data ohlcv           # or: ohlcv, options
   indicators sma:50, sma:200, rsi:14
+  stop_loss 5%         # optional declarative exit
+  profit_target 10%    # optional declarative exit
+  trailing_stop 3%     # optional declarative exit
 
 extern NAME = DEFAULT "description"
+extern NAME = DEFAULT "description" choices VAL1, VAL2
 state NAME = DEFAULT
 
 on each bar                    # available: ctx (implicit via expression rewriting)
@@ -48,6 +54,35 @@ on end
   STATEMENTS...
 ```
 
+### Procedural Mode
+
+Add `procedural` after the strategy name to opt into procedural mode. In this mode,
+there are no event blocks — the entire body runs every bar. Use `when`/`otherwise`
+and action statements directly at the top level.
+
+```
+strategy "SMA Cross" procedural
+  symbol SYMBOL
+  capital CAPITAL
+  interval daily
+  indicators sma:50, sma:200
+  stop_loss 5%
+
+extern FAST = 50 "Fast MA"
+
+require sma:50, sma:200
+
+when no positions and sma(50) crosses above sma(200) then
+  Buy size_by_equity(1.0) shares next bar at market
+
+when has positions and close crosses below sma(50) then
+  close position "signal_exit"
+```
+
+**When to use procedural mode**: simple strategies where a single top-to-bottom
+flow is clearer than separate event callbacks. For strategies that need exit checks,
+position lifecycle hooks, or end-of-backtest cleanup, use callback mode.
+
 ## Strategy Block
 
 Required. Must be the first non-comment declaration.
@@ -63,15 +98,47 @@ strategy "Iron Condor Income"
   expiration_filter monthly           # monthly|weekly|any
   max_positions 1                     # integer
   cross_symbols QQQ, IWM             # for price_of() access
+  stop_loss 5%                        # percentage-based stop loss
+  profit_target 10%                   # percentage-based take profit
+  trailing_stop 3%                    # percentage-based trailing stop
+  stop_loss $500                      # dollar-based stop loss (alternative)
+  profit_target $1000                 # dollar-based take profit (alternative)
 ```
 
 All properties except `symbol` and `capital` are optional (sensible defaults apply).
 
+Add `procedural` after the strategy name to use procedural mode:
+
+```
+strategy "My Strategy" procedural
+  symbol SYMBOL
+  ...
+```
+
 ## Parameters and State
+
+### `extern` (runtime parameters)
+
+The `extern` keyword declares parameters that are visible in the UI and overridable
+at runtime. Format: `extern NAME = DEFAULT "description"` with an optional `choices`
+clause for constrained values.
 
 ```
 extern THRESHOLD = 0.04 "Entry threshold percentage"
 extern MODE = "fast" "Execution mode" choices fast, slow, balanced
+extern DTE = 45 "Target DTE"
+extern DELTA = 0.30 "Short delta"
+```
+
+Transpilation: `extern THRESHOLD = 0.04 "Entry threshold"` generates
+`let THRESHOLD = extern("THRESHOLD", 0.04, "Entry threshold");`
+
+When `choices` is specified, the UI displays a dropdown. The generated Rhai still
+uses `extern()` — validation of allowed values is handled by the UI layer.
+
+### `state` (mutable state)
+
+```
 state consecutive_losses = 0
 state in_trade = false
 ```
@@ -79,7 +146,7 @@ state in_trade = false
 - `extern` → generates `extern()` call (visible in UI, overridable at runtime)
 - `state` → generates `let` (top-level, persists across bars)
 - State variables can be mutated with `set NAME to EXPR` or `add EXPR to NAME`
-- Params are read-only after initialization
+- Externs are read-only after initialization
 
 ## Statements
 
@@ -103,6 +170,67 @@ otherwise
 
 **Important**: consecutive `when` blocks WITHOUT `otherwise` produce **independent**
 `if` statements (both can execute). With `otherwise`, they chain into `if/else if/else`.
+
+### Lookback Syntax
+
+Access previous bar values using bracket notation:
+
+```
+close[1]              # previous bar's close
+high[3]               # high 3 bars ago
+sma(200)[1]           # SMA(200) value 1 bar ago
+rsi(14)[2]            # RSI(14) value 2 bars ago
+close[0]              # current bar's close (optimized — same as close)
+```
+
+**Transpilation rules**:
+- `close[N]` → `ctx.close(N)` (uses the N-bars-ago price accessor)
+- `sma(P)[N]` → `ctx.sma_at(P, N)` (uses the indicator lookback accessor)
+- `rsi(P)[N]` → `ctx.rsi_at(P, N)` (same pattern for all indicators)
+- `[0]` is optimized away — `close[0]` becomes `ctx.close`, `sma(200)[0]` becomes `ctx.sma(200)`
+
+Works in any expression context: `when close[1] > sma(200)[1] then`, `set prev_rsi to rsi(14)[1]`, etc.
+
+### Crossover Keywords
+
+Natural-language crossover detection using `crosses above` and `crosses below`:
+
+```
+when sma(50) crosses above sma(200) then     # golden cross
+when close crosses below ema(20) then         # price breaks below EMA
+when rsi(14) crosses above 30 then            # RSI exits oversold
+when macd_line() crosses below 0 then         # MACD goes negative
+```
+
+**Transpilation rules**:
+- Two indicators: `sma(50) crosses above sma(200)` → `ctx.crossed_above("sma:50", "sma:200")`
+- Two indicators: `close crosses below ema(20)` → `ctx.crossed_below("close", "ema:20")`
+- Indicator vs literal: `rsi(14) crosses above 30` → manual cross check using lookback:
+  `ctx.rsi_at(14, 1) <= 30.0 && ctx.rsi(14) > 30.0`
+
+The `crossed_above`/`crossed_below` context methods compare the current bar's indicator
+value against the previous bar's value to detect the crossover event.
+
+### Declarative Exits
+
+Declare stop loss, profit target, and trailing stop directly in the strategy block.
+The engine evaluates these before `on_exit_check` on every bar:
+
+```
+strategy "My Strategy"
+  stop_loss 5%              # exit if position loses 5% of entry cost
+  profit_target 10%         # exit if position gains 10% of entry cost
+  trailing_stop 3%          # trail from peak, exit if drops 3%
+  stop_loss $500            # dollar-based: exit if unrealized loss exceeds $500
+  profit_target $1000       # dollar-based: exit if unrealized gain exceeds $1000
+```
+
+Use percentage (`%`) or dollar (`$`) notation. When a declarative exit triggers,
+the exit type is set accordingly: `"stop_loss"`, `"take_profit"`, or `"trailing_stop"`.
+These values appear in `exit_type` in the `on position closed` callback.
+
+Declarative exits are checked before any `on_exit_check` logic, so they act as
+hard limits that always apply.
 
 ### Actions
 
@@ -458,3 +586,163 @@ on exit check
   otherwise
     hold position
 ```
+
+### Procedural Mode with Crossovers
+```
+strategy "Golden Cross" procedural
+  symbol SYMBOL
+  capital CAPITAL
+  interval daily
+  indicators sma:50, sma:200
+  stop_loss 5%
+  trailing_stop 3%
+
+require sma:50, sma:200
+
+when no positions and sma(50) crosses above sma(200) then
+  buy size_by_equity(1.0) shares
+
+when has positions and sma(50) crosses below sma(200) then
+  close position "death_cross"
+```
+
+### Lookback with Mean Reversion
+```
+strategy "RSI Reversal"
+  symbol SYMBOL
+  capital CAPITAL
+  interval daily
+  indicators rsi:14, sma:200
+  profit_target 8%
+  stop_loss 4%
+
+extern RSI_ENTRY = 30 "Oversold threshold"
+
+on each bar
+  require rsi:14, sma:200
+  skip when has positions
+  # Enter when RSI crosses above oversold AND was below it yesterday
+  when rsi(14) crosses above RSI_ENTRY and close > sma(200) then
+    buy size_by_equity(0.5) shares
+
+on exit check
+  # Exit when RSI was overbought and starts falling
+  when rsi(14)[1] > 70 and rsi(14) < 70 then
+    close position "rsi_reversal"
+  otherwise
+    hold position
+```
+
+## Conversion Guide
+
+### PineScript to Trading DSL
+
+**PineScript (TradingView)**:
+```pinescript
+//@version=5
+strategy("SMA Cross", overlay=true)
+
+fast = input.int(50, "Fast MA")
+slow = input.int(200, "Slow MA")
+
+smaFast = ta.sma(close, fast)
+smaSlow = ta.sma(close, slow)
+
+if ta.crossover(smaFast, smaSlow)
+    strategy.entry("Long", strategy.long)
+
+if ta.crossunder(smaFast, smaSlow)
+    strategy.close("Long")
+```
+
+**Equivalent Trading DSL**:
+```trading
+strategy "SMA Cross" procedural
+  symbol SYMBOL
+  capital CAPITAL
+  interval daily
+  indicators sma:50, sma:200
+
+extern FAST = 50 "Fast MA"
+extern SLOW = 200 "Slow MA"
+
+require sma:50, sma:200
+
+when no positions and sma(50) crosses above sma(200) then
+  buy size_by_equity(1.0) shares
+
+when has positions and sma(50) crosses below sma(200) then
+  close position "signal_exit"
+```
+
+**Key mappings**:
+| PineScript | Trading DSL |
+|------------|-------------|
+| `input.int(50, "Fast MA")` | `extern FAST = 50 "Fast MA"` |
+| `ta.sma(close, 50)` | `sma(50)` (declared in `indicators`) |
+| `ta.crossover(a, b)` | `a crosses above b` |
+| `ta.crossunder(a, b)` | `a crosses below b` |
+| `strategy.entry("Long", strategy.long)` | `buy size_by_equity(1.0) shares` |
+| `strategy.close("Long")` | `close position "reason"` |
+| `close[1]` | `close[1]` (same syntax) |
+| `ta.sma(close, 50)[1]` | `sma(50)[1]` |
+
+### EasyLanguage to Trading DSL
+
+**EasyLanguage (TradeStation)**:
+```easylanguage
+inputs:
+    FastLen(50),
+    SlowLen(200),
+    StopPct(5);
+
+vars:
+    FastMA(0),
+    SlowMA(0);
+
+FastMA = Average(Close, FastLen);
+SlowMA = Average(Close, SlowLen);
+
+if FastMA crosses above SlowMA then
+    Buy next bar at market;
+
+if FastMA crosses below SlowMA then
+    Sell next bar at market;
+
+SetStopPercent(StopPct);
+```
+
+**Equivalent Trading DSL**:
+```trading
+strategy "SMA Cross" procedural
+  symbol SYMBOL
+  capital CAPITAL
+  interval daily
+  indicators sma:50, sma:200
+  stop_loss 5%
+
+extern FAST_LEN = 50 "Fast period"
+extern SLOW_LEN = 200 "Slow period"
+
+require sma:50, sma:200
+
+when no positions and sma(50) crosses above sma(200) then
+  buy size_by_equity(1.0) shares
+
+when has positions and sma(50) crosses below sma(200) then
+  close position "signal_exit"
+```
+
+**Key mappings**:
+| EasyLanguage | Trading DSL |
+|--------------|-------------|
+| `inputs: FastLen(50)` | `extern FAST_LEN = 50 "Fast period"` |
+| `Average(Close, 50)` | `sma(50)` (declared in `indicators`) |
+| `crosses above` | `crosses above` (same keywords) |
+| `crosses below` | `crosses below` (same keywords) |
+| `Buy next bar at market` | `buy size_by_equity(1.0) shares` |
+| `Sell next bar at market` | `close position "reason"` |
+| `SetStopPercent(5)` | `stop_loss 5%` (in strategy block) |
+| `SetPercentTrailing(3)` | `trailing_stop 3%` (in strategy block) |
+| `SetProfitTarget(1000)` | `profit_target $1000` (dollar-based) |
+| `Close[1]` | `close[1]` (same syntax) |

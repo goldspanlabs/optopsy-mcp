@@ -52,6 +52,11 @@ strategy "Name"
   expiration_filter monthly              # monthly|weekly|all
   max_positions 1                        # integer
   cross_symbols QQQ, IWM                 # comma-separated symbols
+  stop_loss 5%                           # percentage-based stop loss
+  profit_target 10%                      # percentage-based take profit
+  trailing_stop 3%                       # percentage-based trailing stop
+  stop_loss $500                         # dollar-based stop loss (alternative)
+  profit_target $1000                    # dollar-based take profit (alternative)
 
 extern NAME = DEFAULT "description"
 extern NAME = DEFAULT "description" choices VAL1, VAL2
@@ -59,7 +64,40 @@ extern NAME = DEFAULT "description" choices VAL1, VAL2
 state NAME = DEFAULT
 ```
 
-### Event Blocks
+### Declarative Exits
+
+`stop_loss`, `profit_target`, and `trailing_stop` are strategy-level properties.
+The engine evaluates them on every bar **before** `on_exit_check`. When triggered,
+exit type is set to `"stop_loss"`, `"take_profit"`, or `"trailing_stop"` respectively.
+
+Percentage form (`5%`) checks against the position's P&L as a fraction of entry cost.
+Dollar form (`$500`) checks against the absolute unrealized P&L value.
+
+Transpilation: these properties are emitted into the `config()` function's return map.
+
+### Strategy Modes
+
+**Callback mode** (default): uses event blocks (`on each bar`, `on exit check`, etc.).
+
+**Procedural mode**: opt-in via `strategy "Name" procedural`. No event blocks.
+The entire body (after `strategy` block and `extern`/`state` declarations) runs
+on every bar. Statements like `require`, `when`/`otherwise`, and actions are
+written at the top level.
+
+```
+strategy "Name" procedural
+  ...
+
+require sma:50, sma:200
+
+when CONDITION then
+  ACTION
+```
+
+Transpilation: in procedural mode, all body statements are emitted inside a single
+`fn on_bar(ctx)` function. No other callbacks are generated.
+
+### Event Blocks (callback mode only)
 
 ```
 on each bar           → fn on_bar(ctx) { ... }
@@ -100,6 +138,14 @@ Bare identifiers are auto-qualified with `ctx.` so DSL authors never write
 |----------------|---------------|
 | `close` | `ctx.close` |
 | `sma(200)` | `ctx.sma(200)` |
+| `close[1]` | `ctx.close(1)` |
+| `close[0]` | `ctx.close` (optimized) |
+| `sma(200)[1]` | `ctx.sma_at(200, 1)` |
+| `sma(200)[0]` | `ctx.sma(200)` (optimized) |
+| `rsi(14)[2]` | `ctx.rsi_at(14, 2)` |
+| `sma(50) crosses above sma(200)` | `ctx.crossed_above("sma:50", "sma:200")` |
+| `close crosses below ema(20)` | `ctx.crossed_below("close", "ema:20")` |
+| `rsi(14) crosses above 30` | `ctx.rsi_at(14, 1) <= 30.0 && ctx.rsi(14) > 30.0` |
 | `has positions` | `ctx.has_positions()` |
 | `no positions` | `!ctx.has_positions()` |
 | `A and B` | `A && B` |
@@ -114,6 +160,28 @@ Properties rewritten: `close`, `open`, `high`, `low`, `volume`, `cash`,
 
 Methods rewritten: all indicator functions, strategy constructors, position
 sizing methods, cross-symbol accessors, plotting, and range queries.
+
+### Lookback Syntax
+
+Bracket notation `[N]` accesses the value N bars ago. Works on price properties
+and indicator functions:
+
+- `close[N]` → `ctx.close(N)` — price property lookback
+- `sma(P)[N]` → `ctx.sma_at(P, N)` — indicator lookback (uses `_at` suffix)
+- `[0]` is optimized away at transpile time (no runtime cost)
+
+### Crossover Syntax
+
+`A crosses above B` and `A crosses below B` detect crossover events.
+
+**Two indicators**: both sides are converted to string keys and passed to
+the context method: `sma(50) crosses above sma(200)` → `ctx.crossed_above("sma:50", "sma:200")`.
+
+**Indicator vs literal**: generates a manual cross check using lookback:
+`rsi(14) crosses above 30` → `ctx.rsi_at(14, 1) <= 30.0 && ctx.rsi(14) > 30.0`.
+
+The `crossed_above(a, b)` and `crossed_below(a, b)` context methods compare
+current and previous bar values internally.
 
 ### When / Otherwise Chains
 
@@ -227,9 +295,9 @@ if dsl::is_trading_dsl(&source) {
 - `.rhai` extension for standard Rhai scripts
 - Both live in `scripts/strategies/`
 
-## Complete Example
+## Complete Examples
 
-### DSL Source (`sma_crossover.trading`)
+### Callback Mode (`sma_crossover.trading`)
 
 ```
 strategy "SMA Crossover"
@@ -238,6 +306,8 @@ strategy "SMA Crossover"
   interval daily
   data ohlcv
   indicators sma:50, sma:200, rsi:14
+  stop_loss 8%
+  trailing_stop 3%
 
 extern THRESHOLD = 0.04 "Entry threshold"
 state consecutive_losses = 0
@@ -262,7 +332,28 @@ on position closed
     set consecutive_losses to 0
 ```
 
-### Generated Rhai
+### Procedural Mode (`golden_cross.trading`)
+
+```
+strategy "Golden Cross" procedural
+  symbol SYMBOL
+  capital CAPITAL
+  interval daily
+  indicators sma:50, sma:200
+  stop_loss 5%
+
+extern FAST = 50 "Fast MA"
+
+require sma:50, sma:200
+
+when no positions and sma(50) crosses above sma(200) then
+  buy size_by_equity(1.0) shares
+
+when has positions and close crosses below sma(50) then
+  close position "signal_exit"
+```
+
+### Generated Rhai (callback mode)
 
 ```rhai
 // Auto-generated from Trading DSL — do not edit by hand.
@@ -281,6 +372,8 @@ fn config() {
             options: false,
             indicators: ["sma:50", "sma:200", "rsi:14"],
         },
+        stop_loss_pct: 0.08,
+        trailing_stop_pct: 0.03,
     }
 }
 
@@ -310,5 +403,39 @@ fn on_position_closed(ctx, pos, exit_type) {
     } else {
         consecutive_losses = 0;
     }
+}
+```
+
+### Generated Rhai (procedural mode)
+
+```rhai
+// Auto-generated from Trading DSL — do not edit by hand.
+
+let FAST = extern("FAST", 50, "Fast MA");
+
+fn config() {
+    #{
+        symbol: params.SYMBOL,
+        capital: params.CAPITAL,
+        interval: "daily",
+        data: #{
+            ohlcv: true,
+            options: false,
+            indicators: ["sma:50", "sma:200"],
+        },
+        stop_loss_pct: 0.05,
+    }
+}
+
+fn on_bar(ctx) {
+    let __actions = [];
+    if !ctx.indicators_ready(["sma:50", "sma:200"]) { return []; }
+    if !ctx.has_positions() && ctx.crossed_above("sma:50", "sma:200") {
+        __actions.push(buy_stock(ctx.size_by_equity(1.0)));
+    }
+    if ctx.has_positions() && ctx.crossed_below("close", "sma:50") {
+        return close_position("signal_exit");
+    }
+    __actions
 }
 ```
