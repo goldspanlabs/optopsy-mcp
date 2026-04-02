@@ -317,7 +317,8 @@ impl RunStore for SqliteRunStore {
                             sw.source, sw.thread_id,
                             sw.created_at,
                             wfv.best_wfe, wfv.wf_count,
-                            sw.sweep_config
+                            sw.sweep_config,
+                            COALESCE(wfv.last_wf_at, sw.created_at) as last_activity
                      FROM sweeps sw
                      LEFT JOIN strategies s ON s.id = sw.strategy_id
                      LEFT JOIN (
@@ -333,12 +334,13 @@ impl RunStore for SqliteRunStore {
                      LEFT JOIN (
                          SELECT sweep_id,
                                 MAX(efficiency_ratio) as best_wfe,
-                                COUNT(*) as wf_count
+                                COUNT(*) as wf_count,
+                                MAX(created_at) as last_wf_at
                          FROM walk_forward_validations
                          WHERE status = 'completed'
                          GROUP BY sweep_id
                      ) wfv ON wfv.sweep_id = sw.id
-                     ORDER BY sw.created_at DESC",
+                     ORDER BY last_activity DESC",
                 )
                 .context("Failed to prepare sweep list query")?;
 
@@ -394,6 +396,7 @@ impl RunStore for SqliteRunStore {
                         base_params,
                         wf_best_efficiency: row.get(16)?,
                         wf_validation_count: row.get(17)?,
+                        last_activity: row.get(19)?,
                     })
                 })
                 .context("Failed to query sweep rows")?

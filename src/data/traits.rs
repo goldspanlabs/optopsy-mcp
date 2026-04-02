@@ -162,6 +162,8 @@ pub enum RunRow {
         /// Number of completed validations
         #[serde(skip_serializing_if = "Option::is_none")]
         wf_validation_count: Option<i64>,
+        /// Most recent activity (walk-forward or sweep creation)
+        last_activity: String,
     },
 }
 
