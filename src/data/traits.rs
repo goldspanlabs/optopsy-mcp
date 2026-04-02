@@ -150,7 +150,7 @@ pub enum RunRow {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         thread_id: Option<String>,
         created_at: String,
-        /// Swept parameter ranges extracted from sweep_config
+        /// Swept parameter ranges extracted from `sweep_config`
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sweep_params: Option<Vec<SweepParamRange>>,
         /// Best WFE across all validations (for badge display)
