@@ -587,25 +587,21 @@ pub async fn submit_walk_forward(
 
         match wf_result {
             Ok(wf_response) => {
-                // Build config JSON for persistence
-                let config = serde_json::json!({
-                    "n_windows": req.n_windows,
-                    "train_pct": req.train_pct,
-                    "mode": req.mode,
-                    "objective": req.objective,
-                    "windows": wf_response.windows,
-                    "stitched_metrics": wf_response.stitched_metrics,
-                    "execution_time_ms": wf_response.execution_time_ms,
-                });
+                let validation_id = uuid::Uuid::new_v4().to_string();
 
-                match run_store.set_walk_forward_result(
+                match run_store.insert_walk_forward_validation(
+                    &validation_id,
                     &req.sweep_id,
-                    wf_response.efficiency_ratio,
-                    wf_response.profitable_windows as i64,
-                    wf_response.total_windows as i64,
-                    &wf_response.param_stability,
-                    &config,
+                    req.n_windows as i64,
+                    req.train_pct,
+                    &req.mode,
+                    &req.objective,
+                    Some(wf_response.efficiency_ratio),
+                    Some(wf_response.profitable_windows as i64),
+                    Some(wf_response.total_windows as i64),
+                    Some(&wf_response.param_stability),
                     "completed",
+                    Some(wf_response.execution_time_ms as i64),
                 ) {
                     Ok(_) => {
                         let result_json = run_store
@@ -614,23 +610,29 @@ pub async fn submit_walk_forward(
                             .flatten()
                             .and_then(|d| serde_json::to_value(&d).ok())
                             .unwrap_or(Value::Null);
-                        tm.mark_completed(&task.id, result_json, req.sweep_id.clone());
+                        tm.mark_completed(&task.id, result_json, validation_id);
                     }
                     Err(e) => {
-                        tm.mark_failed(&task.id, format!("DB update failed: {e}"));
+                        tm.mark_failed(&task.id, format!("DB insert failed: {e}"));
                     }
                 }
             }
             Err(e) => {
                 // Mark WF as failed in DB too
-                let _ = run_store.set_walk_forward_result(
+                let failed_id = uuid::Uuid::new_v4().to_string();
+                let _ = run_store.insert_walk_forward_validation(
+                    &failed_id,
                     &req.sweep_id,
-                    0.0,
-                    0,
-                    0,
-                    "unknown",
-                    &serde_json::json!({}),
+                    req.n_windows as i64,
+                    req.train_pct,
+                    &req.mode,
+                    &req.objective,
+                    None,
+                    None,
+                    None,
+                    None,
                     "failed",
+                    None,
                 );
                 tm.mark_failed(&task.id, e.to_string());
             }

@@ -104,7 +104,15 @@ pub fn build_api_router(state: AppState) -> Router {
             axum::routing::patch(runs::set_sweep_analysis),
         )
         .route(
-            "/runs/sweep/{sweepId}/wf-analysis",
+            "/runs/sweep/{sweepId}/validations",
+            axum::routing::get(runs::get_walk_forward_validations),
+        )
+        .route(
+            "/runs/walk-forward/{id}",
+            axum::routing::delete(runs::delete_walk_forward_validation),
+        )
+        .route(
+            "/runs/walk-forward/{id}/analysis",
             axum::routing::patch(runs::set_walk_forward_analysis),
         )
         .route(

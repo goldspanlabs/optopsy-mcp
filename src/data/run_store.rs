@@ -10,6 +10,7 @@ use serde_json::Value;
 use super::database::DbConnection;
 use super::traits::{
     RunDetail, RunRow, RunStore, RunSummary, RunsListResponse, RunsOverview, SweepDetail, TradeRow,
+    WalkForwardValidation,
 };
 use crate::server::sanitize::sanitize_opt;
 
@@ -315,7 +316,7 @@ impl RunStore for SqliteRunStore {
                             br.trade_count as best_trade_count,
                             sw.source, sw.thread_id,
                             sw.created_at,
-                            sw.wf_efficiency_ratio, sw.wf_status
+                            wfv.best_wfe, wfv.wf_count
                      FROM sweeps sw
                      LEFT JOIN strategies s ON s.id = sw.strategy_id
                      LEFT JOIN (
@@ -328,6 +329,14 @@ impl RunStore for SqliteRunStore {
                              GROUP BY sweep_id
                          ) r2 ON r1.sweep_id = r2.sweep_id AND r1.sharpe = r2.max_sharpe
                      ) br ON br.sweep_id = sw.id
+                     LEFT JOIN (
+                         SELECT sweep_id,
+                                MAX(efficiency_ratio) as best_wfe,
+                                COUNT(*) as wf_count
+                         FROM walk_forward_validations
+                         WHERE status = 'completed'
+                         GROUP BY sweep_id
+                     ) wfv ON wfv.sweep_id = sw.id
                      ORDER BY sw.created_at DESC",
                 )
                 .context("Failed to prepare sweep list query")?;
@@ -353,8 +362,8 @@ impl RunStore for SqliteRunStore {
                             .unwrap_or_else(|| "manual".to_string()),
                         thread_id: row.get(14)?,
                         created_at: row.get(15)?,
-                        wf_efficiency_ratio: row.get(16)?,
-                        wf_status: row.get(17)?,
+                        wf_best_efficiency: row.get(16)?,
+                        wf_validation_count: row.get(17)?,
                     })
                 })
                 .context("Failed to query sweep rows")?
@@ -493,6 +502,7 @@ impl RunStore for SqliteRunStore {
         Ok(Some(detail))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn get_sweep(&self, id: &str) -> Result<Option<SweepDetail>> {
         let conn = self.conn.lock().expect("mutex poisoned");
 
@@ -501,10 +511,7 @@ impl RunStore for SqliteRunStore {
                 "SELECT sw.id, sw.strategy_id, s.name as strategy_name,
                         sw.symbol, sw.sweep_config, sw.objective, sw.mode,
                         sw.combinations, sw.execution_time_ms, sw.analysis,
-                        sw.source, sw.thread_id, sw.created_at,
-                        sw.wf_efficiency_ratio, sw.wf_profitable_windows,
-                        sw.wf_total_windows, sw.wf_param_stability,
-                        sw.wf_config, sw.wf_analysis, sw.wf_status
+                        sw.source, sw.thread_id, sw.created_at
                  FROM sweeps sw
                  LEFT JOIN strategies s ON s.id = sw.strategy_id
                  WHERE sw.id = ?1",
@@ -513,7 +520,6 @@ impl RunStore for SqliteRunStore {
                     let config_str: String = row.get(4)?;
                     let sweep_config: Value = serde_json::from_str(&config_str)
                         .unwrap_or(Value::Object(serde_json::Map::default()));
-                    let wf_config_str: Option<String> = row.get(17)?;
 
                     Ok(SweepDetail {
                         id: row.get(0)?,
@@ -531,14 +537,8 @@ impl RunStore for SqliteRunStore {
                             .unwrap_or_else(|| "manual".to_string()),
                         thread_id: row.get(11)?,
                         created_at: row.get(12)?,
-                        runs: Vec::new(), // filled below
-                        wf_efficiency_ratio: row.get(13)?,
-                        wf_profitable_windows: row.get(14)?,
-                        wf_total_windows: row.get(15)?,
-                        wf_param_stability: row.get(16)?,
-                        wf_config: wf_config_str.and_then(|s| serde_json::from_str(&s).ok()),
-                        wf_analysis: row.get(18)?,
-                        wf_status: row.get(19)?,
+                        runs: Vec::new(),        // filled below
+                        validations: Vec::new(), // filled below
                     })
                 },
             )
@@ -548,6 +548,44 @@ impl RunStore for SqliteRunStore {
         let Some(mut detail) = row else {
             return Ok(None);
         };
+
+        // Load walk-forward validations for this sweep
+        {
+            let mut wfv_stmt = conn
+                .prepare(
+                    "SELECT id, sweep_id, n_windows, train_pct, mode, objective,
+                            efficiency_ratio, profitable_windows, total_windows,
+                            param_stability, analysis, status, execution_time_ms,
+                            created_at
+                     FROM walk_forward_validations
+                     WHERE sweep_id = ?1
+                     ORDER BY created_at DESC",
+                )
+                .context("Failed to prepare walk-forward validations query")?;
+
+            detail.validations = wfv_stmt
+                .query_map(rusqlite::params![id], |row| {
+                    Ok(WalkForwardValidation {
+                        id: row.get(0)?,
+                        sweep_id: row.get(1)?,
+                        n_windows: row.get(2)?,
+                        train_pct: row.get(3)?,
+                        mode: row.get(4)?,
+                        objective: row.get(5)?,
+                        efficiency_ratio: row.get(6)?,
+                        profitable_windows: row.get(7)?,
+                        total_windows: row.get(8)?,
+                        param_stability: row.get(9)?,
+                        analysis: row.get(10)?,
+                        status: row.get(11)?,
+                        execution_time_ms: row.get(12)?,
+                        created_at: row.get(13)?,
+                    })
+                })
+                .context("Failed to query walk-forward validations")?
+                .collect::<Result<Vec<_>, _>>()
+                .context("Failed to collect walk-forward validations")?;
+        }
 
         // Load runs for this sweep
         let mut stmt = conn
@@ -639,47 +677,107 @@ impl RunStore for SqliteRunStore {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn set_walk_forward_result(
+    fn insert_walk_forward_validation(
         &self,
+        id: &str,
         sweep_id: &str,
-        efficiency_ratio: f64,
-        profitable_windows: i64,
-        total_windows: i64,
-        param_stability: &str,
-        config: &Value,
+        n_windows: i64,
+        train_pct: f64,
+        mode: &str,
+        objective: &str,
+        efficiency_ratio: Option<f64>,
+        profitable_windows: Option<i64>,
+        total_windows: Option<i64>,
+        param_stability: Option<&str>,
         status: &str,
-    ) -> Result<bool> {
+        execution_time_ms: Option<i64>,
+    ) -> Result<String> {
+        let created_at = chrono::Utc::now().to_rfc3339();
         let conn = self.conn.lock().expect("mutex poisoned");
-        let config_str = serde_json::to_string(config)?;
-        let updated = conn.execute(
-            "UPDATE sweeps SET
-                wf_efficiency_ratio = ?1,
-                wf_profitable_windows = ?2,
-                wf_total_windows = ?3,
-                wf_param_stability = ?4,
-                wf_config = ?5,
-                wf_status = ?6
-             WHERE id = ?7",
+        conn.execute(
+            "INSERT INTO walk_forward_validations
+                (id, sweep_id, n_windows, train_pct, mode, objective,
+                 efficiency_ratio, profitable_windows, total_windows,
+                 param_stability, status, execution_time_ms, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             rusqlite::params![
+                id,
+                sweep_id,
+                n_windows,
+                train_pct,
+                mode,
+                objective,
                 efficiency_ratio,
                 profitable_windows,
                 total_windows,
                 param_stability,
-                config_str,
                 status,
-                sweep_id,
+                execution_time_ms,
+                created_at,
             ],
+        )
+        .context("Failed to insert walk-forward validation")?;
+        Ok(created_at)
+    }
+
+    fn get_walk_forward_validations(&self, sweep_id: &str) -> Result<Vec<WalkForwardValidation>> {
+        let conn = self.conn.lock().expect("mutex poisoned");
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, sweep_id, n_windows, train_pct, mode, objective,
+                        efficiency_ratio, profitable_windows, total_windows,
+                        param_stability, analysis, status, execution_time_ms,
+                        created_at
+                 FROM walk_forward_validations
+                 WHERE sweep_id = ?1
+                 ORDER BY created_at DESC",
+            )
+            .context("Failed to prepare walk-forward validations query")?;
+
+        let rows = stmt
+            .query_map(rusqlite::params![sweep_id], |row| {
+                Ok(WalkForwardValidation {
+                    id: row.get(0)?,
+                    sweep_id: row.get(1)?,
+                    n_windows: row.get(2)?,
+                    train_pct: row.get(3)?,
+                    mode: row.get(4)?,
+                    objective: row.get(5)?,
+                    efficiency_ratio: row.get(6)?,
+                    profitable_windows: row.get(7)?,
+                    total_windows: row.get(8)?,
+                    param_stability: row.get(9)?,
+                    analysis: row.get(10)?,
+                    status: row.get(11)?,
+                    execution_time_ms: row.get(12)?,
+                    created_at: row.get(13)?,
+                })
+            })
+            .context("Failed to query walk-forward validations")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("Failed to collect walk-forward validations")?;
+
+        Ok(rows)
+    }
+
+    fn set_walk_forward_analysis(&self, validation_id: &str, analysis: &str) -> Result<bool> {
+        let conn = self.conn.lock().expect("mutex poisoned");
+        let updated = conn.execute(
+            "UPDATE walk_forward_validations SET analysis = ?1 WHERE id = ?2",
+            rusqlite::params![analysis, validation_id],
         )?;
         Ok(updated > 0)
     }
 
-    fn set_walk_forward_analysis(&self, sweep_id: &str, analysis: &str) -> Result<bool> {
+    fn delete_walk_forward_validation(&self, id: &str) -> Result<bool> {
         let conn = self.conn.lock().expect("mutex poisoned");
-        let updated = conn.execute(
-            "UPDATE sweeps SET wf_analysis = ?1 WHERE id = ?2",
-            rusqlite::params![analysis, sweep_id],
-        )?;
-        Ok(updated > 0)
+        let n = conn
+            .execute(
+                "DELETE FROM walk_forward_validations WHERE id = ?1",
+                rusqlite::params![id],
+            )
+            .context("Failed to delete walk-forward validation")?;
+        Ok(n > 0)
     }
 }
 
