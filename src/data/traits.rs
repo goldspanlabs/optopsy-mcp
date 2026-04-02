@@ -142,6 +142,10 @@ pub enum RunRow {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         thread_id: Option<String>,
         created_at: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        wf_efficiency_ratio: Option<f64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        wf_status: Option<String>,
     },
 }
 
@@ -182,6 +186,21 @@ pub struct SweepDetail {
     pub thread_id: Option<String>,
     pub created_at: String,
     pub runs: Vec<RunSummary>,
+    // Walk-forward validation (null if never run)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wf_efficiency_ratio: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wf_profitable_windows: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wf_total_windows: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wf_param_stability: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wf_config: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wf_analysis: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wf_status: Option<String>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -260,6 +279,22 @@ pub trait RunStore: Send + Sync {
 
     /// Save AI-generated analysis text for a sweep.
     fn set_sweep_analysis(&self, id: &str, analysis: &str) -> Result<bool>;
+
+    /// Save walk-forward validation results on a sweep.
+    #[allow(clippy::too_many_arguments)]
+    fn set_walk_forward_result(
+        &self,
+        sweep_id: &str,
+        efficiency_ratio: f64,
+        profitable_windows: i64,
+        total_windows: i64,
+        param_stability: &str,
+        config: &Value,
+        status: &str,
+    ) -> Result<bool>;
+
+    /// Save AI-generated walk-forward analysis text on a sweep.
+    fn set_walk_forward_analysis(&self, sweep_id: &str, analysis: &str) -> Result<bool>;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

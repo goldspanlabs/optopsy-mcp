@@ -314,7 +314,8 @@ impl RunStore for SqliteRunStore {
                             br.profit_factor as best_profit_factor,
                             br.trade_count as best_trade_count,
                             sw.source, sw.thread_id,
-                            sw.created_at
+                            sw.created_at,
+                            sw.wf_efficiency_ratio, sw.wf_status
                      FROM sweeps sw
                      LEFT JOIN strategies s ON s.id = sw.strategy_id
                      LEFT JOIN (
@@ -352,6 +353,8 @@ impl RunStore for SqliteRunStore {
                             .unwrap_or_else(|| "manual".to_string()),
                         thread_id: row.get(14)?,
                         created_at: row.get(15)?,
+                        wf_efficiency_ratio: row.get(16)?,
+                        wf_status: row.get(17)?,
                     })
                 })
                 .context("Failed to query sweep rows")?
@@ -498,7 +501,10 @@ impl RunStore for SqliteRunStore {
                 "SELECT sw.id, sw.strategy_id, s.name as strategy_name,
                         sw.symbol, sw.sweep_config, sw.objective, sw.mode,
                         sw.combinations, sw.execution_time_ms, sw.analysis,
-                        sw.source, sw.thread_id, sw.created_at
+                        sw.source, sw.thread_id, sw.created_at,
+                        sw.wf_efficiency_ratio, sw.wf_profitable_windows,
+                        sw.wf_total_windows, sw.wf_param_stability,
+                        sw.wf_config, sw.wf_analysis, sw.wf_status
                  FROM sweeps sw
                  LEFT JOIN strategies s ON s.id = sw.strategy_id
                  WHERE sw.id = ?1",
@@ -507,6 +513,7 @@ impl RunStore for SqliteRunStore {
                     let config_str: String = row.get(4)?;
                     let sweep_config: Value = serde_json::from_str(&config_str)
                         .unwrap_or(Value::Object(serde_json::Map::default()));
+                    let wf_config_str: Option<String> = row.get(17)?;
 
                     Ok(SweepDetail {
                         id: row.get(0)?,
@@ -525,6 +532,13 @@ impl RunStore for SqliteRunStore {
                         thread_id: row.get(11)?,
                         created_at: row.get(12)?,
                         runs: Vec::new(), // filled below
+                        wf_efficiency_ratio: row.get(13)?,
+                        wf_profitable_windows: row.get(14)?,
+                        wf_total_windows: row.get(15)?,
+                        wf_param_stability: row.get(16)?,
+                        wf_config: wf_config_str.and_then(|s| serde_json::from_str(&s).ok()),
+                        wf_analysis: row.get(18)?,
+                        wf_status: row.get(19)?,
                     })
                 },
             )
@@ -622,6 +636,50 @@ impl RunStore for SqliteRunStore {
             )
             .context("Failed to update sweep analysis")?;
         Ok(rows > 0)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn set_walk_forward_result(
+        &self,
+        sweep_id: &str,
+        efficiency_ratio: f64,
+        profitable_windows: i64,
+        total_windows: i64,
+        param_stability: &str,
+        config: &Value,
+        status: &str,
+    ) -> Result<bool> {
+        let conn = self.conn.lock().expect("mutex poisoned");
+        let config_str = serde_json::to_string(config)?;
+        let updated = conn.execute(
+            "UPDATE sweeps SET
+                wf_efficiency_ratio = ?1,
+                wf_profitable_windows = ?2,
+                wf_total_windows = ?3,
+                wf_param_stability = ?4,
+                wf_config = ?5,
+                wf_status = ?6
+             WHERE id = ?7",
+            rusqlite::params![
+                efficiency_ratio,
+                profitable_windows,
+                total_windows,
+                param_stability,
+                config_str,
+                status,
+                sweep_id,
+            ],
+        )?;
+        Ok(updated > 0)
+    }
+
+    fn set_walk_forward_analysis(&self, sweep_id: &str, analysis: &str) -> Result<bool> {
+        let conn = self.conn.lock().expect("mutex poisoned");
+        let updated = conn.execute(
+            "UPDATE sweeps SET wf_analysis = ?1 WHERE id = ?2",
+            rusqlite::params![analysis, sweep_id],
+        )?;
+        Ok(updated > 0)
     }
 }
 
