@@ -1,11 +1,16 @@
 //! Permutation test for backtest significance.
 //!
-//! Shuffles trade P&Ls to build a null distribution, then computes a p-value
-//! for the observed objective metric. Designed as a composable gate that
-//! transforms a `SweepResponse` without coupling to the sweep engine itself.
+//! Uses a **sign-flip** null hypothesis: under the null, each trade's P&L is
+//! equally likely to be positive or negative (i.e., the strategy has no edge).
+//! Each permutation randomly flips the sign of each trade P&L, recomputes the
+//! objective metric, and the p-value is the fraction of permuted metrics that
+//! meet or exceed the observed value.
+//!
+//! Designed as a composable gate that transforms a `SweepResponse` without
+//! coupling to the sweep engine itself.
 
 use rand::rngs::StdRng;
-use rand::seq::SliceRandom;
+use rand::Rng;
 use rand::SeedableRng;
 
 use crate::constants::{MAX_PROFIT_FACTOR, P_VALUE_THRESHOLD};
@@ -16,14 +21,19 @@ use crate::tools::response_types::sweep::SweepResponse;
 /// Below this threshold the null distribution is too coarse.
 const MIN_TRADES: usize = 10;
 
+/// Maximum allowed permutations to prevent resource exhaustion.
+const MAX_PERMUTATIONS: usize = 100_000;
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Core: compute p-value from trade P&Ls
+// Core: compute p-value from trade P&Ls via sign-flip test
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Compute a one-sided permutation p-value for the observed metric.
+/// Compute a one-sided p-value using a sign-flip permutation test.
 ///
-/// Shuffles `pnls` `n_perms` times, recomputes the objective metric each time,
-/// and returns the fraction of permuted metrics >= the observed value.
+/// For each permutation, randomly flips the sign of each trade P&L (with 50%
+/// probability), recomputes the objective metric, and counts how often the
+/// permuted metric meets or exceeds the observed value. This tests the null
+/// hypothesis that the strategy has no directional edge.
 pub fn permutation_p_value(
     pnls: &[f64],
     observed_metric: f64,
@@ -40,12 +50,19 @@ pub fn permutation_p_value(
         None => StdRng::from_os_rng(),
     };
 
-    let mut shuffled = pnls.to_vec();
+    let mut flipped = pnls.to_vec();
     let mut count_ge = 0usize;
 
     for _ in 0..n_perms {
-        shuffled.shuffle(&mut rng);
-        let metric = compute_metric_from_pnls(&shuffled, objective);
+        // Sign-flip: each P&L independently gets its sign flipped with 50% probability
+        for (i, &original) in pnls.iter().enumerate() {
+            flipped[i] = if rng.random_bool(0.5) {
+                -original
+            } else {
+                original
+            };
+        }
+        let metric = compute_metric_from_pnls(&flipped, objective);
         if metric >= observed_metric {
             count_ge += 1;
         }
@@ -57,8 +74,9 @@ pub fn permutation_p_value(
 
 /// Compute an objective metric directly from a vector of trade P&Ls.
 ///
-/// This is a lightweight version that doesn't need an equity curve —
-/// just the raw trade P&Ls in execution order.
+/// These are intentionally simple, non-annualized versions — the same function
+/// computes both the observed and permuted metrics, so relative comparison is
+/// consistent regardless of annualization differences with the sweep engine.
 pub fn compute_metric_from_pnls(pnls: &[f64], objective: &str) -> f64 {
     if pnls.is_empty() {
         return 0.0;
@@ -73,7 +91,6 @@ pub fn compute_metric_from_pnls(pnls: &[f64], objective: &str) -> f64 {
 }
 
 /// Sharpe ratio from trade P&Ls: `mean / std_dev`.
-/// Not annualized — we only need relative comparison against permuted values.
 fn sharpe_from_pnls(pnls: &[f64]) -> f64 {
     let n = pnls.len() as f64;
     let mean = pnls.iter().sum::<f64>() / n;
@@ -125,7 +142,7 @@ fn calmar_from_pnls(pnls: &[f64]) -> f64 {
     total / max_dd
 }
 
-/// Profit factor from trade P&Ls: sum(winners) / |sum(losers)|.
+/// Profit factor from trade P&Ls: `sum(winners) / |sum(losers)|`.
 fn profit_factor_from_pnls(pnls: &[f64]) -> f64 {
     let gross_profit: f64 = pnls.iter().filter(|&&x| x > 0.0).sum();
     let gross_loss: f64 = pnls.iter().filter(|&&x| x < 0.0).sum::<f64>().abs();
@@ -143,27 +160,39 @@ fn profit_factor_from_pnls(pnls: &[f64]) -> f64 {
 // Gate: enrich a SweepResponse with permutation p-values
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Clamp `num_permutations` to the allowed range.
+pub fn clamp_permutations(n: usize) -> usize {
+    n.min(MAX_PERMUTATIONS)
+}
+
 /// Apply the permutation gate to a completed sweep response.
 ///
-/// For each combo, extracts trade P&Ls from `full_results`, runs the permutation
-/// test, populates `p_value` and `significant` on each `SweepResult`, and attaches
-/// BH-FDR and Bonferroni corrections to the response.
+/// For each combo with sufficient trade data, extracts trade P&Ls from
+/// `full_results`, runs a sign-flip permutation test, populates `p_value` and
+/// `significant` on each `SweepResult`, and attaches BH-FDR and Bonferroni
+/// corrections to the response.
 ///
-/// This function is a pure transformation — it does not modify the sweep engine.
+/// Combos with fewer than `MIN_TRADES` trades receive `p_value = None` and are
+/// excluded from multiple comparisons corrections.
+///
+/// Returns the response unchanged if `n_perms == 0`, results are empty, or
+/// `full_results` is empty (e.g. Bayesian sweeps that don't retain trade logs).
 pub fn apply_permutation_gate(
     mut response: SweepResponse,
     n_perms: usize,
     objective: &str,
     seed: Option<u64>,
 ) -> SweepResponse {
-    if n_perms == 0 || response.ranked_results.is_empty() {
+    if n_perms == 0 || response.ranked_results.is_empty() || response.full_results.is_empty() {
         return response;
     }
 
+    let n_perms = clamp_permutations(n_perms);
     let n_combos = response.ranked_results.len();
 
-    // Phase 1: Compute p-values from trade P&Ls (read-only pass)
-    let p_values: Vec<f64> = (0..n_combos)
+    // Phase 1: Compute p-values from trade P&Ls (read-only pass).
+    // Combos without sufficient trade data get None.
+    let p_values: Vec<Option<f64>> = (0..n_combos)
         .map(|i| {
             let pnls: Vec<f64> = if i < response.full_results.len() {
                 response.full_results[i]
@@ -176,33 +205,49 @@ pub fn apply_permutation_gate(
                 Vec::new()
             };
 
+            if pnls.len() < MIN_TRADES {
+                return None;
+            }
+
             let observed = compute_metric_from_pnls(&pnls, objective);
             let combo_seed = seed.map(|s| s.wrapping_add(i as u64));
-            permutation_p_value(&pnls, observed, objective, n_perms, combo_seed)
+            Some(permutation_p_value(
+                &pnls, observed, objective, n_perms, combo_seed,
+            ))
         })
         .collect();
 
     // Phase 2: Write p-values onto results (mutable pass)
-    for (i, &p) in p_values.iter().enumerate() {
-        response.ranked_results[i].p_value = Some(p);
+    for (i, p) in p_values.iter().enumerate() {
+        response.ranked_results[i].p_value = *p;
     }
 
-    // Apply multiple comparisons corrections
-    let labels: Vec<String> = response
-        .ranked_results
+    // Phase 3: Multiple comparisons corrections on tested combos only
+    let tested: Vec<(usize, f64)> = p_values
         .iter()
         .enumerate()
-        .map(|(i, r)| format!("rank_{} ({})", r.rank, i + 1))
+        .filter_map(|(i, p)| p.map(|v| (i, v)))
         .collect();
 
-    let bh = multiple_comparisons::benjamini_hochberg(&labels, &p_values, P_VALUE_THRESHOLD);
-    let bonf = multiple_comparisons::bonferroni(&labels, &p_values, P_VALUE_THRESHOLD);
+    if tested.is_empty() {
+        return response;
+    }
+
+    let labels: Vec<String> = tested
+        .iter()
+        .map(|(i, _)| {
+            let rank = response.ranked_results[*i].rank;
+            format!("rank_{rank} ({i})")
+        })
+        .collect();
+    let tested_p_values: Vec<f64> = tested.iter().map(|(_, p)| *p).collect();
+
+    let bh = multiple_comparisons::benjamini_hochberg(&labels, &tested_p_values, P_VALUE_THRESHOLD);
+    let bonf = multiple_comparisons::bonferroni(&labels, &tested_p_values, P_VALUE_THRESHOLD);
 
     // Set significance flags based on BH-FDR (less conservative, preferred)
-    for (i, bh_result) in bh.results.iter().enumerate() {
-        if i < response.ranked_results.len() {
-            response.ranked_results[i].significant = Some(bh_result.is_significant);
-        }
+    for (j, &(i, _)) in tested.iter().enumerate() {
+        response.ranked_results[i].significant = Some(bh.results[j].is_significant);
     }
 
     response.multiple_comparisons = Some(vec![bh, bonf]);
@@ -227,7 +272,6 @@ mod tests {
     fn sharpe_mixed_pnls() {
         let pnls = vec![100.0, -50.0, 200.0, -100.0, 150.0];
         let s = sharpe_from_pnls(&pnls);
-        // Mean is positive (60), so Sharpe should be positive
         assert!(s > 0.0);
     }
 
@@ -280,7 +324,6 @@ mod tests {
 
     #[test]
     fn calmar_with_drawdown() {
-        // cumulative: 100, 0, 200 → peak 100, dd 100, total 300
         let pnls = vec![100.0, -100.0, 200.0];
         let c = calmar_from_pnls(&pnls);
         assert!(
@@ -300,22 +343,35 @@ mod tests {
         );
     }
 
-    // ── permutation_p_value ─────────────────────────────────────────
+    // ── sign-flip permutation_p_value ────────────────────────────────
 
     #[test]
-    fn pvalue_strong_signal() {
-        // Strongly positive P&Ls — permuting should rarely beat the original ordering's Sharpe
+    fn pvalue_strong_edge_low_pvalue() {
+        // All-positive P&Ls with high Sharpe — sign-flipping should rarely
+        // produce an equally good metric, so p-value should be low.
         let pnls = vec![
             100.0, 120.0, 130.0, 110.0, 140.0, 150.0, 160.0, 105.0, 115.0, 125.0, 135.0, 145.0,
             155.0, 108.0, 118.0, 128.0, 138.0, 148.0, 142.0, 152.0,
         ];
         let observed = compute_metric_from_pnls(&pnls, "sharpe");
         let p = permutation_p_value(&pnls, observed, "sharpe", 1000, Some(42));
-        // All-positive P&Ls — shuffling doesn't change the Sharpe (mean/std unchanged)
-        // so p-value should be close to 1.0 (every permutation ties or beats)
         assert!(
-            p > 0.5,
-            "all-positive P&Ls: shuffle preserves Sharpe, p={p}"
+            p < 0.05,
+            "strong all-positive edge should have low p-value, got {p}"
+        );
+    }
+
+    #[test]
+    fn pvalue_no_edge_high_pvalue() {
+        // Symmetric P&Ls around zero — no directional edge.
+        let pnls = vec![
+            100.0, -100.0, 50.0, -50.0, 80.0, -80.0, 30.0, -30.0, 60.0, -60.0,
+        ];
+        let observed = compute_metric_from_pnls(&pnls, "sharpe");
+        let p = permutation_p_value(&pnls, observed, "sharpe", 1000, Some(42));
+        assert!(
+            p > 0.3,
+            "symmetric P&Ls (no edge) should have high p-value, got {p}"
         );
     }
 
@@ -350,20 +406,6 @@ mod tests {
     }
 
     #[test]
-    fn pvalue_different_seeds_differ() {
-        let pnls = vec![
-            100.0, -50.0, 200.0, -30.0, 150.0, -80.0, 120.0, -40.0, 180.0, -60.0, 90.0, -20.0,
-            160.0, -70.0, 110.0, -45.0, 130.0, -55.0, 140.0, -35.0,
-        ];
-        let observed = compute_metric_from_pnls(&pnls, "sharpe");
-        let p1 = permutation_p_value(&pnls, observed, "sharpe", 500, Some(1));
-        let p2 = permutation_p_value(&pnls, observed, "sharpe", 500, Some(999));
-        // Different seeds *may* produce the same value, but it's extremely unlikely
-        // with 500 permutations and mixed P&Ls. Not a hard assertion.
-        let _ = (p1, p2); // just ensure it runs without panic
-    }
-
-    #[test]
     fn pvalue_conservative_estimator() {
         // With the (count+1)/(n+1) formula, p-value is always > 0
         let pnls = vec![
@@ -376,5 +418,73 @@ mod tests {
             p > 0.0,
             "conservative estimator: p should never be exactly 0"
         );
+    }
+
+    #[test]
+    fn clamp_permutations_caps_at_max() {
+        assert_eq!(clamp_permutations(1_000_000), MAX_PERMUTATIONS);
+        assert_eq!(clamp_permutations(500), 500);
+        assert_eq!(clamp_permutations(0), 0);
+    }
+
+    // ── apply_permutation_gate ──────────────────────────────────────
+
+    #[test]
+    fn gate_noop_when_zero_perms() {
+        let response = SweepResponse {
+            mode: "grid".into(),
+            objective: "sharpe".into(),
+            combinations_total: 0,
+            combinations_run: 0,
+            combinations_failed: 0,
+            best_result: None,
+            ranked_results: Vec::new(),
+            dimension_sensitivity: Default::default(),
+            convergence_trace: None,
+            execution_time_ms: 0,
+            multiple_comparisons: None,
+            full_results: Vec::new(),
+        };
+        let result = apply_permutation_gate(response, 0, "sharpe", None);
+        assert!(result.multiple_comparisons.is_none());
+    }
+
+    #[test]
+    fn gate_noop_when_no_full_results() {
+        // Simulates Bayesian sweep with empty full_results
+        let response = SweepResponse {
+            mode: "bayesian".into(),
+            objective: "sharpe".into(),
+            combinations_total: 1,
+            combinations_run: 1,
+            combinations_failed: 0,
+            best_result: None,
+            ranked_results: vec![crate::tools::response_types::sweep::SweepResult {
+                rank: 1,
+                params: Default::default(),
+                sharpe: 1.0,
+                sortino: 1.0,
+                pnl: 100.0,
+                trades: 10,
+                win_rate: 0.6,
+                max_drawdown: 0.1,
+                profit_factor: 2.0,
+                cagr: 0.1,
+                calmar: 1.0,
+                p_value: None,
+                significant: None,
+            }],
+            dimension_sensitivity: Default::default(),
+            convergence_trace: None,
+            execution_time_ms: 0,
+            multiple_comparisons: None,
+            full_results: Vec::new(),
+        };
+        let result = apply_permutation_gate(response, 1000, "sharpe", Some(42));
+        assert!(
+            result.multiple_comparisons.is_none(),
+            "should be no-op with empty full_results"
+        );
+        assert!(result.ranked_results[0].p_value.is_none());
     }
 }

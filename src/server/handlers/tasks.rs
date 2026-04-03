@@ -418,13 +418,24 @@ pub async fn submit_sweep(
 
         match sweep_result {
             Ok(sweep_response) => {
-                // Apply permutation gate (if requested)
-                let sweep_response = apply_permutation_gate(
-                    sweep_response,
-                    req.num_permutations,
-                    &req.objective,
-                    None,
-                );
+                // Apply permutation gate — CPU-intensive, run off async executor
+                let n_perms = req.num_permutations;
+                let obj = req.objective.clone();
+                let sweep_response = if n_perms > 0 {
+                    match tokio::task::spawn_blocking(move || {
+                        apply_permutation_gate(sweep_response, n_perms, &obj, None)
+                    })
+                    .await
+                    {
+                        Ok(r) => r,
+                        Err(e) => {
+                            tm.mark_failed(&task.id, format!("Permutation gate failed: {e}"));
+                            return;
+                        }
+                    }
+                } else {
+                    sweep_response
+                };
                 // Reconstruct CreateSweepRequest for persist_sweep_to_store
                 let sweep_req = CreateSweepRequest {
                     strategy: req.strategy.clone(),

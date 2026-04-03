@@ -73,9 +73,10 @@ pub struct BacktestToolParams {
     pub max_evaluations: usize,
 
     /// Number of permutations for statistical significance testing. Default 0 (off).
-    /// When > 0, shuffles trade P&Ls to compute p-values and applies BH-FDR correction.
+    /// When > 0, runs sign-flip permutation test and applies BH-FDR correction.
+    /// Clamped to 100,000 max.
     #[serde(default)]
-    #[garde(skip)]
+    #[garde(range(max = 100_000))]
     pub num_permutations: usize,
 
     /// Chat thread ID for associating results with a conversation.
@@ -304,9 +305,16 @@ async fn execute_sweep(
         }
     };
 
-    // 7b. Apply permutation gate (if requested)
-    let sweep_response =
-        apply_permutation_gate(sweep_response, num_permutations, &req.objective, None);
+    // 7b. Apply permutation gate (if requested) — CPU-intensive, run off async executor
+    let objective = req.objective.clone();
+    let sweep_response = if num_permutations > 0 {
+        tokio::task::spawn_blocking(move || {
+            apply_permutation_gate(sweep_response, num_permutations, &objective, None)
+        })
+        .await?
+    } else {
+        sweep_response
+    };
 
     // 8. Persist via persist_sweep with source = "agent"
     let sweep_id = persist_sweep_to_store(

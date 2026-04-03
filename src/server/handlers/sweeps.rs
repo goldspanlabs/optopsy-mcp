@@ -408,13 +408,26 @@ pub async fn create_sweep(
 
         match sweep_result {
             Ok(sweep_response) => {
-                // Apply permutation gate (if requested)
-                let sweep_response = apply_permutation_gate(
-                    sweep_response,
-                    req.num_permutations,
-                    &req.objective,
-                    None,
-                );
+                // Apply permutation gate — CPU-intensive, run off async executor
+                let n_perms = req.num_permutations;
+                let obj = req.objective.clone();
+                let sweep_response = if n_perms > 0 {
+                    match tokio::task::spawn_blocking(move || {
+                        apply_permutation_gate(sweep_response, n_perms, &obj, None)
+                    })
+                    .await
+                    {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let _ = tx
+                                .send(Event::default().event("error").data(e.to_string()))
+                                .await;
+                            return;
+                        }
+                    }
+                } else {
+                    sweep_response
+                };
                 tracing::info!(
                     "Sweep completed: combinations_run={}, ranked_results={}",
                     sweep_response.combinations_run,
