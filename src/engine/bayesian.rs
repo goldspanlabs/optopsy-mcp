@@ -519,25 +519,15 @@ async fn evaluate(
         is_cancelled,
     )
     .await?;
-    let m = &bt.result.metrics;
     let pre = bt.precomputed_options;
 
     Ok((
-        SweepResult {
-            rank: 0,
-            params: swept_params,
-            sharpe: m.sharpe,
-            sortino: m.sortino,
-            pnl: bt.result.total_pnl,
-            trades: bt.result.trade_count,
-            win_rate: m.win_rate,
-            max_drawdown: m.max_drawdown,
-            profit_factor: m.profit_factor,
-            cagr: m.cagr,
-            calmar: m.calmar,
-            p_value: None,
-            significant: None,
-        },
+        SweepResult::from_metrics(
+            swept_params,
+            &bt.result.metrics,
+            bt.result.total_pnl,
+            bt.result.trade_count,
+        ),
         pre,
     ))
 }

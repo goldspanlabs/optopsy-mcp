@@ -90,22 +90,12 @@ pub async fn run_grid_sweep(
     {
         Ok(bt) => {
             precomputed.clone_from(&bt.precomputed_options);
-            let m = &bt.result.metrics;
-            results.push(SweepResult {
-                rank: 0,
-                params: first_combo,
-                sharpe: m.sharpe,
-                sortino: m.sortino,
-                pnl: bt.result.total_pnl,
-                trades: bt.result.trade_count,
-                win_rate: m.win_rate,
-                max_drawdown: m.max_drawdown,
-                profit_factor: m.profit_factor,
-                cagr: m.cagr,
-                calmar: m.calmar,
-                p_value: None,
-                significant: None,
-            });
+            results.push(SweepResult::from_metrics(
+                first_combo,
+                &bt.result.metrics,
+                bt.result.total_pnl,
+                bt.result.trade_count,
+            ));
             full_results.push(bt);
         }
         Err(_) => {
@@ -181,22 +171,12 @@ pub async fn run_grid_sweep(
 
             match join_result {
                 Ok((_, combo, Ok(bt))) => {
-                    let m = &bt.result.metrics;
-                    results.push(SweepResult {
-                        rank: 0,
-                        params: combo,
-                        sharpe: m.sharpe,
-                        sortino: m.sortino,
-                        pnl: bt.result.total_pnl,
-                        trades: bt.result.trade_count,
-                        win_rate: m.win_rate,
-                        max_drawdown: m.max_drawdown,
-                        profit_factor: m.profit_factor,
-                        cagr: m.cagr,
-                        calmar: m.calmar,
-                        p_value: None,
-                        significant: None,
-                    });
+                    results.push(SweepResult::from_metrics(
+                        combo,
+                        &bt.result.metrics,
+                        bt.result.total_pnl,
+                        bt.result.trade_count,
+                    ));
                     full_results.push(bt);
                 }
                 Ok((_, _, Err(_))) => {

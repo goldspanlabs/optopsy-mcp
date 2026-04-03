@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::engine::multiple_comparisons::MultipleComparisonsResult;
+use crate::engine::types::PerformanceMetrics;
 
 /// A single parameter combination result.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -27,6 +28,32 @@ pub struct SweepResult {
     /// `None` if permutation test was not run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub significant: Option<bool>,
+}
+
+impl SweepResult {
+    /// Build from backtest metrics with a given param combo.
+    pub fn from_metrics(
+        params: HashMap<String, serde_json::Value>,
+        metrics: &PerformanceMetrics,
+        total_pnl: f64,
+        trade_count: usize,
+    ) -> Self {
+        Self {
+            rank: 0,
+            params,
+            sharpe: metrics.sharpe,
+            sortino: metrics.sortino,
+            pnl: total_pnl,
+            trades: trade_count,
+            win_rate: metrics.win_rate,
+            max_drawdown: metrics.max_drawdown,
+            profit_factor: metrics.profit_factor,
+            cagr: metrics.cagr,
+            calmar: metrics.calmar,
+            p_value: None,
+            significant: None,
+        }
+    }
 }
 
 /// Per-value stats for a single swept parameter.

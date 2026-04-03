@@ -8,18 +8,13 @@ use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
 
+use crate::constants::{MAX_PROFIT_FACTOR, P_VALUE_THRESHOLD};
 use crate::engine::multiple_comparisons;
 use crate::tools::response_types::sweep::SweepResponse;
-
-/// Default significance level for BH-FDR correction.
-const DEFAULT_ALPHA: f64 = 0.05;
 
 /// Minimum number of trades required for a meaningful permutation test.
 /// Below this threshold the null distribution is too coarse.
 const MIN_TRADES: usize = 10;
-
-/// Maximum finite value for profit factor when there are no losers.
-const MAX_PROFIT_FACTOR: f64 = 999.99;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Core: compute p-value from trade P&Ls
@@ -200,8 +195,8 @@ pub fn apply_permutation_gate(
         .map(|(i, r)| format!("rank_{} ({})", r.rank, i + 1))
         .collect();
 
-    let bh = multiple_comparisons::benjamini_hochberg(&labels, &p_values, DEFAULT_ALPHA);
-    let bonf = multiple_comparisons::bonferroni(&labels, &p_values, DEFAULT_ALPHA);
+    let bh = multiple_comparisons::benjamini_hochberg(&labels, &p_values, P_VALUE_THRESHOLD);
+    let bonf = multiple_comparisons::bonferroni(&labels, &p_values, P_VALUE_THRESHOLD);
 
     // Set significance flags based on BH-FDR (less conservative, preferred)
     for (i, bh_result) in bh.results.iter().enumerate() {

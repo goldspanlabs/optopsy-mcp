@@ -5,13 +5,9 @@
 
 use anyhow::Result;
 
-use crate::constants::CALENDAR_DAYS_PER_YEAR;
+use crate::constants::{CALENDAR_DAYS_PER_YEAR, MAX_PROFIT_FACTOR};
 
 use super::types::{EquityPoint, PerformanceMetrics, TradeRecord};
-
-/// Maximum finite value for profit factor when there are no losing trades.
-/// Avoids `f64::INFINITY` which is not valid JSON.
-const MAX_PROFIT_FACTOR: f64 = 999.99;
 
 /// Minimum number of calendar days (based on equity curve timestamp span)
 /// required to report CAGR and Calmar.
