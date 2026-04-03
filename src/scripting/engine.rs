@@ -2132,7 +2132,7 @@ fn compute_portfolio_state(
     let realized_pnl = equity - capital;
     let total_exposure: f64 = positions.iter().map(|p| p.entry_cost.abs()).sum();
     let exposure_pct = if equity.abs() > f64::EPSILON {
-        total_exposure / equity
+        total_exposure / equity.abs()
     } else {
         0.0
     };
@@ -2200,8 +2200,9 @@ fn compute_portfolio_state(
             .fold(f64::INFINITY, f64::min)
     };
 
-    let drawdown = if peak_equity.abs() > f64::EPSILON {
-        (equity - peak_equity) / peak_equity
+    let effective_peak = peak_equity.max(equity);
+    let drawdown = if effective_peak.abs() > f64::EPSILON {
+        (equity - effective_peak) / effective_peak
     } else {
         0.0
     };

@@ -907,6 +907,9 @@ fn parse_when_any_all(
         )
     })?;
     let binding_var = rest[..in_pos].trim().to_string();
+    if binding_var.is_empty() {
+        return Err(DslError::new(line_num, "missing variable name after 'any/all'"));
+    }
     let after_in = rest[in_pos + 4..].trim();
 
     // Split on " has " or " have "
@@ -921,6 +924,9 @@ fn parse_when_any_all(
         ));
     };
     let iterable = iterable.trim().to_string();
+    if iterable.is_empty() {
+        return Err(DslError::new(line_num, "missing iterable after 'in'"));
+    }
 
     // Check for " as CAPTURE" at the end
     let (condition, capture_as) = if let Some(as_pos) = after_has.rfind(" as ") {
@@ -930,6 +936,14 @@ fn parse_when_any_all(
     } else {
         (after_has.to_string(), None)
     };
+    if condition.is_empty() {
+        return Err(DslError::new(line_num, "missing condition after 'has'/'have'"));
+    }
+    if let Some(ref cap) = capture_as {
+        if cap.is_empty() {
+            return Err(DslError::new(line_num, "missing variable name after 'as'"));
+        }
+    }
 
     // Collect the then-body (indented deeper)
     let mut then_body_lines = vec![];

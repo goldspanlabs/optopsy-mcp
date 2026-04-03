@@ -450,10 +450,14 @@ fn check_portfolio_in_stmts(stmts: &[Stmt]) -> Result<(), DslError> {
                     check_portfolio_in_stmts(eb)?;
                 }
             }
-            Stmt::ForEach { body, .. } => {
+            Stmt::ForEach {
+                iterable, body, line, ..
+            } => {
+                check_portfolio_expr(iterable, *line)?;
                 check_portfolio_in_stmts(body)?;
             }
-            Stmt::TryOpen { body, .. } => {
+            Stmt::TryOpen { call, body, line, .. } => {
+                check_portfolio_expr(call, *line)?;
                 check_portfolio_in_stmts(body)?;
             }
             Stmt::WhenAnyAll {
@@ -469,6 +473,27 @@ fn check_portfolio_in_stmts(stmts: &[Stmt]) -> Result<(), DslError> {
                     check_portfolio_in_stmts(eb)?;
                 }
             }
+            Stmt::Buy { qty_expr, line, .. } | Stmt::Sell { qty_expr, line, .. } => {
+                check_portfolio_expr(qty_expr, *line)?;
+            }
+            Stmt::Plot { expr, line, .. } | Stmt::Return { expr, line, .. } => {
+                check_portfolio_expr(expr, *line)?;
+            }
+            Stmt::OpenStrategy { call, line, .. } => {
+                check_portfolio_expr(call, *line)?;
+            }
+            Stmt::ClosePositionById { id_expr, line, .. } => {
+                check_portfolio_expr(id_expr, *line)?;
+            }
+            Stmt::AddTo { expr, line, .. }
+            | Stmt::SubtractFrom { expr, line, .. }
+            | Stmt::MultiplyBy { expr, line, .. }
+            | Stmt::DivideBy { expr, line, .. } => {
+                check_portfolio_expr(expr, *line)?;
+            }
+            Stmt::Raw { code, line } => {
+                check_portfolio_expr(code, *line)?;
+            }
             _ => {}
         }
     }
@@ -476,11 +501,11 @@ fn check_portfolio_in_stmts(stmts: &[Stmt]) -> Result<(), DslError> {
 }
 
 fn check_portfolio_expr(expr: &str, line: usize) -> Result<(), DslError> {
+    let stripped = strip_string_literals(expr);
     let prefix = "portfolio.";
-    let mut search = expr;
+    let mut search = stripped.as_str();
     while let Some(pos) = search.find(prefix) {
         let after = &search[pos + prefix.len()..];
-        // Extract the property name (alphanumeric + underscore)
         let prop_end = after
             .find(|c: char| !c.is_alphanumeric() && c != '_')
             .unwrap_or(after.len());
@@ -713,59 +738,89 @@ fn check_aggregation_fields(program: &DslProgram) -> Result<(), DslError> {
 
 fn check_aggregation_in_stmts(stmts: &[Stmt]) -> Result<(), DslError> {
     for stmt in stmts {
-        let exprs_and_lines: Vec<(&str, usize)> = match stmt {
-            Stmt::SkipWhen { condition, line } => vec![(condition.as_str(), *line)],
-            Stmt::Set { expr, line, .. } => vec![(expr.as_str(), *line)],
+        match stmt {
+            Stmt::SkipWhen { condition, line } => {
+                check_aggregation_in_expr(condition, *line)?;
+            }
+            Stmt::Set { expr, line, .. } => {
+                check_aggregation_in_expr(expr, *line)?;
+            }
             Stmt::When {
                 condition,
                 then_body,
                 else_body,
                 line,
             } => {
+                check_aggregation_in_expr(condition, *line)?;
                 check_aggregation_in_stmts(then_body)?;
                 if let Some(ref eb) = else_body {
                     check_aggregation_in_stmts(eb)?;
                 }
-                vec![(condition.as_str(), *line)]
             }
             Stmt::WhenAnyAll {
+                condition,
                 then_body,
                 else_body,
+                line,
                 ..
             } => {
+                check_aggregation_in_expr(condition, *line)?;
                 check_aggregation_in_stmts(then_body)?;
                 if let Some(ref eb) = else_body {
                     check_aggregation_in_stmts(eb)?;
                 }
-                vec![]
             }
             Stmt::ForEach { body, .. } => {
                 check_aggregation_in_stmts(body)?;
-                vec![]
             }
-            _ => vec![],
-        };
+            Stmt::TryOpen { call, body, line, .. } => {
+                check_aggregation_in_expr(call, *line)?;
+                check_aggregation_in_stmts(body)?;
+            }
+            Stmt::Buy { qty_expr, line, .. } | Stmt::Sell { qty_expr, line, .. } => {
+                check_aggregation_in_expr(qty_expr, *line)?;
+            }
+            Stmt::Plot { expr, line, .. } | Stmt::Return { expr, line, .. } => {
+                check_aggregation_in_expr(expr, *line)?;
+            }
+            Stmt::OpenStrategy { call, line, .. } => {
+                check_aggregation_in_expr(call, *line)?;
+            }
+            Stmt::AddTo { expr, line, .. }
+            | Stmt::SubtractFrom { expr, line, .. }
+            | Stmt::MultiplyBy { expr, line, .. }
+            | Stmt::DivideBy { expr, line, .. } => {
+                check_aggregation_in_expr(expr, *line)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
 
-        for (expr, line) in exprs_and_lines {
-            for method in &["sum", "min", "max", "avg"] {
-                let pattern = format!(".{method}(");
-                if let Some(pos) = expr.find(&pattern) {
-                    let after = &expr[pos + pattern.len()..];
-                    if let Some(end) = after.find(')') {
-                        let field = after[..end].trim();
-                        if !NUMERIC_LEG_FIELDS.contains(&field) {
-                            return Err(DslError::new(
-                                line,
-                                format!(
-                                    "`{method}()` requires a numeric field, got `{field}`. \
-                                     Valid numeric fields: {}",
-                                    NUMERIC_LEG_FIELDS.join(", ")
-                                ),
-                            ));
-                        }
-                    }
+/// Check a single expression for aggregation methods using non-numeric fields.
+/// Loops over ALL occurrences, not just the first.
+fn check_aggregation_in_expr(expr: &str, line: usize) -> Result<(), DslError> {
+    for method in &["sum", "min", "max", "avg"] {
+        let pattern = format!(".{method}(");
+        let mut search_from = 0;
+        while let Some(rel_pos) = expr[search_from..].find(&pattern) {
+            let pos = search_from + rel_pos;
+            let after = &expr[pos + pattern.len()..];
+            if let Some(end) = after.find(')') {
+                let field = after[..end].trim();
+                if !NUMERIC_LEG_FIELDS.contains(&field) {
+                    return Err(DslError::new(
+                        line,
+                        format!(
+                            "`{method}()` requires a numeric field, got `{field}`. \
+                             Valid numeric fields: {}",
+                            NUMERIC_LEG_FIELDS.join(", ")
+                        ),
+                    ));
                 }
             }
+            search_from = pos + pattern.len();
         }
     }
     Ok(())

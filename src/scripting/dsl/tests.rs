@@ -2082,7 +2082,7 @@ on exit check
     let rhai = transpile(dsl).unwrap();
     // Both should expand with different suffixes
     assert!(
-        rhai.contains("__agg_0") || rhai.contains("__agg_1"),
+        rhai.contains("__agg_0") && rhai.contains("__agg_1"),
         "Should use unique suffixes for each aggregation.\nGenerated:\n{rhai}"
     );
 }
