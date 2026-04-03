@@ -762,14 +762,16 @@ fn check_aggregation_fields(program: &DslProgram) -> Result<(), DslError> {
 }
 
 /// Check a single expression for aggregation methods using non-numeric fields.
-/// Loops over ALL occurrences, not just the first.
+/// Loops over ALL occurrences, not just the first. Strips string literals first
+/// to avoid false-triggering on `.sum(`/`.min(`/etc. inside quoted strings.
 fn check_aggregation_in_expr(expr: &str, line: usize) -> Result<(), DslError> {
+    let stripped = strip_string_literals(expr);
     for method in &["sum", "min", "max", "avg"] {
         let pattern = format!(".{method}(");
         let mut search_from = 0;
-        while let Some(rel_pos) = expr[search_from..].find(&pattern) {
+        while let Some(rel_pos) = stripped[search_from..].find(&pattern) {
             let pos = search_from + rel_pos;
-            let after = &expr[pos + pattern.len()..];
+            let after = &stripped[pos + pattern.len()..];
             if let Some(end) = after.find(')') {
                 let field = after[..end].trim();
                 if !NUMERIC_LEG_FIELDS.contains(&field) {

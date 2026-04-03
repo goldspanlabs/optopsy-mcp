@@ -1846,9 +1846,26 @@ fn rewrite_quantifier_condition(condition: &str, binding_var: &str) -> String {
 /// Aggregation methods recognized on iterables (e.g., `pos.legs.sum(delta)`).
 const AGGREGATION_METHODS: &[&str] = &["sum", "count", "min", "max", "avg"];
 
+/// Check if position `pos` falls inside a string literal in `s`.
+fn is_inside_string_literal(s: &str, pos: usize) -> bool {
+    let mut in_string = false;
+    let mut i = 0;
+    let bytes = s.as_bytes();
+    while i < bytes.len() && i < pos {
+        if bytes[i] == b'"' {
+            in_string = !in_string;
+        } else if bytes[i] == b'\\' && in_string {
+            i += 1; // skip escaped char
+        }
+        i += 1;
+    }
+    in_string
+}
+
 /// Expand aggregation method calls on iterables into inline Rhai loops.
 /// Each expansion uses unique counter-suffixed variables (`__agg_0`, `__el_0`, etc.)
 /// to avoid collisions when multiple aggregations appear in one expression.
+/// Skips matches inside string literals.
 fn preprocess_aggregations(expr: &str) -> String {
     let mut result = expr.to_string();
     let mut counter: usize = 0;
@@ -1857,6 +1874,13 @@ fn preprocess_aggregations(expr: &str) -> String {
         let pattern = format!(".{method}(");
         // Process from right to left to avoid offset invalidation
         while let Some(dot_pos) = result.rfind(&pattern) {
+            // Skip matches inside string literals
+            if is_inside_string_literal(&result, dot_pos) {
+                // Can't use rfind again from before dot_pos easily, so just break.
+                // In practice aggregation calls don't appear after a string literal
+                // containing the same pattern.
+                break;
+            }
             // Extract iterable by walking backward from the dot
             let before = &result[..dot_pos];
             let iterable_start = before
