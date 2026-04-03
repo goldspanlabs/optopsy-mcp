@@ -1644,3 +1644,67 @@ on each bar
         "Error should mention the invalid time.\nGot: {err}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Reserved name validation tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_reserved_name_extern_day() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+extern monday = 1 "A variable named monday"
+
+on each bar
+  buy 100 shares
+"#;
+
+    let err = transpile(dsl).unwrap_err();
+    assert!(
+        err.message.contains("reserved day/month name"),
+        "Should reject extern named 'monday'.\nGot: {err}"
+    );
+}
+
+#[test]
+fn test_reserved_name_state_month() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+state may = 0
+
+on each bar
+  buy 100 shares
+"#;
+
+    let err = transpile(dsl).unwrap_err();
+    assert!(
+        err.message.contains("reserved day/month name"),
+        "Should reject state named 'may'.\nGot: {err}"
+    );
+}
+
+#[test]
+fn test_non_reserved_name_accepted() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+extern monday_count = 0 "Not a reserved name"
+state may_trades = 0
+
+on each bar
+  buy 100 shares
+"#;
+
+    // Should not error — these are not exact matches
+    let rhai = transpile(dsl).unwrap();
+    assert!(rhai.contains("monday_count"));
+    assert!(rhai.contains("may_trades"));
+}

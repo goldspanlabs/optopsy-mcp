@@ -1427,7 +1427,9 @@ pub fn try_parse_time_literal(chars: &[char], pos: usize) -> Option<(String, usi
     if !chars[pos].is_ascii_digit() {
         return None;
     }
-    if pos > 0 && (chars[pos - 1].is_alphanumeric() || chars[pos - 1] == '_') {
+    if pos > 0
+        && (chars[pos - 1].is_alphanumeric() || chars[pos - 1] == '_' || chars[pos - 1] == ':')
+    {
         return None;
     }
 
@@ -1509,10 +1511,11 @@ fn preprocess_time_literals(expr: &str) -> String {
 pub fn skip_string_literal(chars: &[char], pos: usize) -> usize {
     let mut i = pos + 1; // skip opening "
     while i < chars.len() && chars[i] != '"' {
-        if chars[i] == '\\' {
-            i += 1; // skip escaped char
+        if chars[i] == '\\' && i + 1 < chars.len() {
+            i += 2; // skip backslash + escaped char
+        } else {
+            i += 1;
         }
-        i += 1;
     }
     if i < chars.len() {
         i + 1 // skip closing "
@@ -2043,5 +2046,23 @@ mod tests {
     fn test_rewrite_callable_property_not_dot_qualified() {
         // After a dot, callable properties should NOT be rewritten
         assert_eq!(rewrite_expr("config.time"), "config.time");
+    }
+
+    #[test]
+    fn test_time_literal_not_after_colon() {
+        // Rhai map syntax "field: 10" should NOT match as time literal
+        // "sma:200" indicator specs should not match either
+        assert_eq!(rewrite_expr("sma:200"), "sma:200");
+        // A colon-preceded digit pair should pass through unchanged
+        assert_eq!(rewrite_expr("x:10:00"), "x:10:00");
+    }
+
+    #[test]
+    fn test_skip_string_literal_escaped_quote() {
+        // Escaped quote at end should not cause issues
+        assert_eq!(
+            rewrite_expr(r#"close > 0 and "test\"" == "test\"""#),
+            r#"ctx.close > 0 && "test\"" == "test\"""#
+        );
     }
 }
