@@ -4,7 +4,7 @@ use rhai::{Dynamic, Engine};
 
 use super::dsl;
 use super::helpers;
-use super::types::{BarContext, ScriptPosition};
+use super::types::{BarContext, PortfolioState, ScriptPosition};
 
 /// Build a sandboxed Rhai engine with all custom types and functions registered.
 #[must_use]
@@ -34,6 +34,7 @@ pub fn build_engine() -> Engine {
     // Register custom types
     register_bar_context(&mut engine);
     register_script_position(&mut engine);
+    register_portfolio_state(&mut engine);
 
     // Register global helper functions
     register_global_helpers(&mut engine);
@@ -181,6 +182,9 @@ fn register_bar_context(engine: &mut Engine) {
     engine.register_get("realized_pnl", BarContext::get_realized_pnl);
     engine.register_get("total_exposure", BarContext::get_total_exposure);
 
+    // Portfolio namespace
+    engine.register_get("portfolio", BarContext::get_portfolio);
+
     // Options strategy building
     engine.register_fn("build_strategy", BarContext::build_strategy);
 
@@ -208,6 +212,26 @@ fn register_script_position(engine: &mut Engine) {
     engine.register_get("is_options", ScriptPosition::get_is_options);
     engine.register_get("is_stock", ScriptPosition::get_is_stock);
     engine.register_get("source", ScriptPosition::get_source);
+}
+
+/// Register `PortfolioState` as a Rhai custom type with property getters.
+fn register_portfolio_state(engine: &mut Engine) {
+    engine.register_get("cash", PortfolioState::get_cash);
+    engine.register_get("equity", PortfolioState::get_equity);
+    engine.register_get("unrealized_pnl", PortfolioState::get_unrealized_pnl);
+    engine.register_get("realized_pnl", PortfolioState::get_realized_pnl);
+    engine.register_get("total_exposure", PortfolioState::get_total_exposure);
+    engine.register_get("exposure_pct", PortfolioState::get_exposure_pct);
+    engine.register_get("net_delta", PortfolioState::get_net_delta);
+    engine.register_get("long_delta", PortfolioState::get_long_delta);
+    engine.register_get("short_delta", PortfolioState::get_short_delta);
+    engine.register_get("position_count", PortfolioState::get_position_count);
+    engine.register_get("long_count", PortfolioState::get_long_count);
+    engine.register_get("short_count", PortfolioState::get_short_count);
+    engine.register_get("max_position_pnl", PortfolioState::get_max_position_pnl);
+    engine.register_get("min_position_pnl", PortfolioState::get_min_position_pnl);
+    engine.register_get("drawdown", PortfolioState::get_drawdown);
+    engine.register_get("peak_equity", PortfolioState::get_peak_equity);
 }
 
 /// Register global helper functions available in all scripts.
