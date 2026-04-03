@@ -180,7 +180,7 @@ pub fn clamp_permutations(n: usize) -> usize {
 /// excluded from multiple comparisons corrections.
 ///
 /// Returns the response unchanged if `n_perms == 0`, results are empty, or
-/// `full_results` is empty (e.g. Bayesian sweeps that don't retain trade logs).
+/// `full_results` is empty for any reason.
 pub fn apply_permutation_gate(
     mut response: SweepResponse,
     n_perms: usize,
