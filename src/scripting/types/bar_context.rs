@@ -408,7 +408,9 @@ impl BarContext {
     /// Since bars only exist on actual trading days, this is exact for the dataset.
     pub fn trading_days_left(&mut self) -> i64 {
         let target_month = self.datetime.date().month();
-        self.price_history[self.bar_idx + 1..]
+        self.price_history
+            .get(self.bar_idx + 1..)
+            .unwrap_or_default()
             .iter()
             .take_while(|b| b.datetime.date().month() == target_month)
             .count() as i64
@@ -1517,6 +1519,21 @@ mod tests {
         let bars: Vec<NaiveDateTime> = vec![];
         let mut ctx = make_ctx(daily(2024, 1, 2), 0, bars);
         assert!(ctx.is_last_bar()); // Empty → true (graceful)
+    }
+
+    #[test]
+    fn test_trading_days_left_empty_dataset() {
+        let bars: Vec<NaiveDateTime> = vec![];
+        let mut ctx = make_ctx(daily(2024, 1, 15), 0, bars);
+        assert_eq!(ctx.trading_days_left(), 0); // No bars → 0
+    }
+
+    #[test]
+    fn test_is_quarter_end_empty_dataset() {
+        let bars: Vec<NaiveDateTime> = vec![];
+        let mut ctx = make_ctx(daily(2024, 3, 28), 0, bars);
+        // Empty dataset, no next bar → true (in a quarter-end month)
+        assert!(ctx.is_quarter_end());
     }
 
     // -----------------------------------------------------------------------
