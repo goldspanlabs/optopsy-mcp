@@ -1086,6 +1086,118 @@ mod tests {
         );
     }
 
+    // ── Ulcer Index / Pain Ratio / Drawdown Duration ──────────────────
+
+    #[test]
+    fn ulcer_index_zero_for_monotonic_rise() {
+        // Equity only goes up → no drawdowns → ulcer index = 0
+        let curve = make_equity_curve(&[10000.0, 10100.0, 10200.0, 10300.0, 10400.0]);
+        let m = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
+        assert!(
+            (m.ulcer_index - 0.0).abs() < f64::EPSILON,
+            "ulcer_index should be 0 for monotonic rise, got {}",
+            m.ulcer_index
+        );
+        assert!(
+            (m.avg_drawdown_duration - 0.0).abs() < f64::EPSILON,
+            "avg_drawdown_duration should be 0, got {}",
+            m.avg_drawdown_duration
+        );
+        assert_eq!(m.max_drawdown_duration, 0);
+    }
+
+    #[test]
+    fn ulcer_index_positive_for_drawdown() {
+        // Peak at 10200, drops to 9800 then recovers
+        let curve = make_equity_curve(&[10000.0, 10200.0, 9800.0, 10000.0, 10300.0]);
+        let m = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
+        assert!(
+            m.ulcer_index > 0.0,
+            "ulcer_index should be > 0 when drawdown exists, got {}",
+            m.ulcer_index
+        );
+    }
+
+    #[test]
+    fn max_drawdown_duration_tracks_longest_episode() {
+        // Two drawdown episodes: 2 bars then 3 bars
+        let curve = make_equity_curve(&[
+            10000.0, // new peak
+            9900.0,  // in DD (1)
+            9950.0,  // still in DD (2) — below 10000
+            10100.0, // recovered, new peak
+            10000.0, // in DD (1)
+            9950.0,  // in DD (2)
+            9900.0,  // in DD (3)
+            10200.0, // recovered
+        ]);
+        let m = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
+        assert_eq!(
+            m.max_drawdown_duration, 3,
+            "max_drawdown_duration should be 3, got {}",
+            m.max_drawdown_duration
+        );
+    }
+
+    #[test]
+    fn avg_drawdown_duration_averages_episodes() {
+        // Two episodes: 1 bar and 3 bars → avg = 2.0
+        let curve = make_equity_curve(&[
+            10000.0, // peak
+            9900.0,  // DD episode 1 (1 bar)
+            10100.0, // recovered, new peak
+            10000.0, // DD episode 2 (1)
+            9900.0,  // DD episode 2 (2)
+            9800.0,  // DD episode 2 (3)
+            10200.0, // recovered
+        ]);
+        let m = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
+        assert!(
+            (m.avg_drawdown_duration - 2.0).abs() < 1e-10,
+            "avg_drawdown_duration should be 2.0, got {}",
+            m.avg_drawdown_duration
+        );
+    }
+
+    #[test]
+    fn pain_ratio_zero_when_no_drawdown() {
+        let curve = make_equity_curve(&[10000.0, 10100.0, 10200.0, 10300.0]);
+        let m = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
+        assert!(
+            (m.pain_ratio - 0.0).abs() < f64::EPSILON,
+            "pain_ratio should be 0 when ulcer_index is 0, got {}",
+            m.pain_ratio
+        );
+    }
+
+    #[test]
+    fn trailing_drawdown_counted() {
+        // Ends in a drawdown — should still be tracked
+        let curve = make_equity_curve(&[10000.0, 10200.0, 9800.0, 9700.0]);
+        let m = calculate_metrics(&curve, &[], 10000.0, 252.0).unwrap();
+        assert_eq!(
+            m.max_drawdown_duration, 2,
+            "trailing drawdown should be counted"
+        );
+        assert!(m.ulcer_index > 0.0);
+    }
+
+    #[test]
+    fn empty_equity_curve_returns_default_drawdown_stats() {
+        let m = calculate_metrics(&[], &[], 10000.0, 252.0).unwrap();
+        assert!((m.ulcer_index - 0.0).abs() < f64::EPSILON);
+        assert_eq!(m.max_drawdown_duration, 0);
+        assert!((m.avg_drawdown_duration - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn zero_initial_capital_returns_defaults() {
+        let curve = make_equity_curve(&[0.0, 100.0]);
+        let m = calculate_metrics(&curve, &[], 0.0, 252.0).unwrap();
+        assert!((m.sharpe - 0.0).abs() < f64::EPSILON);
+        assert!((m.ulcer_index - 0.0).abs() < f64::EPSILON);
+    }
+
     #[test]
     fn is_intraday_correct_for_all_intervals() {
         use crate::engine::types::Interval;

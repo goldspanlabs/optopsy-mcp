@@ -575,6 +575,300 @@ fn erf(x: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    // ── normal_pdf / normal_cdf / erf ─────────────────────────────────
+
+    #[test]
+    fn normal_pdf_at_zero() {
+        // pdf(0) = 1 / sqrt(2π) ≈ 0.3989422804
+        let expected = 1.0 / (2.0 * std::f64::consts::PI).sqrt();
+        assert!(
+            (normal_pdf(0.0) - expected).abs() < 1e-10,
+            "pdf(0) = {}, expected {}",
+            normal_pdf(0.0),
+            expected
+        );
+    }
+
+    #[test]
+    fn normal_pdf_symmetry() {
+        assert!((normal_pdf(1.0) - normal_pdf(-1.0)).abs() < 1e-10);
+        assert!((normal_pdf(2.5) - normal_pdf(-2.5)).abs() < 1e-10);
+    }
+
+    #[test]
+    fn normal_cdf_at_zero() {
+        // cdf(0) = 0.5
+        assert!(
+            (normal_cdf(0.0) - 0.5).abs() < 1e-6,
+            "cdf(0) = {}",
+            normal_cdf(0.0)
+        );
+    }
+
+    #[test]
+    fn normal_cdf_monotonic() {
+        let vals = [-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0];
+        for w in vals.windows(2) {
+            assert!(
+                normal_cdf(w[1]) > normal_cdf(w[0]),
+                "cdf({}) should be > cdf({})",
+                w[1],
+                w[0]
+            );
+        }
+    }
+
+    #[test]
+    fn normal_cdf_tails() {
+        assert!(normal_cdf(-5.0) < 1e-5);
+        assert!(normal_cdf(5.0) > 1.0 - 1e-5);
+    }
+
+    #[test]
+    fn erf_at_zero() {
+        // Abramowitz & Stegun approximation has ~1e-7 max error
+        assert!((erf(0.0)).abs() < 1e-6, "erf(0) = {}", erf(0.0));
+    }
+
+    #[test]
+    fn erf_antisymmetric() {
+        assert!((erf(1.0) + erf(-1.0)).abs() < 1e-6);
+        assert!((erf(0.5) + erf(-0.5)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn erf_known_values() {
+        // erf(1) ≈ 0.8427007929
+        assert!((erf(1.0) - 0.842_700_792_9).abs() < 1e-6);
+    }
+
+    // ── expected_improvement ─────────────────────────────────────────
+
+    #[test]
+    fn ei_zero_variance() {
+        // sigma < 1e-12 → EI = 0
+        assert!((expected_improvement(1.0, 0.0, 0.5) - 0.0).abs() < f64::EPSILON);
+        assert!((expected_improvement(1.0, 1e-25, 0.5) - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn ei_positive_when_mean_above_best() {
+        // mean > best_y with reasonable variance → EI > 0
+        let ei = expected_improvement(2.0, 1.0, 1.0);
+        assert!(ei > 0.0, "EI should be positive, got {ei}");
+    }
+
+    #[test]
+    fn ei_still_positive_when_mean_below_best() {
+        // EI can be > 0 even when mean < best, due to variance (exploration)
+        let ei = expected_improvement(0.5, 1.0, 1.0);
+        assert!(ei > 0.0, "EI should be positive due to variance, got {ei}");
+    }
+
+    #[test]
+    fn ei_increases_with_variance() {
+        // Higher variance → more exploration → higher EI (for same mean/best)
+        let ei_low = expected_improvement(1.0, 0.1, 1.0);
+        let ei_high = expected_improvement(1.0, 2.0, 1.0);
+        assert!(
+            ei_high > ei_low,
+            "Higher variance should give higher EI: {ei_high} vs {ei_low}"
+        );
+    }
+
+    #[test]
+    fn ei_non_negative() {
+        // EI should never be negative
+        for mean in [-5.0, -1.0, 0.0, 1.0, 5.0] {
+            for var in [0.01, 0.1, 1.0, 10.0] {
+                let ei = expected_improvement(mean, var, 10.0);
+                assert!(ei >= 0.0, "EI negative: mean={mean}, var={var}, ei={ei}");
+            }
+        }
+    }
+
+    // ── Cholesky decomposition ───────────────────────────────────────
+
+    #[test]
+    fn cholesky_identity_matrix() {
+        // 3x3 identity → L should also be identity
+        let k = vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+        let l = cholesky_decompose(&k, 3).expect("should decompose identity");
+        for i in 0..3 {
+            for j in 0..3 {
+                let expected = if i == j { 1.0 } else { 0.0 };
+                assert!(
+                    (l[i * 3 + j] - expected).abs() < 1e-10,
+                    "L[{i},{j}] = {}, expected {expected}",
+                    l[i * 3 + j]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cholesky_known_2x2() {
+        // K = [[4, 2], [2, 5]] → L = [[2, 0], [1, 2]]
+        let k = vec![4.0, 2.0, 2.0, 5.0];
+        let l = cholesky_decompose(&k, 2).expect("should decompose");
+        assert!((l[0] - 2.0).abs() < 1e-10); // L[0,0]
+        assert!((l[1] - 0.0).abs() < 1e-10); // L[0,1]
+        assert!((l[2] - 1.0).abs() < 1e-10); // L[1,0]
+        assert!((l[3] - 2.0).abs() < 1e-10); // L[1,1]
+    }
+
+    #[test]
+    fn cholesky_not_positive_definite_returns_none() {
+        // Not positive definite → None
+        let k = vec![1.0, 2.0, 2.0, 1.0]; // eigenvalues -1 and 3
+        assert!(cholesky_decompose(&k, 2).is_none());
+    }
+
+    #[test]
+    fn cholesky_solve_round_trip() {
+        // K·x = b where K = [[4, 2], [2, 5]], b = [10, 13]
+        // Solution: x = [1, 2] (verify: 4*1+2*2=8≠10? Let me compute correctly)
+        // Actually solve: 4x + 2y = 10, 2x + 5y = 13 → x = 1, y = 3? No.
+        // 4(1) + 2(3) = 10 ✓, 2(1) + 5(3) = 17 ≠ 13
+        // Let's just verify round-trip: K * solve(K,b) ≈ b
+        let k = vec![4.0, 2.0, 2.0, 5.0];
+        let b = vec![10.0, 13.0];
+        let l = cholesky_decompose(&k, 2).unwrap();
+        let x = cholesky_solve_with_l(&l, &b, 2);
+
+        // Verify K*x ≈ b
+        let b_check = [k[0] * x[0] + k[1] * x[1], k[2] * x[0] + k[3] * x[1]];
+        assert!((b_check[0] - b[0]).abs() < 1e-10, "b[0] mismatch");
+        assert!((b_check[1] - b[1]).abs() < 1e-10, "b[1] mismatch");
+    }
+
+    #[test]
+    fn diagonal_solve_basic() {
+        // Diagonal matrix: K = diag(2, 4), b = [6, 12] → x = [3, 3]
+        let k = vec![2.0, 0.0, 0.0, 4.0];
+        let b = vec![6.0, 12.0];
+        let x = diagonal_solve(&k, &b, 2);
+        assert!((x[0] - 3.0).abs() < 1e-10);
+        assert!((x[1] - 3.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn diagonal_solve_near_zero_returns_zero() {
+        let k = vec![1e-15, 0.0, 0.0, 2.0];
+        let b = vec![1.0, 4.0];
+        let x = diagonal_solve(&k, &b, 2);
+        assert!((x[0] - 0.0).abs() < f64::EPSILON); // near-zero diagonal → 0
+        assert!((x[1] - 2.0).abs() < 1e-10);
+    }
+
+    // ── decode_params ────────────────────────────────────────────────
+
+    #[test]
+    fn decode_params_integer() {
+        let continuous = vec![("dte".to_string(), 7.0, 28.0, true, None)];
+        let x = vec![0.0]; // min
+        let params = decode_params(&x, &continuous);
+        assert_eq!(params.get("dte").unwrap(), &json!(7_i64));
+
+        let x = vec![1.0]; // max
+        let params = decode_params(&x, &continuous);
+        assert_eq!(params.get("dte").unwrap(), &json!(28_i64));
+    }
+
+    #[test]
+    fn decode_params_float() {
+        let continuous = vec![("delta".to_string(), 0.1, 0.5, false, Some(0.05))];
+        let x = vec![0.5]; // midpoint → 0.3
+        let params = decode_params(&x, &continuous);
+        let val = params.get("delta").unwrap().as_f64().unwrap();
+        assert!((val - 0.30).abs() < 0.01, "delta={val}, expected ~0.30");
+    }
+
+    #[test]
+    fn decode_params_step_snapping() {
+        // Step = 5, range 0..100, x=0.33 → val=33 → snap to 35
+        let continuous = vec![("param".to_string(), 0.0, 100.0, true, Some(5.0))];
+        let x = vec![0.33];
+        let params = decode_params(&x, &continuous);
+        assert_eq!(params.get("param").unwrap(), &json!(35_i64));
+    }
+
+    #[test]
+    fn decode_params_multi_dimensional() {
+        let continuous = vec![
+            ("a".to_string(), 0.0, 10.0, true, None),
+            ("b".to_string(), 0.0, 1.0, false, Some(0.1)),
+        ];
+        let x = vec![0.5, 0.5]; // a=5, b=0.5
+        let params = decode_params(&x, &continuous);
+        assert_eq!(params.get("a").unwrap(), &json!(5_i64));
+        let b = params.get("b").unwrap().as_f64().unwrap();
+        assert!((b - 0.5).abs() < 0.01);
+    }
+
+    // ── GP edge cases ────────────────────────────────────────────────
+
+    #[test]
+    fn gp_single_point() {
+        let xs = vec![vec![0.5]];
+        let ys = vec![1.0];
+        let gp = GaussianProcess::fit(&xs, &ys);
+        let (mean, var) = gp.predict(&[0.5]);
+        assert!(mean.is_finite());
+        assert!(var > 0.0);
+    }
+
+    #[test]
+    fn gp_variance_increases_away_from_data() {
+        let xs = vec![vec![0.0], vec![1.0]];
+        let ys = vec![1.0, 1.0];
+        let gp = GaussianProcess::fit(&xs, &ys);
+        let (_, var_near) = gp.predict(&[0.5]);
+        let (_, var_far) = gp.predict(&[5.0]);
+        assert!(
+            var_far > var_near,
+            "Variance should increase far from training data: {var_far} vs {var_near}"
+        );
+    }
+
+    #[test]
+    fn gp_median_distance_two_points() {
+        let xs = vec![vec![0.0], vec![1.0]];
+        let dist = GaussianProcess::median_distance(&xs);
+        assert!((dist - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn gp_median_distance_single_point() {
+        let xs = vec![vec![0.0]];
+        let dist = GaussianProcess::median_distance(&xs);
+        assert!((dist - 1.0).abs() < 1e-10); // fallback
+    }
+
+    // ── cache_key ────────────────────────────────────────────────────
+
+    #[test]
+    fn cache_key_deterministic() {
+        let mut params = HashMap::new();
+        params.insert("b".to_string(), json!(2));
+        params.insert("a".to_string(), json!(1));
+        let k1 = cache_key(&params);
+        let k2 = cache_key(&params);
+        assert_eq!(k1, k2);
+        // Should be sorted by key name
+        assert!(k1.starts_with("a="), "key should start with 'a=': {k1}");
+    }
+
+    #[test]
+    fn cache_key_different_for_different_values() {
+        let mut p1 = HashMap::new();
+        p1.insert("x".to_string(), json!(1));
+        let mut p2 = HashMap::new();
+        p2.insert("x".to_string(), json!(2));
+        assert_ne!(cache_key(&p1), cache_key(&p2));
+    }
 
     /// Verify GP predict correctness: mean should interpolate training points.
     #[test]
