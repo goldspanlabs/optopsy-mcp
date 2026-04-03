@@ -496,16 +496,23 @@ fn check_portfolio_in_stmts(stmts: &[Stmt]) -> Result<(), DslError> {
     visit_exprs_in_stmts(stmts, &check_portfolio_expr)
 }
 
-/// Recursively check that no `set portfolio.X = ...` assignments appear.
+/// Recursively check that no assignment-like statements target `portfolio.*`.
 fn check_portfolio_assignment(stmts: &[Stmt]) -> Result<(), DslError> {
     for stmt in stmts {
-        if let Stmt::Set { name, line, .. } = stmt {
-            if name.starts_with("portfolio.") {
-                return Err(DslError::new(
-                    *line,
-                    "cannot assign to `portfolio` — it is read-only",
-                ));
-            }
+        // Check all statements that mutate a named target
+        let (name, line) = match stmt {
+            Stmt::Set { name, line, .. } => (name.as_str(), *line),
+            Stmt::AddTo { name, line, .. } => (name.as_str(), *line),
+            Stmt::SubtractFrom { name, line, .. } => (name.as_str(), *line),
+            Stmt::MultiplyBy { name, line, .. } => (name.as_str(), *line),
+            Stmt::DivideBy { name, line, .. } => (name.as_str(), *line),
+            _ => ("", 0),
+        };
+        if name.starts_with("portfolio.") {
+            return Err(DslError::new(
+                line,
+                "cannot assign to `portfolio` — it is read-only",
+            ));
         }
         // Recurse into nested bodies
         match stmt {
@@ -544,7 +551,16 @@ fn check_portfolio_expr(expr: &str, line: usize) -> Result<(), DslError> {
             .unwrap_or(after.len());
         let prop = &after[..prop_end];
 
-        if !prop.is_empty() && !PORTFOLIO_PROPERTIES.contains(&prop) {
+        if prop.is_empty() {
+            return Err(DslError::new(
+                line,
+                format!(
+                    "missing property name after `portfolio.`. Valid properties: {}",
+                    PORTFOLIO_PROPERTIES.join(", ")
+                ),
+            ));
+        }
+        if !PORTFOLIO_PROPERTIES.contains(&prop) {
             return Err(DslError::new(
                 line,
                 format!(
@@ -699,6 +715,9 @@ fn check_quantifier_fields_in_stmts(stmts: &[Stmt]) -> Result<(), DslError> {
                 if let Some(ref eb) = else_body {
                     check_quantifier_fields_in_stmts(eb)?;
                 }
+            }
+            Stmt::ForEach { body, .. } | Stmt::TryOpen { body, .. } => {
+                check_quantifier_fields_in_stmts(body)?;
             }
             _ => {}
         }

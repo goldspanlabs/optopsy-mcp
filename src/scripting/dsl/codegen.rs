@@ -1872,14 +1872,15 @@ fn preprocess_aggregations(expr: &str) -> String {
 
     for method in AGGREGATION_METHODS {
         let pattern = format!(".{method}(");
-        // Process from right to left to avoid offset invalidation
-        while let Some(dot_pos) = result.rfind(&pattern) {
-            // Skip matches inside string literals
+        // Process from right to left to avoid offset invalidation.
+        // Use a search ceiling to skip past matches inside string literals.
+        let mut ceiling = result.len();
+        while let Some(dot_pos) = result[..ceiling].rfind(&pattern) {
+            // Skip matches inside string literals — move ceiling before this
+            // match and continue searching earlier positions.
             if is_inside_string_literal(&result, dot_pos) {
-                // Can't use rfind again from before dot_pos easily, so just break.
-                // In practice aggregation calls don't appear after a string literal
-                // containing the same pattern.
-                break;
+                ceiling = dot_pos;
+                continue;
             }
             // Extract iterable by walking backward from the dot
             let before = &result[..dot_pos];
