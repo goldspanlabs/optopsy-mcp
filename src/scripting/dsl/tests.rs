@@ -1500,11 +1500,11 @@ on each bar
 }
 
 #[test]
-fn test_intraday_keyword_error_minutes_since_open_weekly() {
+fn test_intraday_keyword_error_minutes_since_open_daily() {
     let dsl = r#"
 strategy "Test"
   symbol SPY
-  interval weekly
+  interval daily
 
 on each bar
   skip when minutes_since_open < 30
@@ -1707,4 +1707,42 @@ on each bar
     let rhai = transpile(dsl).unwrap();
     assert!(rhai.contains("monday_count"));
     assert!(rhai.contains("may_trades"));
+}
+
+#[test]
+fn test_reserved_name_set_variable() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  set march to 3
+  buy 100 shares
+"#;
+
+    let err = transpile(dsl).unwrap_err();
+    assert!(
+        err.message.contains("reserved day/month name"),
+        "Should reject set variable named 'march'.\nGot: {err}"
+    );
+}
+
+#[test]
+fn test_reserved_name_for_each_variable() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  for each friday in pos.legs
+    hold position
+"#;
+
+    let err = transpile(dsl).unwrap_err();
+    assert!(
+        err.message.contains("reserved day/month name"),
+        "Should reject for-each variable named 'friday'.\nGot: {err}"
+    );
 }

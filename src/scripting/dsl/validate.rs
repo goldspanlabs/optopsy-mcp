@@ -9,13 +9,14 @@ use super::error::DslError;
 use super::parser::{DslProgram, Stmt};
 
 /// Keywords that are only meaningful for intraday intervals.
-/// Using these with `daily`, `weekly`, or `monthly` intervals is a compile error.
+/// Using these with a daily interval is a compile error.
 const INTRADAY_ONLY_KEYWORDS: &[&str] =
     &["time", "is_first_bar", "is_last_bar", "minutes_since_open"];
 
-/// Intervals that are NOT intraday.
+/// Intervals that are NOT intraday. Only includes intervals actually
+/// supported by `Interval::parse()` to avoid false acceptance.
 fn is_non_intraday(interval: &str) -> bool {
-    matches!(interval, "daily" | "1d" | "weekly" | "monthly")
+    matches!(interval, "daily" | "1d")
 }
 
 /// Check that intraday-only time keywords are not used with non-intraday intervals,
@@ -52,11 +53,17 @@ pub fn check_interval_time_keywords(program: &DslProgram) -> Result<(), DslError
     Ok(())
 }
 
-/// Reject extern/state variable names that collide with reserved day/month keywords.
+/// Check if a name collides with a reserved day/month keyword.
+fn is_reserved_name(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    day_name_to_number(&lower).is_some() || month_name_to_number(&lower).is_some()
+}
+
+/// Reject variable names that collide with reserved day/month keywords.
+/// Checks extern, state, set, for-each, and try-open-as identifiers.
 fn check_reserved_names(program: &DslProgram) -> Result<(), DslError> {
     for p in &program.params {
-        let lower = p.name.to_lowercase();
-        if day_name_to_number(&lower).is_some() || month_name_to_number(&lower).is_some() {
+        if is_reserved_name(&p.name) {
             return Err(DslError::general(format!(
                 "extern `{}` conflicts with reserved day/month name. \
                  Choose a different variable name.",
@@ -65,13 +72,88 @@ fn check_reserved_names(program: &DslProgram) -> Result<(), DslError> {
         }
     }
     for s in &program.states {
-        let lower = s.name.to_lowercase();
-        if day_name_to_number(&lower).is_some() || month_name_to_number(&lower).is_some() {
+        if is_reserved_name(&s.name) {
             return Err(DslError::general(format!(
                 "state `{}` conflicts with reserved day/month name. \
                  Choose a different variable name.",
                 s.name
             )));
+        }
+    }
+
+    // Check all statement blocks for identifier-introducing statements
+    let blocks: Vec<&Option<Vec<Stmt>>> = vec![
+        &program.on_bar,
+        &program.on_exit_check,
+        &program.on_position_opened,
+        &program.on_position_closed,
+        &program.on_end,
+    ];
+    for block in blocks.into_iter().flatten() {
+        check_reserved_names_in_stmts(block)?;
+    }
+    check_reserved_names_in_stmts(&program.body)?;
+
+    Ok(())
+}
+
+/// Recursively check statements for reserved day/month names used as identifiers.
+fn check_reserved_names_in_stmts(stmts: &[Stmt]) -> Result<(), DslError> {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Set { name, line, .. } => {
+                if is_reserved_name(name) {
+                    return Err(DslError::new(
+                        *line,
+                        format!(
+                            "variable `{name}` conflicts with reserved day/month name. \
+                             Choose a different variable name."
+                        ),
+                    ));
+                }
+            }
+            Stmt::ForEach {
+                var, body, line, ..
+            } => {
+                if is_reserved_name(var) {
+                    return Err(DslError::new(
+                        *line,
+                        format!(
+                            "loop variable `{var}` conflicts with reserved day/month name. \
+                             Choose a different variable name."
+                        ),
+                    ));
+                }
+                check_reserved_names_in_stmts(body)?;
+            }
+            Stmt::TryOpen {
+                var_name,
+                body,
+                line,
+                ..
+            } => {
+                if is_reserved_name(var_name) {
+                    return Err(DslError::new(
+                        *line,
+                        format!(
+                            "variable `{var_name}` conflicts with reserved day/month name. \
+                             Choose a different variable name."
+                        ),
+                    ));
+                }
+                check_reserved_names_in_stmts(body)?;
+            }
+            Stmt::When {
+                then_body,
+                else_body,
+                ..
+            } => {
+                check_reserved_names_in_stmts(then_body)?;
+                if let Some(ref eb) = else_body {
+                    check_reserved_names_in_stmts(eb)?;
+                }
+            }
+            _ => {}
         }
     }
     Ok(())

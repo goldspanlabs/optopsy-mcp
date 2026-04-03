@@ -405,14 +405,24 @@ impl BarContext {
     }
 
     /// Trading days remaining in the current month, counted from bar data.
-    /// Since bars only exist on actual trading days, this is exact for the dataset.
+    /// For intraday datasets, multiple bars on the same date count as one trading day.
     pub fn trading_days_left(&mut self) -> i64 {
         let target_month = self.datetime.date().month();
+        let mut last_date = None;
         self.price_history
             .get(self.bar_idx + 1..)
             .unwrap_or_default()
             .iter()
             .take_while(|b| b.datetime.date().month() == target_month)
+            .filter(|b| {
+                let date = b.datetime.date();
+                if last_date == Some(date) {
+                    false
+                } else {
+                    last_date = Some(date);
+                    true
+                }
+            })
             .count() as i64
     }
 
@@ -1442,9 +1452,9 @@ mod tests {
 
     // -----------------------------------------------------------------------
     #[test]
-    fn test_trading_days_left_intraday_multiple_bars_per_day() {
+    fn test_trading_days_left_intraday_counts_unique_dates() {
         // Intraday: 3 bars on Jan 15, then 2 bars on Jan 16, then Feb 1
-        // From bar 0 (Jan 15 09:30), remaining bars in Jan: 4 (rest of Jan 15 + Jan 16)
+        // From bar 0 (Jan 15 09:30), remaining unique dates in Jan: Jan 15 (2 more bars) + Jan 16 = 2 days
         let bars = vec![
             dt(2024, 1, 15, 9, 30),
             dt(2024, 1, 15, 10, 0),
@@ -1454,7 +1464,7 @@ mod tests {
             dt(2024, 2, 1, 9, 30),
         ];
         let mut ctx = make_ctx(dt(2024, 1, 15, 9, 30), 0, bars);
-        assert_eq!(ctx.trading_days_left(), 4);
+        assert_eq!(ctx.trading_days_left(), 2); // Jan 15 + Jan 16 (unique dates)
     }
 
     #[test]
