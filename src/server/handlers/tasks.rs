@@ -423,7 +423,7 @@ pub async fn submit_sweep(
                 let obj = req.objective.clone();
                 let sweep_response = if n_perms > 0 {
                     match tokio::task::spawn_blocking(move || {
-                        apply_permutation_gate(sweep_response, n_perms, &obj, None)
+                        apply_permutation_gate(sweep_response, n_perms, &obj, Some(42))
                     })
                     .await
                     {

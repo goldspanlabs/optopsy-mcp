@@ -309,7 +309,7 @@ async fn execute_sweep(
     let objective = req.objective.clone();
     let sweep_response = if num_permutations > 0 {
         tokio::task::spawn_blocking(move || {
-            apply_permutation_gate(sweep_response, num_permutations, &objective, None)
+            apply_permutation_gate(sweep_response, num_permutations, &objective, Some(42))
         })
         .await?
     } else {

@@ -180,7 +180,7 @@ pub fn clamp_permutations(n: usize) -> usize {
 /// excluded from multiple comparisons corrections.
 ///
 /// Returns the response unchanged if `n_perms == 0`, results are empty, or
-/// `full_results` is empty for any reason.
+/// `full_results` is empty.
 pub fn apply_permutation_gate(
     mut response: SweepResponse,
     n_perms: usize,
@@ -460,7 +460,8 @@ mod tests {
 
     #[test]
     fn gate_noop_when_no_full_results() {
-        // Simulates Bayesian sweep with empty full_results
+        // Verifies the permutation gate is a no-op when full_results is empty,
+        // regardless of sweep mode.
         let response = SweepResponse {
             mode: "bayesian".into(),
             objective: "sharpe".into(),
