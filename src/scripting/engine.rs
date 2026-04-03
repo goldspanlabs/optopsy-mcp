@@ -2225,7 +2225,7 @@ fn compute_portfolio_state(
         max_position_pnl,
         min_position_pnl,
         drawdown,
-        peak_equity,
+        peak_equity: effective_peak,
     }
 }
 

@@ -884,52 +884,56 @@ fn generate_stmts(
                 let iter_rw = rewrite_expr(iterable);
                 let cond_rw = rewrite_quantifier_condition(condition, binding_var);
 
+                // Wrap in { } block scope so __any_match/__all_match don't
+                // collide when multiple quantifiers appear in the same block.
+                let si = "    ".repeat(depth + 1); // scoped indent
+                let inner = "    ".repeat(depth + 2);
+                let inner2 = "    ".repeat(depth + 3);
+
                 match quantifier {
                     Quantifier::Any => {
-                        out.push_str(&format!("{indent}let __any_match = false;\n"));
+                        out.push_str(&format!("{indent}{{\n"));
+                        out.push_str(&format!("{si}let __any_match = false;\n"));
                         if let Some(ref cap) = capture_as {
-                            out.push_str(&format!("{indent}let {cap} = ();\n"));
+                            out.push_str(&format!("{si}let {cap} = ();\n"));
                         }
-                        out.push_str(&format!("{indent}for {binding_var} in {iter_rw} {{\n"));
-                        let inner = "    ".repeat(depth + 1);
+                        out.push_str(&format!("{si}for {binding_var} in {iter_rw} {{\n"));
                         out.push_str(&format!("{inner}if {cond_rw} {{\n"));
-                        let inner2 = "    ".repeat(depth + 2);
                         out.push_str(&format!("{inner2}__any_match = true;\n"));
                         if let Some(ref cap) = capture_as {
                             out.push_str(&format!("{inner2}{cap} = {binding_var};\n"));
                         }
                         out.push_str(&format!("{inner2}break;\n"));
                         out.push_str(&format!("{inner}}}\n"));
-                        out.push_str(&format!("{indent}}}\n"));
-                        out.push_str(&format!("{indent}if __any_match {{\n"));
-                        generate_stmts(out, then_body, depth + 1, kind, scope_vars);
-                        out.push_str(&format!("{indent}}}"));
+                        out.push_str(&format!("{si}}}\n"));
+                        out.push_str(&format!("{si}if __any_match {{\n"));
+                        generate_stmts(out, then_body, depth + 2, kind, scope_vars);
+                        out.push_str(&format!("{si}}}"));
                         if let Some(ref eb) = else_body {
                             out.push_str(" else {\n");
-                            generate_stmts(out, eb, depth + 1, kind, scope_vars);
-                            out.push_str(&format!("{indent}}}"));
+                            generate_stmts(out, eb, depth + 2, kind, scope_vars);
+                            out.push_str(&format!("{si}}}"));
                         }
-                        out.push('\n');
+                        out.push_str(&format!("\n{indent}}}\n"));
                     }
                     Quantifier::All => {
-                        out.push_str(&format!("{indent}let __all_match = true;\n"));
-                        out.push_str(&format!("{indent}for {binding_var} in {iter_rw} {{\n"));
-                        let inner = "    ".repeat(depth + 1);
+                        out.push_str(&format!("{indent}{{\n"));
+                        out.push_str(&format!("{si}let __all_match = true;\n"));
+                        out.push_str(&format!("{si}for {binding_var} in {iter_rw} {{\n"));
                         out.push_str(&format!("{inner}if !({cond_rw}) {{\n"));
-                        let inner2 = "    ".repeat(depth + 2);
                         out.push_str(&format!("{inner2}__all_match = false;\n"));
                         out.push_str(&format!("{inner2}break;\n"));
                         out.push_str(&format!("{inner}}}\n"));
-                        out.push_str(&format!("{indent}}}\n"));
-                        out.push_str(&format!("{indent}if __all_match {{\n"));
-                        generate_stmts(out, then_body, depth + 1, kind, scope_vars);
-                        out.push_str(&format!("{indent}}}"));
+                        out.push_str(&format!("{si}}}\n"));
+                        out.push_str(&format!("{si}if __all_match {{\n"));
+                        generate_stmts(out, then_body, depth + 2, kind, scope_vars);
+                        out.push_str(&format!("{si}}}"));
                         if let Some(ref eb) = else_body {
                             out.push_str(" else {\n");
-                            generate_stmts(out, eb, depth + 1, kind, scope_vars);
-                            out.push_str(&format!("{indent}}}"));
+                            generate_stmts(out, eb, depth + 2, kind, scope_vars);
+                            out.push_str(&format!("{si}}}"));
                         }
-                        out.push('\n');
+                        out.push_str(&format!("\n{indent}}}\n"));
                     }
                 }
             }
