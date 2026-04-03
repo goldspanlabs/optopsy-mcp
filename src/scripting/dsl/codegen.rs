@@ -1422,7 +1422,7 @@ fn preprocess_crossovers(expr: &str) -> String {
 
 /// Try to match a time literal (`HH:MM`) at position `pos` in `chars`.
 /// Returns `Some((quoted_string, end_pos))` on success, `None` otherwise.
-fn try_parse_time_literal(chars: &[char], pos: usize) -> Option<(String, usize)> {
+pub fn try_parse_time_literal(chars: &[char], pos: usize) -> Option<(String, usize)> {
     // Must start with a digit, not preceded by alphanumeric/underscore
     if !chars[pos].is_ascii_digit() {
         return None;
@@ -1506,7 +1506,7 @@ fn preprocess_time_literals(expr: &str) -> String {
 
 /// Skip past a string literal starting at `pos` (which points to the opening `"`).
 /// Returns the position after the closing `"`.
-fn skip_string_literal(chars: &[char], pos: usize) -> usize {
+pub fn skip_string_literal(chars: &[char], pos: usize) -> usize {
     let mut i = pos + 1; // skip opening "
     while i < chars.len() && chars[i] != '"' {
         if chars[i] == '\\' {

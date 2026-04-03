@@ -132,68 +132,41 @@ fn check_expr(
 
 /// Validate that all time literals (HH:MM patterns) in an expression have valid
 /// hour (0-23) and minute (0-59) values.
+///
+/// Reuses `try_parse_time_literal` from codegen for pattern matching, then
+/// checks the range of the parsed values.
 fn check_time_literals(expr: &str, line: usize) -> Result<(), DslError> {
-    let bytes = expr.as_bytes();
+    use super::codegen::{skip_string_literal, try_parse_time_literal};
+
+    let chars: Vec<char> = expr.chars().collect();
     let mut i = 0;
 
-    while i < bytes.len() {
-        // Skip string literals
-        if bytes[i] == b'"' {
-            i += 1;
-            while i < bytes.len() && bytes[i] != b'"' {
-                if bytes[i] == b'\\' {
-                    i += 1;
-                }
-                i += 1;
-            }
-            i += 1; // skip closing quote
+    while i < chars.len() {
+        if chars[i] == '"' {
+            i = skip_string_literal(&chars, i);
             continue;
         }
 
-        // Look for digit that could start a time literal
-        if bytes[i].is_ascii_digit() {
-            // Must not be preceded by alphanumeric/underscore
-            let preceded_by_alnum =
-                i > 0 && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_');
-            if !preceded_by_alnum {
-                let start = i;
-                // Consume 1-2 digits
-                while i < bytes.len() && bytes[i].is_ascii_digit() && i - start < 2 {
-                    i += 1;
-                }
-                let hour_len = i - start;
-                // Check for colon followed by exactly 2 digits
-                if hour_len >= 1 && i < bytes.len() && bytes[i] == b':' {
-                    let colon_pos = i;
-                    i += 1;
-                    let min_start = i;
-                    while i < bytes.len() && bytes[i].is_ascii_digit() && i - min_start < 2 {
-                        i += 1;
-                    }
-                    let min_len = i - min_start;
-                    let followed_by_more =
-                        i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b':');
-                    if min_len == 2 && !followed_by_more {
-                        // This is a time literal — validate it
-                        let hour_str = std::str::from_utf8(&bytes[start..colon_pos]).unwrap_or("0");
-                        let min_str =
-                            std::str::from_utf8(&bytes[min_start..min_start + 2]).unwrap_or("0");
-                        let hour: u32 = hour_str.parse().unwrap_or(99);
-                        let min: u32 = min_str.parse().unwrap_or(99);
-                        if hour > 23 || min > 59 {
-                            return Err(DslError::new(
-                                line,
-                                format!(
-                                    "invalid time literal `{hour_str}:{min_str}`. \
-                                     Hour must be 0-23 and minute must be 0-59 (24-hour format)."
-                                ),
-                            ));
-                        }
-                        continue;
-                    }
+        if let Some((quoted, end)) = try_parse_time_literal(&chars, i) {
+            // Extract HH:MM from the quoted string `"HH:MM"`
+            let inner = &quoted[1..quoted.len() - 1]; // strip quotes
+            if let Some((hour_str, min_str)) = inner.split_once(':') {
+                let hour: u32 = hour_str.parse().unwrap_or(99);
+                let min: u32 = min_str.parse().unwrap_or(99);
+                if hour > 23 || min > 59 {
+                    return Err(DslError::new(
+                        line,
+                        format!(
+                            "invalid time literal `{inner}`. \
+                             Hour must be 0-23 and minute must be 0-59 (24-hour format)."
+                        ),
+                    ));
                 }
             }
+            i = end;
+            continue;
         }
+
         i += 1;
     }
     Ok(())
