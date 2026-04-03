@@ -108,7 +108,7 @@ pub struct BarContext {
 ///
 /// Note: `position_count` excludes implicit positions (e.g., auto-hedged stock
 /// from assignment), so `long_count + short_count` may not equal `position_count`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct PortfolioState {
     pub cash: f64,
     pub equity: f64,
@@ -129,22 +129,54 @@ pub struct PortfolioState {
 }
 
 impl PortfolioState {
-    pub fn get_cash(&mut self) -> f64 { self.cash }
-    pub fn get_equity(&mut self) -> f64 { self.equity }
-    pub fn get_unrealized_pnl(&mut self) -> f64 { self.unrealized_pnl }
-    pub fn get_realized_pnl(&mut self) -> f64 { self.realized_pnl }
-    pub fn get_total_exposure(&mut self) -> f64 { self.total_exposure }
-    pub fn get_exposure_pct(&mut self) -> f64 { self.exposure_pct }
-    pub fn get_net_delta(&mut self) -> f64 { self.net_delta }
-    pub fn get_long_delta(&mut self) -> f64 { self.long_delta }
-    pub fn get_short_delta(&mut self) -> f64 { self.short_delta }
-    pub fn get_position_count(&mut self) -> i64 { self.position_count }
-    pub fn get_long_count(&mut self) -> i64 { self.long_count }
-    pub fn get_short_count(&mut self) -> i64 { self.short_count }
-    pub fn get_max_position_pnl(&mut self) -> f64 { self.max_position_pnl }
-    pub fn get_min_position_pnl(&mut self) -> f64 { self.min_position_pnl }
-    pub fn get_drawdown(&mut self) -> f64 { self.drawdown }
-    pub fn get_peak_equity(&mut self) -> f64 { self.peak_equity }
+    pub fn get_cash(&mut self) -> f64 {
+        self.cash
+    }
+    pub fn get_equity(&mut self) -> f64 {
+        self.equity
+    }
+    pub fn get_unrealized_pnl(&mut self) -> f64 {
+        self.unrealized_pnl
+    }
+    pub fn get_realized_pnl(&mut self) -> f64 {
+        self.realized_pnl
+    }
+    pub fn get_total_exposure(&mut self) -> f64 {
+        self.total_exposure
+    }
+    pub fn get_exposure_pct(&mut self) -> f64 {
+        self.exposure_pct
+    }
+    pub fn get_net_delta(&mut self) -> f64 {
+        self.net_delta
+    }
+    pub fn get_long_delta(&mut self) -> f64 {
+        self.long_delta
+    }
+    pub fn get_short_delta(&mut self) -> f64 {
+        self.short_delta
+    }
+    pub fn get_position_count(&mut self) -> i64 {
+        self.position_count
+    }
+    pub fn get_long_count(&mut self) -> i64 {
+        self.long_count
+    }
+    pub fn get_short_count(&mut self) -> i64 {
+        self.short_count
+    }
+    pub fn get_max_position_pnl(&mut self) -> f64 {
+        self.max_position_pnl
+    }
+    pub fn get_min_position_pnl(&mut self) -> f64 {
+        self.min_position_pnl
+    }
+    pub fn get_drawdown(&mut self) -> f64 {
+        self.drawdown
+    }
+    pub fn get_peak_equity(&mut self) -> f64 {
+        self.peak_equity
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1159,6 +1191,7 @@ mod tests {
             max_profit: 0.0,
             max_loss: 0.0,
             pending_orders_count: 0,
+            portfolio: PortfolioState::default(),
         }
     }
 

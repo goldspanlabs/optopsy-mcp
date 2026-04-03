@@ -55,6 +55,8 @@ pub use syntax::register_dsl_syntax;
 pub fn transpile(source: &str) -> Result<String, DslError> {
     let program = parser::parse(source)?;
     validate::check_interval_time_keywords(&program)?;
+    validate::check_portfolio_access(&program)?;
+    validate::check_quantifiers(&program)?;
     Ok(codegen::generate(&program))
 }
 

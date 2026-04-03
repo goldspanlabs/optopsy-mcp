@@ -1790,3 +1790,433 @@ on each bar
         "Chained inline if/else should produce else-if.\nGenerated:\n{rhai}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Portfolio namespace tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_portfolio_property_access() {
+    let dsl = r#"
+strategy "Portfolio Test"
+  symbol SPY
+  interval daily
+  data ohlcv
+
+on each bar
+  skip when portfolio.exposure_pct > 0.50
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("ctx.portfolio.exposure_pct"),
+        "Should rewrite portfolio.exposure_pct to ctx.portfolio.exposure_pct.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_portfolio_in_skip_when() {
+    let dsl = r#"
+strategy "Portfolio Skip"
+  symbol SPY
+  interval daily
+  data ohlcv
+
+on each bar
+  skip when portfolio.drawdown < -0.10
+  skip when portfolio.net_delta > 100
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("ctx.portfolio.drawdown"),
+        "Should rewrite portfolio.drawdown.\nGenerated:\n{rhai}"
+    );
+    assert!(
+        rhai.contains("ctx.portfolio.net_delta"),
+        "Should rewrite portfolio.net_delta.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_portfolio_in_when_then() {
+    let dsl = r#"
+strategy "Portfolio Guard"
+  symbol SPY
+  interval daily
+  data ohlcv
+
+on each bar
+  when portfolio.long_count >= 5 then
+    hold position
+  otherwise
+    buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("ctx.portfolio.long_count >= 5"),
+        "Should rewrite portfolio.long_count in when condition.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_portfolio_unknown_property_rejected() {
+    let dsl = r#"
+strategy "Bad Portfolio"
+  symbol SPY
+  interval daily
+  data ohlcv
+
+on each bar
+  skip when portfolio.foo > 1
+  buy 100 shares
+"#;
+
+    let err = transpile(dsl).unwrap_err();
+    assert!(
+        err.message.contains("portfolio") && err.message.contains("foo"),
+        "Should mention unknown portfolio property.\nGot: {}",
+        err.message
+    );
+}
+
+#[test]
+fn test_portfolio_assignment_rejected() {
+    let dsl = r#"
+strategy "Bad Assignment"
+  symbol SPY
+  interval daily
+  data ohlcv
+
+on each bar
+  set portfolio.cash to 1000
+  buy 100 shares
+"#;
+
+    let err = transpile(dsl).unwrap_err();
+    assert!(
+        err.message.contains("read-only") || err.message.contains("cannot assign"),
+        "Should reject assignment to portfolio.\nGot: {}",
+        err.message
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Quantifier tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_when_any_leg_condition() {
+    let dsl = r#"
+strategy "Delta Check"
+  symbol SPY
+  interval daily
+  data ohlcv, options
+
+on exit check
+  when any leg in pos.legs has delta > 0.50 then
+    close position "delta too high"
+  otherwise
+    hold position
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("__any_match"),
+        "Should generate __any_match variable.\nGenerated:\n{rhai}"
+    );
+    assert!(
+        rhai.contains("leg.delta > 0.50"),
+        "Should qualify delta with leg.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_when_all_legs_condition() {
+    let dsl = r#"
+strategy "All Legs Check"
+  symbol SPY
+  interval daily
+  data ohlcv, options
+
+on exit check
+  when all legs in pos.legs have current_price < 0.05 then
+    close position "all legs worthless"
+  otherwise
+    hold position
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("__all_match"),
+        "Should generate __all_match variable.\nGenerated:\n{rhai}"
+    );
+    assert!(
+        rhai.contains("legs.current_price < 0.05"),
+        "Should check current_price on each leg.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_when_any_with_binding() {
+    let dsl = r#"
+strategy "Binding Test"
+  symbol SPY
+  interval daily
+  data ohlcv, options
+
+on exit check
+  when any leg in pos.legs has delta > 0.50 as hot_leg then
+    close position "hot leg"
+  otherwise
+    hold position
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("let hot_leg = ();"),
+        "Should declare hot_leg.\nGenerated:\n{rhai}"
+    );
+    assert!(
+        rhai.contains("hot_leg = leg;"),
+        "Should capture leg into hot_leg.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_legs_sum_aggregation() {
+    let dsl = r#"
+strategy "Sum Delta"
+  symbol SPY
+  interval daily
+  data ohlcv, options
+
+on exit check
+  when pos.legs.sum(delta) > 1.0 then
+    close position "net delta too high"
+  otherwise
+    hold position
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("__agg_"),
+        "Should generate uniquely suffixed aggregation variable.\nGenerated:\n{rhai}"
+    );
+    assert!(
+        rhai.contains(".delta"),
+        "Should access .delta on each leg.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_legs_count_aggregation() {
+    let dsl = r#"
+strategy "Count Legs"
+  symbol SPY
+  interval daily
+  data ohlcv, options
+
+on exit check
+  when pos.legs.count(side == "long") > 2 then
+    close position "too many long legs"
+  otherwise
+    hold position
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("__agg_"),
+        "Should generate uniquely suffixed count variable.\nGenerated:\n{rhai}"
+    );
+    assert!(
+        rhai.contains(".side == \"long\""),
+        "Should qualify side with __el_N.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_legs_min_max_avg_aggregation() {
+    let dsl = r#"
+strategy "Min Price"
+  symbol SPY
+  interval daily
+  data ohlcv, options
+
+on exit check
+  when pos.legs.min(current_price) < 0.05 then
+    close position "a leg is nearly worthless"
+  otherwise
+    hold position
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains(".current_price"),
+        "Should access current_price on __el_N.\nGenerated:\n{rhai}"
+    );
+    assert!(
+        rhai.contains("__agg_"),
+        "Should generate uniquely suffixed min aggregation variable.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_multiple_aggregations_in_same_expression() {
+    let dsl = r#"
+strategy "Multi Agg"
+  symbol SPY
+  interval daily
+  data ohlcv, options
+
+on exit check
+  when pos.legs.sum(delta) + pos.legs.max(strike) > 100 then
+    close position "combined check"
+  otherwise
+    hold position
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    // Both should expand with different suffixes
+    assert!(
+        rhai.contains("__agg_0") || rhai.contains("__agg_1"),
+        "Should use unique suffixes for each aggregation.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_quantifier_outside_pos_scope_rejected() {
+    let dsl = r#"
+strategy "Bad Quantifier"
+  symbol SPY
+  interval daily
+  data ohlcv, options
+
+on each bar
+  when any leg in pos.legs has delta > 0.50 then
+    close position "bad"
+"#;
+
+    let err = transpile(dsl).unwrap_err();
+    assert!(
+        err.message.contains("pos") && err.message.contains("scope"),
+        "Should mention pos scope in error.\nGot: {}",
+        err.message
+    );
+}
+
+#[test]
+fn test_quantifier_inside_for_each_pos_allowed() {
+    let dsl = r#"
+strategy "Nested Quantifier"
+  symbol SPY
+  interval daily
+  data ohlcv, options
+
+on each bar
+  for each pos in positions
+    when any leg in pos.legs has delta > 0.50 then
+      close position "delta too high"
+    otherwise
+      hold position
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("__any_match"),
+        "Should generate quantifier loop inside for-each.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_invalid_leg_field_rejected() {
+    let dsl = r#"
+strategy "Bad Field"
+  symbol SPY
+  interval daily
+  data ohlcv, options
+
+on exit check
+  when any leg in pos.legs has foo > 1 then
+    close position "bad"
+"#;
+
+    let err = transpile(dsl).unwrap_err();
+    assert!(
+        err.message.contains("foo"),
+        "Should mention unknown field.\nGot: {}",
+        err.message
+    );
+}
+
+#[test]
+fn test_aggregation_on_non_numeric_field_rejected() {
+    let dsl = r#"
+strategy "Bad Agg"
+  symbol SPY
+  interval daily
+  data ohlcv, options
+
+on exit check
+  when pos.legs.sum(option_type) > 1 then
+    close position "bad"
+  otherwise
+    hold position
+"#;
+
+    let err = transpile(dsl).unwrap_err();
+    assert!(
+        err.message.contains("numeric") && err.message.contains("option_type"),
+        "Should reject sum on non-numeric field.\nGot: {}",
+        err.message
+    );
+}
+
+#[test]
+fn test_portfolio_and_quantifier_together() {
+    let dsl = r#"
+strategy "Combined"
+  symbol SPY
+  interval daily
+  data ohlcv, options
+
+on each bar
+  skip when portfolio.exposure_pct > 0.50
+  buy 100 shares
+
+on exit check
+  when any leg in pos.legs has delta > 0.50 then
+    close position "delta too high"
+  otherwise
+    hold position
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(rhai.contains("ctx.portfolio.exposure_pct > 0.50"));
+    assert!(rhai.contains("__any_match"));
+}
+
+#[test]
+fn test_avg_aggregation() {
+    let dsl = r#"
+strategy "Avg Delta"
+  symbol SPY
+  interval daily
+  data ohlcv, options
+
+on exit check
+  when pos.legs.avg(delta) > 0.30 then
+    close position "avg delta too high"
+  otherwise
+    hold position
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("__sum_") && rhai.contains("__cnt_"),
+        "Should generate uniquely suffixed avg aggregation.\nGenerated:\n{rhai}"
+    );
+}

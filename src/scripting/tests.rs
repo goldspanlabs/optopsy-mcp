@@ -671,6 +671,7 @@ mod tests {
             max_profit: 0.0,
             max_loss: 0.0,
             pending_orders_count: 0,
+            portfolio: crate::scripting::types::PortfolioState::default(),
         }
     }
 

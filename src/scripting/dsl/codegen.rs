@@ -1790,16 +1790,18 @@ fn split_at_top_level_keyword<'a>(expr: &'a str, keyword: &str) -> Option<(&'a s
     Some((&expr[..pos], &expr[pos + kw_len..]))
 }
 
-/// Rewrite a DSL expression into a valid Rhai expression.
-///
-/// - Inline if/else: `V if C else E` → `if C { V } else { E }`
-/// - Bare context properties (`close`, `equity`) → `ctx.close`, `ctx.equity`
 /// Rewrite a quantifier condition expression. Bare identifiers that are known
 /// leg fields get prefixed with `binding_var.`. Other words pass through.
 fn rewrite_quantifier_condition(condition: &str, binding_var: &str) -> String {
     const LEG_FIELDS: &[&str] = &[
-        "delta", "strike", "current_price", "entry_price",
-        "option_type", "side", "qty", "expiration",
+        "delta",
+        "strike",
+        "current_price",
+        "entry_price",
+        "option_type",
+        "side",
+        "qty",
+        "expiration",
     ];
 
     let mut result = String::with_capacity(condition.len() + 32);
@@ -1917,7 +1919,12 @@ fn preprocess_aggregations(expr: &str) -> String {
                 _ => continue,
             };
 
-            result = format!("{}{}{}", &result[..iterable_start], replacement, &result[args_end + 1..]);
+            result = format!(
+                "{}{}{}",
+                &result[..iterable_start],
+                replacement,
+                &result[args_end + 1..]
+            );
         }
     }
 

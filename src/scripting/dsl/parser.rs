@@ -901,7 +901,10 @@ fn parse_when_any_all(
 
     // Split on " in "
     let in_pos = rest.find(" in ").ok_or_else(|| {
-        DslError::new(line_num, "expected 'in' after variable name: when any/all VAR in ITERABLE has ...")
+        DslError::new(
+            line_num,
+            "expected 'in' after variable name: when any/all VAR in ITERABLE has ...",
+        )
     })?;
     let binding_var = rest[..in_pos].trim().to_string();
     let after_in = rest[in_pos + 4..].trim();
@@ -937,29 +940,33 @@ fn parse_when_any_all(
     }
 
     if then_body_lines.is_empty() {
-        return Err(DslError::new(line_num, "when any/all block has no indented body"));
+        return Err(DslError::new(
+            line_num,
+            "when any/all block has no indented body",
+        ));
     }
 
     let then_body = parse_statements(&then_body_lines)?;
 
     // Check for otherwise
-    let else_body = if i < lines.len()
-        && lines[i].indent == base_indent
-        && lines[i].content == "otherwise"
-    {
-        let mut else_body_lines = vec![];
-        i += 1;
-        while i < lines.len() && lines[i].indent > base_indent {
-            else_body_lines.push(lines[i].clone());
+    let else_body =
+        if i < lines.len() && lines[i].indent == base_indent && lines[i].content == "otherwise" {
+            let mut else_body_lines = vec![];
             i += 1;
-        }
-        if else_body_lines.is_empty() {
-            return Err(DslError::new(lines[i - 1].num, "otherwise block has no indented body"));
-        }
-        Some(parse_statements(&else_body_lines)?)
-    } else {
-        None
-    };
+            while i < lines.len() && lines[i].indent > base_indent {
+                else_body_lines.push(lines[i].clone());
+                i += 1;
+            }
+            if else_body_lines.is_empty() {
+                return Err(DslError::new(
+                    lines[i - 1].num,
+                    "otherwise block has no indented body",
+                ));
+            }
+            Some(parse_statements(&else_body_lines)?)
+        } else {
+            None
+        };
 
     Ok((
         Stmt::WhenAnyAll {
