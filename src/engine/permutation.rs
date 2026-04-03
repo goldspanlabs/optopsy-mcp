@@ -256,6 +256,9 @@ pub fn apply_permutation_gate(
 
     response.multiple_comparisons = Some(vec![bh, bonf]);
 
+    // Update best_result to reflect p-value/significance from ranked_results[0]
+    response.best_result = response.ranked_results.first().cloned();
+
     response
 }
 

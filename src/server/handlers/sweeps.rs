@@ -145,6 +145,7 @@ pub(crate) fn persist_sweep_to_store(
         "objective": req.objective,
         "sweep_params": req.sweep_params,
         "params": req.params,
+        "num_permutations": req.num_permutations,
     });
 
     let combinations_total = sweep_response.combinations_total as i64;
