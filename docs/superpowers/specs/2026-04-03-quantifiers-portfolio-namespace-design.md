@@ -15,7 +15,7 @@ Two DSL features to improve multi-leg options position management and portfolio-
 
 ### Context
 
-Quantifiers are valid inside `on exit check` only, where `pos` is available. In `on_bar`, use `for each pos in positions` and nest quantifiers inside.
+Quantifiers are valid wherever `pos` is in scope: inside `on exit check` (where `pos` is implicit) or nested inside a `for each pos in positions` block in `on_bar`. Outside these contexts, quantifiers are a compile error.
 
 ### Syntax: Condition-only (any/all)
 
@@ -112,11 +112,13 @@ if __all_match {
 
 **`pos.legs.sum(delta)` → Rhai (inline expansion):**
 
+Each aggregation expansion uses a unique counter suffix (`_0`, `_1`, ...) to avoid variable collisions when multiple aggregations appear in the same expression (e.g., `pos.legs.sum(delta) + pos.legs.max(strike) > 100`).
+
 ```rhai
 {
-    let __sum = 0.0;
-    for __leg in pos.legs { __sum += __leg.delta; }
-    __sum
+    let __agg_0 = 0.0;
+    for __el_0 in pos.legs { __agg_0 += __el_0.delta; }
+    __agg_0
 }
 ```
 
@@ -124,19 +126,19 @@ if __all_match {
 
 ```rhai
 {
-    let __count = 0;
-    for __leg in pos.legs {
-        if __leg.side == "long" { __count += 1; }
+    let __agg_1 = 0;
+    for __el_1 in pos.legs {
+        if __el_1.side == "long" { __agg_1 += 1; }
     }
-    __count
+    __agg_1
 }
 ```
 
-`min`, `max`, `avg` follow the same loop pattern.
+`min`, `max`, `avg` follow the same loop pattern with unique suffixes.
 
 ### Validation
 
-- `when any/all ... in pos.legs` outside `on exit check` → compile error with guidance to use `for each pos in positions` in `on_bar`
+- `when any/all ... in pos.legs` outside `on exit check` or `for each pos in positions` → compile error with guidance
 - Unknown leg field in `has FIELD ...` → error listing valid fields: `delta`, `strike`, `current_price`, `entry_price`, `option_type`, `side`, `qty`, `expiration`
 - `sum/min/max/avg` on non-numeric field (`option_type`, `side`, `expiration`) → compile error
 - `as <name>` binding must not shadow reserved words or existing variables
@@ -174,9 +176,11 @@ pub struct PortfolioState {
     // P&L
     pub max_position_pnl: f64, // best-performing open position unrealized P&L
     pub min_position_pnl: f64, // worst-performing open position unrealized P&L
-    pub drawdown: f64,         // (equity - peak_equity) / peak_equity, 0.0 to -1.0
+    pub drawdown: f64,         // (equity - peak_equity) / peak_equity, always ≤ 0.0
     pub peak_equity: f64,      // high-water mark across simulation
 }
+// Note: `position_count` excludes implicit positions (e.g., auto-hedged stock from assignment),
+// so `long_count + short_count` may not equal `position_count`.
 ```
 
 ### DSL Syntax
@@ -219,10 +223,13 @@ Existing `ctx.cash`, `ctx.equity`, etc. continue to work unchanged. `portfolio.*
 | `test_when_any_leg_condition` | `when any leg in pos.legs has delta > 0.50 then close position` | Loop with early break, action inside guard |
 | `test_when_all_legs_condition` | `when all legs in pos.legs have current_price < 0.05 then` | All-check loop, break on first false |
 | `test_when_any_with_binding` | `when any leg ... has delta > 0.50 as hot_leg then` | `hot_leg` variable captured |
-| `test_legs_sum` | `pos.legs.sum(delta) > 1.0` | Accumulator loop |
+| `test_legs_sum` | `pos.legs.sum(delta) > 1.0` | Accumulator loop with unique suffix |
 | `test_legs_count` | `pos.legs.count(side == "long")` | Count loop with condition |
 | `test_legs_min_max_avg` | `pos.legs.min(current_price)`, etc. | Each aggregation method |
-| `test_quantifier_outside_exit_check` | Quantifier in `on_bar` | Compile error |
+| `test_multiple_aggregations` | `pos.legs.sum(delta) + pos.legs.max(strike) > 100` | Unique variable suffixes (`__agg_0`, `__agg_1`) |
+| `test_aggregation_non_numeric` | `pos.legs.sum(option_type)` | Compile error (non-numeric field) |
+| `test_quantifier_outside_pos_scope` | Quantifier in `on_bar` without `for each pos` | Compile error |
+| `test_quantifier_inside_for_each_pos` | Quantifier nested in `for each pos in positions` in `on_bar` | Compiles successfully |
 | `test_invalid_leg_field` | `has foo > 1` | Error listing valid fields |
 
 ### Portfolio — Codegen Tests
@@ -249,7 +256,7 @@ Existing `ctx.cash`, `ctx.equity`, etc. continue to work unchanged. `portfolio.*
 |------|---------|
 | `src/scripting/dsl/parser.rs` | Add `WhenAnyAll` variant, `Quantifier` enum, parse `when any/all` syntax |
 | `src/scripting/dsl/codegen.rs` | Generate Rhai loops for quantifiers, expand aggregation methods, rewrite `portfolio.X` |
-| `src/scripting/dsl/validate.rs` | Context checks (exit_check only), field validation, portfolio property validation |
+| `src/scripting/dsl/validate.rs` | Context checks (pos-scope: exit_check or for-each-pos), field validation, portfolio property validation |
 | `src/scripting/types/bar_context.rs` | Add `PortfolioState` struct, `portfolio()` method on `BarContext` |
 | `src/scripting/types/position.rs` | No changes (leg fields already sufficient) |
 | `src/scripting/registration.rs` | Register `PortfolioState` getters with Rhai engine |
