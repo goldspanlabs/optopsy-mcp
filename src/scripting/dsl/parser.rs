@@ -908,7 +908,10 @@ fn parse_when_any_all(
     })?;
     let binding_var = rest[..in_pos].trim().to_string();
     if binding_var.is_empty() {
-        return Err(DslError::new(line_num, "missing variable name after 'any/all'"));
+        return Err(DslError::new(
+            line_num,
+            "missing variable name after 'any/all'",
+        ));
     }
     let after_in = rest[in_pos + 4..].trim();
 
@@ -937,7 +940,10 @@ fn parse_when_any_all(
         (after_has.to_string(), None)
     };
     if condition.is_empty() {
-        return Err(DslError::new(line_num, "missing condition after 'has'/'have'"));
+        return Err(DslError::new(
+            line_num,
+            "missing condition after 'has'/'have'",
+        ));
     }
     if let Some(ref cap) = capture_as {
         if cap.is_empty() {

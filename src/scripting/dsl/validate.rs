@@ -451,12 +451,17 @@ fn check_portfolio_in_stmts(stmts: &[Stmt]) -> Result<(), DslError> {
                 }
             }
             Stmt::ForEach {
-                iterable, body, line, ..
+                iterable,
+                body,
+                line,
+                ..
             } => {
                 check_portfolio_expr(iterable, *line)?;
                 check_portfolio_in_stmts(body)?;
             }
-            Stmt::TryOpen { call, body, line, .. } => {
+            Stmt::TryOpen {
+                call, body, line, ..
+            } => {
                 check_portfolio_expr(call, *line)?;
                 check_portfolio_in_stmts(body)?;
             }
@@ -773,7 +778,9 @@ fn check_aggregation_in_stmts(stmts: &[Stmt]) -> Result<(), DslError> {
             Stmt::ForEach { body, .. } => {
                 check_aggregation_in_stmts(body)?;
             }
-            Stmt::TryOpen { call, body, line, .. } => {
+            Stmt::TryOpen {
+                call, body, line, ..
+            } => {
                 check_aggregation_in_expr(call, *line)?;
                 check_aggregation_in_stmts(body)?;
             }
