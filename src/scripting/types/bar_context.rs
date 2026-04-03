@@ -404,14 +404,14 @@ impl BarContext {
     }
 
     /// Approximate trading days remaining in the current month.
+    /// Excludes weekends and US market holidays (NYSE observed schedule).
     pub fn trading_days_left(&mut self) -> i64 {
         let date = self.datetime.date();
         let mut count = 0i64;
         let mut d = date.succ_opt().unwrap_or(date);
         let target_month = date.month();
         while d.month() == target_month {
-            let wd = d.weekday();
-            if wd != Weekday::Sat && wd != Weekday::Sun {
+            if is_trading_day(d) {
                 count += 1;
             }
             d = d.succ_opt().unwrap_or(d);
@@ -917,6 +917,150 @@ impl BarContext {
     }
 }
 
+// ---------------------------------------------------------------------------
+// US Market holiday & trading day helpers
+// ---------------------------------------------------------------------------
+
+/// Returns true if the given date is a US market trading day
+/// (not a weekend and not an NYSE-observed holiday).
+fn is_trading_day(d: NaiveDate) -> bool {
+    let wd = d.weekday();
+    if wd == Weekday::Sat || wd == Weekday::Sun {
+        return false;
+    }
+    !is_us_market_holiday(d)
+}
+
+/// Returns true if the given date is an NYSE-observed holiday.
+///
+/// Covers the 9 standard NYSE holidays with observed-date rules:
+/// - New Year's Day (Jan 1, observed prev Fri if Sat, next Mon if Sun)
+/// - MLK Day (3rd Monday of January)
+/// - Presidents' Day (3rd Monday of February)
+/// - Good Friday (Friday before Easter Sunday)
+/// - Memorial Day (last Monday of May)
+/// - Juneteenth (Jun 19, observed prev Fri if Sat, next Mon if Sun; since 2022)
+/// - Independence Day (Jul 4, observed prev Fri if Sat, next Mon if Sun)
+/// - Labor Day (1st Monday of September)
+/// - Thanksgiving (4th Thursday of November)
+/// - Christmas (Dec 25, observed prev Fri if Sat, next Mon if Sun)
+fn is_us_market_holiday(d: NaiveDate) -> bool {
+    let y = d.year();
+    let m = d.month();
+    let day = d.day();
+    let wd = d.weekday();
+
+    // Fixed holidays with weekend observation rules
+    // New Year's Day
+    if m == 1 && day == 1 && wd != Weekday::Sat && wd != Weekday::Sun {
+        return true;
+    }
+    // New Year's observed on Friday Dec 31 (when Jan 1 is Saturday)
+    if m == 12 && day == 31 && wd == Weekday::Fri {
+        return true;
+    }
+    // New Year's observed on Monday Jan 2 (when Jan 1 is Sunday)
+    if m == 1 && day == 2 && wd == Weekday::Mon {
+        return true;
+    }
+
+    // Independence Day (Jul 4)
+    if m == 7 {
+        if day == 4 && wd != Weekday::Sat && wd != Weekday::Sun {
+            return true;
+        }
+        if day == 3 && wd == Weekday::Fri {
+            return true; // Jul 4 is Saturday → observed Friday Jul 3
+        }
+        if day == 5 && wd == Weekday::Mon {
+            return true; // Jul 4 is Sunday → observed Monday Jul 5
+        }
+    }
+
+    // Juneteenth (Jun 19, observed since 2022)
+    if m == 6 && y >= 2022 {
+        if day == 19 && wd != Weekday::Sat && wd != Weekday::Sun {
+            return true;
+        }
+        if day == 18 && wd == Weekday::Fri {
+            return true;
+        }
+        if day == 20 && wd == Weekday::Mon {
+            return true;
+        }
+    }
+
+    // Christmas (Dec 25)
+    if m == 12 {
+        if day == 25 && wd != Weekday::Sat && wd != Weekday::Sun {
+            return true;
+        }
+        if day == 24 && wd == Weekday::Fri {
+            return true; // Dec 25 is Saturday → observed Friday Dec 24
+        }
+        if day == 26 && wd == Weekday::Mon {
+            return true; // Dec 25 is Sunday → observed Monday Dec 26
+        }
+    }
+
+    // MLK Day — 3rd Monday of January
+    if m == 1 && wd == Weekday::Mon && (15..=21).contains(&day) {
+        return true;
+    }
+
+    // Presidents' Day — 3rd Monday of February
+    if m == 2 && wd == Weekday::Mon && (15..=21).contains(&day) {
+        return true;
+    }
+
+    // Memorial Day — last Monday of May
+    if m == 5 && wd == Weekday::Mon && (25..=31).contains(&day) {
+        return true;
+    }
+
+    // Labor Day — 1st Monday of September
+    if m == 9 && wd == Weekday::Mon && (1..=7).contains(&day) {
+        return true;
+    }
+
+    // Thanksgiving — 4th Thursday of November
+    if m == 11 && wd == Weekday::Thu && (22..=28).contains(&day) {
+        return true;
+    }
+
+    // Good Friday — Friday before Easter Sunday (computus algorithm)
+    if wd == Weekday::Fri {
+        if let Some(easter) = easter_sunday(y) {
+            let good_friday = easter - chrono::Duration::days(2);
+            if d == good_friday {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Compute Easter Sunday for a given year using the anonymous Gregorian algorithm.
+#[allow(clippy::many_single_char_names)]
+fn easter_sunday(year: i32) -> Option<NaiveDate> {
+    let a = year % 19;
+    let b = year / 100;
+    let c = year % 100;
+    let d = b / 4;
+    let e = b % 4;
+    let f = (b + 8) / 25;
+    let g = (b - f + 1) / 3;
+    let h = (19 * a + b - d - g + 15) % 30;
+    let i = c / 4;
+    let k = c % 4;
+    let l = (32 + 2 * e + 2 * i - h - k) % 7;
+    let m = (a + 11 * h + 22 * l) / 451;
+    let month = (h + l - 7 * m + 114) / 31;
+    let day = ((h + l - 7 * m + 114) % 31) + 1;
+    NaiveDate::from_ymd_opt(year, month as u32, day as u32)
+}
+
 /// Parse "sma:20" into ("sma", 20).
 fn parse_indicator_ref(s: &str) -> (String, i64) {
     let parts: Vec<&str> = s.split(':').collect();
@@ -1020,4 +1164,649 @@ pub(in crate::scripting) fn row_to_expiration_date(
         return Some(dt.date_naive());
     }
     None
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scripting::indicators::IndicatorStore;
+    use crate::scripting::types::config::{Interval, OhlcvBar, ScriptConfig};
+    use chrono::{NaiveDate, NaiveTime};
+
+    /// Build a minimal BarContext for testing time methods.
+    fn make_ctx(dt: NaiveDateTime, bar_idx: usize, bars: Vec<NaiveDateTime>) -> BarContext {
+        let price_history: Vec<OhlcvBar> = bars
+            .into_iter()
+            .map(|d| OhlcvBar {
+                datetime: d,
+                open: 100.0,
+                high: 101.0,
+                low: 99.0,
+                close: 100.0,
+                volume: 1000.0,
+            })
+            .collect();
+
+        let config = ScriptConfig {
+            symbol: "TEST".to_string(),
+            capital: 100_000.0,
+            start_date: None,
+            end_date: None,
+            interval: Interval::Daily,
+            multiplier: 100,
+            timeout_secs: 30,
+            auto_close_on_end: false,
+            needs_ohlcv: true,
+            needs_options: false,
+            cross_symbols: vec![],
+            declared_indicators: vec![],
+            slippage: Default::default(),
+            commission: None,
+            min_days_between_entries: None,
+            expiration_filter: Default::default(),
+            trade_selector: Default::default(),
+            defaults: HashMap::new(),
+            procedural: false,
+        };
+
+        BarContext {
+            datetime: dt,
+            open: 100.0,
+            high: 101.0,
+            low: 99.0,
+            close: 100.0,
+            volume: 1000.0,
+            bar_idx,
+            cash: 100_000.0,
+            equity: 100_000.0,
+            positions: Arc::new(vec![]),
+            indicator_store: Arc::new(IndicatorStore::new()),
+            price_history: Arc::new(price_history),
+            cross_symbol_data: Arc::new(HashMap::new()),
+            options_by_date: None,
+            config: Arc::new(config),
+            pnl_history: Arc::new(vec![]),
+            custom_series: Arc::new(Mutex::new(CustomSeriesStore {
+                series: HashMap::new(),
+                display_types: HashMap::new(),
+                num_bars: 1,
+            })),
+            adjusted_close: 100.0,
+            market_position: 0,
+            entry_price: 0.0,
+            bars_since_entry: 0,
+            current_shares: 0,
+            open_profit: 0.0,
+            max_profit: 0.0,
+            max_loss: 0.0,
+            pending_orders_count: 0,
+        }
+    }
+
+    fn dt(y: i32, m: u32, d: u32, h: u32, min: u32) -> NaiveDateTime {
+        NaiveDate::from_ymd_opt(y, m, d)
+            .unwrap()
+            .and_time(NaiveTime::from_hms_opt(h, min, 0).unwrap())
+    }
+
+    fn daily(y: i32, m: u32, d: u32) -> NaiveDateTime {
+        dt(y, m, d, 15, 59)
+    }
+
+    // -----------------------------------------------------------------------
+    // day_of_week
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_day_of_week_monday_through_friday() {
+        // 2024-01-01 is Monday
+        let mut ctx = make_ctx(daily(2024, 1, 1), 0, vec![daily(2024, 1, 1)]);
+        assert_eq!(ctx.day_of_week(), 1); // Monday
+
+        ctx.datetime = daily(2024, 1, 2);
+        assert_eq!(ctx.day_of_week(), 2); // Tuesday
+
+        ctx.datetime = daily(2024, 1, 3);
+        assert_eq!(ctx.day_of_week(), 3); // Wednesday
+
+        ctx.datetime = daily(2024, 1, 4);
+        assert_eq!(ctx.day_of_week(), 4); // Thursday
+
+        ctx.datetime = daily(2024, 1, 5);
+        assert_eq!(ctx.day_of_week(), 5); // Friday
+    }
+
+    #[test]
+    fn test_day_of_week_weekend() {
+        let mut ctx = make_ctx(daily(2024, 1, 6), 0, vec![daily(2024, 1, 6)]);
+        assert_eq!(ctx.day_of_week(), 6); // Saturday
+
+        ctx.datetime = daily(2024, 1, 7);
+        assert_eq!(ctx.day_of_week(), 7); // Sunday
+    }
+
+    // -----------------------------------------------------------------------
+    // month
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_month_all_twelve() {
+        let mut ctx = make_ctx(daily(2024, 1, 15), 0, vec![daily(2024, 1, 15)]);
+        for m in 1..=12 {
+            ctx.datetime = daily(2024, m, 15);
+            assert_eq!(ctx.month(), m as i64);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // day_of_month edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_day_of_month_boundaries() {
+        let mut ctx = make_ctx(daily(2024, 1, 1), 0, vec![daily(2024, 1, 1)]);
+        assert_eq!(ctx.day_of_month(), 1);
+
+        ctx.datetime = daily(2024, 1, 31);
+        assert_eq!(ctx.day_of_month(), 31);
+
+        // Feb 29 leap year
+        ctx.datetime = daily(2024, 2, 29);
+        assert_eq!(ctx.day_of_month(), 29);
+
+        // Feb 28 non-leap year
+        ctx.datetime = daily(2023, 2, 28);
+        assert_eq!(ctx.day_of_month(), 28);
+    }
+
+    // -----------------------------------------------------------------------
+    // time()
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_time_formatting() {
+        let mut ctx = make_ctx(dt(2024, 1, 2, 9, 30), 0, vec![dt(2024, 1, 2, 9, 30)]);
+        assert_eq!(ctx.time(), "09:30");
+
+        ctx.datetime = dt(2024, 1, 2, 15, 59);
+        assert_eq!(ctx.time(), "15:59");
+
+        ctx.datetime = dt(2024, 1, 2, 0, 0);
+        assert_eq!(ctx.time(), "00:00");
+
+        ctx.datetime = dt(2024, 1, 2, 23, 59);
+        assert_eq!(ctx.time(), "23:59");
+    }
+
+    #[test]
+    fn test_time_lexicographic_comparison() {
+        // Verify string ordering matches chronological ordering
+        let t0930 = "09:30";
+        let t1000 = "10:00";
+        let t1530 = "15:30";
+        let t1559 = "15:59";
+        assert!(t0930 < t1000);
+        assert!(t1000 < t1530);
+        assert!(t1530 < t1559);
+    }
+
+    // -----------------------------------------------------------------------
+    // minutes_since_open
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_minutes_since_open() {
+        let mut ctx = make_ctx(dt(2024, 1, 2, 9, 30), 0, vec![dt(2024, 1, 2, 9, 30)]);
+        assert_eq!(ctx.minutes_since_open(), 0); // Market open
+
+        ctx.datetime = dt(2024, 1, 2, 10, 0);
+        assert_eq!(ctx.minutes_since_open(), 30);
+
+        ctx.datetime = dt(2024, 1, 2, 16, 0);
+        assert_eq!(ctx.minutes_since_open(), 390); // 6.5 hours
+
+        // Before market open — clamped to 0
+        ctx.datetime = dt(2024, 1, 2, 8, 0);
+        assert_eq!(ctx.minutes_since_open(), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // is_first_bar / is_last_bar
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_is_first_bar_daily() {
+        // For daily bars, every bar is the first (and last) bar of its trading day
+        // because each bar is on a different date.
+        let bars = vec![daily(2024, 1, 2), daily(2024, 1, 3), daily(2024, 1, 4)];
+        let mut ctx = make_ctx(daily(2024, 1, 2), 0, bars.clone());
+        assert!(ctx.is_first_bar()); // First bar of dataset
+
+        ctx.bar_idx = 1;
+        ctx.datetime = daily(2024, 1, 3);
+        assert!(ctx.is_first_bar()); // Different date than prev → first bar of this day
+    }
+
+    #[test]
+    fn test_is_first_bar_intraday_day_transition() {
+        let bars = vec![
+            dt(2024, 1, 2, 15, 55),
+            dt(2024, 1, 2, 16, 0),
+            dt(2024, 1, 3, 9, 30), // New day
+            dt(2024, 1, 3, 9, 35),
+        ];
+        let mut ctx = make_ctx(dt(2024, 1, 3, 9, 30), 2, bars.clone());
+        assert!(ctx.is_first_bar()); // First bar of new trading day
+
+        ctx.bar_idx = 3;
+        ctx.datetime = dt(2024, 1, 3, 9, 35);
+        assert!(!ctx.is_first_bar());
+    }
+
+    #[test]
+    fn test_is_last_bar_daily() {
+        // For daily bars, every bar is the last bar of its trading day
+        let bars = vec![daily(2024, 1, 2), daily(2024, 1, 3), daily(2024, 1, 4)];
+        let mut ctx = make_ctx(daily(2024, 1, 4), 2, bars.clone());
+        assert!(ctx.is_last_bar()); // Last bar of dataset
+
+        ctx.bar_idx = 0;
+        ctx.datetime = daily(2024, 1, 2);
+        assert!(ctx.is_last_bar()); // Next bar is different date → last bar of this day
+    }
+
+    #[test]
+    fn test_is_last_bar_intraday_day_transition() {
+        let bars = vec![
+            dt(2024, 1, 2, 15, 55),
+            dt(2024, 1, 2, 16, 0), // Last bar of Jan 2
+            dt(2024, 1, 3, 9, 30), // First bar of Jan 3
+            dt(2024, 1, 3, 9, 35),
+        ];
+        let mut ctx = make_ctx(dt(2024, 1, 2, 16, 0), 1, bars.clone());
+        assert!(ctx.is_last_bar()); // Last bar before day transition
+
+        ctx.bar_idx = 2;
+        ctx.datetime = dt(2024, 1, 3, 9, 30);
+        assert!(!ctx.is_last_bar());
+    }
+
+    // -----------------------------------------------------------------------
+    // is_expiry_week
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_is_expiry_week_jan_2024() {
+        // January 2024: 3rd Friday = Jan 19
+        // ISO week of Jan 19, 2024 = week 3
+        let mut ctx = make_ctx(daily(2024, 1, 15), 0, vec![daily(2024, 1, 15)]);
+        assert!(ctx.is_expiry_week()); // Mon of expiry week
+
+        ctx.datetime = daily(2024, 1, 19);
+        assert!(ctx.is_expiry_week()); // The 3rd Friday itself
+
+        ctx.datetime = daily(2024, 1, 8);
+        assert!(!ctx.is_expiry_week()); // Week before
+    }
+
+    #[test]
+    fn test_is_expiry_week_feb_2024() {
+        // February 2024: 1st is Thursday
+        // 1st Friday = Feb 2, 2nd = Feb 9, 3rd Friday = Feb 16
+        let mut ctx = make_ctx(daily(2024, 2, 16), 0, vec![daily(2024, 2, 16)]);
+        assert!(ctx.is_expiry_week()); // 3rd Friday
+
+        ctx.datetime = daily(2024, 2, 12);
+        assert!(ctx.is_expiry_week()); // Monday of same week
+
+        ctx.datetime = daily(2024, 2, 23);
+        assert!(!ctx.is_expiry_week()); // Following week
+    }
+
+    #[test]
+    fn test_is_expiry_week_month_starting_saturday() {
+        // June 2024: June 1 is Saturday
+        // 1st Friday = June 7, 2nd = June 14, 3rd Friday = June 21
+        let mut ctx = make_ctx(daily(2024, 6, 21), 0, vec![daily(2024, 6, 21)]);
+        assert!(ctx.is_expiry_week());
+
+        ctx.datetime = daily(2024, 6, 14);
+        assert!(!ctx.is_expiry_week()); // 2nd Friday, not 3rd
+    }
+
+    #[test]
+    fn test_is_expiry_week_month_starting_friday() {
+        // November 2024: Nov 1 is Friday
+        // 1st Friday = Nov 1, 2nd = Nov 8, 3rd Friday = Nov 15
+        let mut ctx = make_ctx(daily(2024, 11, 15), 0, vec![daily(2024, 11, 15)]);
+        assert!(ctx.is_expiry_week());
+
+        ctx.datetime = daily(2024, 11, 22);
+        assert!(!ctx.is_expiry_week()); // 4th Friday
+    }
+
+    // -----------------------------------------------------------------------
+    // is_quarter_end
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_is_quarter_end_q1_2024() {
+        // Q1 2024 ends: last trading day of March
+        // March 29, 2024 is Friday (Good Friday), so March 28 (Thu) is last trading day
+        let bars = vec![
+            daily(2024, 3, 27),
+            daily(2024, 3, 28),
+            daily(2024, 4, 1), // Next quarter
+        ];
+        let mut ctx = make_ctx(daily(2024, 3, 28), 1, bars.clone());
+        assert!(ctx.is_quarter_end()); // Last bar in Q1 before Q2
+
+        ctx.bar_idx = 0;
+        ctx.datetime = daily(2024, 3, 27);
+        assert!(!ctx.is_quarter_end()); // Not the last trading day
+    }
+
+    #[test]
+    fn test_is_quarter_end_not_quarter_month() {
+        let bars = vec![daily(2024, 2, 28), daily(2024, 3, 1)];
+        let mut ctx = make_ctx(daily(2024, 2, 28), 0, bars);
+        assert!(!ctx.is_quarter_end()); // February is not a quarter-end month
+    }
+
+    #[test]
+    fn test_is_quarter_end_last_bar_of_dataset() {
+        // Last bar of dataset in December → true
+        let bars = vec![daily(2024, 12, 30), daily(2024, 12, 31)];
+        let mut ctx = make_ctx(daily(2024, 12, 31), 1, bars);
+        assert!(ctx.is_quarter_end());
+    }
+
+    #[test]
+    fn test_is_quarter_end_all_quarters() {
+        // Test each quarter transition
+        let quarters = vec![
+            (daily(2024, 3, 28), daily(2024, 4, 1)),  // Q1→Q2
+            (daily(2024, 6, 28), daily(2024, 7, 1)),  // Q2→Q3
+            (daily(2024, 9, 30), daily(2024, 10, 1)), // Q3→Q4
+            (daily(2024, 12, 31), daily(2025, 1, 2)), // Q4→Q1
+        ];
+        for (last_bar, next_bar) in quarters {
+            let bars = vec![last_bar, next_bar];
+            let mut ctx = make_ctx(last_bar, 0, bars);
+            assert!(ctx.is_quarter_end(), "Expected quarter end at {last_bar}");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // trading_days_left (with holidays)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_trading_days_left_simple() {
+        // January 2, 2024 (Tuesday) — rest of Jan has 21 trading days
+        // Jan 3-31: 21 weekdays, minus MLK day (Jan 15) = 20
+        let mut ctx = make_ctx(daily(2024, 1, 2), 0, vec![daily(2024, 1, 2)]);
+        assert_eq!(ctx.trading_days_left(), 20);
+    }
+
+    #[test]
+    fn test_trading_days_left_last_day_of_month() {
+        // January 31, 2024 (Wednesday) — 0 trading days remaining
+        let mut ctx = make_ctx(daily(2024, 1, 31), 0, vec![daily(2024, 1, 31)]);
+        assert_eq!(ctx.trading_days_left(), 0);
+    }
+
+    #[test]
+    fn test_trading_days_left_feb_leap_year() {
+        // Feb 1, 2024 (Thursday) — rest of Feb 2024 has 20 weekdays
+        // minus Presidents' Day (Feb 19) = 19
+        let mut ctx = make_ctx(daily(2024, 2, 1), 0, vec![daily(2024, 2, 1)]);
+        assert_eq!(ctx.trading_days_left(), 19);
+    }
+
+    #[test]
+    fn test_trading_days_left_feb_non_leap_year() {
+        // Feb 1, 2023 (Wednesday) — rest of Feb 2023 has 19 weekdays
+        // minus Presidents' Day (Feb 20) = 18
+        let mut ctx = make_ctx(daily(2023, 2, 1), 0, vec![daily(2023, 2, 1)]);
+        assert_eq!(ctx.trading_days_left(), 18);
+    }
+
+    #[test]
+    fn test_trading_days_left_month_with_30_days() {
+        // April 1, 2024 (Monday) — rest of April has 21 weekdays, no holidays = 21
+        let mut ctx = make_ctx(daily(2024, 4, 1), 0, vec![daily(2024, 4, 1)]);
+        assert_eq!(ctx.trading_days_left(), 21);
+    }
+
+    #[test]
+    fn test_trading_days_left_december_with_christmas() {
+        // Dec 1, 2024 (Sunday — but pretend bar exists)
+        // Dec 2-31: 22 weekdays, minus Christmas observed (Dec 25 Wed) = 21
+        let mut ctx = make_ctx(daily(2024, 12, 1), 0, vec![daily(2024, 12, 1)]);
+        assert_eq!(ctx.trading_days_left(), 21);
+    }
+
+    #[test]
+    fn test_trading_days_left_friday_end_of_month() {
+        // Aug 30, 2024 (Friday) — no more days in August
+        // Aug 31 is Saturday → 0 trading days
+        let mut ctx = make_ctx(daily(2024, 8, 30), 0, vec![daily(2024, 8, 30)]);
+        assert_eq!(ctx.trading_days_left(), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // US Market holidays
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_new_years_day() {
+        // 2024: Jan 1 is Monday — holiday
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
+        ));
+        // 2023: Jan 1 is Sunday — observed Monday Jan 2
+        assert!(!is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2023, 1, 1).unwrap()
+        )); // Sunday
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2023, 1, 2).unwrap()
+        )); // Observed Mon
+            // 2022: Jan 1 is Saturday — observed Friday Dec 31, 2021
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2021, 12, 31).unwrap()
+        ));
+    }
+
+    #[test]
+    fn test_mlk_day() {
+        // 2024: 3rd Monday of January = Jan 15
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap()
+        ));
+        assert!(!is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2024, 1, 8).unwrap()
+        )); // 2nd Mon
+            // 2025: Jan 20
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2025, 1, 20).unwrap()
+        ));
+    }
+
+    #[test]
+    fn test_presidents_day() {
+        // 2024: 3rd Monday of February = Feb 19
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2024, 2, 19).unwrap()
+        ));
+        // 2023: Feb 20
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2023, 2, 20).unwrap()
+        ));
+    }
+
+    #[test]
+    fn test_good_friday() {
+        // 2024: Easter is March 31 → Good Friday is March 29
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2024, 3, 29).unwrap()
+        ));
+        // 2023: Easter is April 9 → Good Friday is April 7
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2023, 4, 7).unwrap()
+        ));
+        // 2025: Easter is April 20 → Good Friday is April 18
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2025, 4, 18).unwrap()
+        ));
+    }
+
+    #[test]
+    fn test_memorial_day() {
+        // 2024: last Monday of May = May 27
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2024, 5, 27).unwrap()
+        ));
+        // 2023: May 29
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2023, 5, 29).unwrap()
+        ));
+    }
+
+    #[test]
+    fn test_juneteenth() {
+        // 2024: June 19 is Wednesday — holiday
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2024, 6, 19).unwrap()
+        ));
+        // 2022: June 19 is Sunday → observed Monday June 20
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2022, 6, 20).unwrap()
+        ));
+        // 2021: Not observed yet (before 2022)
+        assert!(!is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2021, 6, 18).unwrap()
+        ));
+    }
+
+    #[test]
+    fn test_independence_day() {
+        // 2024: Jul 4 is Thursday — holiday
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2024, 7, 4).unwrap()
+        ));
+        // 2020: Jul 4 is Saturday → observed Friday Jul 3
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2020, 7, 3).unwrap()
+        ));
+        // 2021: Jul 4 is Sunday → observed Monday Jul 5
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2021, 7, 5).unwrap()
+        ));
+    }
+
+    #[test]
+    fn test_labor_day() {
+        // 2024: 1st Monday of September = Sep 2
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2024, 9, 2).unwrap()
+        ));
+        // 2023: Sep 4
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2023, 9, 4).unwrap()
+        ));
+    }
+
+    #[test]
+    fn test_thanksgiving() {
+        // 2024: 4th Thursday of November = Nov 28
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2024, 11, 28).unwrap()
+        ));
+        // 2023: Nov 23
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2023, 11, 23).unwrap()
+        ));
+    }
+
+    #[test]
+    fn test_christmas() {
+        // 2024: Dec 25 is Wednesday — holiday
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2024, 12, 25).unwrap()
+        ));
+        // 2021: Dec 25 is Saturday → observed Friday Dec 24
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2021, 12, 24).unwrap()
+        ));
+        // 2022: Dec 25 is Sunday → observed Monday Dec 26
+        assert!(is_us_market_holiday(
+            NaiveDate::from_ymd_opt(2022, 12, 26).unwrap()
+        ));
+    }
+
+    #[test]
+    fn test_regular_days_not_holidays() {
+        // Normal trading days should not be flagged
+        let normal_days = vec![
+            NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(), // Regular Tuesday
+            NaiveDate::from_ymd_opt(2024, 3, 15).unwrap(), // Regular Friday
+            NaiveDate::from_ymd_opt(2024, 7, 3).unwrap(), // Day before Jul 4 (Thu, not observed)
+            NaiveDate::from_ymd_opt(2024, 12, 24).unwrap(), // Christmas Eve (Tue, not observed in 2024)
+        ];
+        for d in normal_days {
+            assert!(!is_us_market_holiday(d), "{d} should not be a holiday");
+        }
+    }
+
+    #[test]
+    fn test_is_trading_day() {
+        // Weekday non-holiday
+        assert!(is_trading_day(NaiveDate::from_ymd_opt(2024, 1, 2).unwrap()));
+        // Weekend
+        assert!(!is_trading_day(
+            NaiveDate::from_ymd_opt(2024, 1, 6).unwrap()
+        )); // Saturday
+        assert!(!is_trading_day(
+            NaiveDate::from_ymd_opt(2024, 1, 7).unwrap()
+        )); // Sunday
+            // Holiday
+        assert!(!is_trading_day(
+            NaiveDate::from_ymd_opt(2024, 1, 15).unwrap()
+        )); // MLK Day
+    }
+
+    // -----------------------------------------------------------------------
+    // Easter algorithm validation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_easter_known_dates() {
+        // Verify against known Easter dates
+        assert_eq!(easter_sunday(2020), NaiveDate::from_ymd_opt(2020, 4, 12));
+        assert_eq!(easter_sunday(2021), NaiveDate::from_ymd_opt(2021, 4, 4));
+        assert_eq!(easter_sunday(2022), NaiveDate::from_ymd_opt(2022, 4, 17));
+        assert_eq!(easter_sunday(2023), NaiveDate::from_ymd_opt(2023, 4, 9));
+        assert_eq!(easter_sunday(2024), NaiveDate::from_ymd_opt(2024, 3, 31));
+        assert_eq!(easter_sunday(2025), NaiveDate::from_ymd_opt(2025, 4, 20));
+        // Edge: earliest possible Easter (March 22)
+        assert_eq!(easter_sunday(2285), NaiveDate::from_ymd_opt(2285, 3, 22));
+    }
+
+    // -----------------------------------------------------------------------
+    // week_of_year
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_week_of_year() {
+        let mut ctx = make_ctx(daily(2024, 1, 1), 0, vec![daily(2024, 1, 1)]);
+        assert_eq!(ctx.week_of_year(), 1);
+
+        ctx.datetime = daily(2024, 12, 31);
+        assert_eq!(ctx.week_of_year(), 1); // Dec 31, 2024 is in ISO week 1 of 2025
+    }
 }

@@ -1898,4 +1898,127 @@ mod tests {
         assert!(result.contains("ctx.crossed_above(\"sma:50\", \"sma:200\")"));
         assert!(result.contains("ctx.rsi(14) > 50"));
     }
+
+    // -----------------------------------------------------------------------
+    // Time keyword rewrite tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_rewrite_callable_properties_without_parens() {
+        assert_eq!(rewrite_expr("day_of_week == 1"), "ctx.day_of_week() == 1");
+        assert_eq!(rewrite_expr("month == 12"), "ctx.month() == 12");
+        assert_eq!(rewrite_expr("day_of_month > 25"), "ctx.day_of_month() > 25");
+        assert_eq!(rewrite_expr("hour > 10"), "ctx.hour() > 10");
+        assert_eq!(rewrite_expr("minute == 30"), "ctx.minute() == 30");
+        assert_eq!(
+            rewrite_expr("week_of_year == 52"),
+            "ctx.week_of_year() == 52"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_callable_properties_with_parens() {
+        // When used with parens, they go through CTX_METHODS path
+        assert_eq!(rewrite_expr("day_of_week()"), "ctx.day_of_week()");
+        assert_eq!(rewrite_expr("month()"), "ctx.month()");
+        assert_eq!(rewrite_expr("time()"), "ctx.time()");
+    }
+
+    #[test]
+    fn test_rewrite_time_property() {
+        assert_eq!(rewrite_expr("time < \"10:00\""), "ctx.time() < \"10:00\"");
+    }
+
+    #[test]
+    fn test_rewrite_new_callable_properties() {
+        assert_eq!(rewrite_expr("is_first_bar"), "ctx.is_first_bar()");
+        assert_eq!(rewrite_expr("is_last_bar"), "ctx.is_last_bar()");
+        assert_eq!(rewrite_expr("is_expiry_week"), "ctx.is_expiry_week()");
+        assert_eq!(rewrite_expr("is_quarter_end"), "ctx.is_quarter_end()");
+        assert_eq!(
+            rewrite_expr("trading_days_left < 3"),
+            "ctx.trading_days_left() < 3"
+        );
+        assert_eq!(
+            rewrite_expr("minutes_since_open > 30"),
+            "ctx.minutes_since_open() > 30"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_day_names() {
+        assert_eq!(rewrite_expr("monday"), "1");
+        assert_eq!(rewrite_expr("tuesday"), "2");
+        assert_eq!(rewrite_expr("wednesday"), "3");
+        assert_eq!(rewrite_expr("thursday"), "4");
+        assert_eq!(rewrite_expr("friday"), "5");
+        assert_eq!(rewrite_expr("saturday"), "6");
+        assert_eq!(rewrite_expr("sunday"), "7");
+    }
+
+    #[test]
+    fn test_rewrite_month_names() {
+        assert_eq!(rewrite_expr("january"), "1");
+        assert_eq!(rewrite_expr("february"), "2");
+        assert_eq!(rewrite_expr("march"), "3");
+        assert_eq!(rewrite_expr("april"), "4");
+        assert_eq!(rewrite_expr("may"), "5");
+        assert_eq!(rewrite_expr("june"), "6");
+        assert_eq!(rewrite_expr("july"), "7");
+        assert_eq!(rewrite_expr("august"), "8");
+        assert_eq!(rewrite_expr("september"), "9");
+        assert_eq!(rewrite_expr("october"), "10");
+        assert_eq!(rewrite_expr("november"), "11");
+        assert_eq!(rewrite_expr("december"), "12");
+    }
+
+    #[test]
+    fn test_rewrite_day_name_in_expression() {
+        assert_eq!(
+            rewrite_expr("day_of_week == monday"),
+            "ctx.day_of_week() == 1"
+        );
+        assert_eq!(
+            rewrite_expr("day_of_week != friday and month == december"),
+            "ctx.day_of_week() != 5 && ctx.month() == 12"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_time_literal() {
+        assert_eq!(rewrite_expr("10:00"), "\"10:00\"");
+        assert_eq!(rewrite_expr("9:30"), "\"09:30\"");
+        assert_eq!(rewrite_expr("15:30"), "\"15:30\"");
+        assert_eq!(rewrite_expr("0:00"), "\"00:00\"");
+        assert_eq!(rewrite_expr("23:59"), "\"23:59\"");
+    }
+
+    #[test]
+    fn test_rewrite_time_literal_in_expression() {
+        assert_eq!(rewrite_expr("time < 10:00"), "ctx.time() < \"10:00\"");
+        assert_eq!(
+            rewrite_expr("time > 15:30 and time < 16:00"),
+            "ctx.time() > \"15:30\" && ctx.time() < \"16:00\""
+        );
+    }
+
+    #[test]
+    fn test_rewrite_time_literal_not_in_string() {
+        // Time literals inside strings should NOT be double-quoted
+        assert_eq!(rewrite_expr("\"10:00\""), "\"10:00\"");
+    }
+
+    #[test]
+    fn test_rewrite_combined_time_and_indicators() {
+        assert_eq!(
+            rewrite_expr("day_of_week == monday and close > sma(200)"),
+            "ctx.day_of_week() == 1 && ctx.close > ctx.sma(200)"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_callable_property_not_dot_qualified() {
+        // After a dot, callable properties should NOT be rewritten
+        assert_eq!(rewrite_expr("config.time"), "config.time");
+    }
 }
