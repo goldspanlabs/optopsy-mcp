@@ -1793,16 +1793,7 @@ fn split_at_top_level_keyword<'a>(expr: &'a str, keyword: &str) -> Option<(&'a s
 /// Rewrite a quantifier condition expression. Bare identifiers that are known
 /// leg fields get prefixed with `binding_var.`. Other words pass through.
 fn rewrite_quantifier_condition(condition: &str, binding_var: &str) -> String {
-    const LEG_FIELDS: &[&str] = &[
-        "delta",
-        "strike",
-        "current_price",
-        "entry_price",
-        "option_type",
-        "side",
-        "qty",
-        "expiration",
-    ];
+    use super::validate::LEG_FIELDS;
 
     let mut result = String::with_capacity(condition.len() + 32);
     let chars: Vec<char> = condition.chars().collect();
@@ -1810,23 +1801,11 @@ fn rewrite_quantifier_condition(condition: &str, binding_var: &str) -> String {
 
     while i < chars.len() {
         if chars[i] == '"' {
-            // Copy string literals verbatim
-            result.push(chars[i]);
-            i += 1;
-            while i < chars.len() && chars[i] != '"' {
-                if chars[i] == '\\' {
-                    result.push(chars[i]);
-                    i += 1;
-                }
-                if i < chars.len() {
-                    result.push(chars[i]);
-                    i += 1;
-                }
+            let end = skip_string_literal(&chars, i);
+            for j in i..end {
+                result.push(chars[j]);
             }
-            if i < chars.len() {
-                result.push(chars[i]);
-                i += 1;
-            }
+            i = end;
             continue;
         }
 

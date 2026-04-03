@@ -13,6 +13,101 @@ use super::parser::{DslProgram, Stmt};
 const INTRADAY_ONLY_KEYWORDS: &[&str] =
     &["time", "is_first_bar", "is_last_bar", "minutes_since_open"];
 
+/// Iterate over all statement blocks in a program (callbacks + procedural body).
+fn all_blocks(program: &DslProgram) -> impl Iterator<Item = &[Stmt]> {
+    [
+        &program.on_bar,
+        &program.on_exit_check,
+        &program.on_position_opened,
+        &program.on_position_closed,
+        &program.on_end,
+    ]
+    .into_iter()
+    .filter_map(|b| b.as_deref())
+    .chain(std::iter::once(program.body.as_slice()))
+}
+
+/// Walk all expressions in a statement tree, calling `check` on each (expr, line).
+/// Also recurses into nested statement bodies.
+fn visit_exprs_in_stmts(
+    stmts: &[Stmt],
+    check: &impl Fn(&str, usize) -> Result<(), DslError>,
+) -> Result<(), DslError> {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Set { expr, line, .. } => {
+                check(expr, *line)?;
+            }
+            Stmt::SkipWhen { condition, line } => {
+                check(condition, *line)?;
+            }
+            Stmt::When {
+                condition,
+                then_body,
+                else_body,
+                line,
+            } => {
+                check(condition, *line)?;
+                visit_exprs_in_stmts(then_body, check)?;
+                if let Some(ref eb) = else_body {
+                    visit_exprs_in_stmts(eb, check)?;
+                }
+            }
+            Stmt::WhenAnyAll {
+                condition,
+                then_body,
+                else_body,
+                line,
+                ..
+            } => {
+                check(condition, *line)?;
+                visit_exprs_in_stmts(then_body, check)?;
+                if let Some(ref eb) = else_body {
+                    visit_exprs_in_stmts(eb, check)?;
+                }
+            }
+            Stmt::ForEach {
+                iterable,
+                body,
+                line,
+                ..
+            } => {
+                check(iterable, *line)?;
+                visit_exprs_in_stmts(body, check)?;
+            }
+            Stmt::TryOpen {
+                call, body, line, ..
+            } => {
+                check(call, *line)?;
+                visit_exprs_in_stmts(body, check)?;
+            }
+            Stmt::Buy { qty_expr, line, .. } | Stmt::Sell { qty_expr, line, .. } => {
+                check(qty_expr, *line)?;
+            }
+            Stmt::Plot { expr, line, .. } | Stmt::Return { expr, line, .. } => {
+                check(expr, *line)?;
+            }
+            Stmt::OpenStrategy { call, line, .. } => {
+                check(call, *line)?;
+            }
+            Stmt::ClosePositionById { id_expr, line, .. } => {
+                check(id_expr, *line)?;
+            }
+            Stmt::AddTo { expr, line, .. }
+            | Stmt::SubtractFrom { expr, line, .. }
+            | Stmt::MultiplyBy { expr, line, .. }
+            | Stmt::DivideBy { expr, line, .. } => {
+                check(expr, *line)?;
+            }
+            Stmt::Raw { code, line } => {
+                check(code, *line)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// Intervals that are NOT intraday. Only includes intervals actually
 /// supported by `Interval::parse()` to avoid false acceptance.
 fn is_non_intraday(interval: &str) -> bool {
@@ -32,20 +127,9 @@ pub fn check_interval_time_keywords(program: &DslProgram) -> Result<(), DslError
     let check_intraday = is_non_intraday(interval);
 
     // Scan all statement blocks
-    let blocks: Vec<&Option<Vec<Stmt>>> = vec![
-        &program.on_bar,
-        &program.on_exit_check,
-        &program.on_position_opened,
-        &program.on_position_closed,
-        &program.on_end,
-    ];
-
-    for block in blocks.into_iter().flatten() {
+    for block in all_blocks(program) {
         check_stmts(block, interval, check_intraday)?;
     }
-
-    // Also check procedural body
-    check_stmts(&program.body, interval, check_intraday)?;
 
     // Check that reserved day/month names are not used as extern/state variable names
     check_reserved_names(program)?;
@@ -82,17 +166,9 @@ fn check_reserved_names(program: &DslProgram) -> Result<(), DslError> {
     }
 
     // Check all statement blocks for identifier-introducing statements
-    let blocks: Vec<&Option<Vec<Stmt>>> = vec![
-        &program.on_bar,
-        &program.on_exit_check,
-        &program.on_position_opened,
-        &program.on_position_closed,
-        &program.on_end,
-    ];
-    for block in blocks.into_iter().flatten() {
+    for block in all_blocks(program) {
         check_reserved_names_in_stmts(block)?;
     }
-    check_reserved_names_in_stmts(&program.body)?;
 
     Ok(())
 }
@@ -407,97 +483,49 @@ const PORTFOLIO_PROPERTIES: &[&str] = &[
 
 /// Check for invalid `portfolio.X` property accesses and `set portfolio.X` assignments.
 pub fn check_portfolio_access(program: &DslProgram) -> Result<(), DslError> {
-    let blocks: Vec<&Option<Vec<Stmt>>> = vec![
-        &program.on_bar,
-        &program.on_exit_check,
-        &program.on_position_opened,
-        &program.on_position_closed,
-        &program.on_end,
-    ];
-
-    for block in blocks.into_iter().flatten() {
+    for block in all_blocks(program) {
         check_portfolio_in_stmts(block)?;
     }
-    check_portfolio_in_stmts(&program.body)?;
-
     Ok(())
 }
 
 fn check_portfolio_in_stmts(stmts: &[Stmt]) -> Result<(), DslError> {
+    // Check for read-only portfolio assignment (special case for Set)
+    check_portfolio_assignment(stmts)?;
+    // Check all expressions for invalid portfolio property accesses
+    visit_exprs_in_stmts(stmts, &check_portfolio_expr)
+}
+
+/// Recursively check that no `set portfolio.X = ...` assignments appear.
+fn check_portfolio_assignment(stmts: &[Stmt]) -> Result<(), DslError> {
     for stmt in stmts {
+        if let Stmt::Set { name, line, .. } = stmt {
+            if name.starts_with("portfolio.") {
+                return Err(DslError::new(
+                    *line,
+                    "cannot assign to `portfolio` — it is read-only",
+                ));
+            }
+        }
+        // Recurse into nested bodies
         match stmt {
-            Stmt::Set { name, expr, line } => {
-                if name.starts_with("portfolio.") {
-                    return Err(DslError::new(
-                        *line,
-                        "cannot assign to `portfolio` — it is read-only",
-                    ));
-                }
-                check_portfolio_expr(expr, *line)?;
-            }
-            Stmt::SkipWhen { condition, line } => {
-                check_portfolio_expr(condition, *line)?;
-            }
             Stmt::When {
-                condition,
                 then_body,
                 else_body,
-                line,
-            } => {
-                check_portfolio_expr(condition, *line)?;
-                check_portfolio_in_stmts(then_body)?;
-                if let Some(ref eb) = else_body {
-                    check_portfolio_in_stmts(eb)?;
-                }
-            }
-            Stmt::ForEach {
-                iterable,
-                body,
-                line,
                 ..
-            } => {
-                check_portfolio_expr(iterable, *line)?;
-                check_portfolio_in_stmts(body)?;
             }
-            Stmt::TryOpen {
-                call, body, line, ..
-            } => {
-                check_portfolio_expr(call, *line)?;
-                check_portfolio_in_stmts(body)?;
-            }
-            Stmt::WhenAnyAll {
-                condition,
+            | Stmt::WhenAnyAll {
                 then_body,
                 else_body,
-                line,
                 ..
             } => {
-                check_portfolio_expr(condition, *line)?;
-                check_portfolio_in_stmts(then_body)?;
+                check_portfolio_assignment(then_body)?;
                 if let Some(ref eb) = else_body {
-                    check_portfolio_in_stmts(eb)?;
+                    check_portfolio_assignment(eb)?;
                 }
             }
-            Stmt::Buy { qty_expr, line, .. } | Stmt::Sell { qty_expr, line, .. } => {
-                check_portfolio_expr(qty_expr, *line)?;
-            }
-            Stmt::Plot { expr, line, .. } | Stmt::Return { expr, line, .. } => {
-                check_portfolio_expr(expr, *line)?;
-            }
-            Stmt::OpenStrategy { call, line, .. } => {
-                check_portfolio_expr(call, *line)?;
-            }
-            Stmt::ClosePositionById { id_expr, line, .. } => {
-                check_portfolio_expr(id_expr, *line)?;
-            }
-            Stmt::AddTo { expr, line, .. }
-            | Stmt::SubtractFrom { expr, line, .. }
-            | Stmt::MultiplyBy { expr, line, .. }
-            | Stmt::DivideBy { expr, line, .. } => {
-                check_portfolio_expr(expr, *line)?;
-            }
-            Stmt::Raw { code, line } => {
-                check_portfolio_expr(code, *line)?;
+            Stmt::ForEach { body, .. } | Stmt::TryOpen { body, .. } => {
+                check_portfolio_assignment(body)?;
             }
             _ => {}
         }
@@ -535,7 +563,7 @@ fn check_portfolio_expr(expr: &str, line: usize) -> Result<(), DslError> {
 // ---------------------------------------------------------------------------
 
 /// Valid leg field names for quantifier conditions.
-const LEG_FIELDS: &[&str] = &[
+pub(super) const LEG_FIELDS: &[&str] = &[
     "delta",
     "strike",
     "current_price",
@@ -727,80 +755,8 @@ fn check_condition_fields(condition: &str, line: usize) -> Result<(), DslError> 
 
 /// Check aggregation expressions like pos.legs.sum(FIELD) for valid numeric fields.
 fn check_aggregation_fields(program: &DslProgram) -> Result<(), DslError> {
-    let blocks: Vec<&Option<Vec<Stmt>>> = vec![
-        &program.on_bar,
-        &program.on_exit_check,
-        &program.on_position_opened,
-        &program.on_position_closed,
-        &program.on_end,
-    ];
-    for block in blocks.into_iter().flatten() {
-        check_aggregation_in_stmts(block)?;
-    }
-    check_aggregation_in_stmts(&program.body)?;
-    Ok(())
-}
-
-fn check_aggregation_in_stmts(stmts: &[Stmt]) -> Result<(), DslError> {
-    for stmt in stmts {
-        match stmt {
-            Stmt::SkipWhen { condition, line } => {
-                check_aggregation_in_expr(condition, *line)?;
-            }
-            Stmt::Set { expr, line, .. } => {
-                check_aggregation_in_expr(expr, *line)?;
-            }
-            Stmt::When {
-                condition,
-                then_body,
-                else_body,
-                line,
-            } => {
-                check_aggregation_in_expr(condition, *line)?;
-                check_aggregation_in_stmts(then_body)?;
-                if let Some(ref eb) = else_body {
-                    check_aggregation_in_stmts(eb)?;
-                }
-            }
-            Stmt::WhenAnyAll {
-                condition,
-                then_body,
-                else_body,
-                line,
-                ..
-            } => {
-                check_aggregation_in_expr(condition, *line)?;
-                check_aggregation_in_stmts(then_body)?;
-                if let Some(ref eb) = else_body {
-                    check_aggregation_in_stmts(eb)?;
-                }
-            }
-            Stmt::ForEach { body, .. } => {
-                check_aggregation_in_stmts(body)?;
-            }
-            Stmt::TryOpen {
-                call, body, line, ..
-            } => {
-                check_aggregation_in_expr(call, *line)?;
-                check_aggregation_in_stmts(body)?;
-            }
-            Stmt::Buy { qty_expr, line, .. } | Stmt::Sell { qty_expr, line, .. } => {
-                check_aggregation_in_expr(qty_expr, *line)?;
-            }
-            Stmt::Plot { expr, line, .. } | Stmt::Return { expr, line, .. } => {
-                check_aggregation_in_expr(expr, *line)?;
-            }
-            Stmt::OpenStrategy { call, line, .. } => {
-                check_aggregation_in_expr(call, *line)?;
-            }
-            Stmt::AddTo { expr, line, .. }
-            | Stmt::SubtractFrom { expr, line, .. }
-            | Stmt::MultiplyBy { expr, line, .. }
-            | Stmt::DivideBy { expr, line, .. } => {
-                check_aggregation_in_expr(expr, *line)?;
-            }
-            _ => {}
-        }
+    for block in all_blocks(program) {
+        visit_exprs_in_stmts(block, &check_aggregation_in_expr)?;
     }
     Ok(())
 }

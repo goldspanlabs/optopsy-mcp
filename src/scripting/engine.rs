@@ -2124,26 +2124,33 @@ pub fn compute_position_awareness(
 fn compute_portfolio_state(
     positions: &[ScriptPosition],
     equity: f64,
-    cash: f64,
     capital: f64,
     peak_equity: f64,
 ) -> PortfolioState {
-    let unrealized_pnl: f64 = positions.iter().map(|p| p.unrealized_pnl).sum();
-    let realized_pnl = equity - capital;
-    let total_exposure: f64 = positions.iter().map(|p| p.entry_cost.abs()).sum();
-    let exposure_pct = if equity.abs() > f64::EPSILON {
-        total_exposure / equity.abs()
-    } else {
-        0.0
-    };
-
+    let mut unrealized_pnl = 0.0_f64;
+    let mut total_exposure = 0.0_f64;
     let mut net_delta = 0.0_f64;
     let mut long_delta = 0.0_f64;
     let mut short_delta = 0.0_f64;
     let mut long_count: i64 = 0;
     let mut short_count: i64 = 0;
+    let mut position_count: i64 = 0;
+    let mut max_position_pnl = f64::NEG_INFINITY;
+    let mut min_position_pnl = f64::INFINITY;
 
     for pos in positions {
+        unrealized_pnl += pos.unrealized_pnl;
+        total_exposure += pos.entry_cost.abs();
+        if !pos.implicit {
+            position_count += 1;
+        }
+        if pos.unrealized_pnl > max_position_pnl {
+            max_position_pnl = pos.unrealized_pnl;
+        }
+        if pos.unrealized_pnl < min_position_pnl {
+            min_position_pnl = pos.unrealized_pnl;
+        }
+
         match &pos.inner {
             ScriptPositionInner::Options {
                 legs, multiplier, ..
@@ -2182,22 +2189,17 @@ fn compute_portfolio_state(
         }
     }
 
-    let position_count = positions.iter().filter(|p| !p.implicit).count() as i64;
-    let max_position_pnl = if positions.is_empty() {
-        0.0
+    if positions.is_empty() {
+        max_position_pnl = 0.0;
+        min_position_pnl = 0.0;
+    }
+
+    let cash = equity - unrealized_pnl;
+    let realized_pnl = equity - capital;
+    let exposure_pct = if equity.abs() > f64::EPSILON {
+        total_exposure / equity.abs()
     } else {
-        positions
-            .iter()
-            .map(|p| p.unrealized_pnl)
-            .fold(f64::NEG_INFINITY, f64::max)
-    };
-    let min_position_pnl = if positions.is_empty() {
         0.0
-    } else {
-        positions
-            .iter()
-            .map(|p| p.unrealized_pnl)
-            .fold(f64::INFINITY, f64::min)
     };
 
     let effective_peak = peak_equity.max(equity);
@@ -2238,14 +2240,9 @@ impl BarContextFactory {
         awareness: &PositionAwareness,
         peak_equity: f64,
     ) -> BarContext {
-        let cash = equity - positions_arc.iter().map(|p| p.unrealized_pnl).sum::<f64>();
-        let portfolio = compute_portfolio_state(
-            positions_arc,
-            equity,
-            cash,
-            self.config.capital,
-            peak_equity,
-        );
+        let portfolio =
+            compute_portfolio_state(positions_arc, equity, self.config.capital, peak_equity);
+        let cash = portfolio.cash;
         BarContext {
             datetime: bar.datetime,
             open: bar.open,
