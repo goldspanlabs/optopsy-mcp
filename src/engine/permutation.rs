@@ -257,6 +257,8 @@ pub fn apply_permutation_gate(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
 
     // ── compute_metric_from_pnls ────────────────────────────────────
@@ -439,7 +441,7 @@ mod tests {
             combinations_failed: 0,
             best_result: None,
             ranked_results: Vec::new(),
-            dimension_sensitivity: Default::default(),
+            dimension_sensitivity: HashMap::default(),
             convergence_trace: None,
             execution_time_ms: 0,
             multiple_comparisons: None,
@@ -461,7 +463,7 @@ mod tests {
             best_result: None,
             ranked_results: vec![crate::tools::response_types::sweep::SweepResult {
                 rank: 1,
-                params: Default::default(),
+                params: HashMap::default(),
                 sharpe: 1.0,
                 sortino: 1.0,
                 pnl: 100.0,
@@ -474,7 +476,7 @@ mod tests {
                 p_value: None,
                 significant: None,
             }],
-            dimension_sensitivity: Default::default(),
+            dimension_sensitivity: HashMap::default(),
             convergence_trace: None,
             execution_time_ms: 0,
             multiple_comparisons: None,
