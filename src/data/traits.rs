@@ -136,6 +136,8 @@ pub enum RunRow {
         strategy_id: Option<String>,
         strategy_name: Option<String>,
         symbol: String,
+        /// Optimization mode: "grid" or "bayesian"
+        mode: String,
         combinations: i64,
         best_return: Option<f64>,
         best_win_rate: Option<f64>,

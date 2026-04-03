@@ -305,7 +305,7 @@ impl RunStore for SqliteRunStore {
             let mut stmt = conn
                 .prepare(
                     "SELECT sw.id, sw.strategy_id, s.name as strategy_name,
-                            sw.symbol, sw.combinations,
+                            sw.symbol, sw.mode, sw.combinations,
                             br.total_return as best_return,
                             br.win_rate as best_win_rate,
                             br.max_drawdown as best_max_drawdown,
@@ -348,7 +348,7 @@ impl RunStore for SqliteRunStore {
                 .query_map([], |row| {
                     // Parse sweep_config JSON once
                     let config: Option<Value> = row
-                        .get::<_, Option<String>>(18)?
+                        .get::<_, Option<String>>(19)?
                         .and_then(|s| serde_json::from_str(&s).ok());
 
                     let sweep_params: Option<Vec<SweepParamRange>> = config
@@ -378,25 +378,26 @@ impl RunStore for SqliteRunStore {
                         strategy_id: row.get(1)?,
                         strategy_name: row.get(2)?,
                         symbol: row.get(3)?,
-                        combinations: row.get(4)?,
-                        best_return: row.get(5)?,
-                        best_win_rate: row.get(6)?,
-                        best_max_drawdown: row.get(7)?,
-                        best_sharpe: row.get(8)?,
-                        best_sortino: row.get(9)?,
-                        best_cagr: row.get(10)?,
-                        best_profit_factor: row.get(11)?,
-                        best_trade_count: row.get(12)?,
+                        mode: row.get::<_, String>(4)?,
+                        combinations: row.get(5)?,
+                        best_return: row.get(6)?,
+                        best_win_rate: row.get(7)?,
+                        best_max_drawdown: row.get(8)?,
+                        best_sharpe: row.get(9)?,
+                        best_sortino: row.get(10)?,
+                        best_cagr: row.get(11)?,
+                        best_profit_factor: row.get(12)?,
+                        best_trade_count: row.get(13)?,
                         source: row
-                            .get::<_, Option<String>>(13)?
+                            .get::<_, Option<String>>(14)?
                             .unwrap_or_else(|| "manual".to_string()),
-                        thread_id: row.get(14)?,
-                        created_at: row.get(15)?,
+                        thread_id: row.get(15)?,
+                        created_at: row.get(16)?,
                         sweep_params,
                         base_params,
-                        wf_best_efficiency: row.get(16)?,
-                        wf_validation_count: row.get(17)?,
-                        last_activity: row.get(19)?,
+                        wf_best_efficiency: row.get(17)?,
+                        wf_validation_count: row.get(18)?,
+                        last_activity: row.get(20)?,
                     })
                 })
                 .context("Failed to query sweep rows")?
