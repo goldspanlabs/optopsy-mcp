@@ -111,6 +111,8 @@ pub(crate) fn persist_backtest(
             Some(response.result.trade_count as i64),
             Some(sanitize(m.expectancy)),
             Some(sanitize(m.var_95)),
+            None, // p_value (single backtests don't run permutation test)
+            None, // significant
             &result_json,
             Some(response.execution_time_ms as i64),
             hypothesis,

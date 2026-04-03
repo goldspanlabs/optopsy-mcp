@@ -74,6 +74,10 @@ pub struct RunSummary {
     pub profit_factor: Option<f64>,
     pub trade_count: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub p_value: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub significant: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tags: Option<String>,
     #[serde(default = "default_source")]
     pub source: String,
@@ -102,6 +106,10 @@ pub struct RunDetail {
     pub trade_count: Option<i64>,
     pub expectancy: Option<f64>,
     pub var_95: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub p_value: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub significant: Option<bool>,
     pub result_json: Option<Value>,
     pub trades: Vec<TradeRow>,
     pub execution_time_ms: Option<i64>,
@@ -256,6 +264,8 @@ pub trait RunStore: Send + Sync {
         trade_count: Option<i64>,
         expectancy: Option<f64>,
         var_95: Option<f64>,
+        p_value: Option<f64>,
+        significant: Option<bool>,
         result_json: &str,
         execution_time_ms: Option<i64>,
         hypothesis: Option<&str>,

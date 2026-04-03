@@ -225,6 +225,8 @@ pub(crate) fn persist_sweep_to_store(
                 Some(result.trades as i64),
                 m.map(|m| sanitize(m.expectancy)),
                 m.map(|m| sanitize(m.var_95)),
+                result.p_value,
+                result.significant,
                 &result_json,
                 full.map(|r| r.execution_time_ms as i64),
                 script_meta.hypothesis.as_deref(),
