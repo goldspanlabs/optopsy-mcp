@@ -870,6 +870,58 @@ fn generate_stmts(
 // Expression rewriting
 // ---------------------------------------------------------------------------
 
+/// Context methods that can be used without parentheses in DSL.
+/// Unlike CTX_PROPERTIES (which emit `ctx.X`), these emit `ctx.X()` since
+/// they are Rhai functions, not getters.
+const CTX_CALLABLE_PROPERTIES: &[&str] = &[
+    "day_of_week",
+    "month",
+    "day_of_month",
+    "hour",
+    "minute",
+    "week_of_year",
+    "time",
+    "is_first_bar",
+    "is_last_bar",
+    "is_expiry_week",
+    "is_quarter_end",
+    "trading_days_left",
+    "minutes_since_open",
+];
+
+/// Map day names to their numeric value (1=Monday..7=Sunday).
+pub fn day_name_to_number(word: &str) -> Option<i64> {
+    match word {
+        "monday" => Some(1),
+        "tuesday" => Some(2),
+        "wednesday" => Some(3),
+        "thursday" => Some(4),
+        "friday" => Some(5),
+        "saturday" => Some(6),
+        "sunday" => Some(7),
+        _ => None,
+    }
+}
+
+/// Map month names to their numeric value (1=January..12=December).
+pub fn month_name_to_number(word: &str) -> Option<i64> {
+    match word {
+        "january" => Some(1),
+        "february" => Some(2),
+        "march" => Some(3),
+        "april" => Some(4),
+        "may" => Some(5),
+        "june" => Some(6),
+        "july" => Some(7),
+        "august" => Some(8),
+        "september" => Some(9),
+        "october" => Some(10),
+        "november" => Some(11),
+        "december" => Some(12),
+        _ => None,
+    }
+}
+
 /// Known `ctx` properties (accessed without parentheses).
 const CTX_PROPERTIES: &[&str] = &[
     "close",
@@ -957,6 +1009,14 @@ const CTX_METHODS: &[&str] = &[
     "hour",
     "minute",
     "week_of_year",
+    // Time/session
+    "time",
+    "is_first_bar",
+    "is_last_bar",
+    "is_expiry_week",
+    "is_quarter_end",
+    "trading_days_left",
+    "minutes_since_open",
     // Portfolio
     "has_positions",
     "positions",
@@ -1360,10 +1420,118 @@ fn preprocess_crossovers(expr: &str) -> String {
     result
 }
 
+/// Try to match a time literal (`HH:MM`) at position `pos` in `chars`.
+/// Returns `Some((quoted_string, end_pos))` on success, `None` otherwise.
+pub fn try_parse_time_literal(chars: &[char], pos: usize) -> Option<(String, usize)> {
+    // Must start with a digit, not preceded by alphanumeric/underscore
+    if !chars[pos].is_ascii_digit() {
+        return None;
+    }
+    if pos > 0
+        && (chars[pos - 1].is_alphanumeric() || chars[pos - 1] == '_' || chars[pos - 1] == ':')
+    {
+        return None;
+    }
+
+    // Consume 1-2 digits for hour
+    let mut j = pos;
+    while j < chars.len() && chars[j].is_ascii_digit() && j - pos < 2 {
+        j += 1;
+    }
+
+    // Expect ':'
+    if j >= chars.len() || chars[j] != ':' {
+        return None;
+    }
+    let colon = j;
+    j += 1;
+
+    // Consume exactly 2 digits for minute
+    let min_start = j;
+    while j < chars.len() && chars[j].is_ascii_digit() && j - min_start < 2 {
+        j += 1;
+    }
+    if j - min_start != 2 {
+        return None;
+    }
+
+    // Must end at a word boundary: reject continuations like "10:00:00", "10:00pm", "10:00_et"
+    if j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_' || chars[j] == ':') {
+        return None;
+    }
+
+    let hour: u32 = chars[pos..colon].iter().collect::<String>().parse().ok()?;
+    let min: u32 = chars[min_start..j]
+        .iter()
+        .collect::<String>()
+        .parse()
+        .ok()?;
+
+    // Validation happens in validate.rs; here we only convert valid-looking patterns.
+    // Out-of-range values (25:00) still get quoted so the validator can report them.
+    Some((format!("\"{hour:02}:{min:02}\""), j))
+}
+
+/// Pre-process time literals (`HH:MM`) into quoted strings (`"HH:MM"`).
+///
+/// Matches `\d{1,2}:\d{2}` that are NOT inside string literals and NOT preceded
+/// by an alphanumeric/underscore character (to avoid matching Rhai map syntax etc.).
+fn preprocess_time_literals(expr: &str) -> String {
+    let chars: Vec<char> = expr.chars().collect();
+    let mut result = String::with_capacity(expr.len() + 16);
+    let mut i = 0;
+
+    while i < chars.len() {
+        // Skip string literals
+        if chars[i] == '"' {
+            let end = skip_string_literal(&chars, i);
+            for c in &chars[i..end] {
+                result.push(*c);
+            }
+            i = end;
+            continue;
+        }
+
+        // Try time literal
+        if let Some((quoted, end)) = try_parse_time_literal(&chars, i) {
+            result.push_str(&quoted);
+            i = end;
+            continue;
+        }
+
+        result.push(chars[i]);
+        i += 1;
+    }
+
+    result
+}
+
+/// Skip past a string literal starting at `pos` (which points to the opening `"`).
+/// Returns the position after the closing `"`.
+pub fn skip_string_literal(chars: &[char], pos: usize) -> usize {
+    let mut i = pos + 1; // skip opening "
+    while i < chars.len() && chars[i] != '"' {
+        if chars[i] == '\\' && i + 1 < chars.len() {
+            i += 2; // skip backslash + escaped char
+        } else {
+            i += 1;
+        }
+    }
+    if i < chars.len() {
+        i + 1 // skip closing "
+    } else {
+        i
+    }
+}
+
 /// Rewrite a DSL expression into a valid Rhai expression.
 ///
 /// - Bare context properties (`close`, `equity`) → `ctx.close`, `ctx.equity`
 /// - Bare context methods (`sma(200)`) → `ctx.sma(200)`
+/// - Callable properties (`day_of_week`, `time`) → `ctx.day_of_week()`, `ctx.time()`
+/// - Day names (`monday`..`sunday`) → numeric values (1..7)
+/// - Month names (`january`..`december`) → numeric values (1..12)
+/// - Time literals (`10:00`, `15:30`) → quoted strings (`"10:00"`, `"15:30"`)
 /// - `has positions` → `ctx.has_positions()`
 /// - `no positions` → `!ctx.has_positions()`
 /// - `and` → `&&`, `or` → `||`
@@ -1371,6 +1539,7 @@ fn preprocess_crossovers(expr: &str) -> String {
 pub fn rewrite_expr(expr: &str) -> String {
     let expr = preprocess_crossovers(expr);
     let expr = preprocess_concat(&expr);
+    let expr = preprocess_time_literals(&expr);
     let chars: Vec<char> = expr.chars().collect();
     let mut result = String::with_capacity(expr.len() + 32);
     let mut i = 0;
@@ -1411,6 +1580,15 @@ pub fn rewrite_expr(expr: &str) -> String {
 
             if preceded_by_dot {
                 result.push_str(&word);
+            } else if let Some(num) = day_name_to_number(&word) {
+                result.push_str(&num.to_string());
+            } else if let Some(num) = month_name_to_number(&word) {
+                result.push_str(&num.to_string());
+            } else if CTX_CALLABLE_PROPERTIES.contains(&word.as_str())
+                && !is_followed_by_paren(&chars, i)
+            {
+                // Callable properties without parens: `day_of_week` → `ctx.day_of_week()`
+                result.push_str(&format!("ctx.{word}()"));
             } else if word == "has" {
                 if let Some(end) = matches_word_at(&chars, i, "positions") {
                     // "has positions" → ctx.has_positions()
@@ -1745,5 +1923,146 @@ mod tests {
         let result = rewrite_expr("sma(50) crosses above sma(200) and rsi(14) > 50");
         assert!(result.contains("ctx.crossed_above(\"sma:50\", \"sma:200\")"));
         assert!(result.contains("ctx.rsi(14) > 50"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Time keyword rewrite tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_rewrite_callable_properties_without_parens() {
+        assert_eq!(rewrite_expr("day_of_week == 1"), "ctx.day_of_week() == 1");
+        assert_eq!(rewrite_expr("month == 12"), "ctx.month() == 12");
+        assert_eq!(rewrite_expr("day_of_month > 25"), "ctx.day_of_month() > 25");
+        assert_eq!(rewrite_expr("hour > 10"), "ctx.hour() > 10");
+        assert_eq!(rewrite_expr("minute == 30"), "ctx.minute() == 30");
+        assert_eq!(
+            rewrite_expr("week_of_year == 52"),
+            "ctx.week_of_year() == 52"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_callable_properties_with_parens() {
+        // When used with parens, they go through CTX_METHODS path
+        assert_eq!(rewrite_expr("day_of_week()"), "ctx.day_of_week()");
+        assert_eq!(rewrite_expr("month()"), "ctx.month()");
+        assert_eq!(rewrite_expr("time()"), "ctx.time()");
+    }
+
+    #[test]
+    fn test_rewrite_time_property() {
+        assert_eq!(rewrite_expr("time < \"10:00\""), "ctx.time() < \"10:00\"");
+    }
+
+    #[test]
+    fn test_rewrite_new_callable_properties() {
+        assert_eq!(rewrite_expr("is_first_bar"), "ctx.is_first_bar()");
+        assert_eq!(rewrite_expr("is_last_bar"), "ctx.is_last_bar()");
+        assert_eq!(rewrite_expr("is_expiry_week"), "ctx.is_expiry_week()");
+        assert_eq!(rewrite_expr("is_quarter_end"), "ctx.is_quarter_end()");
+        assert_eq!(
+            rewrite_expr("trading_days_left < 3"),
+            "ctx.trading_days_left() < 3"
+        );
+        assert_eq!(
+            rewrite_expr("minutes_since_open > 30"),
+            "ctx.minutes_since_open() > 30"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_day_names() {
+        assert_eq!(rewrite_expr("monday"), "1");
+        assert_eq!(rewrite_expr("tuesday"), "2");
+        assert_eq!(rewrite_expr("wednesday"), "3");
+        assert_eq!(rewrite_expr("thursday"), "4");
+        assert_eq!(rewrite_expr("friday"), "5");
+        assert_eq!(rewrite_expr("saturday"), "6");
+        assert_eq!(rewrite_expr("sunday"), "7");
+    }
+
+    #[test]
+    fn test_rewrite_month_names() {
+        assert_eq!(rewrite_expr("january"), "1");
+        assert_eq!(rewrite_expr("february"), "2");
+        assert_eq!(rewrite_expr("march"), "3");
+        assert_eq!(rewrite_expr("april"), "4");
+        assert_eq!(rewrite_expr("may"), "5");
+        assert_eq!(rewrite_expr("june"), "6");
+        assert_eq!(rewrite_expr("july"), "7");
+        assert_eq!(rewrite_expr("august"), "8");
+        assert_eq!(rewrite_expr("september"), "9");
+        assert_eq!(rewrite_expr("october"), "10");
+        assert_eq!(rewrite_expr("november"), "11");
+        assert_eq!(rewrite_expr("december"), "12");
+    }
+
+    #[test]
+    fn test_rewrite_day_name_in_expression() {
+        assert_eq!(
+            rewrite_expr("day_of_week == monday"),
+            "ctx.day_of_week() == 1"
+        );
+        assert_eq!(
+            rewrite_expr("day_of_week != friday and month == december"),
+            "ctx.day_of_week() != 5 && ctx.month() == 12"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_time_literal() {
+        assert_eq!(rewrite_expr("10:00"), "\"10:00\"");
+        assert_eq!(rewrite_expr("9:30"), "\"09:30\"");
+        assert_eq!(rewrite_expr("15:30"), "\"15:30\"");
+        assert_eq!(rewrite_expr("0:00"), "\"00:00\"");
+        assert_eq!(rewrite_expr("23:59"), "\"23:59\"");
+    }
+
+    #[test]
+    fn test_rewrite_time_literal_in_expression() {
+        assert_eq!(rewrite_expr("time < 10:00"), "ctx.time() < \"10:00\"");
+        assert_eq!(
+            rewrite_expr("time > 15:30 and time < 16:00"),
+            "ctx.time() > \"15:30\" && ctx.time() < \"16:00\""
+        );
+    }
+
+    #[test]
+    fn test_rewrite_time_literal_not_in_string() {
+        // Time literals inside strings should NOT be double-quoted
+        assert_eq!(rewrite_expr("\"10:00\""), "\"10:00\"");
+    }
+
+    #[test]
+    fn test_rewrite_combined_time_and_indicators() {
+        assert_eq!(
+            rewrite_expr("day_of_week == monday and close > sma(200)"),
+            "ctx.day_of_week() == 1 && ctx.close > ctx.sma(200)"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_callable_property_not_dot_qualified() {
+        // After a dot, callable properties should NOT be rewritten
+        assert_eq!(rewrite_expr("config.time"), "config.time");
+    }
+
+    #[test]
+    fn test_time_literal_not_after_colon() {
+        // Rhai map syntax "field: 10" should NOT match as time literal
+        // "sma:200" indicator specs should not match either
+        assert_eq!(rewrite_expr("sma:200"), "sma:200");
+        // A colon-preceded digit pair should pass through unchanged
+        assert_eq!(rewrite_expr("x:10:00"), "x:10:00");
+    }
+
+    #[test]
+    fn test_skip_string_literal_escaped_quote() {
+        // Escaped quote at end should not cause issues
+        assert_eq!(
+            rewrite_expr(r#"close > 0 and "test\"" == "test\"""#),
+            r#"ctx.close > 0 && "test\"" == "test\"""#
+        );
     }
 }

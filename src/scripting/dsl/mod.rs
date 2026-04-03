@@ -37,6 +37,7 @@ pub mod parser;
 pub mod syntax;
 #[cfg(test)]
 mod tests;
+mod validate;
 
 pub use error::DslError;
 pub use syntax::register_dsl_syntax;
@@ -49,9 +50,11 @@ pub use syntax::register_dsl_syntax;
 ///
 /// # Errors
 ///
-/// Returns `DslError` with line numbers if the DSL source is malformed.
+/// Returns `DslError` with line numbers if the DSL source is malformed, or if
+/// intraday-only keywords are used with a non-intraday interval.
 pub fn transpile(source: &str) -> Result<String, DslError> {
     let program = parser::parse(source)?;
+    validate::check_interval_time_keywords(&program)?;
     Ok(codegen::generate(&program))
 }
 
