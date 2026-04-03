@@ -57,6 +57,7 @@ pub async fn run_grid_sweep(
             dimension_sensitivity: HashMap::new(),
             convergence_trace: None,
             execution_time_ms: start.elapsed().as_millis() as u64,
+            multiple_comparisons: None,
             full_results: Vec::new(),
         });
     }
@@ -102,6 +103,8 @@ pub async fn run_grid_sweep(
                 profit_factor: m.profit_factor,
                 cagr: m.cagr,
                 calmar: m.calmar,
+                p_value: None,
+                significant: None,
             });
             full_results.push(bt);
         }
@@ -191,6 +194,8 @@ pub async fn run_grid_sweep(
                         profit_factor: m.profit_factor,
                         cagr: m.cagr,
                         calmar: m.calmar,
+                        p_value: None,
+                        significant: None,
                     });
                     full_results.push(bt);
                 }
@@ -226,6 +231,7 @@ pub async fn run_grid_sweep(
         dimension_sensitivity: sensitivity,
         convergence_trace: None,
         execution_time_ms: start.elapsed().as_millis() as u64,
+        multiple_comparisons: None,
         full_results,
     })
 }
@@ -311,6 +317,8 @@ mod tests {
             profit_factor,
             cagr: 0.0,
             calmar,
+            p_value: None,
+            significant: None,
         }
     }
 
@@ -331,6 +339,8 @@ mod tests {
             profit_factor: 0.0,
             cagr: 0.0,
             calmar: 0.0,
+            p_value: None,
+            significant: None,
         }
     }
 

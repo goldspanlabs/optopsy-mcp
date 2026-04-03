@@ -17,6 +17,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::engine::bayesian::{run_bayesian, BayesianConfig};
+use crate::engine::permutation::apply_permutation_gate;
 use crate::engine::sweep::{run_grid_sweep, GridSweepConfig};
 use crate::engine::walk_forward::{WalkForwardParams, WfMode, WfObjective};
 use crate::scripting::engine::{CachingDataLoader, CancelCallback, DataLoader};
@@ -52,6 +53,9 @@ pub struct SubmitSweepRequest {
     pub sweep_params: Vec<SweepParamDef>,
     #[serde(default = "default_max_evaluations")]
     pub max_evaluations: usize,
+    /// Number of permutations for significance testing. Default 0 (off).
+    #[serde(default)]
+    pub num_permutations: usize,
     #[serde(default)]
     pub thread_id: Option<String>,
 }
@@ -414,6 +418,13 @@ pub async fn submit_sweep(
 
         match sweep_result {
             Ok(sweep_response) => {
+                // Apply permutation gate (if requested)
+                let sweep_response = apply_permutation_gate(
+                    sweep_response,
+                    req.num_permutations,
+                    &req.objective,
+                    None,
+                );
                 // Reconstruct CreateSweepRequest for persist_sweep_to_store
                 let sweep_req = CreateSweepRequest {
                     strategy: req.strategy.clone(),
@@ -422,6 +433,7 @@ pub async fn submit_sweep(
                     params: req.params.clone(),
                     sweep_params: req.sweep_params.clone(),
                     max_evaluations: req.max_evaluations,
+                    num_permutations: req.num_permutations,
                 };
 
                 match persist_sweep_to_store(

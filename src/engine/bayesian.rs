@@ -206,6 +206,7 @@ pub async fn run_bayesian(
         dimension_sensitivity: sensitivity,
         convergence_trace: Some(convergence_trace),
         execution_time_ms: start.elapsed().as_millis() as u64,
+        multiple_comparisons: None,
         full_results: Vec::new(),
     })
 }
@@ -534,6 +535,8 @@ async fn evaluate(
             profit_factor: m.profit_factor,
             cagr: m.cagr,
             calmar: m.calmar,
+            p_value: None,
+            significant: None,
         },
         pre,
     ))

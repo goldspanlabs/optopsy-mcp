@@ -15,6 +15,7 @@ use std::sync::Arc;
 use uuid;
 
 use crate::engine::bayesian::{run_bayesian, BayesianConfig};
+use crate::engine::permutation::apply_permutation_gate;
 use crate::engine::sweep::{run_grid_sweep, GridSweepConfig};
 use crate::scripting::engine::{CachingDataLoader, CancelCallback, DataLoader};
 use crate::server::sanitize::{sanitize, trade_row_from_record};
@@ -43,6 +44,9 @@ pub struct CreateSweepRequest {
     pub sweep_params: Vec<SweepParamDef>,
     #[serde(default = "default_max_evaluations")]
     pub max_evaluations: usize,
+    /// Number of permutations for significance testing. Default 0 (off).
+    #[serde(default)]
+    pub num_permutations: usize,
 }
 
 #[derive(Debug, Deserialize, Clone, serde::Serialize, schemars::JsonSchema)]
@@ -404,6 +408,13 @@ pub async fn create_sweep(
 
         match sweep_result {
             Ok(sweep_response) => {
+                // Apply permutation gate (if requested)
+                let sweep_response = apply_permutation_gate(
+                    sweep_response,
+                    req.num_permutations,
+                    &req.objective,
+                    None,
+                );
                 tracing::info!(
                     "Sweep completed: combinations_run={}, ranked_results={}",
                     sweep_response.combinations_run,
