@@ -1420,6 +1420,56 @@ fn preprocess_crossovers(expr: &str) -> String {
     result
 }
 
+/// Try to match a time literal (`HH:MM`) at position `pos` in `chars`.
+/// Returns `Some((quoted_string, end_pos))` on success, `None` otherwise.
+fn try_parse_time_literal(chars: &[char], pos: usize) -> Option<(String, usize)> {
+    // Must start with a digit, not preceded by alphanumeric/underscore
+    if !chars[pos].is_ascii_digit() {
+        return None;
+    }
+    if pos > 0 && (chars[pos - 1].is_alphanumeric() || chars[pos - 1] == '_') {
+        return None;
+    }
+
+    // Consume 1-2 digits for hour
+    let mut j = pos;
+    while j < chars.len() && chars[j].is_ascii_digit() && j - pos < 2 {
+        j += 1;
+    }
+
+    // Expect ':'
+    if j >= chars.len() || chars[j] != ':' {
+        return None;
+    }
+    let colon = j;
+    j += 1;
+
+    // Consume exactly 2 digits for minute
+    let min_start = j;
+    while j < chars.len() && chars[j].is_ascii_digit() && j - min_start < 2 {
+        j += 1;
+    }
+    if j - min_start != 2 {
+        return None;
+    }
+
+    // Must NOT be followed by more digits or ':' (e.g., "10:00:00" is not a time literal)
+    if j < chars.len() && (chars[j].is_ascii_digit() || chars[j] == ':') {
+        return None;
+    }
+
+    let hour: u32 = chars[pos..colon].iter().collect::<String>().parse().ok()?;
+    let min: u32 = chars[min_start..j]
+        .iter()
+        .collect::<String>()
+        .parse()
+        .ok()?;
+
+    // Validation happens in validate.rs; here we only convert valid-looking patterns.
+    // Out-of-range values (25:00) still get quoted so the validator can report them.
+    Some((format!("\"{hour:02}:{min:02}\""), j))
+}
+
 /// Pre-process time literals (`HH:MM`) into quoted strings (`"HH:MM"`).
 ///
 /// Matches `\d{1,2}:\d{2}` that are NOT inside string literals and NOT preceded
@@ -1432,63 +1482,19 @@ fn preprocess_time_literals(expr: &str) -> String {
     while i < chars.len() {
         // Skip string literals
         if chars[i] == '"' {
-            result.push(chars[i]);
-            i += 1;
-            while i < chars.len() && chars[i] != '"' {
-                if chars[i] == '\\' {
-                    result.push(chars[i]);
-                    i += 1;
-                }
-                if i < chars.len() {
-                    result.push(chars[i]);
-                    i += 1;
-                }
+            let end = skip_string_literal(&chars, i);
+            for c in &chars[i..end] {
+                result.push(*c);
             }
-            if i < chars.len() {
-                result.push(chars[i]);
-                i += 1;
-            }
+            i = end;
             continue;
         }
 
-        // Check for time literal: 1-2 digits, ':', exactly 2 digits
-        if chars[i].is_ascii_digit() {
-            // Must not be preceded by alphanumeric/underscore (would be part of identifier)
-            let preceded_by_alnum =
-                i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_');
-            if !preceded_by_alnum {
-                // Try to parse as time literal
-                let start = i;
-                let mut j = i;
-                // 1-2 digits for hour
-                while j < chars.len() && chars[j].is_ascii_digit() && j - start < 2 {
-                    j += 1;
-                }
-                let hour_len = j - start;
-                if hour_len >= 1 && j < chars.len() && chars[j] == ':' {
-                    let colon_pos = j;
-                    j += 1; // skip ':'
-                    let min_start = j;
-                    while j < chars.len() && chars[j].is_ascii_digit() && j - min_start < 2 {
-                        j += 1;
-                    }
-                    let min_len = j - min_start;
-                    // Must be exactly 2 digits after colon, and NOT followed by more digits or ':'
-                    let followed_by_more =
-                        j < chars.len() && (chars[j].is_ascii_digit() || chars[j] == ':');
-                    if min_len == 2 && !followed_by_more {
-                        let hour_str: String = chars[start..colon_pos].iter().collect();
-                        let min_str: String = chars[min_start..j].iter().collect();
-                        let hour: u32 = hour_str.parse().unwrap_or(0);
-                        let min: u32 = min_str.parse().unwrap_or(0);
-                        if hour < 24 && min < 60 {
-                            result.push_str(&format!("\"{hour:02}:{min:02}\""));
-                            i = j;
-                            continue;
-                        }
-                    }
-                }
-            }
+        // Try time literal
+        if let Some((quoted, end)) = try_parse_time_literal(&chars, i) {
+            result.push_str(&quoted);
+            i = end;
+            continue;
         }
 
         result.push(chars[i]);
@@ -1496,6 +1502,23 @@ fn preprocess_time_literals(expr: &str) -> String {
     }
 
     result
+}
+
+/// Skip past a string literal starting at `pos` (which points to the opening `"`).
+/// Returns the position after the closing `"`.
+fn skip_string_literal(chars: &[char], pos: usize) -> usize {
+    let mut i = pos + 1; // skip opening "
+    while i < chars.len() && chars[i] != '"' {
+        if chars[i] == '\\' {
+            i += 1; // skip escaped char
+        }
+        i += 1;
+    }
+    if i < chars.len() {
+        i + 1 // skip closing "
+    } else {
+        i
+    }
 }
 
 /// Rewrite a DSL expression into a valid Rhai expression.
