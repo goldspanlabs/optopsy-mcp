@@ -1531,41 +1531,114 @@ pub fn skip_string_literal(chars: &[char], pos: usize) -> usize {
 /// Supports chaining: `A if C1 else B if C2 else C`
 /// → `if C1 { A } else if C2 { B } else { C }`
 ///
-/// The `if` keyword must appear as a whole word at the top level (not inside
-/// parentheses or string literals) to avoid conflicts with other uses.
+/// Also recursively processes ternaries inside parenthesized groups, e.g.
+/// `close * (1.0 if trend_up else 0.5)`.
 fn preprocess_inline_if(expr: &str) -> String {
     // Find the first top-level ` if ` keyword (not inside parens or strings)
-    let Some((value_part, rest)) = split_at_top_level_keyword(expr, " if ") else {
-        return expr.to_string();
-    };
+    if let Some((value_part, rest)) = split_at_top_level_keyword(expr, " if ") {
+        // Find the matching ` else ` in the rest
+        let Some((condition, else_and_tail)) = split_at_top_level_keyword(rest, " else ") else {
+            // `if` without `else` — not an inline ternary, leave as-is
+            return expr.to_string();
+        };
 
-    // Find the matching ` else ` in the rest
-    let Some((condition, else_and_tail)) = split_at_top_level_keyword(rest, " else ") else {
-        // `if` without `else` — not an inline ternary, leave as-is
-        return expr.to_string();
-    };
+        // Separate the else expression from any trailing content (e.g., `, arg2` in function args)
+        let (else_expr, tail) = split_at_top_level_comma(else_and_tail);
 
-    // Separate the else expression from any trailing content (e.g., `, arg2` in function args)
-    let (else_expr, tail) = split_at_top_level_comma(else_and_tail);
+        // Recursively process the else branch (handles chaining)
+        let else_processed = preprocess_inline_if(else_expr.trim());
 
-    // Recursively process the else branch (handles chaining)
-    let else_processed = preprocess_inline_if(else_expr.trim());
+        // Check if the else branch is itself an if-expression (chained)
+        let else_rhai = if else_processed.starts_with("if ") {
+            format!("else {else_processed}")
+        } else {
+            format!("else {{ {else_processed} }}")
+        };
 
-    // Check if the else branch is itself an if-expression (chained)
-    let else_rhai = if else_processed.starts_with("if ") {
-        // Chained: `else if C2 { B } else { C }`
-        format!("else {else_processed}")
-    } else {
-        format!("else {{ {else_processed} }}")
-    };
+        return format!(
+            "if {} {{ {} }} {}{}",
+            condition.trim(),
+            value_part.trim(),
+            else_rhai,
+            tail
+        );
+    }
 
-    format!(
-        "if {} {{ {} }} {}{}",
-        condition.trim(),
-        value_part.trim(),
-        else_rhai,
-        tail
-    )
+    // No top-level if/else — recursively process parenthesized sub-expressions
+    // to handle cases like `close * (1.0 if trend_up else 0.5)`
+    rewrite_parens_inline_if(expr)
+}
+
+/// Scan for parenthesized groups and recursively apply `preprocess_inline_if`
+/// to their contents. Handles `close * (1.0 if trend_up else 0.5)`.
+fn rewrite_parens_inline_if(expr: &str) -> String {
+    let bytes = expr.as_bytes();
+    let mut result = String::with_capacity(expr.len());
+    let mut i = 0;
+    let mut in_string = false;
+
+    while i < bytes.len() {
+        let ch = bytes[i];
+
+        // Skip string literals
+        if ch == b'"' && !in_string {
+            in_string = true;
+            result.push('"');
+            i += 1;
+            continue;
+        }
+        if in_string {
+            if ch == b'\\' && i + 1 < bytes.len() {
+                result.push(bytes[i] as char);
+                result.push(bytes[i + 1] as char);
+                i += 2;
+                continue;
+            }
+            if ch == b'"' {
+                in_string = false;
+            }
+            result.push(ch as char);
+            i += 1;
+            continue;
+        }
+
+        // Found opening paren — extract contents and recursively process
+        if ch == b'(' {
+            let start = i + 1;
+            let mut depth = 1;
+            let mut j = start;
+            while j < bytes.len() && depth > 0 {
+                if bytes[j] == b'"' {
+                    j += 1;
+                    while j < bytes.len() && bytes[j] != b'"' {
+                        if bytes[j] == b'\\' {
+                            j += 1;
+                        }
+                        j += 1;
+                    }
+                } else if bytes[j] == b'(' {
+                    depth += 1;
+                } else if bytes[j] == b')' {
+                    depth -= 1;
+                }
+                if depth > 0 {
+                    j += 1;
+                }
+            }
+            let inner = &expr[start..j];
+            let processed = preprocess_inline_if(inner);
+            result.push('(');
+            result.push_str(&processed);
+            result.push(')');
+            i = j + 1; // skip past closing ')'
+            continue;
+        }
+
+        result.push(ch as char);
+        i += 1;
+    }
+
+    result
 }
 
 /// Find the byte offset of the first top-level position where `predicate(bytes, i)` returns
@@ -2260,6 +2333,24 @@ mod tests {
         assert_eq!(
             rewrite_expr("0.15 if close > sma(200) and rsi(14) > 50 else 0.30"),
             "if ctx.close > ctx.sma(200) && ctx.rsi(14) > 50 { 0.15 } else { 0.30 }"
+        );
+    }
+
+    #[test]
+    fn test_inline_if_inside_parens_for_grouping() {
+        // Ternary inside grouping parens for arithmetic precedence
+        assert_eq!(
+            rewrite_expr("close * (1.0 if rsi(14) > 50 else 0.5)"),
+            "ctx.close * (if ctx.rsi(14) > 50 { 1.0 } else { 0.5 })"
+        );
+    }
+
+    #[test]
+    fn test_inline_if_nested_parens() {
+        // Ternary wrapped in standalone parens
+        assert_eq!(
+            rewrite_expr("(0.15 if close > sma(200) else 0.30)"),
+            "(if ctx.close > ctx.sma(200) { 0.15 } else { 0.30 })"
         );
     }
 }
