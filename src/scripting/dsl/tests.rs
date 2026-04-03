@@ -1746,3 +1746,47 @@ on each bar
         "Should reject for-each variable named 'friday'.\nGot: {err}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Inline if/else ternary tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_inline_if_else_in_set() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval 5m
+
+extern VIX_THRESHOLD = 20 "VIX threshold"
+
+on each bar
+  set target_delta to 0.15 if close > sma(200) else 0.30
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("if ctx.close > ctx.sma(200) { 0.15 } else { 0.30 }"),
+        "Inline if/else should be transpiled.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_inline_if_else_chained_in_set() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval daily
+
+on each bar
+  set size to 1.0 if rsi(14) < 30 else 0.5 if rsi(14) > 70 else 0.75
+  buy 100 shares
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("if ctx.rsi(14) < 30 { 1.0 } else if ctx.rsi(14) > 70 { 0.5 } else { 0.75 }"),
+        "Chained inline if/else should produce else-if.\nGenerated:\n{rhai}"
+    );
+}
