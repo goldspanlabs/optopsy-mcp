@@ -357,12 +357,13 @@ impl BarContext {
     /// True if this is the last bar in the dataset (or last bar of the trading day for intraday).
     pub fn is_last_bar(&mut self) -> bool {
         let total = self.price_history.len();
-        if self.bar_idx >= total - 1 {
+        if total == 0 || self.bar_idx >= total.saturating_sub(1) {
             return true;
         }
         // For intraday: check if next bar is a different date
-        let next = &self.price_history[self.bar_idx + 1];
-        next.datetime.date() != self.datetime.date()
+        self.price_history
+            .get(self.bar_idx + 1)
+            .is_none_or(|next| next.datetime.date() != self.datetime.date())
     }
 
     /// True if the current bar falls in options expiration week (week of 3rd Friday).
@@ -385,39 +386,53 @@ impl BarContext {
     }
 
     /// True if the current bar is the last trading day of a calendar quarter.
+    /// Uses calendar logic (not dataset boundaries) to find the actual last trading day.
     pub fn is_quarter_end(&mut self) -> bool {
         let date = self.datetime.date();
-        let m = date.month();
+        let month = date.month();
         // Quarter-end months: 3, 6, 9, 12
-        if m != 3 && m != 6 && m != 9 && m != 12 {
+        if month != 3 && month != 6 && month != 9 && month != 12 {
             return false;
         }
-        // Check if next trading bar is in a different quarter
-        let total = self.price_history.len();
-        if self.bar_idx >= total - 1 {
-            return true; // Last bar of dataset in a quarter-end month
+        // Find the last trading day of this quarter via calendar
+        let (next_year, next_month) = if month == 12 {
+            (date.year() + 1, 1)
+        } else {
+            (date.year(), month + 1)
+        };
+        let Some(first_of_next) = NaiveDate::from_ymd_opt(next_year, next_month, 1) else {
+            return false;
+        };
+        let Some(mut last_day) = first_of_next.pred_opt() else {
+            return false;
+        };
+        // Walk back to find the last trading day
+        while !is_trading_day(last_day) {
+            let Some(prev) = last_day.pred_opt() else {
+                return false;
+            };
+            last_day = prev;
         }
-        let next_date = self.price_history[self.bar_idx + 1].datetime.date();
-        let next_q = (next_date.month() - 1) / 3;
-        let curr_q = (m - 1) / 3;
-        next_q != curr_q
+        date == last_day
     }
 
     /// Approximate trading days remaining in the current month.
     /// Excludes weekends and US market holidays (NYSE observed schedule).
     pub fn trading_days_left(&mut self) -> i64 {
         let date = self.datetime.date();
-        let mut count = 0i64;
-        let mut d = date.succ_opt().unwrap_or(date);
         let target_month = date.month();
+        let mut count = 0i64;
+        let Some(mut d) = date.succ_opt() else {
+            return 0;
+        };
         while d.month() == target_month {
             if is_trading_day(d) {
                 count += 1;
             }
-            d = d.succ_opt().unwrap_or(d);
-            if count > 25 {
-                break;
-            } // safety
+            d = match d.succ_opt() {
+                Some(next) => next,
+                None => break,
+            };
         }
         count
     }
@@ -1042,22 +1057,21 @@ fn is_us_market_holiday(d: NaiveDate) -> bool {
 }
 
 /// Compute Easter Sunday for a given year using the anonymous Gregorian algorithm.
-#[allow(clippy::many_single_char_names)]
 fn easter_sunday(year: i32) -> Option<NaiveDate> {
-    let a = year % 19;
-    let b = year / 100;
-    let c = year % 100;
-    let d = b / 4;
-    let e = b % 4;
-    let f = (b + 8) / 25;
-    let g = (b - f + 1) / 3;
-    let h = (19 * a + b - d - g + 15) % 30;
-    let i = c / 4;
-    let k = c % 4;
-    let l = (32 + 2 * e + 2 * i - h - k) % 7;
-    let m = (a + 11 * h + 22 * l) / 451;
-    let month = (h + l - 7 * m + 114) / 31;
-    let day = ((h + l - 7 * m + 114) % 31) + 1;
+    let golden = year % 19;
+    let century = year / 100;
+    let year_in_century = year % 100;
+    let leap_correction = century / 4;
+    let leap_remainder = century % 4;
+    let moon_correction = (century + 8) / 25;
+    let epact_correction = (century - moon_correction + 1) / 3;
+    let epact = (19 * golden + century - leap_correction - epact_correction + 15) % 30;
+    let quarter = year_in_century / 4;
+    let year_remainder = year_in_century % 4;
+    let weekday_shift = (32 + 2 * leap_remainder + 2 * quarter - epact - year_remainder) % 7;
+    let lunar_correction = (golden + 11 * epact + 22 * weekday_shift) / 451;
+    let month = (epact + weekday_shift - 7 * lunar_correction + 114) / 31;
+    let day = ((epact + weekday_shift - 7 * lunar_correction + 114) % 31) + 1;
     NaiveDate::from_ymd_opt(year, month as u32, day as u32)
 }
 
@@ -1495,49 +1509,43 @@ mod tests {
 
     #[test]
     fn test_is_quarter_end_q1_2024() {
-        // Q1 2024 ends: last trading day of March
-        // March 29, 2024 is Friday (Good Friday), so March 28 (Thu) is last trading day
-        let bars = vec![
-            daily(2024, 3, 27),
-            daily(2024, 3, 28),
-            daily(2024, 4, 1), // Next quarter
-        ];
-        let mut ctx = make_ctx(daily(2024, 3, 28), 1, bars.clone());
-        assert!(ctx.is_quarter_end()); // Last bar in Q1 before Q2
+        // Q1 2024 ends: March 29 is Good Friday (holiday), so March 28 (Thu) is last trading day
+        let mut ctx = make_ctx(daily(2024, 3, 28), 0, vec![daily(2024, 3, 28)]);
+        assert!(ctx.is_quarter_end());
 
-        ctx.bar_idx = 0;
         ctx.datetime = daily(2024, 3, 27);
         assert!(!ctx.is_quarter_end()); // Not the last trading day
     }
 
     #[test]
     fn test_is_quarter_end_not_quarter_month() {
-        let bars = vec![daily(2024, 2, 28), daily(2024, 3, 1)];
-        let mut ctx = make_ctx(daily(2024, 2, 28), 0, bars);
+        let mut ctx = make_ctx(daily(2024, 2, 28), 0, vec![daily(2024, 2, 28)]);
         assert!(!ctx.is_quarter_end()); // February is not a quarter-end month
     }
 
     #[test]
-    fn test_is_quarter_end_last_bar_of_dataset() {
-        // Last bar of dataset in December → true
-        let bars = vec![daily(2024, 12, 30), daily(2024, 12, 31)];
-        let mut ctx = make_ctx(daily(2024, 12, 31), 1, bars);
-        assert!(ctx.is_quarter_end());
+    fn test_is_quarter_end_mid_month_not_end() {
+        // Dataset ends mid-March but that doesn't make it quarter-end (calendar-based)
+        let mut ctx = make_ctx(daily(2024, 3, 10), 0, vec![daily(2024, 3, 10)]);
+        assert!(!ctx.is_quarter_end()); // March 10 is not last trading day of Q1
     }
 
     #[test]
     fn test_is_quarter_end_all_quarters() {
-        // Test each quarter transition
-        let quarters = vec![
-            (daily(2024, 3, 28), daily(2024, 4, 1)),  // Q1→Q2
-            (daily(2024, 6, 28), daily(2024, 7, 1)),  // Q2→Q3
-            (daily(2024, 9, 30), daily(2024, 10, 1)), // Q3→Q4
-            (daily(2024, 12, 31), daily(2025, 1, 2)), // Q4→Q1
+        // Calendar-based: last trading day of each quarter in 2024
+        // Q1: Mar 28 (Good Friday Mar 29 is holiday)
+        // Q2: Jun 28 (Jun 29 Sat, Jun 30 Sun → Jun 28 Fri)
+        // Q3: Sep 30 (Monday, regular trading day)
+        // Q4: Dec 31 (Tuesday, regular trading day)
+        let quarter_ends = vec![
+            daily(2024, 3, 28),
+            daily(2024, 6, 28),
+            daily(2024, 9, 30),
+            daily(2024, 12, 31),
         ];
-        for (last_bar, next_bar) in quarters {
-            let bars = vec![last_bar, next_bar];
-            let mut ctx = make_ctx(last_bar, 0, bars);
-            assert!(ctx.is_quarter_end(), "Expected quarter end at {last_bar}");
+        for dt in quarter_ends {
+            let mut ctx = make_ctx(dt, 0, vec![dt]);
+            assert!(ctx.is_quarter_end(), "Expected quarter end at {dt}");
         }
     }
 

@@ -890,7 +890,7 @@ const CTX_CALLABLE_PROPERTIES: &[&str] = &[
 ];
 
 /// Map day names to their numeric value (1=Monday..7=Sunday).
-fn day_name_to_number(word: &str) -> Option<i64> {
+pub fn day_name_to_number(word: &str) -> Option<i64> {
     match word {
         "monday" => Some(1),
         "tuesday" => Some(2),
@@ -904,7 +904,7 @@ fn day_name_to_number(word: &str) -> Option<i64> {
 }
 
 /// Map month names to their numeric value (1=January..12=December).
-fn month_name_to_number(word: &str) -> Option<i64> {
+pub fn month_name_to_number(word: &str) -> Option<i64> {
     match word {
         "january" => Some(1),
         "february" => Some(2),
@@ -1453,8 +1453,8 @@ pub fn try_parse_time_literal(chars: &[char], pos: usize) -> Option<(String, usi
         return None;
     }
 
-    // Must NOT be followed by more digits or ':' (e.g., "10:00:00" is not a time literal)
-    if j < chars.len() && (chars[j].is_ascii_digit() || chars[j] == ':') {
+    // Must end at a word boundary: reject continuations like "10:00:00", "10:00pm", "10:00_et"
+    if j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_' || chars[j] == ':') {
         return None;
     }
 

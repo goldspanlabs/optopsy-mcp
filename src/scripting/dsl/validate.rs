@@ -4,6 +4,7 @@
 //! invalid given the strategy configuration (e.g., using intraday-only keywords
 //! with a daily interval).
 
+use super::codegen::{day_name_to_number, month_name_to_number};
 use super::error::DslError;
 use super::parser::{DslProgram, Stmt};
 
@@ -14,11 +15,12 @@ const INTRADAY_ONLY_KEYWORDS: &[&str] =
 
 /// Intervals that are NOT intraday.
 fn is_non_intraday(interval: &str) -> bool {
-    matches!(interval, "daily" | "weekly" | "monthly")
+    matches!(interval, "daily" | "1d" | "weekly" | "monthly")
 }
 
 /// Check that intraday-only time keywords are not used with non-intraday intervals,
-/// and that all time literals are valid (hour 0-23, minute 0-59).
+/// that all time literals are valid (hour 0-23, minute 0-59), and that reserved
+/// day/month names are not used as variable names.
 pub fn check_interval_time_keywords(program: &DslProgram) -> Result<(), DslError> {
     let interval = program
         .strategy
@@ -44,6 +46,34 @@ pub fn check_interval_time_keywords(program: &DslProgram) -> Result<(), DslError
     // Also check procedural body
     check_stmts(&program.body, interval, check_intraday)?;
 
+    // Check that reserved day/month names are not used as extern/state variable names
+    check_reserved_names(program)?;
+
+    Ok(())
+}
+
+/// Reject extern/state variable names that collide with reserved day/month keywords.
+fn check_reserved_names(program: &DslProgram) -> Result<(), DslError> {
+    for p in &program.params {
+        let lower = p.name.to_lowercase();
+        if day_name_to_number(&lower).is_some() || month_name_to_number(&lower).is_some() {
+            return Err(DslError::general(format!(
+                "extern `{}` conflicts with reserved day/month name. \
+                 Choose a different variable name.",
+                p.name
+            )));
+        }
+    }
+    for s in &program.states {
+        let lower = s.name.to_lowercase();
+        if day_name_to_number(&lower).is_some() || month_name_to_number(&lower).is_some() {
+            return Err(DslError::general(format!(
+                "state `{}` conflicts with reserved day/month name. \
+                 Choose a different variable name.",
+                s.name
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -104,9 +134,11 @@ fn check_expr(
     check_time_literals(expr, line)?;
 
     // Only check intraday keywords if interval is non-intraday
+    // Strip string literals first to avoid false positives on e.g. `note == "time"`
     if check_intraday {
+        let stripped = strip_string_literals(expr);
         for keyword in INTRADAY_ONLY_KEYWORDS {
-            if contains_whole_word(expr, keyword) {
+            if contains_whole_word(&stripped, keyword) {
                 let hint = match *keyword {
                     "time" => "Use `day_of_week`, `month`, or `day_of_month` instead.",
                     "is_first_bar" | "is_last_bar" => {
@@ -170,6 +202,29 @@ fn check_time_literals(expr: &str, line: usize) -> Result<(), DslError> {
         i += 1;
     }
     Ok(())
+}
+
+/// Remove the contents of string literals from an expression, replacing them with spaces.
+/// `"note == \"time\""` → `"note ==         "` so keyword scanning doesn't false-positive.
+fn strip_string_literals(expr: &str) -> String {
+    use super::codegen::skip_string_literal;
+    let chars: Vec<char> = expr.chars().collect();
+    let mut result = String::with_capacity(expr.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '"' {
+            let end = skip_string_literal(&chars, i);
+            // Replace the entire string literal (including quotes) with spaces
+            for _ in i..end {
+                result.push(' ');
+            }
+            i = end;
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+    result
 }
 
 /// Check if `expr` contains `word` as a whole word (not part of a larger identifier).
