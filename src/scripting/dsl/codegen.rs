@@ -1524,8 +1524,198 @@ pub fn skip_string_literal(chars: &[char], pos: usize) -> usize {
     }
 }
 
+/// Pre-process Python-style inline if/else ternary expressions.
+///
+/// `VALUE if CONDITION else ELSE_VALUE` → `if CONDITION { VALUE } else { ELSE_VALUE }`
+///
+/// Supports chaining: `A if C1 else B if C2 else C`
+/// → `if C1 { A } else if C2 { B } else { C }`
+///
+/// Recursively processes ternaries inside bracketed groups (`()`, `{}`, `[]`),
+/// e.g. `close * (1.0 if trend_up else 0.5)`.
+fn preprocess_inline_if(expr: &str) -> String {
+    // Find the first top-level ` if ` keyword (not inside brackets or strings)
+    if let Some((value_part, rest)) = split_at_top_level_keyword(expr, " if ") {
+        // Find the matching ` else ` in the rest
+        let Some((condition, else_and_tail)) = split_at_top_level_keyword(rest, " else ") else {
+            // `if` without `else` — not an inline ternary, leave as-is
+            return expr.to_string();
+        };
+
+        // Separate the else expression from any trailing content (e.g., `, arg2` in function args)
+        let (else_expr, tail) = split_at_top_level_comma(else_and_tail);
+
+        // Recursively process all parts (value, condition, else branch)
+        let value_processed = rewrite_bracketed_inline_if(value_part.trim());
+        let cond_processed = rewrite_bracketed_inline_if(condition.trim());
+        let else_processed = preprocess_inline_if(else_expr.trim());
+
+        // Check if the else branch is itself an if-expression (chained)
+        let else_rhai = if else_processed.starts_with("if ") {
+            format!("else {else_processed}")
+        } else {
+            format!("else {{ {else_processed} }}")
+        };
+
+        return format!("if {cond_processed} {{ {value_processed} }} {else_rhai}{tail}");
+    }
+
+    // No top-level if/else — recursively process bracketed sub-expressions
+    // to handle cases like `close * (1.0 if trend_up else 0.5)`
+    rewrite_bracketed_inline_if(expr)
+}
+
+/// Scan for bracketed groups (`()`, `{}`, `[]`) and recursively apply
+/// `preprocess_inline_if` to their contents.
+fn rewrite_bracketed_inline_if(expr: &str) -> String {
+    let chars: Vec<char> = expr.chars().collect();
+    let mut result = String::with_capacity(expr.len());
+    let mut i = 0;
+
+    while i < chars.len() {
+        // Skip string literals verbatim
+        if chars[i] == '"' {
+            let end = skip_string_literal(&chars, i);
+            for c in &chars[i..end] {
+                result.push(*c);
+            }
+            i = end;
+            continue;
+        }
+
+        // Opening bracket — extract balanced contents and recurse
+        let (open, close) = match chars[i] {
+            '(' => ('(', ')'),
+            '{' => ('{', '}'),
+            '[' => ('[', ']'),
+            _ => {
+                result.push(chars[i]);
+                i += 1;
+                continue;
+            }
+        };
+
+        let start = i + 1;
+        let mut depth = 1;
+        let mut j = start;
+        while j < chars.len() && depth > 0 {
+            if chars[j] == '"' {
+                j = skip_string_literal(&chars, j);
+                continue;
+            }
+            if chars[j] == open {
+                depth += 1;
+            } else if chars[j] == close {
+                depth -= 1;
+            }
+            if depth > 0 {
+                j += 1;
+            }
+        }
+        let inner: String = chars[start..j].iter().collect();
+        let processed = preprocess_inline_if(&inner);
+        result.push(open);
+        result.push_str(&processed);
+        result.push(close);
+        i = j + 1; // skip past closing bracket
+    }
+
+    result
+}
+
+/// Find the byte offset of the first top-level position where `predicate(bytes, i)` returns
+/// `Some(match_len)`. "Top-level" means not inside nested parentheses, braces,
+/// brackets, or string literals.
+/// Returns `Some((offset, match_len))` or `None`.
+fn find_top_level(
+    bytes: &[u8],
+    predicate: impl Fn(&[u8], usize) -> Option<usize>,
+) -> Option<(usize, usize)> {
+    let mut i = 0;
+    let mut depth: i32 = 0; // tracks (), {}, []
+    let mut in_string = false;
+
+    while i < bytes.len() {
+        let ch = bytes[i];
+
+        // Track string literals
+        if ch == b'"' && !in_string {
+            in_string = true;
+            i += 1;
+            continue;
+        }
+        if in_string {
+            if ch == b'\\' {
+                i += 2;
+                continue;
+            }
+            if ch == b'"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        // Track nesting: (), {}, []
+        if ch == b'(' || ch == b'{' || ch == b'[' {
+            depth += 1;
+            i += 1;
+            continue;
+        }
+        if ch == b')' || ch == b'}' || ch == b']' {
+            depth -= 1;
+            i += 1;
+            continue;
+        }
+
+        // Check predicate at top level only
+        if depth == 0 {
+            if let Some(match_len) = predicate(bytes, i) {
+                return Some((i, match_len));
+            }
+        }
+
+        i += 1;
+    }
+
+    None
+}
+
+/// Split an expression at the first top-level comma.
+/// Returns `(before_comma, comma_and_rest)` where `comma_and_rest` includes the comma.
+/// If no top-level comma found, returns `(expr, "")`.
+fn split_at_top_level_comma(expr: &str) -> (&str, &str) {
+    let bytes = expr.as_bytes();
+    if let Some((pos, _)) = find_top_level(bytes, |b, i| if b[i] == b',' { Some(1) } else { None })
+    {
+        (&expr[..pos], &expr[pos..])
+    } else {
+        (expr, "")
+    }
+}
+
+/// Split an expression at the first top-level occurrence of `keyword`.
+/// "Top-level" means not inside parentheses or string literals.
+/// Returns `(before, after)` or `None` if keyword not found.
+fn split_at_top_level_keyword<'a>(expr: &'a str, keyword: &str) -> Option<(&'a str, &'a str)> {
+    let kw_bytes = keyword.as_bytes();
+    let kw_len = kw_bytes.len();
+    let bytes = expr.as_bytes();
+
+    let (pos, _) = find_top_level(bytes, |b, i| {
+        if i + kw_len <= b.len() && &b[i..i + kw_len] == kw_bytes {
+            Some(kw_len)
+        } else {
+            None
+        }
+    })?;
+
+    Some((&expr[..pos], &expr[pos + kw_len..]))
+}
+
 /// Rewrite a DSL expression into a valid Rhai expression.
 ///
+/// - Inline if/else: `V if C else E` → `if C { V } else { E }`
 /// - Bare context properties (`close`, `equity`) → `ctx.close`, `ctx.equity`
 /// - Bare context methods (`sma(200)`) → `ctx.sma(200)`
 /// - Callable properties (`day_of_week`, `time`) → `ctx.day_of_week()`, `ctx.time()`
@@ -1537,7 +1727,8 @@ pub fn skip_string_literal(chars: &[char], pos: usize) -> usize {
 /// - `and` → `&&`, `or` → `||`
 /// - `X crosses above Y` / `X crosses below Y` → crossover expressions
 pub fn rewrite_expr(expr: &str) -> String {
-    let expr = preprocess_crossovers(expr);
+    let expr = preprocess_inline_if(expr);
+    let expr = preprocess_crossovers(&expr);
     let expr = preprocess_concat(&expr);
     let expr = preprocess_time_literals(&expr);
     let chars: Vec<char> = expr.chars().collect();
@@ -2063,6 +2254,86 @@ mod tests {
         assert_eq!(
             rewrite_expr(r#"close > 0 and "test\"" == "test\"""#),
             r#"ctx.close > 0 && "test\"" == "test\"""#
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Inline if/else ternary tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_inline_if_simple() {
+        assert_eq!(
+            rewrite_expr("0.15 if vix > 20 else 0.30"),
+            "if vix > 20 { 0.15 } else { 0.30 }"
+        );
+    }
+
+    #[test]
+    fn test_inline_if_with_indicators() {
+        assert_eq!(
+            rewrite_expr("0.15 if rsi(14) > 70 else 0.30"),
+            "if ctx.rsi(14) > 70 { 0.15 } else { 0.30 }"
+        );
+    }
+
+    #[test]
+    fn test_inline_if_chained() {
+        assert_eq!(
+            rewrite_expr("0.15 if rsi(14) > 70 else 0.30 if rsi(14) < 30 else 0.20"),
+            "if ctx.rsi(14) > 70 { 0.15 } else if ctx.rsi(14) < 30 { 0.30 } else { 0.20 }"
+        );
+    }
+
+    #[test]
+    fn test_inline_if_with_ctx_properties() {
+        assert_eq!(
+            rewrite_expr("close * 1.05 if close > sma(200) else close * 0.95"),
+            "if ctx.close > ctx.sma(200) { ctx.close * 1.05 } else { ctx.close * 0.95 }"
+        );
+    }
+
+    #[test]
+    fn test_inline_if_no_else_passes_through() {
+        // `if` without `else` is not an inline ternary — leave as-is
+        assert_eq!(
+            rewrite_expr("0.15 if close > sma(200)"),
+            "0.15 if ctx.close > ctx.sma(200)"
+        );
+    }
+
+    #[test]
+    fn test_inline_if_inside_function_args() {
+        // Inline if/else inside function args should work, bounded by comma
+        assert_eq!(
+            rewrite_expr("size_by_risk(0.02 if atr(14) > 1 else 0.01, close)"),
+            "ctx.size_by_risk(if ctx.atr(14) > 1 { 0.02 } else { 0.01 }, ctx.close)"
+        );
+    }
+
+    #[test]
+    fn test_inline_if_with_boolean_operators() {
+        assert_eq!(
+            rewrite_expr("0.15 if close > sma(200) and rsi(14) > 50 else 0.30"),
+            "if ctx.close > ctx.sma(200) && ctx.rsi(14) > 50 { 0.15 } else { 0.30 }"
+        );
+    }
+
+    #[test]
+    fn test_inline_if_inside_parens_for_grouping() {
+        // Ternary inside grouping parens for arithmetic precedence
+        assert_eq!(
+            rewrite_expr("close * (1.0 if rsi(14) > 50 else 0.5)"),
+            "ctx.close * (if ctx.rsi(14) > 50 { 1.0 } else { 0.5 })"
+        );
+    }
+
+    #[test]
+    fn test_inline_if_nested_parens() {
+        // Ternary wrapped in standalone parens
+        assert_eq!(
+            rewrite_expr("(0.15 if close > sma(200) else 0.30)"),
+            "(if ctx.close > ctx.sma(200) { 0.15 } else { 0.30 })"
         );
     }
 }
