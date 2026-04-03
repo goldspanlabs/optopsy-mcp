@@ -45,6 +45,7 @@ pub struct CreateSweepRequest {
     #[serde(default = "default_max_evaluations")]
     pub max_evaluations: usize,
     /// Number of permutations for significance testing. Default 0 (off).
+    /// Only effective for grid sweeps; bayesian sweeps skip permutation testing.
     #[serde(default)]
     pub num_permutations: usize,
 }
