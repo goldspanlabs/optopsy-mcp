@@ -1439,6 +1439,87 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    #[test]
+    fn test_trading_days_left_intraday_multiple_bars_per_day() {
+        // Intraday: 3 bars on Jan 15, then 2 bars on Jan 16, then Feb 1
+        // From bar 0 (Jan 15 09:30), remaining bars in Jan: 4 (rest of Jan 15 + Jan 16)
+        let bars = vec![
+            dt(2024, 1, 15, 9, 30),
+            dt(2024, 1, 15, 10, 0),
+            dt(2024, 1, 15, 10, 30),
+            dt(2024, 1, 16, 9, 30),
+            dt(2024, 1, 16, 10, 0),
+            dt(2024, 2, 1, 9, 30),
+        ];
+        let mut ctx = make_ctx(dt(2024, 1, 15, 9, 30), 0, bars);
+        assert_eq!(ctx.trading_days_left(), 4);
+    }
+
+    #[test]
+    fn test_trading_days_left_mid_dataset() {
+        // Current bar is in the middle, not at index 0
+        let bars = vec![
+            daily(2024, 4, 22),
+            daily(2024, 4, 23),
+            daily(2024, 4, 24), // ← current
+            daily(2024, 4, 25),
+            daily(2024, 4, 26),
+            daily(2024, 5, 1),
+        ];
+        let mut ctx = make_ctx(daily(2024, 4, 24), 2, bars);
+        assert_eq!(ctx.trading_days_left(), 2); // Apr 25, Apr 26
+    }
+
+    #[test]
+    fn test_is_quarter_end_intraday_last_bar_of_day() {
+        // Intraday: last 5m bar of March, next bar is April
+        let bars = vec![dt(2024, 3, 28, 15, 55), dt(2024, 4, 1, 9, 30)];
+        let mut ctx = make_ctx(dt(2024, 3, 28, 15, 55), 0, bars);
+        assert!(ctx.is_quarter_end());
+    }
+
+    #[test]
+    fn test_is_quarter_end_intraday_not_last_bar_of_day() {
+        // Intraday: mid-day bar in March, next bar still in March
+        let bars = vec![dt(2024, 3, 28, 10, 0), dt(2024, 3, 28, 10, 5)];
+        let mut ctx = make_ctx(dt(2024, 3, 28, 10, 0), 0, bars);
+        assert!(!ctx.is_quarter_end()); // Next bar is same month
+    }
+
+    #[test]
+    fn test_is_quarter_end_mid_dataset() {
+        // bar_idx is not 0 — test that we look at the right next bar
+        let bars = vec![
+            daily(2024, 6, 27),
+            daily(2024, 6, 28), // ← current
+            daily(2024, 7, 1),
+        ];
+        let mut ctx = make_ctx(daily(2024, 6, 28), 1, bars);
+        assert!(ctx.is_quarter_end());
+    }
+
+    #[test]
+    fn test_is_first_bar_single_bar_dataset() {
+        let bars = vec![daily(2024, 1, 2)];
+        let mut ctx = make_ctx(daily(2024, 1, 2), 0, bars);
+        assert!(ctx.is_first_bar());
+    }
+
+    #[test]
+    fn test_is_last_bar_single_bar_dataset() {
+        let bars = vec![daily(2024, 1, 2)];
+        let mut ctx = make_ctx(daily(2024, 1, 2), 0, bars);
+        assert!(ctx.is_last_bar());
+    }
+
+    #[test]
+    fn test_is_last_bar_empty_dataset() {
+        let bars: Vec<NaiveDateTime> = vec![];
+        let mut ctx = make_ctx(daily(2024, 1, 2), 0, bars);
+        assert!(ctx.is_last_bar()); // Empty → true (graceful)
+    }
+
+    // -----------------------------------------------------------------------
     // week_of_year
     // -----------------------------------------------------------------------
 
