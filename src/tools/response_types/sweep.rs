@@ -4,6 +4,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::engine::multiple_comparisons::MultipleComparisonsResult;
+use crate::engine::types::PerformanceMetrics;
+
 /// A single parameter combination result.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SweepResult {
@@ -18,6 +21,39 @@ pub struct SweepResult {
     pub profit_factor: f64,
     pub cagr: f64,
     pub calmar: f64,
+    /// Raw (unadjusted) p-value from permutation test. `None` if permutation test was not run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p_value: Option<f64>,
+    /// Whether the combo is statistically significant after BH-FDR correction.
+    /// `None` if permutation test was not run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub significant: Option<bool>,
+}
+
+impl SweepResult {
+    /// Build from backtest metrics with a given param combo.
+    pub fn from_metrics(
+        params: HashMap<String, serde_json::Value>,
+        metrics: &PerformanceMetrics,
+        total_pnl: f64,
+        trade_count: usize,
+    ) -> Self {
+        Self {
+            rank: 0,
+            params,
+            sharpe: metrics.sharpe,
+            sortino: metrics.sortino,
+            pnl: total_pnl,
+            trades: trade_count,
+            win_rate: metrics.win_rate,
+            max_drawdown: metrics.max_drawdown,
+            profit_factor: metrics.profit_factor,
+            cagr: metrics.cagr,
+            calmar: metrics.calmar,
+            p_value: None,
+            significant: None,
+        }
+    }
 }
 
 /// Per-value stats for a single swept parameter.
@@ -44,6 +80,10 @@ pub struct SweepResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub convergence_trace: Option<Vec<f64>>,
     pub execution_time_ms: u64,
+    /// Permutation test multiple comparisons corrections (BH-FDR + Bonferroni).
+    /// `None` if permutation test was not run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub multiple_comparisons: Option<Vec<MultipleComparisonsResult>>,
     /// Full backtest responses per combo — parallel to `ranked_results`.
     /// Skipped from MCP serialization (too large); used by REST handler for DB storage.
     #[serde(skip)]

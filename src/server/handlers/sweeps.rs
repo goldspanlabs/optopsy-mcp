@@ -15,6 +15,7 @@ use std::sync::Arc;
 use uuid;
 
 use crate::engine::bayesian::{run_bayesian, BayesianConfig};
+use crate::engine::permutation::apply_permutation_gate;
 use crate::engine::sweep::{run_grid_sweep, GridSweepConfig};
 use crate::scripting::engine::{CachingDataLoader, CancelCallback, DataLoader};
 use crate::server::sanitize::{sanitize, trade_row_from_record};
@@ -43,6 +44,9 @@ pub struct CreateSweepRequest {
     pub sweep_params: Vec<SweepParamDef>,
     #[serde(default = "default_max_evaluations")]
     pub max_evaluations: usize,
+    /// Number of permutations for significance testing. Default 0 (off).
+    #[serde(default)]
+    pub num_permutations: usize,
 }
 
 #[derive(Debug, Deserialize, Clone, serde::Serialize, schemars::JsonSchema)]
@@ -141,6 +145,7 @@ pub(crate) fn persist_sweep_to_store(
         "objective": req.objective,
         "sweep_params": req.sweep_params,
         "params": req.params,
+        "num_permutations": req.num_permutations,
     });
 
     let combinations_total = sweep_response.combinations_total as i64;
@@ -221,6 +226,8 @@ pub(crate) fn persist_sweep_to_store(
                 Some(result.trades as i64),
                 m.map(|m| sanitize(m.expectancy)),
                 m.map(|m| sanitize(m.var_95)),
+                result.p_value,
+                result.significant,
                 &result_json,
                 full.map(|r| r.execution_time_ms as i64),
                 script_meta.hypothesis.as_deref(),
@@ -404,6 +411,26 @@ pub async fn create_sweep(
 
         match sweep_result {
             Ok(sweep_response) => {
+                // Apply permutation gate — CPU-intensive, run off async executor
+                let n_perms = req.num_permutations;
+                let obj = req.objective.clone();
+                let sweep_response = if n_perms > 0 {
+                    match tokio::task::spawn_blocking(move || {
+                        apply_permutation_gate(sweep_response, n_perms, &obj, Some(42))
+                    })
+                    .await
+                    {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let _ = tx
+                                .send(Event::default().event("error").data(e.to_string()))
+                                .await;
+                            return;
+                        }
+                    }
+                } else {
+                    sweep_response
+                };
                 tracing::info!(
                     "Sweep completed: combinations_run={}, ranked_results={}",
                     sweep_response.combinations_run,

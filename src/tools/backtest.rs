@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::engine::bayesian::{run_bayesian, BayesianConfig};
+use crate::engine::permutation::apply_permutation_gate;
 use crate::engine::sweep::{run_grid_sweep, GridSweepConfig};
 use crate::scripting::engine::{CachingDataLoader, CancelCallback, DataLoader};
 use crate::server::handlers::sweeps::{
@@ -70,6 +71,13 @@ pub struct BacktestToolParams {
     #[serde(default = "default_max_evaluations")]
     #[garde(skip)]
     pub max_evaluations: usize,
+
+    /// Number of permutations for statistical significance testing. Default 0 (off).
+    /// When > 0, runs sign-flip permutation test and applies BH-FDR correction.
+    /// Values above 100,000 are rejected by input validation.
+    #[serde(default)]
+    #[garde(range(max = 100_000))]
+    pub num_permutations: usize,
 
     /// Chat thread ID for associating results with a conversation.
     #[serde(default)]
@@ -246,12 +254,14 @@ async fn execute_sweep(
         params: params.params.clone(),
         sweep_params: params.sweep_params.clone(),
         max_evaluations: params.max_evaluations,
+        num_permutations: params.num_permutations,
     };
 
     // 6. No-op cancellation — cancellation is handled via /tasks/* endpoints
     let is_cancelled: CancelCallback = Box::new(|| false);
 
     // 7. Run grid or bayesian sweep
+    let num_permutations = params.num_permutations;
     let sweep_response: SweepResponse = match params.mode.as_str() {
         "grid" => {
             let param_grid = build_grid(&req.sweep_params);
@@ -293,6 +303,17 @@ async fn execute_sweep(
                 "Invalid mode '{other}', expected 'grid' or 'bayesian'"
             ));
         }
+    };
+
+    // 7b. Apply permutation gate (if requested) — CPU-intensive, run off async executor
+    let objective = req.objective.clone();
+    let sweep_response = if num_permutations > 0 {
+        tokio::task::spawn_blocking(move || {
+            apply_permutation_gate(sweep_response, num_permutations, &objective, Some(42))
+        })
+        .await?
+    } else {
+        sweep_response
     };
 
     // 8. Persist via persist_sweep with source = "agent"

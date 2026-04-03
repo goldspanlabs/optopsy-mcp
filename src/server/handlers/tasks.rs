@@ -17,6 +17,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::engine::bayesian::{run_bayesian, BayesianConfig};
+use crate::engine::permutation::apply_permutation_gate;
 use crate::engine::sweep::{run_grid_sweep, GridSweepConfig};
 use crate::engine::walk_forward::{WalkForwardParams, WfMode, WfObjective};
 use crate::scripting::engine::{CachingDataLoader, CancelCallback, DataLoader};
@@ -52,6 +53,9 @@ pub struct SubmitSweepRequest {
     pub sweep_params: Vec<SweepParamDef>,
     #[serde(default = "default_max_evaluations")]
     pub max_evaluations: usize,
+    /// Number of permutations for significance testing. Default 0 (off).
+    #[serde(default)]
+    pub num_permutations: usize,
     #[serde(default)]
     pub thread_id: Option<String>,
 }
@@ -414,6 +418,24 @@ pub async fn submit_sweep(
 
         match sweep_result {
             Ok(sweep_response) => {
+                // Apply permutation gate — CPU-intensive, run off async executor
+                let n_perms = req.num_permutations;
+                let obj = req.objective.clone();
+                let sweep_response = if n_perms > 0 {
+                    match tokio::task::spawn_blocking(move || {
+                        apply_permutation_gate(sweep_response, n_perms, &obj, Some(42))
+                    })
+                    .await
+                    {
+                        Ok(r) => r,
+                        Err(e) => {
+                            tm.mark_failed(&task.id, format!("Permutation gate failed: {e}"));
+                            return;
+                        }
+                    }
+                } else {
+                    sweep_response
+                };
                 // Reconstruct CreateSweepRequest for persist_sweep_to_store
                 let sweep_req = CreateSweepRequest {
                     strategy: req.strategy.clone(),
@@ -422,6 +444,7 @@ pub async fn submit_sweep(
                     params: req.params.clone(),
                     sweep_params: req.sweep_params.clone(),
                     max_evaluations: req.max_evaluations,
+                    num_permutations: req.num_permutations,
                 };
 
                 match persist_sweep_to_store(

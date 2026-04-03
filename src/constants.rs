@@ -11,3 +11,7 @@ pub const P_VALUE_THRESHOLD: f64 = 0.05;
 
 /// Default years of price history for analysis tools.
 pub const DEFAULT_ANALYSIS_YEARS: u32 = 5;
+
+/// Maximum finite value for profit factor when there are no losing trades.
+/// Avoids `f64::INFINITY` which is not valid JSON.
+pub const MAX_PROFIT_FACTOR: f64 = 999.99;
