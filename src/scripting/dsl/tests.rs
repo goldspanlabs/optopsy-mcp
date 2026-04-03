@@ -1602,3 +1602,45 @@ on each bar
         "minutes_since_open() with parens should work.\nGenerated:\n{rhai}"
     );
 }
+
+#[test]
+fn test_invalid_time_literal_compile_error() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval 5m
+
+on each bar
+  skip when time < 25:00
+  buy 100 shares
+"#;
+
+    let err = transpile(dsl).unwrap_err();
+    assert!(
+        err.message.contains("25:00"),
+        "Error should mention the invalid time.\nGot: {err}"
+    );
+    assert!(
+        err.message.contains("0-23"),
+        "Error should mention valid hour range.\nGot: {err}"
+    );
+}
+
+#[test]
+fn test_invalid_time_minute_compile_error() {
+    let dsl = r#"
+strategy "Test"
+  symbol SPY
+  interval 5m
+
+on each bar
+  skip when time > 10:75
+  buy 100 shares
+"#;
+
+    let err = transpile(dsl).unwrap_err();
+    assert!(
+        err.message.contains("10:75"),
+        "Error should mention the invalid time.\nGot: {err}"
+    );
+}
