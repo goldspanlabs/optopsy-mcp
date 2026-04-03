@@ -1568,54 +1568,18 @@ fn preprocess_inline_if(expr: &str) -> String {
     )
 }
 
-/// Split an expression at the first top-level comma.
-/// Returns `(before_comma, comma_and_rest)` where `comma_and_rest` includes the comma.
-/// If no top-level comma found, returns `(expr, "")`.
-fn split_at_top_level_comma(expr: &str) -> (&str, &str) {
-    let bytes = expr.as_bytes();
+/// Find the byte offset of the first top-level position where `predicate(bytes, i)` returns
+/// `Some(match_len)`. "Top-level" means not inside parentheses or string literals.
+/// Returns `Some((offset, match_len))` or `None`.
+fn find_top_level(
+    bytes: &[u8],
+    predicate: impl Fn(&[u8], usize) -> Option<usize>,
+) -> Option<(usize, usize)> {
     let mut i = 0;
-    let mut paren_depth = 0;
+    let mut paren_depth: i32 = 0;
     let mut in_string = false;
 
     while i < bytes.len() {
-        let ch = bytes[i];
-        if ch == b'"' && !in_string {
-            in_string = true;
-        } else if in_string {
-            if ch == b'\\' {
-                i += 1;
-            } else if ch == b'"' {
-                in_string = false;
-            }
-        } else if ch == b'(' {
-            paren_depth += 1;
-        } else if ch == b')' {
-            paren_depth -= 1;
-        } else if paren_depth == 0 && ch == b',' {
-            return (&expr[..i], &expr[i..]);
-        }
-        i += 1;
-    }
-    (expr, "")
-}
-
-/// Split an expression at the first top-level occurrence of `keyword`.
-/// "Top-level" means not inside parentheses or string literals.
-/// Returns `(before, after)` or `None` if keyword not found.
-fn split_at_top_level_keyword<'a>(expr: &'a str, keyword: &str) -> Option<(&'a str, &'a str)> {
-    let bytes = expr.as_bytes();
-    let kw_bytes = keyword.as_bytes();
-    let kw_len = kw_bytes.len();
-
-    if bytes.len() < kw_len {
-        return None;
-    }
-
-    let mut i = 0;
-    let mut paren_depth = 0;
-    let mut in_string = false;
-
-    while i + kw_len <= bytes.len() {
         let ch = bytes[i];
 
         // Track string literals
@@ -1626,7 +1590,7 @@ fn split_at_top_level_keyword<'a>(expr: &'a str, keyword: &str) -> Option<(&'a s
         }
         if in_string {
             if ch == b'\\' {
-                i += 2; // skip escape
+                i += 2;
                 continue;
             }
             if ch == b'"' {
@@ -1648,15 +1612,49 @@ fn split_at_top_level_keyword<'a>(expr: &'a str, keyword: &str) -> Option<(&'a s
             continue;
         }
 
-        // Only match at top level (not inside parens)
-        if paren_depth == 0 && &bytes[i..i + kw_len] == kw_bytes {
-            return Some((&expr[..i], &expr[i + kw_len..]));
+        // Check predicate at top level only
+        if paren_depth == 0 {
+            if let Some(match_len) = predicate(bytes, i) {
+                return Some((i, match_len));
+            }
         }
 
         i += 1;
     }
 
     None
+}
+
+/// Split an expression at the first top-level comma.
+/// Returns `(before_comma, comma_and_rest)` where `comma_and_rest` includes the comma.
+/// If no top-level comma found, returns `(expr, "")`.
+fn split_at_top_level_comma(expr: &str) -> (&str, &str) {
+    let bytes = expr.as_bytes();
+    if let Some((pos, _)) = find_top_level(bytes, |b, i| if b[i] == b',' { Some(1) } else { None })
+    {
+        (&expr[..pos], &expr[pos..])
+    } else {
+        (expr, "")
+    }
+}
+
+/// Split an expression at the first top-level occurrence of `keyword`.
+/// "Top-level" means not inside parentheses or string literals.
+/// Returns `(before, after)` or `None` if keyword not found.
+fn split_at_top_level_keyword<'a>(expr: &'a str, keyword: &str) -> Option<(&'a str, &'a str)> {
+    let kw_bytes = keyword.as_bytes();
+    let kw_len = kw_bytes.len();
+    let bytes = expr.as_bytes();
+
+    let (pos, _) = find_top_level(bytes, |b, i| {
+        if i + kw_len <= b.len() && &b[i..i + kw_len] == kw_bytes {
+            Some(kw_len)
+        } else {
+            None
+        }
+    })?;
+
+    Some((&expr[..pos], &expr[pos + kw_len..]))
 }
 
 /// Rewrite a DSL expression into a valid Rhai expression.
