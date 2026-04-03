@@ -702,6 +702,7 @@ pub async fn run_script_backtest(
     let mut equity_curve: Vec<EquityPoint> = Vec::new();
     let mut warnings: Vec<String> = early_warnings;
     let mut realized_equity = config.capital;
+    let mut peak_equity = config.capital;
     let mut next_id = 1usize;
     let mut last_entry_date: Option<NaiveDate> = None;
     let mut stop_requested = false;
@@ -833,6 +834,7 @@ pub async fn run_script_backtest(
                                 realized_equity,
                                 &pnl_history_arc,
                                 &awareness,
+                                peak_equity,
                             );
                             let pos_dyn = Dynamic::from(pos.clone());
                             let _ = call_fn_persistent(
@@ -953,6 +955,7 @@ pub async fn run_script_backtest(
                                     realized_equity,
                                     &pnl_history_arc,
                                     &awareness,
+                                    peak_equity,
                                 );
                                 let pos_dyn = Dynamic::from(closed_pos.clone());
                                 let exit_dyn = Dynamic::from(reason.clone());
@@ -1031,6 +1034,7 @@ pub async fn run_script_backtest(
                                     realized_equity,
                                     &pnl_history_arc,
                                     &awareness,
+                                    peak_equity,
                                 );
                                 let pos_dyn = Dynamic::from(closed_pos.clone());
                                 let exit_dyn = Dynamic::from(reason.clone());
@@ -1140,6 +1144,7 @@ pub async fn run_script_backtest(
                                 realized_equity,
                                 &pnl_history_arc,
                                 &awareness,
+                                peak_equity,
                             );
                             let pos_dyn = Dynamic::from(pos.clone());
                             let _ = call_fn_persistent(
@@ -1239,6 +1244,7 @@ pub async fn run_script_backtest(
                     realized_equity,
                     &pnl_history_arc,
                     &awareness,
+                    peak_equity,
                 );
                 let pos_dyn = Dynamic::from(positions[i].clone());
 
@@ -1286,6 +1292,7 @@ pub async fn run_script_backtest(
                         realized_equity,
                         &pnl_history_arc,
                         &awareness,
+                        peak_equity,
                     );
                     let pos_dyn = Dynamic::from(closed_pos.clone());
                     let exit_type_dyn = Dynamic::from(exit_reason.clone());
@@ -1457,6 +1464,7 @@ pub async fn run_script_backtest(
             realized_equity,
             &pnl_history_arc,
             &awareness,
+            peak_equity,
         );
 
         // Call on_bar(ctx) — actions are queued, not immediately executed
@@ -1574,9 +1582,11 @@ pub async fn run_script_backtest(
             }
         }
 
+        let current_equity = realized_equity + unrealized;
+        peak_equity = peak_equity.max(current_equity);
         equity_curve.push(EquityPoint {
             datetime: bar.datetime,
-            equity: realized_equity + unrealized,
+            equity: current_equity,
             unrealized: Some(unrealized),
         });
     }
@@ -1615,6 +1625,7 @@ pub async fn run_script_backtest(
                 realized_equity,
                 &pnl_history_arc,
                 &end_awareness,
+                peak_equity,
             )
         } else {
             // Empty bars — shouldn't reach here due to early bail
@@ -2109,6 +2120,115 @@ pub fn compute_position_awareness(
     }
 }
 
+/// Compute portfolio-level aggregate state from current positions and equity.
+fn compute_portfolio_state(
+    positions: &[ScriptPosition],
+    equity: f64,
+    capital: f64,
+    peak_equity: f64,
+) -> PortfolioState {
+    let mut unrealized_pnl = 0.0_f64;
+    let mut total_exposure = 0.0_f64;
+    let mut net_delta = 0.0_f64;
+    let mut long_delta = 0.0_f64;
+    let mut short_delta = 0.0_f64;
+    let mut long_count: i64 = 0;
+    let mut short_count: i64 = 0;
+    let mut position_count: i64 = 0;
+    let mut max_position_pnl = f64::NEG_INFINITY;
+    let mut min_position_pnl = f64::INFINITY;
+
+    for pos in positions {
+        unrealized_pnl += pos.unrealized_pnl;
+        total_exposure += pos.entry_cost.abs();
+        if !pos.implicit {
+            position_count += 1;
+        }
+        if pos.unrealized_pnl > max_position_pnl {
+            max_position_pnl = pos.unrealized_pnl;
+        }
+        if pos.unrealized_pnl < min_position_pnl {
+            min_position_pnl = pos.unrealized_pnl;
+        }
+
+        match &pos.inner {
+            ScriptPositionInner::Options {
+                legs, multiplier, ..
+            } => {
+                let mut pos_delta = 0.0;
+                for leg in legs {
+                    let leg_delta = leg.delta * leg.qty as f64 * *multiplier as f64;
+                    pos_delta += leg_delta;
+                    if leg_delta > 0.0 {
+                        long_delta += leg_delta;
+                    } else {
+                        short_delta += leg_delta;
+                    }
+                }
+                if pos_delta > 0.0 {
+                    long_count += 1;
+                } else if pos_delta < 0.0 {
+                    short_count += 1;
+                }
+                net_delta += pos_delta;
+            }
+            ScriptPositionInner::Stock { side, qty, .. } => {
+                let d = match side {
+                    Side::Long => *qty as f64,
+                    Side::Short => -(*qty as f64),
+                };
+                net_delta += d;
+                if d > 0.0 {
+                    long_delta += d;
+                    long_count += 1;
+                } else {
+                    short_delta += d;
+                    short_count += 1;
+                }
+            }
+        }
+    }
+
+    if positions.is_empty() {
+        max_position_pnl = 0.0;
+        min_position_pnl = 0.0;
+    }
+
+    let cash = equity - unrealized_pnl;
+    let realized_pnl = equity - capital;
+    let exposure_pct = if equity.abs() > f64::EPSILON {
+        total_exposure / equity.abs()
+    } else {
+        0.0
+    };
+
+    let effective_peak = peak_equity.max(equity);
+    let drawdown = if effective_peak.abs() > f64::EPSILON {
+        (equity - effective_peak) / effective_peak
+    } else {
+        0.0
+    };
+
+    PortfolioState {
+        cash,
+        equity,
+        unrealized_pnl,
+        realized_pnl,
+        total_exposure,
+        exposure_pct,
+        net_delta,
+        long_delta,
+        short_delta,
+        position_count,
+        long_count,
+        short_count,
+        max_position_pnl,
+        min_position_pnl,
+        drawdown,
+        peak_equity: effective_peak,
+    }
+}
+
 impl BarContextFactory {
     fn build(
         &self,
@@ -2118,8 +2238,11 @@ impl BarContextFactory {
         equity: f64,
         pnl_history: &Arc<Vec<f64>>,
         awareness: &PositionAwareness,
+        peak_equity: f64,
     ) -> BarContext {
-        let cash = equity - positions_arc.iter().map(|p| p.unrealized_pnl).sum::<f64>();
+        let portfolio =
+            compute_portfolio_state(positions_arc, equity, self.config.capital, peak_equity);
+        let cash = portfolio.cash;
         BarContext {
             datetime: bar.datetime,
             open: bar.open,
@@ -2158,6 +2281,7 @@ impl BarContextFactory {
             max_profit: awareness.max_profit,
             max_loss: awareness.max_loss,
             pending_orders_count: awareness.pending_orders_count,
+            portfolio,
         }
     }
 }

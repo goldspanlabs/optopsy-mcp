@@ -132,6 +132,18 @@ fn collect_from_stmts(stmts: &[Stmt], specs: &mut Vec<String>, seen: &mut HashSe
                 scan_expr(call, specs, seen);
                 collect_from_stmts(body, specs, seen);
             }
+            Stmt::WhenAnyAll {
+                condition,
+                then_body,
+                else_body,
+                ..
+            } => {
+                scan_expr(condition, specs, seen);
+                collect_from_stmts(then_body, specs, seen);
+                if let Some(ref eb) = else_body {
+                    collect_from_stmts(eb, specs, seen);
+                }
+            }
             // Variants with no expressions to scan
             Stmt::HoldPosition { .. }
             | Stmt::ClosePosition { .. }
@@ -859,6 +871,73 @@ fn generate_stmts(
                 out.push_str(&format!("{indent}}}\n"));
             }
 
+            Stmt::WhenAnyAll {
+                quantifier,
+                binding_var,
+                iterable,
+                condition,
+                capture_as,
+                then_body,
+                else_body,
+                ..
+            } => {
+                let iter_rw = rewrite_expr(iterable);
+                let cond_rw = rewrite_quantifier_condition(condition, binding_var);
+
+                // Wrap in { } block scope so __any_match/__all_match don't
+                // collide when multiple quantifiers appear in the same block.
+                let si = "    ".repeat(depth + 1); // scoped indent
+                let inner = "    ".repeat(depth + 2);
+                let inner2 = "    ".repeat(depth + 3);
+
+                match quantifier {
+                    Quantifier::Any => {
+                        out.push_str(&format!("{indent}{{\n"));
+                        out.push_str(&format!("{si}let __any_match = false;\n"));
+                        if let Some(ref cap) = capture_as {
+                            out.push_str(&format!("{si}let {cap} = ();\n"));
+                        }
+                        out.push_str(&format!("{si}for {binding_var} in {iter_rw} {{\n"));
+                        out.push_str(&format!("{inner}if {cond_rw} {{\n"));
+                        out.push_str(&format!("{inner2}__any_match = true;\n"));
+                        if let Some(ref cap) = capture_as {
+                            out.push_str(&format!("{inner2}{cap} = {binding_var};\n"));
+                        }
+                        out.push_str(&format!("{inner2}break;\n"));
+                        out.push_str(&format!("{inner}}}\n"));
+                        out.push_str(&format!("{si}}}\n"));
+                        out.push_str(&format!("{si}if __any_match {{\n"));
+                        generate_stmts(out, then_body, depth + 2, kind, scope_vars);
+                        out.push_str(&format!("{si}}}"));
+                        if let Some(ref eb) = else_body {
+                            out.push_str(" else {\n");
+                            generate_stmts(out, eb, depth + 2, kind, scope_vars);
+                            out.push_str(&format!("{si}}}"));
+                        }
+                        out.push_str(&format!("\n{indent}}}\n"));
+                    }
+                    Quantifier::All => {
+                        out.push_str(&format!("{indent}{{\n"));
+                        out.push_str(&format!("{si}let __all_match = true;\n"));
+                        out.push_str(&format!("{si}for {binding_var} in {iter_rw} {{\n"));
+                        out.push_str(&format!("{inner}if !({cond_rw}) {{\n"));
+                        out.push_str(&format!("{inner2}__all_match = false;\n"));
+                        out.push_str(&format!("{inner2}break;\n"));
+                        out.push_str(&format!("{inner}}}\n"));
+                        out.push_str(&format!("{si}}}\n"));
+                        out.push_str(&format!("{si}if __all_match {{\n"));
+                        generate_stmts(out, then_body, depth + 2, kind, scope_vars);
+                        out.push_str(&format!("{si}}}"));
+                        if let Some(ref eb) = else_body {
+                            out.push_str(" else {\n");
+                            generate_stmts(out, eb, depth + 2, kind, scope_vars);
+                            out.push_str(&format!("{si}}}"));
+                        }
+                        out.push_str(&format!("\n{indent}}}\n"));
+                    }
+                }
+            }
+
             Stmt::Raw { code, .. } => {
                 out.push_str(&format!("{indent}{code}\n"));
             }
@@ -948,6 +1027,8 @@ const CTX_PROPERTIES: &[&str] = &[
     "max_profit",
     "max_loss",
     "pending_orders_count",
+    // Portfolio namespace
+    "portfolio",
 ];
 
 /// Known `ctx` methods (accessed with parentheses).
@@ -1713,10 +1794,151 @@ fn split_at_top_level_keyword<'a>(expr: &'a str, keyword: &str) -> Option<(&'a s
     Some((&expr[..pos], &expr[pos + kw_len..]))
 }
 
-/// Rewrite a DSL expression into a valid Rhai expression.
-///
-/// - Inline if/else: `V if C else E` → `if C { V } else { E }`
-/// - Bare context properties (`close`, `equity`) → `ctx.close`, `ctx.equity`
+/// Rewrite a quantifier condition expression. Bare identifiers that are known
+/// leg fields get prefixed with `binding_var.`. Other words pass through.
+fn rewrite_quantifier_condition(condition: &str, binding_var: &str) -> String {
+    use super::validate::LEG_FIELDS;
+
+    let mut result = String::with_capacity(condition.len() + 32);
+    let chars: Vec<char> = condition.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        if chars[i] == '"' {
+            let end = skip_string_literal(&chars, i);
+            for j in i..end {
+                result.push(chars[j]);
+            }
+            i = end;
+            continue;
+        }
+
+        if chars[i].is_alphabetic() || chars[i] == '_' {
+            let start = i;
+            while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            let preceded_by_dot = start > 0 && chars[start - 1] == '.';
+
+            if preceded_by_dot {
+                result.push_str(&word);
+            } else if LEG_FIELDS.contains(&word.as_str()) {
+                result.push_str(&format!("{binding_var}.{word}"));
+            } else if word == "and" {
+                result.push_str("&&");
+            } else if word == "or" {
+                result.push_str("||");
+            } else if word == "not" {
+                result.push('!');
+            } else {
+                result.push_str(&word);
+            }
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+
+    result
+}
+
+/// Aggregation methods recognized on iterables (e.g., `pos.legs.sum(delta)`).
+const AGGREGATION_METHODS: &[&str] = &["sum", "count", "min", "max", "avg"];
+
+/// Check if position `pos` falls inside a string literal in `s`.
+fn is_inside_string_literal(s: &str, pos: usize) -> bool {
+    let mut in_string = false;
+    let mut i = 0;
+    let bytes = s.as_bytes();
+    while i < bytes.len() && i < pos {
+        if bytes[i] == b'"' {
+            in_string = !in_string;
+        } else if bytes[i] == b'\\' && in_string {
+            i += 1; // skip escaped char
+        }
+        i += 1;
+    }
+    in_string
+}
+
+/// Expand aggregation method calls on iterables into inline Rhai loops.
+/// Each expansion uses unique counter-suffixed variables (`__agg_0`, `__el_0`, etc.)
+/// to avoid collisions when multiple aggregations appear in one expression.
+/// Skips matches inside string literals.
+fn preprocess_aggregations(expr: &str) -> String {
+    let mut result = expr.to_string();
+    let mut counter: usize = 0;
+
+    for method in AGGREGATION_METHODS {
+        let pattern = format!(".{method}(");
+        // Process from right to left to avoid offset invalidation.
+        // Use a search ceiling to skip past matches inside string literals.
+        let mut ceiling = result.len();
+        while let Some(dot_pos) = result[..ceiling].rfind(&pattern) {
+            // Skip matches inside string literals — move ceiling before this
+            // match and continue searching earlier positions.
+            if is_inside_string_literal(&result, dot_pos) {
+                ceiling = dot_pos;
+                continue;
+            }
+            // Extract iterable by walking backward from the dot
+            let before = &result[..dot_pos];
+            let iterable_start = before
+                .rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != '.')
+                .map(|p| p + 1)
+                .unwrap_or(0);
+            let iterable = &result[iterable_start..dot_pos];
+
+            if iterable.is_empty() {
+                break;
+            }
+
+            // Extract args inside parens
+            let args_start = dot_pos + pattern.len();
+            let args_end = match result[args_start..].find(')') {
+                Some(p) => args_start + p,
+                None => break,
+            };
+            let arg = result[args_start..args_end].trim();
+
+            let n = counter;
+            counter += 1;
+
+            let replacement = match *method {
+                "sum" => format!(
+                    "{{ let __agg_{n} = 0.0; for __el_{n} in {iterable} {{ __agg_{n} += __el_{n}.{arg}; }} __agg_{n} }}"
+                ),
+                "count" => {
+                    let cond = rewrite_quantifier_condition(arg, &format!("__el_{n}"));
+                    format!(
+                        "{{ let __agg_{n} = 0; for __el_{n} in {iterable} {{ if {cond} {{ __agg_{n} += 1; }} }} __agg_{n} }}"
+                    )
+                }
+                "min" => format!(
+                    "{{ let __agg_{n} = 1e308; for __el_{n} in {iterable} {{ if __el_{n}.{arg} < __agg_{n} {{ __agg_{n} = __el_{n}.{arg}; }} }} __agg_{n} }}"
+                ),
+                "max" => format!(
+                    "{{ let __agg_{n} = -1e308; for __el_{n} in {iterable} {{ if __el_{n}.{arg} > __agg_{n} {{ __agg_{n} = __el_{n}.{arg}; }} }} __agg_{n} }}"
+                ),
+                "avg" => format!(
+                    "{{ let __sum_{n} = 0.0; let __cnt_{n} = 0; for __el_{n} in {iterable} {{ __sum_{n} += __el_{n}.{arg}; __cnt_{n} += 1; }} if __cnt_{n} > 0 {{ __sum_{n} / __cnt_{n} }} else {{ 0.0 }} }}"
+                ),
+                _ => continue,
+            };
+
+            result = format!(
+                "{}{}{}",
+                &result[..iterable_start],
+                replacement,
+                &result[args_end + 1..]
+            );
+        }
+    }
+
+    result
+}
+
 /// - Bare context methods (`sma(200)`) → `ctx.sma(200)`
 /// - Callable properties (`day_of_week`, `time`) → `ctx.day_of_week()`, `ctx.time()`
 /// - Day names (`monday`..`sunday`) → numeric values (1..7)
@@ -1727,7 +1949,8 @@ fn split_at_top_level_keyword<'a>(expr: &'a str, keyword: &str) -> Option<(&'a s
 /// - `and` → `&&`, `or` → `||`
 /// - `X crosses above Y` / `X crosses below Y` → crossover expressions
 pub fn rewrite_expr(expr: &str) -> String {
-    let expr = preprocess_inline_if(expr);
+    let expr = preprocess_aggregations(expr);
+    let expr = preprocess_inline_if(&expr);
     let expr = preprocess_crossovers(&expr);
     let expr = preprocess_concat(&expr);
     let expr = preprocess_time_literals(&expr);

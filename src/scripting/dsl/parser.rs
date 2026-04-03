@@ -100,6 +100,13 @@ pub enum OrderExitSpec {
     Dollar(f64),  // $500
 }
 
+/// Quantifier type for `when any/all` statements.
+#[derive(Debug, Clone, Copy)]
+pub enum Quantifier {
+    Any,
+    All,
+}
+
 /// A statement inside an event block.
 #[derive(Debug)]
 pub enum Stmt {
@@ -202,6 +209,16 @@ pub enum Stmt {
         call: String,
         var_name: String,
         body: Vec<Stmt>,
+        line: usize,
+    },
+    WhenAnyAll {
+        quantifier: Quantifier,
+        binding_var: String,
+        iterable: String,
+        condition: String,
+        capture_as: Option<String>,
+        then_body: Vec<Stmt>,
+        else_body: Option<Vec<Stmt>>,
         line: usize,
     },
 }
@@ -669,6 +686,14 @@ fn parse_statements(lines: &[Line]) -> Result<Vec<Stmt>, DslError> {
                 line: line.num,
             });
             i += 1;
+        } else if let Some(rest) = content.strip_prefix("when any ") {
+            let (stmt, next) = parse_when_any_all(lines, i, Quantifier::Any, rest)?;
+            stmts.push(stmt);
+            i = next;
+        } else if let Some(rest) = content.strip_prefix("when all ") {
+            let (stmt, next) = parse_when_any_all(lines, i, Quantifier::All, rest)?;
+            stmts.push(stmt);
+            i = next;
         } else if let Some(rest) = content.strip_prefix("when ") {
             let (stmt, next) = parse_when_chain(lines, i, rest)?;
             stmts.push(stmt);
@@ -857,6 +882,125 @@ fn has_otherwise_in_siblings(lines: &[Line], start: usize, base_indent: usize) -
         j += 1;
     }
     false
+}
+
+/// Parse `when any/all VAR in ITERABLE has/have CONDITION [as CAPTURE] then` block.
+fn parse_when_any_all(
+    lines: &[Line],
+    start: usize,
+    quantifier: Quantifier,
+    rest: &str,
+) -> Result<(Stmt, usize), DslError> {
+    let line_num = lines[start].num;
+    let base_indent = lines[start].indent;
+
+    // rest must end with " then"
+    let rest = rest
+        .strip_suffix(" then")
+        .ok_or_else(|| DslError::new(line_num, "when any/all clause must end with 'then'"))?;
+
+    // Split on " in "
+    let in_pos = rest.find(" in ").ok_or_else(|| {
+        DslError::new(
+            line_num,
+            "expected 'in' after variable name: when any/all VAR in ITERABLE has ...",
+        )
+    })?;
+    let binding_var = rest[..in_pos].trim().to_string();
+    if binding_var.is_empty() {
+        return Err(DslError::new(
+            line_num,
+            "missing variable name after 'any/all'",
+        ));
+    }
+    let after_in = rest[in_pos + 4..].trim();
+
+    // Split on " has " or " have "
+    let (iterable, after_has) = if let Some(pos) = after_in.find(" has ") {
+        (&after_in[..pos], after_in[pos + 5..].trim())
+    } else if let Some(pos) = after_in.find(" have ") {
+        (&after_in[..pos], after_in[pos + 6..].trim())
+    } else {
+        return Err(DslError::new(
+            line_num,
+            "expected 'has' or 'have' after iterable: when any/all VAR in ITERABLE has CONDITION then",
+        ));
+    };
+    let iterable = iterable.trim().to_string();
+    if iterable.is_empty() {
+        return Err(DslError::new(line_num, "missing iterable after 'in'"));
+    }
+
+    // Check for " as CAPTURE" at the end
+    let (condition, capture_as) = if let Some(as_pos) = after_has.rfind(" as ") {
+        let capture = after_has[as_pos + 4..].trim().to_string();
+        let cond = after_has[..as_pos].trim().to_string();
+        (cond, Some(capture))
+    } else {
+        (after_has.to_string(), None)
+    };
+    if condition.is_empty() {
+        return Err(DslError::new(
+            line_num,
+            "missing condition after 'has'/'have'",
+        ));
+    }
+    if let Some(ref cap) = capture_as {
+        if cap.is_empty() {
+            return Err(DslError::new(line_num, "missing variable name after 'as'"));
+        }
+    }
+
+    // Collect the then-body (indented deeper)
+    let mut then_body_lines = vec![];
+    let mut i = start + 1;
+    while i < lines.len() && lines[i].indent > base_indent {
+        then_body_lines.push(lines[i].clone());
+        i += 1;
+    }
+
+    if then_body_lines.is_empty() {
+        return Err(DslError::new(
+            line_num,
+            "when any/all block has no indented body",
+        ));
+    }
+
+    let then_body = parse_statements(&then_body_lines)?;
+
+    // Check for otherwise
+    let else_body =
+        if i < lines.len() && lines[i].indent == base_indent && lines[i].content == "otherwise" {
+            let mut else_body_lines = vec![];
+            i += 1;
+            while i < lines.len() && lines[i].indent > base_indent {
+                else_body_lines.push(lines[i].clone());
+                i += 1;
+            }
+            if else_body_lines.is_empty() {
+                return Err(DslError::new(
+                    lines[i - 1].num,
+                    "otherwise block has no indented body",
+                ));
+            }
+            Some(parse_statements(&else_body_lines)?)
+        } else {
+            None
+        };
+
+    Ok((
+        Stmt::WhenAnyAll {
+            quantifier,
+            binding_var,
+            iterable,
+            condition,
+            capture_as,
+            then_body,
+            else_body,
+            line: line_num,
+        },
+        i,
+    ))
 }
 
 /// Parse a `when CONDITION then` block, consuming any subsequent `when`/`otherwise`

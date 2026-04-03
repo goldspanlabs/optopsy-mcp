@@ -8,6 +8,8 @@
 
 **Tech Stack:** Rust, Rhai scripting engine, existing DSL transpiler pipeline
 
+**Task ordering note:** Tasks 1-3 (Portfolio) and Tasks 4-6 (Quantifiers) are mostly independent feature tracks, but Task 4 adds the `WhenAnyAll` variant to `Stmt` which introduces a new match arm. Validation functions written in Task 3 (`check_portfolio_in_stmts`) will need a `WhenAnyAll` arm added in Task 7. Until Task 4 is merged, the `Stmt` enum won't have that variant, so Task 3's code compiles cleanly. After Task 4, any exhaustive match on `Stmt` must handle `WhenAnyAll` — Task 7 wires this up.
+
 ---
 
 ## File Map
@@ -93,6 +95,8 @@ pub struct PortfolioState {
     pub drawdown: f64,
     pub peak_equity: f64,
 }
+// Note: `position_count` excludes implicit positions (e.g., auto-hedged stock
+// from assignment), so `long_count + short_count` may not equal `position_count`.
 
 impl PortfolioState {
     // --- Rhai getters ---
@@ -1055,8 +1059,8 @@ on exit check
 
     let rhai = transpile(dsl).unwrap();
     assert!(
-        rhai.contains("__agg"),
-        "Should generate aggregation variable.\nGenerated:\n{rhai}"
+        rhai.contains("__agg_"),
+        "Should generate uniquely suffixed aggregation variable.\nGenerated:\n{rhai}"
     );
     assert!(
         rhai.contains(".delta"),
@@ -1081,10 +1085,14 @@ Add a preprocessing step in `rewrite_expr`, called before the main char-level sc
 const AGGREGATION_METHODS: &[&str] = &["sum", "count", "min", "max", "avg"];
 
 /// Expand aggregation method calls on iterables.
-/// `pos.legs.sum(delta)` → `{ let __agg = 0.0; for __el in pos.legs { __agg += __el.delta; } __agg }`
-/// Scans for `.METHOD(` where METHOD is in AGGREGATION_METHODS, then walks backward to extract the iterable.
+/// `pos.legs.sum(delta)` → `{ let __agg_0 = 0.0; for __el_0 in pos.legs { __agg_0 += __el_0.delta; } __agg_0 }`
+///
+/// Each expansion uses a unique counter suffix (`_0`, `_1`, ...) to avoid variable
+/// collisions when multiple aggregations appear in the same expression (e.g.,
+/// `pos.legs.sum(delta) + pos.legs.max(strike) > 100`).
 fn preprocess_aggregations(expr: &str) -> String {
     let mut result = expr.to_string();
+    let mut counter: usize = 0;
 
     for method in AGGREGATION_METHODS {
         let pattern = format!(".{method}(");
@@ -1110,24 +1118,27 @@ fn preprocess_aggregations(expr: &str) -> String {
             };
             let arg = result[args_start..args_end].trim();
 
+            let n = counter;
+            counter += 1;
+
             let replacement = match *method {
                 "sum" => format!(
-                    "{{ let __agg = 0.0; for __el in {iterable} {{ __agg += __el.{arg}; }} __agg }}"
+                    "{{ let __agg_{n} = 0.0; for __el_{n} in {iterable} {{ __agg_{n} += __el_{n}.{arg}; }} __agg_{n} }}"
                 ),
                 "count" => {
-                    let cond = rewrite_quantifier_condition(arg, "__el");
+                    let cond = rewrite_quantifier_condition(arg, &format!("__el_{n}"));
                     format!(
-                        "{{ let __agg = 0; for __el in {iterable} {{ if {cond} {{ __agg += 1; }} }} __agg }}"
+                        "{{ let __agg_{n} = 0; for __el_{n} in {iterable} {{ if {cond} {{ __agg_{n} += 1; }} }} __agg_{n} }}"
                     )
                 }
                 "min" => format!(
-                    "{{ let __agg = 1e308; for __el in {iterable} {{ if __el.{arg} < __agg {{ __agg = __el.{arg}; }} }} __agg }}"
+                    "{{ let __agg_{n} = 1e308; for __el_{n} in {iterable} {{ if __el_{n}.{arg} < __agg_{n} {{ __agg_{n} = __el_{n}.{arg}; }} }} __agg_{n} }}"
                 ),
                 "max" => format!(
-                    "{{ let __agg = -1e308; for __el in {iterable} {{ if __el.{arg} > __agg {{ __agg = __el.{arg}; }} }} __agg }}"
+                    "{{ let __agg_{n} = -1e308; for __el_{n} in {iterable} {{ if __el_{n}.{arg} > __agg_{n} {{ __agg_{n} = __el_{n}.{arg}; }} }} __agg_{n} }}"
                 ),
                 "avg" => format!(
-                    "{{ let __sum = 0.0; let __cnt = 0; for __el in {iterable} {{ __sum += __el.{arg}; __cnt += 1; }} if __cnt > 0 {{ __sum / __cnt }} else {{ 0.0 }} }}"
+                    "{{ let __sum_{n} = 0.0; let __cnt_{n} = 0; for __el_{n} in {iterable} {{ __sum_{n} += __el_{n}.{arg}; __cnt_{n} += 1; }} if __cnt_{n} > 0 {{ __sum_{n} / __cnt_{n} }} else {{ 0.0 }} }}"
                 ),
                 _ => continue,
             };
@@ -1174,12 +1185,12 @@ on exit check
 
     let rhai = transpile(dsl).unwrap();
     assert!(
-        rhai.contains("__agg"),
-        "Should generate count variable.\nGenerated:\n{rhai}"
+        rhai.contains("__agg_"),
+        "Should generate uniquely suffixed count variable.\nGenerated:\n{rhai}"
     );
     assert!(
-        rhai.contains("__el.side == \"long\""),
-        "Should qualify side with __el.\nGenerated:\n{rhai}"
+        rhai.contains(".side == \"long\""),
+        "Should qualify side with __el_N.\nGenerated:\n{rhai}"
     );
 }
 
@@ -1200,12 +1211,12 @@ on exit check
 
     let rhai = transpile(dsl).unwrap();
     assert!(
-        rhai.contains("__el.current_price"),
-        "Should access current_price on __el.\nGenerated:\n{rhai}"
+        rhai.contains(".current_price"),
+        "Should access current_price on __el_N.\nGenerated:\n{rhai}"
     );
     assert!(
-        rhai.contains("__agg"),
-        "Should generate min aggregation variable.\nGenerated:\n{rhai}"
+        rhai.contains("__agg_"),
+        "Should generate uniquely suffixed min aggregation variable.\nGenerated:\n{rhai}"
     );
 }
 ```
@@ -1232,7 +1243,8 @@ git add -A && git commit -m "feat(dsl): codegen for pos.legs aggregation methods
 
 ```rust
 #[test]
-fn test_quantifier_outside_exit_check_rejected() {
+fn test_quantifier_outside_pos_scope_rejected() {
+    // Quantifier directly in on_bar (no `for each pos in positions` wrapper) should fail
     let dsl = r#"
 strategy "Bad Quantifier"
   symbol SPY
@@ -1246,8 +1258,32 @@ on each bar
 
     let err = transpile(dsl).unwrap_err();
     assert!(
-        err.message.contains("on exit check") || err.message.contains("exit_check"),
-        "Should mention on exit check in error.\nGot: {}", err.message
+        err.message.contains("pos") && err.message.contains("scope"),
+        "Should mention pos scope in error.\nGot: {}", err.message
+    );
+}
+
+#[test]
+fn test_quantifier_inside_for_each_pos_allowed() {
+    // Quantifier nested inside `for each pos in positions` in on_bar should compile
+    let dsl = r#"
+strategy "Nested Quantifier"
+  symbol SPY
+  interval daily
+  data ohlcv, options
+
+on each bar
+  for each pos in positions
+    when any leg in pos.legs has delta > 0.50 then
+      close position "delta too high"
+    otherwise
+      hold position
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("__any_match"),
+        "Should generate quantifier loop inside for-each.\nGenerated:\n{rhai}"
     );
 }
 
@@ -1274,7 +1310,7 @@ on exit check
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test test_quantifier_outside_exit_check_rejected test_invalid_leg_field_rejected --release -- --nocapture`
+Run: `cargo test test_quantifier_outside_pos_scope_rejected test_quantifier_inside_for_each_pos_allowed test_invalid_leg_field_rejected --release -- --nocapture`
 Expected: FAIL
 
 - [ ] **Step 3: Add quantifier validation to `validate.rs`**
@@ -1291,28 +1327,30 @@ const NUMERIC_LEG_FIELDS: &[&str] = &[
     "delta", "strike", "current_price", "entry_price", "qty",
 ];
 
-/// Check that quantifier statements are only used inside `on_exit_check` blocks,
-/// and that leg field references are valid.
+/// Check that quantifier statements are only used where `pos` is in scope:
+/// inside `on_exit_check` (implicit `pos`) or nested inside a
+/// `for each pos in positions` block in other callbacks.
+/// Also validates that leg field references are valid.
 pub fn check_quantifiers(program: &DslProgram) -> Result<(), DslError> {
-    // Quantifiers are ONLY allowed in on_exit_check
-    let disallowed_blocks: Vec<(&str, &Option<Vec<Stmt>>)> = vec![
+    // In on_exit_check, quantifiers are allowed at any nesting level (pos is implicit)
+    if let Some(ref stmts) = program.on_exit_check {
+        check_quantifier_fields_in_stmts(stmts)?;
+    }
+
+    // In other blocks, quantifiers are only allowed inside `for each pos in positions`
+    let other_blocks: Vec<(&str, &Option<Vec<Stmt>>)> = vec![
         ("on each bar", &program.on_bar),
         ("on position opened", &program.on_position_opened),
         ("on position closed", &program.on_position_closed),
         ("on end", &program.on_end),
     ];
 
-    for (block_name, block) in disallowed_blocks {
+    for (block_name, block) in other_blocks {
         if let Some(ref stmts) = block {
-            check_no_quantifiers_in_stmts(stmts, block_name)?;
+            check_no_quantifiers_outside_pos_scope(stmts, block_name, false)?;
         }
     }
-    check_no_quantifiers_in_stmts(&program.body, "procedural body")?;
-
-    // In on_exit_check, validate the quantifier fields
-    if let Some(ref stmts) = program.on_exit_check {
-        check_quantifier_fields_in_stmts(stmts)?;
-    }
+    check_no_quantifiers_outside_pos_scope(&program.body, "procedural body", false)?;
 
     // Check aggregation methods in all blocks for field validity
     check_aggregation_fields(program)?;
@@ -1320,29 +1358,50 @@ pub fn check_quantifiers(program: &DslProgram) -> Result<(), DslError> {
     Ok(())
 }
 
-fn check_no_quantifiers_in_stmts(stmts: &[Stmt], block_name: &str) -> Result<(), DslError> {
+/// Recursively check that quantifiers only appear inside a `for each pos in positions` scope.
+/// `in_pos_scope` tracks whether we're currently nested inside such a loop.
+fn check_no_quantifiers_outside_pos_scope(
+    stmts: &[Stmt],
+    block_name: &str,
+    in_pos_scope: bool,
+) -> Result<(), DslError> {
     for stmt in stmts {
         match stmt {
-            Stmt::WhenAnyAll { line, .. } => {
+            Stmt::WhenAnyAll { line, .. } if !in_pos_scope => {
                 return Err(DslError::new(
                     *line,
                     format!(
-                        "quantifiers (`when any/all`) can only be used inside `on exit check`. \
-                         Found in `{block_name}`. Use `for each pos in positions` in `on each bar` instead."
+                        "quantifiers (`when any/all`) require `pos` to be in scope. \
+                         Found in `{block_name}` outside a `for each pos in positions` block. \
+                         Either move to `on exit check` or wrap in `for each pos in positions`."
                     ),
                 ));
             }
-            Stmt::When { then_body, else_body, .. } => {
-                check_no_quantifiers_in_stmts(then_body, block_name)?;
+            Stmt::WhenAnyAll { then_body, else_body, .. } => {
+                // in_pos_scope is true here, validate nested fields
+                check_quantifier_fields_in_stmts(std::slice::from_ref(stmt))?;
+                check_no_quantifiers_outside_pos_scope(then_body, block_name, true)?;
                 if let Some(ref eb) = else_body {
-                    check_no_quantifiers_in_stmts(eb, block_name)?;
+                    check_no_quantifiers_outside_pos_scope(eb, block_name, true)?;
                 }
             }
-            Stmt::ForEach { body, .. } => {
-                check_no_quantifiers_in_stmts(body, block_name)?;
+            Stmt::When { then_body, else_body, .. } => {
+                check_no_quantifiers_outside_pos_scope(then_body, block_name, in_pos_scope)?;
+                if let Some(ref eb) = else_body {
+                    check_no_quantifiers_outside_pos_scope(eb, block_name, in_pos_scope)?;
+                }
+            }
+            Stmt::ForEach { binding, iterable, body, .. } => {
+                // `for each pos in positions` introduces pos scope
+                let enters_pos_scope = binding == "pos" && iterable == "positions";
+                check_no_quantifiers_outside_pos_scope(
+                    body,
+                    block_name,
+                    in_pos_scope || enters_pos_scope,
+                )?;
             }
             Stmt::TryOpen { body, .. } => {
-                check_no_quantifiers_in_stmts(body, block_name)?;
+                check_no_quantifiers_outside_pos_scope(body, block_name, in_pos_scope)?;
             }
             _ => {}
         }
@@ -1565,7 +1624,7 @@ Also in `check_portfolio_in_stmts()`, add:
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `cargo test test_quantifier_outside_exit_check_rejected test_invalid_leg_field_rejected --release -- --nocapture`
+Run: `cargo test test_quantifier_outside_pos_scope_rejected test_quantifier_inside_for_each_pos_allowed test_invalid_leg_field_rejected --release -- --nocapture`
 Expected: PASS
 
 - [ ] **Step 7: Run full test suite**
@@ -1589,6 +1648,52 @@ git add -A && git commit -m "feat(dsl): add quantifier and portfolio validation 
 - [ ] **Step 1: Add comprehensive edge case tests**
 
 ```rust
+#[test]
+fn test_aggregation_on_non_numeric_field_rejected() {
+    let dsl = r#"
+strategy "Bad Agg"
+  symbol SPY
+  interval daily
+  data ohlcv, options
+
+on exit check
+  when pos.legs.sum(option_type) > 1 then
+    close position "bad"
+  otherwise
+    hold position
+"#;
+
+    let err = transpile(dsl).unwrap_err();
+    assert!(
+        err.message.contains("numeric") && err.message.contains("option_type"),
+        "Should reject sum on non-numeric field.\nGot: {}", err.message
+    );
+}
+
+#[test]
+fn test_multiple_aggregations_in_same_expression() {
+    // Verifies unique variable suffixes prevent collision
+    let dsl = r#"
+strategy "Multi Agg"
+  symbol SPY
+  interval daily
+  data ohlcv, options
+
+on exit check
+  when pos.legs.sum(delta) + pos.legs.max(strike) > 100 then
+    close position "combined check"
+  otherwise
+    hold position
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    // Both should expand with different suffixes
+    assert!(
+        rhai.contains("__agg_0") && rhai.contains("__agg_1"),
+        "Should use unique suffixes for each aggregation.\nGenerated:\n{rhai}"
+    );
+}
+
 #[test]
 fn test_close_position_without_reason_in_exit_check() {
     // close position (bare) should work in on_exit_check
@@ -1672,8 +1777,8 @@ on exit check
 
     let rhai = transpile(dsl).unwrap();
     assert!(
-        rhai.contains("__sum") && rhai.contains("__cnt"),
-        "Should generate avg aggregation.\nGenerated:\n{rhai}"
+        rhai.contains("__sum_") && rhai.contains("__cnt_"),
+        "Should generate uniquely suffixed avg aggregation.\nGenerated:\n{rhai}"
     );
 }
 ```
@@ -1717,24 +1822,21 @@ Expected: No warnings
 
 - [ ] **Step 4: Squash commits into one feature commit**
 
-Squash all task commits into a single commit:
+Use a soft reset to squash all task commits (non-interactive — do NOT use `git rebase -i`):
 
 ```bash
-git rebase -i HEAD~N  # where N is the number of task commits
-```
+# Find the commit hash before the first task commit
+BASE=$(git log --oneline | grep -m1 -B999 "feat(dsl): add PortfolioState" | tail -1 | awk '{print $1}')
+git reset --soft ${BASE}~1
+git commit -m "feat(dsl): add quantifiers (when any/all) and portfolio namespace
 
-Final commit message:
-
-```
-feat(dsl): add quantifiers (when any/all) and portfolio namespace (#167)
-
-- Add `when any/all VAR in ITERABLE has CONDITION [as CAPTURE] then` syntax
-  for iterating over position legs in on_exit_check
+- Add \`when any/all VAR in ITERABLE has CONDITION [as CAPTURE] then\` syntax
+  for iterating over position legs in on_exit_check or for-each-pos blocks
 - Add aggregation methods: pos.legs.sum(field), .count(cond), .min(field),
-  .max(field), .avg(field)
-- Add `portfolio.*` namespace with 16 properties: cash, equity, exposure_pct,
+  .max(field), .avg(field) with unique variable suffixes per expansion
+- Add \`portfolio.*\` namespace with 16 properties: cash, equity, exposure_pct,
   net_delta, drawdown, position counts, etc.
 - PortfolioState computed per-bar with peak_equity tracking for drawdown
-- Validation: quantifiers restricted to on_exit_check, field validation,
-  portfolio property validation, read-only enforcement
+- Validation: quantifiers restricted to pos-scope contexts, field validation,
+  portfolio property validation, read-only enforcement"
 ```

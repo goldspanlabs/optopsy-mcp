@@ -13,6 +13,101 @@ use super::parser::{DslProgram, Stmt};
 const INTRADAY_ONLY_KEYWORDS: &[&str] =
     &["time", "is_first_bar", "is_last_bar", "minutes_since_open"];
 
+/// Iterate over all statement blocks in a program (callbacks + procedural body).
+fn all_blocks(program: &DslProgram) -> impl Iterator<Item = &[Stmt]> {
+    [
+        &program.on_bar,
+        &program.on_exit_check,
+        &program.on_position_opened,
+        &program.on_position_closed,
+        &program.on_end,
+    ]
+    .into_iter()
+    .filter_map(|b| b.as_deref())
+    .chain(std::iter::once(program.body.as_slice()))
+}
+
+/// Walk all expressions in a statement tree, calling `check` on each (expr, line).
+/// Also recurses into nested statement bodies.
+fn visit_exprs_in_stmts(
+    stmts: &[Stmt],
+    check: &impl Fn(&str, usize) -> Result<(), DslError>,
+) -> Result<(), DslError> {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Set { expr, line, .. } => {
+                check(expr, *line)?;
+            }
+            Stmt::SkipWhen { condition, line } => {
+                check(condition, *line)?;
+            }
+            Stmt::When {
+                condition,
+                then_body,
+                else_body,
+                line,
+            } => {
+                check(condition, *line)?;
+                visit_exprs_in_stmts(then_body, check)?;
+                if let Some(ref eb) = else_body {
+                    visit_exprs_in_stmts(eb, check)?;
+                }
+            }
+            Stmt::WhenAnyAll {
+                condition,
+                then_body,
+                else_body,
+                line,
+                ..
+            } => {
+                check(condition, *line)?;
+                visit_exprs_in_stmts(then_body, check)?;
+                if let Some(ref eb) = else_body {
+                    visit_exprs_in_stmts(eb, check)?;
+                }
+            }
+            Stmt::ForEach {
+                iterable,
+                body,
+                line,
+                ..
+            } => {
+                check(iterable, *line)?;
+                visit_exprs_in_stmts(body, check)?;
+            }
+            Stmt::TryOpen {
+                call, body, line, ..
+            } => {
+                check(call, *line)?;
+                visit_exprs_in_stmts(body, check)?;
+            }
+            Stmt::Buy { qty_expr, line, .. } | Stmt::Sell { qty_expr, line, .. } => {
+                check(qty_expr, *line)?;
+            }
+            Stmt::Plot { expr, line, .. } | Stmt::Return { expr, line, .. } => {
+                check(expr, *line)?;
+            }
+            Stmt::OpenStrategy { call, line, .. } => {
+                check(call, *line)?;
+            }
+            Stmt::ClosePositionById { id_expr, line, .. } => {
+                check(id_expr, *line)?;
+            }
+            Stmt::AddTo { expr, line, .. }
+            | Stmt::SubtractFrom { expr, line, .. }
+            | Stmt::MultiplyBy { expr, line, .. }
+            | Stmt::DivideBy { expr, line, .. } => {
+                check(expr, *line)?;
+            }
+            Stmt::Raw { code, line } => {
+                check(code, *line)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// Intervals that are NOT intraday. Only includes intervals actually
 /// supported by `Interval::parse()` to avoid false acceptance.
 fn is_non_intraday(interval: &str) -> bool {
@@ -32,20 +127,9 @@ pub fn check_interval_time_keywords(program: &DslProgram) -> Result<(), DslError
     let check_intraday = is_non_intraday(interval);
 
     // Scan all statement blocks
-    let blocks: Vec<&Option<Vec<Stmt>>> = vec![
-        &program.on_bar,
-        &program.on_exit_check,
-        &program.on_position_opened,
-        &program.on_position_closed,
-        &program.on_end,
-    ];
-
-    for block in blocks.into_iter().flatten() {
+    for block in all_blocks(program) {
         check_stmts(block, interval, check_intraday)?;
     }
-
-    // Also check procedural body
-    check_stmts(&program.body, interval, check_intraday)?;
 
     // Check that reserved day/month names are not used as extern/state variable names
     check_reserved_names(program)?;
@@ -82,17 +166,9 @@ fn check_reserved_names(program: &DslProgram) -> Result<(), DslError> {
     }
 
     // Check all statement blocks for identifier-introducing statements
-    let blocks: Vec<&Option<Vec<Stmt>>> = vec![
-        &program.on_bar,
-        &program.on_exit_check,
-        &program.on_position_opened,
-        &program.on_position_closed,
-        &program.on_end,
-    ];
-    for block in blocks.into_iter().flatten() {
+    for block in all_blocks(program) {
         check_reserved_names_in_stmts(block)?;
     }
-    check_reserved_names_in_stmts(&program.body)?;
 
     Ok(())
 }
@@ -153,6 +229,39 @@ fn check_reserved_names_in_stmts(stmts: &[Stmt]) -> Result<(), DslError> {
                     check_reserved_names_in_stmts(eb)?;
                 }
             }
+            Stmt::WhenAnyAll {
+                binding_var,
+                capture_as,
+                then_body,
+                else_body,
+                line,
+                ..
+            } => {
+                if is_reserved_name(binding_var) {
+                    return Err(DslError::new(
+                        *line,
+                        format!(
+                            "variable `{binding_var}` conflicts with reserved day/month name. \
+                             Choose a different variable name."
+                        ),
+                    ));
+                }
+                if let Some(ref cap) = capture_as {
+                    if is_reserved_name(cap) {
+                        return Err(DslError::new(
+                            *line,
+                            format!(
+                                "variable `{cap}` conflicts with reserved day/month name. \
+                                 Choose a different variable name."
+                            ),
+                        ));
+                    }
+                }
+                check_reserved_names_in_stmts(then_body)?;
+                if let Some(ref eb) = else_body {
+                    check_reserved_names_in_stmts(eb)?;
+                }
+            }
             _ => {}
         }
     }
@@ -198,6 +307,19 @@ fn check_stmts(stmts: &[Stmt], interval: &str, check_intraday: bool) -> Result<(
             }
             Stmt::Raw { code, line } => {
                 check_expr(code, *line, interval, check_intraday)?;
+            }
+            Stmt::WhenAnyAll {
+                condition,
+                then_body,
+                else_body,
+                line,
+                ..
+            } => {
+                check_expr(condition, *line, interval, check_intraday)?;
+                check_stmts(then_body, interval, check_intraday)?;
+                if let Some(ref eb) = else_body {
+                    check_stmts(eb, interval, check_intraday)?;
+                }
             }
             _ => {}
         }
@@ -333,6 +455,359 @@ fn contains_whole_word(expr: &str, word: &str) -> bool {
         }
     }
     false
+}
+
+// ---------------------------------------------------------------------------
+// Portfolio namespace validation
+// ---------------------------------------------------------------------------
+
+/// Valid portfolio namespace properties.
+const PORTFOLIO_PROPERTIES: &[&str] = &[
+    "cash",
+    "equity",
+    "unrealized_pnl",
+    "realized_pnl",
+    "total_exposure",
+    "exposure_pct",
+    "net_delta",
+    "long_delta",
+    "short_delta",
+    "position_count",
+    "long_count",
+    "short_count",
+    "max_position_pnl",
+    "min_position_pnl",
+    "drawdown",
+    "peak_equity",
+];
+
+/// Check for invalid `portfolio.X` property accesses and `set portfolio.X` assignments.
+pub fn check_portfolio_access(program: &DslProgram) -> Result<(), DslError> {
+    for block in all_blocks(program) {
+        check_portfolio_in_stmts(block)?;
+    }
+    Ok(())
+}
+
+fn check_portfolio_in_stmts(stmts: &[Stmt]) -> Result<(), DslError> {
+    // Check for read-only portfolio assignment (special case for Set)
+    check_portfolio_assignment(stmts)?;
+    // Check all expressions for invalid portfolio property accesses
+    visit_exprs_in_stmts(stmts, &check_portfolio_expr)
+}
+
+/// Recursively check that no assignment-like statements target `portfolio.*`.
+fn check_portfolio_assignment(stmts: &[Stmt]) -> Result<(), DslError> {
+    for stmt in stmts {
+        // Check all statements that mutate a named target
+        let (name, line) = match stmt {
+            Stmt::Set { name, line, .. } => (name.as_str(), *line),
+            Stmt::AddTo { name, line, .. } => (name.as_str(), *line),
+            Stmt::SubtractFrom { name, line, .. } => (name.as_str(), *line),
+            Stmt::MultiplyBy { name, line, .. } => (name.as_str(), *line),
+            Stmt::DivideBy { name, line, .. } => (name.as_str(), *line),
+            _ => ("", 0),
+        };
+        if name.starts_with("portfolio.") {
+            return Err(DslError::new(
+                line,
+                "cannot assign to `portfolio` — it is read-only",
+            ));
+        }
+        // Recurse into nested bodies
+        match stmt {
+            Stmt::When {
+                then_body,
+                else_body,
+                ..
+            }
+            | Stmt::WhenAnyAll {
+                then_body,
+                else_body,
+                ..
+            } => {
+                check_portfolio_assignment(then_body)?;
+                if let Some(ref eb) = else_body {
+                    check_portfolio_assignment(eb)?;
+                }
+            }
+            Stmt::ForEach { body, .. } | Stmt::TryOpen { body, .. } => {
+                check_portfolio_assignment(body)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn check_portfolio_expr(expr: &str, line: usize) -> Result<(), DslError> {
+    let stripped = strip_string_literals(expr);
+    let prefix = "portfolio.";
+    let mut search = stripped.as_str();
+    while let Some(pos) = search.find(prefix) {
+        let after = &search[pos + prefix.len()..];
+        let prop_end = after
+            .find(|c: char| !c.is_alphanumeric() && c != '_')
+            .unwrap_or(after.len());
+        let prop = &after[..prop_end];
+
+        if prop.is_empty() {
+            return Err(DslError::new(
+                line,
+                format!(
+                    "missing property name after `portfolio.`. Valid properties: {}",
+                    PORTFOLIO_PROPERTIES.join(", ")
+                ),
+            ));
+        }
+        if !PORTFOLIO_PROPERTIES.contains(&prop) {
+            return Err(DslError::new(
+                line,
+                format!(
+                    "unknown portfolio property `{prop}`. Valid properties: {}",
+                    PORTFOLIO_PROPERTIES.join(", ")
+                ),
+            ));
+        }
+        search = &after[prop_end..];
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Quantifier validation
+// ---------------------------------------------------------------------------
+
+/// Valid leg field names for quantifier conditions.
+pub(super) const LEG_FIELDS: &[&str] = &[
+    "delta",
+    "strike",
+    "current_price",
+    "entry_price",
+    "option_type",
+    "side",
+    "qty",
+    "expiration",
+];
+
+/// Numeric-only leg fields (valid for sum/min/max/avg).
+const NUMERIC_LEG_FIELDS: &[&str] = &["delta", "strike", "current_price", "entry_price", "qty"];
+
+/// Check that quantifier statements (`when any/all`) are only used where `pos` is
+/// in scope: inside `on_exit_check` (implicit) or nested inside `for each pos in positions`.
+/// Also validates leg field references.
+pub fn check_quantifiers(program: &DslProgram) -> Result<(), DslError> {
+    // In on_exit_check, quantifiers are allowed at any nesting level (pos is implicit)
+    if let Some(ref stmts) = program.on_exit_check {
+        check_quantifier_fields_in_stmts(stmts)?;
+    }
+
+    // In other blocks, quantifiers are only allowed inside `for each pos in positions`
+    let other_blocks: Vec<(&str, &Option<Vec<Stmt>>)> = vec![
+        ("on each bar", &program.on_bar),
+        ("on position opened", &program.on_position_opened),
+        ("on position closed", &program.on_position_closed),
+        ("on end", &program.on_end),
+    ];
+
+    for (block_name, block) in other_blocks {
+        if let Some(ref stmts) = block {
+            check_no_quantifiers_outside_pos_scope(stmts, block_name, false)?;
+        }
+    }
+    check_no_quantifiers_outside_pos_scope(&program.body, "procedural body", false)?;
+
+    // Check aggregation methods in all blocks for field validity
+    check_aggregation_fields(program)?;
+
+    Ok(())
+}
+
+/// Recursively check that quantifiers only appear inside a `for each pos in positions` scope.
+fn check_no_quantifiers_outside_pos_scope(
+    stmts: &[Stmt],
+    block_name: &str,
+    in_pos_scope: bool,
+) -> Result<(), DslError> {
+    for stmt in stmts {
+        match stmt {
+            Stmt::WhenAnyAll {
+                line,
+                then_body,
+                else_body,
+                ..
+            } if !in_pos_scope => {
+                return Err(DslError::new(
+                    *line,
+                    format!(
+                        "quantifiers (`when any/all`) require `pos` to be in scope. \
+                         Found in `{block_name}` outside a `for each pos in positions` block. \
+                         Either move to `on exit check` or wrap in `for each pos in positions`."
+                    ),
+                ));
+            }
+            Stmt::WhenAnyAll {
+                then_body,
+                else_body,
+                ..
+            } => {
+                // in_pos_scope is true here, validate fields
+                check_quantifier_fields_in_stmts(std::slice::from_ref(stmt))?;
+                check_no_quantifiers_outside_pos_scope(then_body, block_name, true)?;
+                if let Some(ref eb) = else_body {
+                    check_no_quantifiers_outside_pos_scope(eb, block_name, true)?;
+                }
+            }
+            Stmt::When {
+                then_body,
+                else_body,
+                ..
+            } => {
+                check_no_quantifiers_outside_pos_scope(then_body, block_name, in_pos_scope)?;
+                if let Some(ref eb) = else_body {
+                    check_no_quantifiers_outside_pos_scope(eb, block_name, in_pos_scope)?;
+                }
+            }
+            Stmt::ForEach {
+                var,
+                iterable,
+                body,
+                ..
+            } => {
+                let enters_pos_scope = var == "pos" && iterable == "positions";
+                check_no_quantifiers_outside_pos_scope(
+                    body,
+                    block_name,
+                    in_pos_scope || enters_pos_scope,
+                )?;
+            }
+            Stmt::TryOpen { body, .. } => {
+                check_no_quantifiers_outside_pos_scope(body, block_name, in_pos_scope)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn check_quantifier_fields_in_stmts(stmts: &[Stmt]) -> Result<(), DslError> {
+    for stmt in stmts {
+        match stmt {
+            Stmt::WhenAnyAll {
+                condition,
+                line,
+                then_body,
+                else_body,
+                ..
+            } => {
+                check_condition_fields(condition, *line)?;
+                check_quantifier_fields_in_stmts(then_body)?;
+                if let Some(ref eb) = else_body {
+                    check_quantifier_fields_in_stmts(eb)?;
+                }
+            }
+            Stmt::When {
+                then_body,
+                else_body,
+                ..
+            } => {
+                check_quantifier_fields_in_stmts(then_body)?;
+                if let Some(ref eb) = else_body {
+                    check_quantifier_fields_in_stmts(eb)?;
+                }
+            }
+            Stmt::ForEach { body, .. } | Stmt::TryOpen { body, .. } => {
+                check_quantifier_fields_in_stmts(body)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Check that the condition in a quantifier only references known leg fields.
+fn check_condition_fields(condition: &str, line: usize) -> Result<(), DslError> {
+    let chars: Vec<char> = condition.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '"' {
+            i += 1;
+            while i < chars.len() && chars[i] != '"' {
+                if chars[i] == '\\' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            if i < chars.len() {
+                i += 1;
+            }
+            continue;
+        }
+        if chars[i].is_alphabetic() || chars[i] == '_' {
+            let start = i;
+            while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            let preceded_by_dot = start > 0 && chars[start - 1] == '.';
+            // Skip logical operators and known non-field tokens
+            if !preceded_by_dot
+                && !["and", "or", "not", "true", "false"].contains(&word.as_str())
+                && word.parse::<f64>().is_err()
+                && !LEG_FIELDS.contains(&word.as_str())
+            {
+                return Err(DslError::new(
+                    line,
+                    format!(
+                        "unknown leg field `{word}` in quantifier condition. \
+                         Valid fields: {}",
+                        LEG_FIELDS.join(", ")
+                    ),
+                ));
+            }
+        } else {
+            i += 1;
+        }
+    }
+    Ok(())
+}
+
+/// Check aggregation expressions like pos.legs.sum(FIELD) for valid numeric fields.
+fn check_aggregation_fields(program: &DslProgram) -> Result<(), DslError> {
+    for block in all_blocks(program) {
+        visit_exprs_in_stmts(block, &check_aggregation_in_expr)?;
+    }
+    Ok(())
+}
+
+/// Check a single expression for aggregation methods using non-numeric fields.
+/// Loops over ALL occurrences, not just the first. Strips string literals first
+/// to avoid false-triggering on `.sum(`/`.min(`/etc. inside quoted strings.
+fn check_aggregation_in_expr(expr: &str, line: usize) -> Result<(), DslError> {
+    let stripped = strip_string_literals(expr);
+    for method in &["sum", "min", "max", "avg"] {
+        let pattern = format!(".{method}(");
+        let mut search_from = 0;
+        while let Some(rel_pos) = stripped[search_from..].find(&pattern) {
+            let pos = search_from + rel_pos;
+            let after = &stripped[pos + pattern.len()..];
+            if let Some(end) = after.find(')') {
+                let field = after[..end].trim();
+                if !NUMERIC_LEG_FIELDS.contains(&field) {
+                    return Err(DslError::new(
+                        line,
+                        format!(
+                            "`{method}()` requires a numeric field, got `{field}`. \
+                             Valid numeric fields: {}",
+                            NUMERIC_LEG_FIELDS.join(", ")
+                        ),
+                    ));
+                }
+            }
+            search_from = pos + pattern.len();
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
