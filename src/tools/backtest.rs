@@ -74,7 +74,7 @@ pub struct BacktestToolParams {
 
     /// Number of permutations for statistical significance testing. Default 0 (off).
     /// When > 0, runs sign-flip permutation test and applies BH-FDR correction.
-    /// Clamped to 100,000 max.
+    /// Values above 100,000 are rejected by input validation.
     #[serde(default)]
     #[garde(range(max = 100_000))]
     pub num_permutations: usize,

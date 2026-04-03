@@ -92,9 +92,13 @@ pub fn compute_metric_from_pnls(pnls: &[f64], objective: &str) -> f64 {
 
 /// Sharpe ratio from trade P&Ls: `mean / std_dev`.
 fn sharpe_from_pnls(pnls: &[f64]) -> f64 {
-    let n = pnls.len() as f64;
-    let mean = pnls.iter().sum::<f64>() / n;
-    let variance = pnls.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0);
+    let n = pnls.len();
+    if n < 2 {
+        return 0.0;
+    }
+    let nf = n as f64;
+    let mean = pnls.iter().sum::<f64>() / nf;
+    let variance = pnls.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (nf - 1.0);
     let std = variance.sqrt();
     if std < 1e-12 {
         return 0.0;
