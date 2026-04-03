@@ -20,6 +20,7 @@ use crate::scripting::indicators::IndicatorStore;
 /// Thread-safe via `Mutex` (no contention since Rhai is single-threaded).
 /// Pre-allocates each series to `num_bars` length on first write so indexing
 /// by `bar_idx` is always valid.
+#[derive(Clone)]
 pub struct CustomSeriesStore {
     /// series_name → values indexed by bar_idx (`None` = not plotted on that bar).
     pub series: HashMap<String, Vec<Option<f64>>>,

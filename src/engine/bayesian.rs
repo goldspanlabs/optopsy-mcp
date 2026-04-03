@@ -8,9 +8,9 @@ use anyhow::Result;
 use rand::Rng;
 use serde_json::Value;
 
-use crate::engine::sweep::{compute_sensitivity, extract_objective, sort_by_objective};
+use crate::engine::sweep::{compute_sensitivity, extract_objective};
 use crate::scripting::engine::{
-    run_script_backtest, CancelCallback, DataLoader, PrecomputedOptionsData,
+    run_script_backtest, CancelCallback, DataLoader, PrecomputedOptionsData, ScriptBacktestResult,
 };
 use crate::tools::response_types::sweep::{SweepResponse, SweepResult};
 
@@ -56,10 +56,11 @@ pub async fn run_bayesian(
     let mut xs: Vec<Vec<f64>> = Vec::new();
     let mut ys: Vec<f64> = Vec::new();
     let mut results: Vec<SweepResult> = Vec::new();
+    let mut full_results: Vec<ScriptBacktestResult> = Vec::new();
     let mut failed = 0usize;
     let mut convergence_trace: Vec<f64> = Vec::with_capacity(config.max_evaluations);
     let mut best_so_far = f64::NEG_INFINITY;
-    let mut eval_cache: HashMap<String, (SweepResult, f64)> = HashMap::new();
+    let mut eval_cache: HashMap<String, (SweepResult, ScriptBacktestResult, f64)> = HashMap::new();
 
     // Pre-build options data on the first evaluation so subsequent ones skip the
     // expensive build_price_table + DatePartitionedOptions::from_df work.
@@ -93,13 +94,14 @@ pub async fn run_bayesian(
         let swept = decode_params(&x, &config.continuous_params);
         let key = cache_key(&swept);
 
-        if let Some((cached_result, cached_obj)) = eval_cache.get(&key) {
+        if let Some((cached_result, cached_bt, cached_obj)) = eval_cache.get(&key) {
             // Cache hit — skip backtest, don't bloat GP with duplicate points
             if cached_obj.is_finite() && *cached_obj > best_so_far {
                 best_so_far = *cached_obj;
             }
             convergence_trace.push(trace_val(best_so_far));
             results.push(cached_result.clone());
+            full_results.push(cached_bt.clone());
 
             // Track consecutive cache hits — if the GP keeps suggesting
             // already-evaluated points, the search space is exhausted.
@@ -117,7 +119,7 @@ pub async fn run_bayesian(
 
         let prev_best = best_so_far;
 
-        if let Ok((result, pre)) = evaluate(
+        if let Ok((result, bt)) = evaluate(
             &config.script_source,
             &config.base_params,
             swept,
@@ -128,10 +130,10 @@ pub async fn run_bayesian(
         .await
         {
             if precomputed.is_none() {
-                precomputed = pre;
+                precomputed.clone_from(&bt.precomputed_options);
             }
             let obj = extract_objective(&result, &config.objective);
-            eval_cache.insert(key, (result.clone(), obj));
+            eval_cache.insert(key, (result.clone(), bt.clone(), obj));
             if obj.is_finite() {
                 xs.push(x);
                 ys.push(obj);
@@ -141,6 +143,7 @@ pub async fn run_bayesian(
             }
             convergence_trace.push(trace_val(best_so_far));
             results.push(result);
+            full_results.push(bt);
 
             // Early stopping check (only after initial random phase)
             if i >= config.initial_samples {
@@ -163,13 +166,21 @@ pub async fn run_bayesian(
     }
 
     let total = config.max_evaluations;
-    // Deduplicate results — keep one entry per unique param combo
+    // Deduplicate results — keep one entry per unique param combo.
+    // Pair results with full_results so they stay in sync through dedup + sort.
+    let mut paired: Vec<(SweepResult, ScriptBacktestResult)> =
+        results.into_iter().zip(full_results).collect();
     let mut seen_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
-    results.retain(|r| {
+    paired.retain(|(r, _)| {
         let key = cache_key(&r.params);
         seen_keys.insert(key)
     });
-    sort_by_objective(&mut results, &config.objective);
+    paired.sort_by(|(a, _), (b, _)| {
+        let va = extract_objective(a, &config.objective);
+        let vb = extract_objective(b, &config.objective);
+        vb.partial_cmp(&va).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let (mut results, full_results): (Vec<_>, Vec<_>) = paired.into_iter().unzip();
     for (i, r) in results.iter_mut().enumerate() {
         r.rank = i + 1;
     }
@@ -207,7 +218,7 @@ pub async fn run_bayesian(
         convergence_trace: Some(convergence_trace),
         execution_time_ms: start.elapsed().as_millis() as u64,
         multiple_comparisons: None,
-        full_results: Vec::new(),
+        full_results,
     })
 }
 
@@ -506,7 +517,7 @@ async fn evaluate(
     data_loader: &dyn DataLoader,
     precomputed: Option<&PrecomputedOptionsData>,
     is_cancelled: Option<&CancelCallback>,
-) -> Result<(SweepResult, Option<PrecomputedOptionsData>)> {
+) -> Result<(SweepResult, ScriptBacktestResult)> {
     let mut run_params = base_params.clone();
     run_params.extend(swept_params.iter().map(|(k, v)| (k.clone(), v.clone())));
 
@@ -519,17 +530,15 @@ async fn evaluate(
         is_cancelled,
     )
     .await?;
-    let pre = bt.precomputed_options;
 
-    Ok((
-        SweepResult::from_metrics(
-            swept_params,
-            &bt.result.metrics,
-            bt.result.total_pnl,
-            bt.result.trade_count,
-        ),
-        pre,
-    ))
+    let result = SweepResult::from_metrics(
+        swept_params,
+        &bt.result.metrics,
+        bt.result.total_pnl,
+        bt.result.trade_count,
+    );
+
+    Ok((result, bt))
 }
 
 // ---------------------------------------------------------------------------

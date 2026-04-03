@@ -3404,6 +3404,7 @@ fn is_intraday_data(df: &polars::prelude::DataFrame) -> bool {
 // ---------------------------------------------------------------------------
 
 /// Extended backtest result with script metadata.
+#[derive(Clone)]
 pub struct ScriptBacktestResult {
     pub result: BacktestResult,
     pub metadata: Option<rhai::Map>,
