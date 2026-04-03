@@ -7,7 +7,6 @@
 mod bar_context;
 mod config;
 mod position;
-pub mod trading_calendar;
 
 pub use bar_context::*;
 pub use config::*;
