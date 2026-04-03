@@ -1531,10 +1531,10 @@ pub fn skip_string_literal(chars: &[char], pos: usize) -> usize {
 /// Supports chaining: `A if C1 else B if C2 else C`
 /// → `if C1 { A } else if C2 { B } else { C }`
 ///
-/// Also recursively processes ternaries inside parenthesized groups, e.g.
-/// `close * (1.0 if trend_up else 0.5)`.
+/// Recursively processes ternaries inside bracketed groups (`()`, `{}`, `[]`),
+/// e.g. `close * (1.0 if trend_up else 0.5)`.
 fn preprocess_inline_if(expr: &str) -> String {
-    // Find the first top-level ` if ` keyword (not inside parens or strings)
+    // Find the first top-level ` if ` keyword (not inside brackets or strings)
     if let Some((value_part, rest)) = split_at_top_level_keyword(expr, " if ") {
         // Find the matching ` else ` in the rest
         let Some((condition, else_and_tail)) = split_at_top_level_keyword(rest, " else ") else {
@@ -1545,7 +1545,9 @@ fn preprocess_inline_if(expr: &str) -> String {
         // Separate the else expression from any trailing content (e.g., `, arg2` in function args)
         let (else_expr, tail) = split_at_top_level_comma(else_and_tail);
 
-        // Recursively process the else branch (handles chaining)
+        // Recursively process all parts (value, condition, else branch)
+        let value_processed = rewrite_bracketed_inline_if(value_part.trim());
+        let cond_processed = rewrite_bracketed_inline_if(condition.trim());
         let else_processed = preprocess_inline_if(else_expr.trim());
 
         // Check if the else branch is itself an if-expression (chained)
@@ -1555,94 +1557,75 @@ fn preprocess_inline_if(expr: &str) -> String {
             format!("else {{ {else_processed} }}")
         };
 
-        return format!(
-            "if {} {{ {} }} {}{}",
-            condition.trim(),
-            value_part.trim(),
-            else_rhai,
-            tail
-        );
+        return format!("if {cond_processed} {{ {value_processed} }} {else_rhai}{tail}");
     }
 
-    // No top-level if/else — recursively process parenthesized sub-expressions
+    // No top-level if/else — recursively process bracketed sub-expressions
     // to handle cases like `close * (1.0 if trend_up else 0.5)`
-    rewrite_parens_inline_if(expr)
+    rewrite_bracketed_inline_if(expr)
 }
 
-/// Scan for parenthesized groups and recursively apply `preprocess_inline_if`
-/// to their contents. Handles `close * (1.0 if trend_up else 0.5)`.
-fn rewrite_parens_inline_if(expr: &str) -> String {
-    let bytes = expr.as_bytes();
+/// Scan for bracketed groups (`()`, `{}`, `[]`) and recursively apply
+/// `preprocess_inline_if` to their contents.
+fn rewrite_bracketed_inline_if(expr: &str) -> String {
+    let chars: Vec<char> = expr.chars().collect();
     let mut result = String::with_capacity(expr.len());
     let mut i = 0;
-    let mut in_string = false;
 
-    while i < bytes.len() {
-        let ch = bytes[i];
-
-        // Skip string literals
-        if ch == b'"' && !in_string {
-            in_string = true;
-            result.push('"');
-            i += 1;
+    while i < chars.len() {
+        // Skip string literals verbatim
+        if chars[i] == '"' {
+            let end = skip_string_literal(&chars, i);
+            for c in &chars[i..end] {
+                result.push(*c);
+            }
+            i = end;
             continue;
         }
-        if in_string {
-            if ch == b'\\' && i + 1 < bytes.len() {
-                result.push(bytes[i] as char);
-                result.push(bytes[i + 1] as char);
-                i += 2;
+
+        // Opening bracket — extract balanced contents and recurse
+        let (open, close) = match chars[i] {
+            '(' => ('(', ')'),
+            '{' => ('{', '}'),
+            '[' => ('[', ']'),
+            _ => {
+                result.push(chars[i]);
+                i += 1;
                 continue;
             }
-            if ch == b'"' {
-                in_string = false;
-            }
-            result.push(ch as char);
-            i += 1;
-            continue;
-        }
+        };
 
-        // Found opening paren — extract contents and recursively process
-        if ch == b'(' {
-            let start = i + 1;
-            let mut depth = 1;
-            let mut j = start;
-            while j < bytes.len() && depth > 0 {
-                if bytes[j] == b'"' {
-                    j += 1;
-                    while j < bytes.len() && bytes[j] != b'"' {
-                        if bytes[j] == b'\\' {
-                            j += 1;
-                        }
-                        j += 1;
-                    }
-                } else if bytes[j] == b'(' {
-                    depth += 1;
-                } else if bytes[j] == b')' {
-                    depth -= 1;
-                }
-                if depth > 0 {
-                    j += 1;
-                }
+        let start = i + 1;
+        let mut depth = 1;
+        let mut j = start;
+        while j < chars.len() && depth > 0 {
+            if chars[j] == '"' {
+                j = skip_string_literal(&chars, j);
+                continue;
             }
-            let inner = &expr[start..j];
-            let processed = preprocess_inline_if(inner);
-            result.push('(');
-            result.push_str(&processed);
-            result.push(')');
-            i = j + 1; // skip past closing ')'
-            continue;
+            if chars[j] == open {
+                depth += 1;
+            } else if chars[j] == close {
+                depth -= 1;
+            }
+            if depth > 0 {
+                j += 1;
+            }
         }
-
-        result.push(ch as char);
-        i += 1;
+        let inner: String = chars[start..j].iter().collect();
+        let processed = preprocess_inline_if(&inner);
+        result.push(open);
+        result.push_str(&processed);
+        result.push(close);
+        i = j + 1; // skip past closing bracket
     }
 
     result
 }
 
 /// Find the byte offset of the first top-level position where `predicate(bytes, i)` returns
-/// `Some(match_len)`. "Top-level" means not inside parentheses or string literals.
+/// `Some(match_len)`. "Top-level" means not inside nested parentheses, braces,
+/// brackets, or string literals.
 /// Returns `Some((offset, match_len))` or `None`.
 fn find_top_level(
     bytes: &[u8],
