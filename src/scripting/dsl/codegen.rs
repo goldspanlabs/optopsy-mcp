@@ -1576,7 +1576,7 @@ fn find_top_level(
     predicate: impl Fn(&[u8], usize) -> Option<usize>,
 ) -> Option<(usize, usize)> {
     let mut i = 0;
-    let mut paren_depth: i32 = 0;
+    let mut depth: i32 = 0; // tracks (), {}, []
     let mut in_string = false;
 
     while i < bytes.len() {
@@ -1600,20 +1600,20 @@ fn find_top_level(
             continue;
         }
 
-        // Track parentheses
-        if ch == b'(' {
-            paren_depth += 1;
+        // Track nesting: (), {}, []
+        if ch == b'(' || ch == b'{' || ch == b'[' {
+            depth += 1;
             i += 1;
             continue;
         }
-        if ch == b')' {
-            paren_depth -= 1;
+        if ch == b')' || ch == b'}' || ch == b']' {
+            depth -= 1;
             i += 1;
             continue;
         }
 
         // Check predicate at top level only
-        if paren_depth == 0 {
+        if depth == 0 {
             if let Some(match_len) = predicate(bytes, i) {
                 return Some((i, match_len));
             }
@@ -2240,8 +2240,10 @@ mod tests {
     #[test]
     fn test_inline_if_no_else_passes_through() {
         // `if` without `else` is not an inline ternary — leave as-is
-        // (it will be handled by the `when...then` parser)
-        assert_eq!(rewrite_expr("close > 100"), "ctx.close > 100");
+        assert_eq!(
+            rewrite_expr("0.15 if close > sma(200)"),
+            "0.15 if ctx.close > ctx.sma(200)"
+        );
     }
 
     #[test]
