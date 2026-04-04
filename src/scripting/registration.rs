@@ -239,6 +239,7 @@ fn register_symbol_context(engine: &mut Engine) {
     engine.register_fn("supertrend", SymbolContext::supertrend);
     engine.register_fn("indicator", SymbolContext::indicator);
     engine.register_fn("indicators_ready", SymbolContext::indicators_ready);
+    engine.register_fn("indicator_with", SymbolContext::indicator_with);
 
     // Position sizing helpers (use price from this symbol's bar)
     engine.register_fn(

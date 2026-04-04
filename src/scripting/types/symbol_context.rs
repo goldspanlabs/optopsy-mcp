@@ -132,8 +132,13 @@ impl SymbolContext {
         self.indicator_value("supertrend", period)
     }
 
-    /// Generic indicator lookup by name and params (matches `BarContext::indicator`).
-    pub fn indicator(&mut self, name: &str, params: rhai::Array) -> Dynamic {
+    /// Single-param indicator lookup matching `BarContext::indicator(name, period)`.
+    pub fn indicator(&mut self, name: String, period: i64) -> Dynamic {
+        self.indicator_value(&name, period)
+    }
+
+    /// Multi-param indicator lookup by name and params array.
+    pub fn indicator_with(&mut self, name: &str, params: rhai::Array) -> Dynamic {
         let int_params: Vec<i64> = params.iter().filter_map(|v| v.as_int().ok()).collect();
         self.indicator_value_multi(name, &int_params)
     }
@@ -217,7 +222,10 @@ impl SymbolContext {
     }
 
     fn bar_at_offset(&self, n: i64) -> Option<&OhlcvBar> {
-        if n <= 0 {
+        if n < 0 {
+            return None;
+        }
+        if n == 0 {
             return self.price_history.get(self.bar_idx);
         }
         let idx = self.bar_idx.checked_sub(n as usize)?;

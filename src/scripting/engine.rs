@@ -1787,6 +1787,15 @@ fn parse_config(map: Dynamic) -> Result<ScriptConfig> {
         if syms.is_empty() {
             bail!("config().symbols must contain at least one symbol");
         }
+        // Reject duplicates
+        {
+            let mut seen = std::collections::HashSet::new();
+            for s in &syms {
+                if !seen.insert(s.as_str()) {
+                    bail!("config().symbols contains duplicate '{s}'");
+                }
+            }
+        }
         syms
     } else {
         // Legacy single-symbol mode
