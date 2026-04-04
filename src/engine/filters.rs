@@ -166,15 +166,11 @@ pub fn prepare_leg_for_join_multi_exp(
 /// `(datetime, expiration_<cycle>)`, then cross-joined on `datetime`
 /// with a filter ensuring `expiration_secondary > expiration_primary`.
 pub fn join_multi_expiration_legs(leg_dfs: &[(DataFrame, ExpirationCycle)]) -> Result<DataFrame> {
-    let mut primary_dfs: Vec<&DataFrame> = Vec::new();
-    let mut secondary_dfs: Vec<&DataFrame> = Vec::new();
-
-    for (df, cycle) in leg_dfs {
-        match cycle {
-            ExpirationCycle::Primary => primary_dfs.push(df),
-            ExpirationCycle::Secondary => secondary_dfs.push(df),
-        }
-    }
+    let (primary_refs, secondary_refs): (Vec<_>, Vec<_>) = leg_dfs
+        .iter()
+        .partition(|(_, cycle)| matches!(cycle, ExpirationCycle::Primary));
+    let primary_dfs: Vec<&DataFrame> = primary_refs.into_iter().map(|(df, _)| df).collect();
+    let secondary_dfs: Vec<&DataFrame> = secondary_refs.into_iter().map(|(df, _)| df).collect();
 
     if primary_dfs.is_empty() {
         anyhow::bail!("Multi-expiration strategy has no Primary legs");

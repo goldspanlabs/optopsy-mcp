@@ -124,14 +124,18 @@ fn compute_equity_metrics(
     initial_capital: f64,
     bars_per_year: f64,
 ) -> EquityMetrics {
-    let mut returns = Vec::new();
-    let mut prev_equity = initial_capital;
-    for point in equity_curve {
-        if prev_equity > 0.0 {
-            returns.push((point.equity - prev_equity) / prev_equity);
-        }
-        prev_equity = point.equity;
-    }
+    let returns: Vec<f64> = equity_curve
+        .iter()
+        .scan(initial_capital, |prev, point| {
+            let ret = if *prev > 0.0 {
+                (point.equity - *prev) / *prev
+            } else {
+                0.0
+            };
+            *prev = point.equity;
+            Some(ret)
+        })
+        .collect();
 
     if returns.is_empty() {
         return EquityMetrics::default();
