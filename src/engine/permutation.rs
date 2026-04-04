@@ -12,6 +12,7 @@
 use rand::rngs::StdRng;
 use rand::Rng;
 use rand::SeedableRng;
+use rayon::prelude::*;
 
 use crate::constants::{MAX_PROFIT_FACTOR, P_VALUE_THRESHOLD};
 use crate::engine::multiple_comparisons;
@@ -28,12 +29,88 @@ const MAX_PERMUTATIONS: usize = 100_000;
 // Core: compute p-value from trade P&Ls via sign-flip test
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Minimum permutation count to justify parallelism overhead.
+const PAR_THRESHOLD: usize = 1_000;
+
+/// Run sign-flip permutations for absolute indices `[start_idx, start_idx + count)`.
+/// Each permutation seeds its own RNG from `base_seed + perm_index`, making the
+/// random draws for permutation `i` a pure function of `(base_seed, i)` —
+/// completely independent of how permutations are partitioned across threads.
+///
+/// When `base_seed` is `None`, uses a single OS-entropy RNG (non-deterministic).
+fn run_signflip_chunk(
+    pnls: &[f64],
+    observed_metric: f64,
+    objective: &str,
+    base_seed: Option<u64>,
+    start_idx: usize,
+    count: usize,
+) -> usize {
+    let mut flipped = pnls.to_vec();
+    let mut hits = 0usize;
+
+    // Non-seeded path: single RNG, no per-perm determinism needed.
+    let Some(seed) = base_seed else {
+        let mut rng = StdRng::from_os_rng();
+        for _ in 0..count {
+            for (i, &original) in pnls.iter().enumerate() {
+                flipped[i] = if rng.random_bool(0.5) {
+                    -original
+                } else {
+                    original
+                };
+            }
+            if compute_metric_from_pnls(&flipped, objective) >= observed_metric {
+                hits += 1;
+            }
+        }
+        return hits;
+    };
+
+    // Seeded path: per-permutation RNG for chunk-invariant determinism.
+    for perm_idx in start_idx..(start_idx + count) {
+        let mut rng = StdRng::seed_from_u64(seed.wrapping_add(perm_idx as u64));
+        for (i, &original) in pnls.iter().enumerate() {
+            flipped[i] = if rng.random_bool(0.5) {
+                -original
+            } else {
+                original
+            };
+        }
+        if compute_metric_from_pnls(&flipped, objective) >= observed_metric {
+            hits += 1;
+        }
+    }
+    hits
+}
+
+/// Compute a p-value sequentially (no internal rayon). Used when the caller
+/// already parallelizes at a higher level (e.g., across combos).
+fn permutation_p_value_seq(
+    pnls: &[f64],
+    observed_metric: f64,
+    objective: &str,
+    n_perms: usize,
+    seed: Option<u64>,
+) -> f64 {
+    if pnls.len() < MIN_TRADES || n_perms == 0 {
+        return 1.0;
+    }
+    let count_ge = run_signflip_chunk(pnls, observed_metric, objective, seed, 0, n_perms);
+    (count_ge as f64 + 1.0) / (n_perms as f64 + 1.0)
+}
+
 /// Compute a one-sided p-value using a sign-flip permutation test.
 ///
 /// For each permutation, randomly flips the sign of each trade P&L (with 50%
 /// probability), recomputes the objective metric, and counts how often the
 /// permuted metric meets or exceeds the observed value. This tests the null
 /// hypothesis that the strategy has no directional edge.
+///
+/// When a `seed` is provided, results are deterministic and independent of the
+/// Rayon thread pool size — each permutation seeds its own RNG from
+/// `seed + perm_index`, so the draws for permutation `i` are a pure function
+/// of `(seed, i)` regardless of how work is partitioned across threads.
 pub fn permutation_p_value(
     pnls: &[f64],
     observed_metric: f64,
@@ -45,28 +122,31 @@ pub fn permutation_p_value(
         return 1.0;
     }
 
-    let mut rng = match seed {
-        Some(s) => StdRng::seed_from_u64(s),
-        None => StdRng::from_os_rng(),
+    let count_ge = if n_perms >= PAR_THRESHOLD {
+        // Cap chunks so each has meaningful work (avoids empty tasks on large pools).
+        let n_chunks = rayon::current_num_threads().min(n_perms).max(1);
+        let chunk_size = n_perms / n_chunks;
+        let remainder = n_perms % n_chunks;
+
+        (0..n_chunks)
+            .into_par_iter()
+            .map(|t| {
+                let perms_this_chunk = chunk_size + usize::from(t < remainder);
+                // Compute the starting permutation index for this chunk.
+                let start_idx = t * chunk_size + t.min(remainder);
+                run_signflip_chunk(
+                    pnls,
+                    observed_metric,
+                    objective,
+                    seed,
+                    start_idx,
+                    perms_this_chunk,
+                )
+            })
+            .sum::<usize>()
+    } else {
+        run_signflip_chunk(pnls, observed_metric, objective, seed, 0, n_perms)
     };
-
-    let mut flipped = pnls.to_vec();
-    let mut count_ge = 0usize;
-
-    for _ in 0..n_perms {
-        // Sign-flip: each P&L independently gets its sign flipped with 50% probability
-        for (i, &original) in pnls.iter().enumerate() {
-            flipped[i] = if rng.random_bool(0.5) {
-                -original
-            } else {
-                original
-            };
-        }
-        let metric = compute_metric_from_pnls(&flipped, objective);
-        if metric >= observed_metric {
-            count_ge += 1;
-        }
-    }
 
     // Add 1 to numerator and denominator (conservative estimator)
     (count_ge as f64 + 1.0) / (n_perms as f64 + 1.0)
@@ -194,11 +274,10 @@ pub fn apply_permutation_gate(
     let n_perms = clamp_permutations(n_perms);
     let n_combos = response.ranked_results.len();
 
-    // Phase 1: Compute p-values from trade P&Ls (read-only pass).
-    // Combos without sufficient trade data get None.
-    let p_values: Vec<Option<f64>> = (0..n_combos)
+    // Phase 1: Extract trade P&Ls per combo (cheap, sequential).
+    let combo_pnls: Vec<Vec<f64>> = (0..n_combos)
         .map(|i| {
-            let pnls: Vec<f64> = if i < response.full_results.len() {
+            if i < response.full_results.len() {
                 response.full_results[i]
                     .result
                     .trade_log
@@ -207,26 +286,56 @@ pub fn apply_permutation_gate(
                     .collect()
             } else {
                 Vec::new()
-            };
-
-            if pnls.len() < MIN_TRADES {
-                return None;
             }
-
-            let observed = compute_metric_from_pnls(&pnls, objective);
-            let combo_seed = seed.map(|s| s.wrapping_add(i as u64));
-            Some(permutation_p_value(
-                &pnls, observed, objective, n_perms, combo_seed,
-            ))
         })
         .collect();
 
-    // Phase 2: Write p-values onto results (mutable pass)
+    // Phase 2: Compute p-values — choose a single parallelism level to avoid
+    // nested rayon overhead. With multiple combos, parallelize across combos and
+    // run each permutation test sequentially. With a single combo, let
+    // permutation_p_value parallelize internally across permutations.
+    let testable_count = combo_pnls.iter().filter(|p| p.len() >= MIN_TRADES).count();
+
+    let p_values: Vec<Option<f64>> = if testable_count > 1 {
+        // Many combos: parallelize across combos, sequential per-combo.
+        combo_pnls
+            .par_iter()
+            .enumerate()
+            .map(|(i, pnls)| {
+                if pnls.len() < MIN_TRADES {
+                    return None;
+                }
+                let observed = compute_metric_from_pnls(pnls, objective);
+                let combo_seed = seed.map(|s| s.wrapping_add(i as u64));
+                Some(permutation_p_value_seq(
+                    pnls, observed, objective, n_perms, combo_seed,
+                ))
+            })
+            .collect()
+    } else {
+        // Single combo (or none): let permutation_p_value parallelize internally.
+        combo_pnls
+            .iter()
+            .enumerate()
+            .map(|(i, pnls)| {
+                if pnls.len() < MIN_TRADES {
+                    return None;
+                }
+                let observed = compute_metric_from_pnls(pnls, objective);
+                let combo_seed = seed.map(|s| s.wrapping_add(i as u64));
+                Some(permutation_p_value(
+                    pnls, observed, objective, n_perms, combo_seed,
+                ))
+            })
+            .collect()
+    };
+
+    // Phase 3: Write p-values onto results (mutable pass)
     for (i, p) in p_values.iter().enumerate() {
         response.ranked_results[i].p_value = *p;
     }
 
-    // Phase 3: Multiple comparisons corrections on tested combos only
+    // Phase 4: Multiple comparisons corrections on tested combos only
     let tested: Vec<(usize, f64)> = p_values
         .iter()
         .enumerate()
@@ -438,58 +547,50 @@ mod tests {
 
     // ── apply_permutation_gate ──────────────────────────────────────
 
-    #[test]
-    fn gate_noop_when_zero_perms() {
-        let response = SweepResponse {
+    /// Build an empty `SweepResponse` with optional ranked results and no `full_results`.
+    fn empty_response(
+        ranked: Vec<crate::tools::response_types::sweep::SweepResult>,
+    ) -> SweepResponse {
+        SweepResponse {
             mode: "grid".into(),
             objective: "sharpe".into(),
-            combinations_total: 0,
-            combinations_run: 0,
+            combinations_total: ranked.len(),
+            combinations_run: ranked.len(),
             combinations_failed: 0,
             best_result: None,
-            ranked_results: Vec::new(),
+            ranked_results: ranked,
             dimension_sensitivity: HashMap::default(),
             convergence_trace: None,
             execution_time_ms: 0,
             multiple_comparisons: None,
             full_results: Vec::new(),
-        };
+        }
+    }
+
+    #[test]
+    fn gate_noop_when_zero_perms() {
+        let response = empty_response(Vec::new());
         let result = apply_permutation_gate(response, 0, "sharpe", None);
         assert!(result.multiple_comparisons.is_none());
     }
 
     #[test]
     fn gate_noop_when_no_full_results() {
-        // Verifies the permutation gate is a no-op when full_results is empty,
-        // regardless of sweep mode.
-        let response = SweepResponse {
-            mode: "bayesian".into(),
-            objective: "sharpe".into(),
-            combinations_total: 1,
-            combinations_run: 1,
-            combinations_failed: 0,
-            best_result: None,
-            ranked_results: vec![crate::tools::response_types::sweep::SweepResult {
-                rank: 1,
-                params: HashMap::default(),
-                sharpe: 1.0,
-                sortino: 1.0,
-                pnl: 100.0,
-                trades: 10,
-                win_rate: 0.6,
-                max_drawdown: 0.1,
-                profit_factor: 2.0,
-                cagr: 0.1,
-                calmar: 1.0,
-                p_value: None,
-                significant: None,
-            }],
-            dimension_sensitivity: HashMap::default(),
-            convergence_trace: None,
-            execution_time_ms: 0,
-            multiple_comparisons: None,
-            full_results: Vec::new(),
-        };
+        let response = empty_response(vec![crate::tools::response_types::sweep::SweepResult {
+            rank: 1,
+            params: HashMap::default(),
+            sharpe: 1.0,
+            sortino: 1.0,
+            pnl: 100.0,
+            trades: 10,
+            win_rate: 0.6,
+            max_drawdown: 0.1,
+            profit_factor: 2.0,
+            cagr: 0.1,
+            calmar: 1.0,
+            p_value: None,
+            significant: None,
+        }]);
         let result = apply_permutation_gate(response, 1000, "sharpe", Some(42));
         assert!(
             result.multiple_comparisons.is_none(),
