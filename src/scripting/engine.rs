@@ -493,130 +493,178 @@ pub async fn run_script_backtest(
     // 4. Load data
     let mut early_warnings: Vec<String> = Vec::new();
 
-    let ohlcv_df = data_loader
-        .load_ohlcv(&config.symbol, config.start_date, config.end_date)
-        .await?;
+    // These variables are set by either the single-symbol or multi-symbol path below.
+    let price_history: Arc<Vec<OhlcvBar>>;
+    let indicator_store: Arc<IndicatorStore>;
+    let adjustment_timeline: Arc<crate::engine::adjustments::AdjustmentTimeline>;
+    let split_timeline: Arc<crate::engine::adjustments::AdjustmentTimeline>;
+    let options_by_date: Option<Arc<DatePartitionedOptions>>;
+    let price_table: Option<Arc<crate::engine::sim_types::PriceTable>>;
+    let date_index: Option<Arc<crate::engine::sim_types::DateIndex>>;
+    let per_symbol_data: Option<HashMap<String, PerSymbolData>>;
+    let mut last_known = crate::engine::sim_types::LastKnown::new();
 
-    if ohlcv_df.height() == 0 {
-        bail!("No OHLCV data found for symbol '{}'", config.symbol);
-    }
+    if config.symbols.len() > 1 {
+        // ----- Multi-symbol path -----
+        let (psd, _master_dates) =
+            load_multi_symbol_data(&config, data_loader, &mut early_warnings).await?;
 
-    // 4a. Resample to daily if needed.
-    // Detect intraday data by checking the time gap between the first two bars:
-    // a gap < 1 day means the data is sub-daily.
-    let data_is_intraday = is_intraday_data(&ohlcv_df);
-    let needs_daily =
-        (config.interval == Interval::Daily && data_is_intraday) || config.needs_options;
+        // Use first symbol's data as the primary loop driver.
+        // All symbols share the same dates after intersection.
+        let first = &config.symbols[0];
+        let first_data = psd
+            .get(first)
+            .expect("first symbol must be in per_symbol_data");
+        price_history = Arc::clone(&first_data.bars);
+        indicator_store = Arc::clone(&first_data.indicator_store);
+        split_timeline = Arc::clone(&first_data.split_timeline);
+        adjustment_timeline = Arc::clone(&first_data.adjustment_timeline);
 
-    let ohlcv_df = if needs_daily && data_is_intraday {
-        let original_rows = ohlcv_df.height();
-        let resampled =
-            crate::engine::ohlcv::resample_ohlcv(&ohlcv_df, crate::engine::types::Interval::Daily)?;
-        if config.needs_options && config.interval != Interval::Daily {
-            early_warnings.push(format!(
-                "Options require daily data; resampled {} intraday ({:?}) bars to {} daily bars",
-                original_rows,
-                config.interval,
-                resampled.height()
-            ));
-            config.interval = Interval::Daily;
-        } else {
-            early_warnings.push(format!(
-                "Resampled {} intraday bars to {} daily bars",
-                original_rows,
-                resampled.height()
-            ));
+        // Primary symbol's options data (used for single-symbol compat paths)
+        options_by_date = first_data.options_by_date.as_ref().map(Arc::clone);
+        price_table = first_data.price_table.as_ref().map(Arc::clone);
+        date_index = first_data.date_index.as_ref().map(Arc::clone);
+
+        per_symbol_data = Some(psd);
+    } else {
+        // ----- Single-symbol path (existing logic) -----
+        per_symbol_data = None;
+
+        let ohlcv_df = data_loader
+            .load_ohlcv(&config.symbol, config.start_date, config.end_date)
+            .await?;
+
+        if ohlcv_df.height() == 0 {
+            bail!("No OHLCV data found for symbol '{}'", config.symbol);
         }
-        resampled
-    } else {
-        ohlcv_df
-    };
 
-    // 4b. Convert DataFrame → Vec<OhlcvBar> for the simulation loop
-    let bars = ohlcv_bars_from_df(&ohlcv_df)?;
+        // 4a. Resample to daily if needed.
+        let data_is_intraday = is_intraday_data(&ohlcv_df);
+        let needs_daily =
+            (config.interval == Interval::Daily && data_is_intraday) || config.needs_options;
 
-    // Load adjustment factors (splits + dividends)
-    let splits = data_loader.load_splits(&config.symbol)?;
-    let dividends = data_loader.load_dividends(&config.symbol)?;
-    let closes: Vec<(NaiveDate, f64)> = bars.iter().map(|b| (b.datetime.date(), b.close)).collect();
+        let ohlcv_df = if needs_daily && data_is_intraday {
+            let original_rows = ohlcv_df.height();
+            let resampled = crate::engine::ohlcv::resample_ohlcv(
+                &ohlcv_df,
+                crate::engine::types::Interval::Daily,
+            )?;
+            if config.needs_options && config.interval != Interval::Daily {
+                early_warnings.push(format!(
+                    "Options require daily data; resampled {} intraday ({:?}) bars to {} daily bars",
+                    original_rows, config.interval, resampled.height()
+                ));
+                config.interval = Interval::Daily;
+            } else {
+                early_warnings.push(format!(
+                    "Resampled {} intraday bars to {} daily bars",
+                    original_rows,
+                    resampled.height()
+                ));
+            }
+            resampled
+        } else {
+            ohlcv_df
+        };
 
-    // Split-only timeline: matches options data (which is split-adjusted by data provider).
-    // Used for the simulation bars so strike-vs-price comparisons are correct.
-    let split_timeline = Arc::new(crate::engine::adjustments::AdjustmentTimeline::build(
-        &splits,
-        &[],
-        &[],
-    ));
+        // 4b. Convert DataFrame → Vec<OhlcvBar> for the simulation loop
+        let bars = ohlcv_bars_from_df(&ohlcv_df)?;
 
-    // Full timeline (splits + dividends): used for indicators and ctx.adjusted_close
-    // so returns/metrics are fully adjusted.
-    let adjustment_timeline = Arc::new(crate::engine::adjustments::AdjustmentTimeline::build(
-        &splits, &dividends, &closes,
-    ));
+        // Load adjustment factors (splits + dividends)
+        let splits = data_loader.load_splits(&config.symbol)?;
+        let dividends = data_loader.load_dividends(&config.symbol)?;
+        let closes: Vec<(NaiveDate, f64)> =
+            bars.iter().map(|b| (b.datetime.date(), b.close)).collect();
 
-    let config = Arc::new(config);
+        split_timeline = Arc::new(crate::engine::adjustments::AdjustmentTimeline::build(
+            &splits,
+            &[],
+            &[],
+        ));
 
-    // Apply split-only adjustment to simulation bars so OHLCV prices match
-    // the split-adjusted options strikes from the data provider.
-    let bars = if split_timeline.is_empty() {
-        bars
-    } else {
-        bars.iter()
-            .map(|b| {
-                let factor = split_timeline.factor_at(b.datetime.date());
-                OhlcvBar {
-                    datetime: b.datetime,
-                    open: b.open * factor,
-                    high: b.high * factor,
-                    low: b.low * factor,
-                    close: b.close * factor,
-                    volume: b.volume,
-                }
-            })
-            .collect()
-    };
+        adjustment_timeline = Arc::new(crate::engine::adjustments::AdjustmentTimeline::build(
+            &splits, &dividends, &closes,
+        ));
 
-    // 5. Pre-compute indicators
-    // Build price_history Arc first so indicator_bars can share it (zero-cost
-    // Arc::clone) when no dividend adjustments are needed, avoiding a full
-    // Vec<OhlcvBar> clone.
-    let price_history = Arc::new(bars);
-    let indicator_bars: Arc<Vec<OhlcvBar>> = if adjustment_timeline.is_empty() {
-        Arc::clone(&price_history)
-    } else {
-        // Build fully-adjusted bars for indicator computation (split + dividend adjusted
-        // to avoid false signals at corporate action dates)
-        Arc::new(
-            price_history
-                .iter()
+        // Apply split-only adjustment to simulation bars
+        let bars = if split_timeline.is_empty() {
+            bars
+        } else {
+            bars.iter()
                 .map(|b| {
-                    // bars are already split-adjusted, so only apply dividend adjustment
-                    // by dividing out the split factor and applying the full factor
-                    let split_factor = split_timeline.factor_at(b.datetime.date());
-                    let full_factor = adjustment_timeline.factor_at(b.datetime.date());
-                    // dividend-only factor = full / split
-                    let div_factor = if split_factor.abs() > f64::EPSILON {
-                        full_factor / split_factor
-                    } else {
-                        1.0
-                    };
+                    let factor = split_timeline.factor_at(b.datetime.date());
                     OhlcvBar {
                         datetime: b.datetime,
-                        open: b.open * div_factor,
-                        high: b.high * div_factor,
-                        low: b.low * div_factor,
-                        close: b.close * div_factor,
+                        open: b.open * factor,
+                        high: b.high * factor,
+                        low: b.low * factor,
+                        close: b.close * factor,
                         volume: b.volume,
                     }
                 })
-                .collect(),
-        )
-    };
+                .collect()
+        };
 
-    let indicator_store = Arc::new(IndicatorStore::build(
-        &config.declared_indicators,
-        &indicator_bars,
-    )?);
+        // 5. Pre-compute indicators
+        price_history = Arc::new(bars);
+        let indicator_bars: Arc<Vec<OhlcvBar>> = if adjustment_timeline.is_empty() {
+            Arc::clone(&price_history)
+        } else {
+            Arc::new(
+                price_history
+                    .iter()
+                    .map(|b| {
+                        let split_factor = split_timeline.factor_at(b.datetime.date());
+                        let full_factor = adjustment_timeline.factor_at(b.datetime.date());
+                        let div_factor = if split_factor.abs() > f64::EPSILON {
+                            full_factor / split_factor
+                        } else {
+                            1.0
+                        };
+                        OhlcvBar {
+                            datetime: b.datetime,
+                            open: b.open * div_factor,
+                            high: b.high * div_factor,
+                            low: b.low * div_factor,
+                            close: b.close * div_factor,
+                            volume: b.volume,
+                        }
+                    })
+                    .collect(),
+            )
+        };
+
+        indicator_store = Arc::new(IndicatorStore::build(
+            &config.declared_indicators,
+            &indicator_bars,
+        )?);
+
+        // Load options data if needed + build PriceTable for MTM
+        if config.needs_options {
+            if let Some(pre) = precomputed_options {
+                options_by_date = Some(Arc::clone(&pre.options_by_date));
+                price_table = Some(Arc::clone(&pre.price_table));
+                date_index = Some(Arc::clone(&pre.date_index));
+            } else {
+                let df = data_loader
+                    .load_options(&config.symbol, config.start_date, config.end_date)
+                    .await?;
+                let (pt, _trading_days, di) = crate::engine::price_table::build_price_table(&df)?;
+                price_table = Some(Arc::new(pt));
+                date_index = Some(Arc::new(di));
+                options_by_date = Some(Arc::new(DatePartitionedOptions::from_df(
+                    &df,
+                    &config.expiration_filter,
+                )?));
+            }
+        } else {
+            options_by_date = None;
+            price_table = None;
+            date_index = None;
+        }
+    }
+
+    let config = Arc::new(config);
 
     // 6. Run main simulation loop
     // Load cross-symbol data (forward-filled to primary timeline)
@@ -661,39 +709,6 @@ pub async fn run_script_backtest(
         Arc::new(cross_map)
     };
 
-    // Load options data if needed + build PriceTable for MTM
-    // When precomputed_options is provided (e.g. during a sweep), skip the
-    // expensive build_price_table + DatePartitionedOptions::from_df work.
-    let options_by_date: Option<Arc<DatePartitionedOptions>>;
-    let price_table: Option<Arc<crate::engine::sim_types::PriceTable>>;
-    let date_index: Option<Arc<crate::engine::sim_types::DateIndex>>;
-
-    if config.needs_options {
-        if let Some(pre) = precomputed_options {
-            options_by_date = Some(Arc::clone(&pre.options_by_date));
-            price_table = Some(Arc::clone(&pre.price_table));
-            date_index = Some(Arc::clone(&pre.date_index));
-        } else {
-            let df = data_loader
-                .load_options(&config.symbol, config.start_date, config.end_date)
-                .await?;
-            let (pt, _trading_days, di) = crate::engine::price_table::build_price_table(&df)?;
-            price_table = Some(Arc::new(pt));
-            date_index = Some(Arc::new(di));
-            options_by_date = Some(Arc::new(DatePartitionedOptions::from_df(
-                &df,
-                &config.expiration_filter,
-            )?));
-        }
-    } else {
-        options_by_date = None;
-        price_table = None;
-        date_index = None;
-    }
-
-    // Last-known prices for data-gap fill pricing (options MTM)
-    let mut last_known = crate::engine::sim_types::LastKnown::new();
-
     let has_on_exit_check = has_fn(&ast, "on_exit_check", 2);
     let has_on_position_opened = has_fn(&ast, "on_position_opened", 2);
     let has_on_position_closed = has_fn(&ast, "on_position_closed", 3);
@@ -726,7 +741,7 @@ pub async fn run_script_backtest(
         cross_symbol_data: Arc::clone(&cross_symbol_data),
         config: Arc::clone(&config),
         options_by_date: options_by_date.clone(),
-        per_symbol_data: None, // TODO: populated in multi-symbol path
+        per_symbol_data: per_symbol_data.map(Arc::new),
         custom_series: Arc::clone(&custom_series),
         adjustment_timeline: Arc::clone(&adjustment_timeline),
         split_timeline: Arc::clone(&split_timeline),
@@ -787,7 +802,20 @@ pub async fn run_script_backtest(
         let mut unfilled_orders: Vec<PendingOrder> = Vec::new();
         let mut auto_exit_orders: Vec<PendingOrder> = Vec::new();
         for order in orders_to_process {
-            if let Some(fill_price) = order.try_fill(bar.open, bar.high, bar.low, bar.close) {
+            // Resolve the target symbol's bar for fill checks (multi-symbol support)
+            let target_sym = order.symbol.as_deref().unwrap_or(&config.symbol);
+            let fill_bar = if let Some(psd) = &ctx_factory.per_symbol_data {
+                psd.get(target_sym).and_then(|d| d.bars.get(bar_idx))
+            } else {
+                Some(bar)
+            };
+            let Some(fill_bar) = fill_bar else {
+                unfilled_orders.push(order);
+                continue;
+            };
+            if let Some(fill_price) =
+                order.try_fill(fill_bar.open, fill_bar.high, fill_bar.low, fill_bar.close)
+            {
                 match &order.action {
                     ScriptAction::OpenStock { side, qty, .. } => {
                         // Stagger check
@@ -804,7 +832,7 @@ pub async fn run_script_backtest(
                             apply_stock_slippage(fill_price, *side, &config.slippage);
                         let pos = ScriptPosition {
                             id: next_id,
-                            symbol: config.symbol.clone(),
+                            symbol: target_sym.to_string(),
                             entry_date: today,
                             inner: ScriptPositionInner::Stock {
                                 side: *side,
@@ -1088,7 +1116,14 @@ pub async fn run_script_backtest(
                         }
                     }
                     ScriptAction::OpenOptions { legs, qty, .. } => {
-                        let resolved = resolve_option_legs(legs, &options_by_date, today, &config);
+                        // In multi-symbol mode, use the target symbol's options chain
+                        let target_obd = if let Some(psd) = &ctx_factory.per_symbol_data {
+                            psd.get(target_sym)
+                                .and_then(|d| d.options_by_date.as_ref().map(Arc::clone))
+                        } else {
+                            options_by_date.as_ref().map(Arc::clone)
+                        };
+                        let resolved = resolve_option_legs(legs, &target_obd, today, &config);
                         if resolved.is_empty() {
                             warnings.push(format!(
                                 "OpenOptions pending order skipped on {today}: no option contracts \
@@ -1101,7 +1136,7 @@ pub async fn run_script_backtest(
                             compute_options_entry(&resolved, &config, effective_qty);
                         let pos = ScriptPosition {
                             id: next_id,
-                            symbol: config.symbol.clone(),
+                            symbol: target_sym.to_string(),
                             entry_date: today,
                             inner: ScriptPositionInner::Options {
                                 legs: script_legs,
@@ -1212,7 +1247,14 @@ pub async fn run_script_backtest(
                 if today >= *expiration {
                     should_close = true;
                     // Determine if any leg is ITM to classify as assignment/called_away
-                    exit_reason = classify_expiration(legs, bar.close);
+                    let exp_close = if let Some(psd) = &ctx_factory.per_symbol_data {
+                        psd.get(&pos.symbol)
+                            .and_then(|d| d.bars.get(bar_idx).map(|b| b.close))
+                            .unwrap_or(bar.close)
+                    } else {
+                        bar.close
+                    };
+                    exit_reason = classify_expiration(legs, exp_close);
                 }
             }
 
@@ -1285,7 +1327,20 @@ pub async fn run_script_backtest(
                 let closed_pos = positions[i].clone();
 
                 // Close position immediately (deduct exit commission)
-                let pnl = compute_close_pnl(&closed_pos, bar);
+                // In multi-symbol mode, use position's symbol's close for stock P&L
+                let pnl = if closed_pos.is_stock() {
+                    if let Some(psd) = &ctx_factory.per_symbol_data {
+                        let sym_close = psd
+                            .get(&closed_pos.symbol)
+                            .and_then(|d| d.bars.get(bar_idx).map(|b| b.close))
+                            .unwrap_or(bar.close);
+                        compute_close_pnl_at_price(&closed_pos, sym_close)
+                    } else {
+                        compute_close_pnl(&closed_pos, bar)
+                    }
+                } else {
+                    compute_close_pnl(&closed_pos, bar)
+                };
                 let exit_comm = compute_commission(&config.commission, &closed_pos);
                 realized_equity += pnl - exit_comm;
 
@@ -1360,7 +1415,7 @@ pub async fn run_script_backtest(
                                     let shares = leg.qty.saturating_mul(*multiplier);
                                     let implicit = ScriptPosition {
                                         id: next_id,
-                                        symbol: config.symbol.clone(),
+                                        symbol: closed_pos.symbol.clone(),
                                         entry_date: today,
                                         inner: ScriptPositionInner::Stock {
                                             side: Side::Long,
@@ -1371,8 +1426,19 @@ pub async fn run_script_backtest(
                                         // received offsets this in realized_equity; we intentionally
                                         // do not re-deduct it here to avoid double-counting.
                                         entry_cost: leg.strike * f64::from(shares),
-                                        unrealized_pnl: (bar.close - leg.strike)
-                                            * f64::from(shares),
+                                        unrealized_pnl: {
+                                            let assign_close =
+                                                if let Some(psd) = &ctx_factory.per_symbol_data {
+                                                    psd.get(&closed_pos.symbol)
+                                                        .and_then(|d| {
+                                                            d.bars.get(bar_idx).map(|b| b.close)
+                                                        })
+                                                        .unwrap_or(bar.close)
+                                                } else {
+                                                    bar.close
+                                                };
+                                            (assign_close - leg.strike) * f64::from(shares)
+                                        },
                                         days_held: 0,
                                         current_date: today,
                                         entry_bar_idx: bar_idx,
@@ -1402,6 +1468,7 @@ pub async fn run_script_backtest(
                                     while j < positions.len() {
                                         let is_target = positions[j].implicit
                                             && positions[j].source == "assignment"
+                                            && positions[j].symbol == closed_pos.symbol
                                             && matches!(
                                                 &positions[j].inner,
                                                 ScriptPositionInner::Stock {
@@ -1533,7 +1600,15 @@ pub async fn run_script_backtest(
         }
 
         // Update last_known prices for data-gap fill pricing
-        if let (Some(pt), Some(di)) = (&price_table, &date_index) {
+        if let Some(psd) = &ctx_factory.per_symbol_data {
+            // Multi-symbol: update each symbol's last_known independently
+            for (_sym, data) in psd.iter() {
+                if let (Some(pt), Some(di)) = (&data.price_table, &data.date_index) {
+                    let mut lk = data.last_known.lock().unwrap_or_else(|e| e.into_inner());
+                    crate::engine::positions::update_last_known(pt, di, today, &mut lk);
+                }
+            }
+        } else if let (Some(pt), Some(di)) = (&price_table, &date_index) {
             crate::engine::positions::update_last_known(pt, di, today, &mut last_known);
         }
 
@@ -1546,7 +1621,15 @@ pub async fn run_script_backtest(
                     qty,
                     entry_price,
                 } => {
-                    let pnl = (bar.close - *entry_price) * *qty as f64 * side.multiplier();
+                    // In multi-symbol mode, use the position's symbol's close price
+                    let close_price = if let Some(psd) = &ctx_factory.per_symbol_data {
+                        psd.get(&pos.symbol)
+                            .and_then(|d| d.bars.get(bar_idx).map(|b| b.close))
+                            .unwrap_or(*entry_price)
+                    } else {
+                        bar.close
+                    };
+                    let pnl = (close_price - *entry_price) * *qty as f64 * side.multiplier();
                     pos.unrealized_pnl = pnl;
                     unrealized += pnl;
                 }
@@ -1556,16 +1639,35 @@ pub async fn run_script_backtest(
                     // MTM each leg using PriceTable / last_known
                     let mut pos_pnl = 0.0;
                     for leg in legs.iter_mut() {
-                        let current = lookup_option_price(
-                            &price_table,
-                            &last_known,
-                            today,
-                            leg.expiration,
-                            leg.strike,
-                            leg.option_type,
-                            leg.side,
-                            &config.slippage,
-                        );
+                        // In multi-symbol mode, use per-symbol PriceTable and last_known
+                        let current = if let Some(psd) = &ctx_factory.per_symbol_data {
+                            if let Some(data) = psd.get(&pos.symbol) {
+                                let lk = data.last_known.lock().unwrap_or_else(|e| e.into_inner());
+                                lookup_option_price(
+                                    &data.price_table,
+                                    &lk,
+                                    today,
+                                    leg.expiration,
+                                    leg.strike,
+                                    leg.option_type,
+                                    leg.side,
+                                    &config.slippage,
+                                )
+                            } else {
+                                None
+                            }
+                        } else {
+                            lookup_option_price(
+                                &price_table,
+                                &last_known,
+                                today,
+                                leg.expiration,
+                                leg.strike,
+                                leg.option_type,
+                                leg.side,
+                                &config.slippage,
+                            )
+                        };
                         if let Some(price) = current {
                             leg.current_price = price;
                             let leg_pnl = (price - leg.entry_price)
@@ -1605,8 +1707,22 @@ pub async fn run_script_backtest(
     if config.auto_close_on_end {
         // Auto-close remaining positions
         if let Some(last_bar) = price_history.last() {
+            let last_bar_idx = price_history.len().saturating_sub(1);
             for pos in &positions {
-                let pnl = compute_close_pnl(pos, last_bar);
+                // In multi-symbol mode, use position's symbol's last bar close
+                let pnl = if pos.is_stock() {
+                    if let Some(psd) = &ctx_factory.per_symbol_data {
+                        let sym_close = psd
+                            .get(&pos.symbol)
+                            .and_then(|d| d.bars.get(last_bar_idx).map(|b| b.close))
+                            .unwrap_or(last_bar.close);
+                        compute_close_pnl_at_price(pos, sym_close)
+                    } else {
+                        compute_close_pnl(pos, last_bar)
+                    }
+                } else {
+                    compute_close_pnl(pos, last_bar)
+                };
                 trade_log.push(build_script_trade_record(
                     pos,
                     last_bar.datetime,
@@ -3420,7 +3536,7 @@ fn forward_fill_cross_symbol(
 ///
 /// The master timeline is the intersection of all symbols' OHLCV date ranges,
 /// ensuring every bar has real data for every symbol.
-#[allow(clippy::too_many_lines, clippy::single_match_else, dead_code)]
+#[allow(clippy::too_many_lines, clippy::single_match_else)]
 async fn load_multi_symbol_data(
     config: &ScriptConfig,
     data_loader: &dyn DataLoader,
@@ -3604,6 +3720,7 @@ async fn load_multi_symbol_data(
                 options_by_date,
                 price_table,
                 date_index,
+                last_known: std::sync::Mutex::new(crate::engine::sim_types::LastKnown::new()),
             },
         );
     }

@@ -354,6 +354,16 @@ fn register_action_helpers(engine: &mut Engine) {
     engine.register_fn("sell_stop_limit", helpers::sell_stop_limit);
     engine.register_fn("cancel_orders", helpers::cancel_orders as fn() -> Dynamic);
     engine.register_fn("cancel_orders", helpers::cancel_orders_by_signal);
+
+    // Symbol-aware stock action helpers (multi-symbol portfolio support)
+    engine.register_fn("buy_stock_for", helpers::buy_stock_for);
+    engine.register_fn("sell_stock_for", helpers::sell_stock_for);
+    engine.register_fn("buy_limit_for", helpers::buy_limit_for);
+    engine.register_fn("sell_limit_for", helpers::sell_limit_for);
+    engine.register_fn("buy_stop_for", helpers::buy_stop_for);
+    engine.register_fn("sell_stop_for", helpers::sell_stop_for);
+    engine.register_fn("buy_stop_limit_for", helpers::buy_stop_limit_for);
+    engine.register_fn("sell_stop_limit_for", helpers::sell_stop_limit_for);
 }
 
 /// Register strategy helper methods on `BarContext`.

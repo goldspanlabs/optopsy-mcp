@@ -1,6 +1,7 @@
 //! Configuration types, intervals, and value enums for the scripting engine.
 
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 use chrono::NaiveDate;
 
@@ -189,6 +190,8 @@ pub struct PerSymbolData {
     pub price_table: Option<Arc<PriceTable>>,
     /// Date → PriceTable keys index. `None` if no options data.
     pub date_index: Option<Arc<DateIndex>>,
+    /// Last-known options prices for data-gap fill pricing (mutable per bar).
+    pub last_known: Mutex<LastKnown>,
 }
 
 // ---------------------------------------------------------------------------
