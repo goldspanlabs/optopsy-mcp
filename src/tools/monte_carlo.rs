@@ -63,9 +63,13 @@ pub async fn execute(
         None => StdRng::from_os_rng(),
     };
 
-    let (mut terminal_values, mut max_drawdowns): (Vec<f64>, Vec<f64>) = (0..n_simulations)
-        .map(|_| simulate_path(&returns, horizon_days, initial_capital, &mut rng))
-        .unzip();
+    let mut terminal_values = Vec::with_capacity(n_simulations);
+    let mut max_drawdowns = Vec::with_capacity(n_simulations);
+    for _ in 0..n_simulations {
+        let (terminal, max_dd) = simulate_path(&returns, horizon_days, initial_capital, &mut rng);
+        terminal_values.push(terminal);
+        max_drawdowns.push(max_dd);
+    }
 
     // Sort for percentile extraction
     terminal_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -92,17 +96,17 @@ pub async fn execute(
 
     // Ruin analysis — single pass over terminal values
     let n = n_simulations as f64;
-    let (cnt_10, cnt_25, cnt_50, cnt_neg) =
-        terminal_values
-            .iter()
-            .fold((0usize, 0usize, 0usize, 0usize), |(a, b, c, d), &v| {
-                (
-                    a + usize::from(v < initial_capital * 0.9),
-                    b + usize::from(v < initial_capital * 0.75),
-                    c + usize::from(v < initial_capital * 0.5),
-                    d + usize::from(v < initial_capital),
-                )
-            });
+    let (cnt_10, cnt_25, cnt_50, cnt_neg) = terminal_values.iter().fold(
+        (0usize, 0usize, 0usize, 0usize),
+        |(loss_10, loss_25, loss_50, negative), &v| {
+            (
+                loss_10 + usize::from(v < initial_capital * 0.9),
+                loss_25 + usize::from(v < initial_capital * 0.75),
+                loss_50 + usize::from(v < initial_capital * 0.5),
+                negative + usize::from(v < initial_capital),
+            )
+        },
+    );
     let prob_loss_10 = cnt_10 as f64 / n;
     let prob_loss_25 = cnt_25 as f64 / n;
     let prob_loss_50 = cnt_50 as f64 / n;
