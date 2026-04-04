@@ -31,16 +31,23 @@ fn dt(days: i64) -> NaiveDateTime {
 
 /// Build a minimal `TradeRecord` with the given P&L.
 fn trade(id: usize, pnl: f64) -> TradeRecord {
+    let entry_cost = -100.0;
+    let exit_proceeds = 100.0 + pnl;
+
     TradeRecord {
         trade_id: id,
         entry_datetime: dt(0),
         exit_datetime: dt(30),
-        entry_cost: -100.0,
-        exit_proceeds: 100.0 + pnl,
-        entry_amount: 100.0,
-        entry_label: CashflowLabel::DR,
-        exit_amount: (100.0 + pnl).abs(),
-        exit_label: if pnl >= 0.0 {
+        entry_cost,
+        exit_proceeds,
+        entry_amount: entry_cost.abs(),
+        entry_label: if entry_cost >= 0.0 {
+            CashflowLabel::CR
+        } else {
+            CashflowLabel::DR
+        },
+        exit_amount: exit_proceeds.abs(),
+        exit_label: if exit_proceeds >= 0.0 {
             CashflowLabel::CR
         } else {
             CashflowLabel::DR
