@@ -118,8 +118,9 @@ pub struct LegDetail {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TradeRecord {
     pub trade_id: usize,
-    /// Symbol this trade was executed on. Always set for new backtests;
-    /// `None` only when deserializing legacy results that predate multi-symbol support.
+    /// Symbol this trade was executed on. Set by the engine after construction;
+    /// `None` immediately after `TradeRecord::new()` and when deserializing
+    /// legacy results that predate multi-symbol support.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbol: Option<String>,
     #[serde(with = "super::epoch_serde")]

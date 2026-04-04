@@ -140,9 +140,13 @@ impl SymbolContext {
         self.iv(&name, period)
     }
 
-    pub fn indicator_with(&mut self, name: &str, params: rhai::Array) -> Dynamic {
-        let int_params: Vec<i64> = params.iter().filter_map(|v| v.as_int().ok()).collect();
-        self.ivm(name, &int_params)
+    pub fn indicator_with(&mut self, name: String, params: rhai::Map) -> Dynamic {
+        crate::scripting::helpers::indicator_lookup_map(
+            &self.indicator_store,
+            self.bar_idx,
+            name,
+            params,
+        )
     }
 
     pub fn indicators_ready(&mut self, indicators: rhai::Array) -> bool {

@@ -58,6 +58,52 @@ pub(super) fn indicator_lookup_multi(
     }
 }
 
+/// Look up a multi-param indicator using a named parameter map (matching `BarContext::indicator_with`).
+///
+/// Extracts known param keys in a fixed order, converting floats to scaled integers
+/// following the `IndicatorStore` convention.
+pub(super) fn indicator_lookup_map(
+    store: &IndicatorStore,
+    bar_idx: usize,
+    name: String,
+    params: rhai::Map,
+) -> Dynamic {
+    use super::indicators::{IndicatorKey, IndicatorParam};
+
+    let mut param_vec: Vec<IndicatorParam> = Vec::new();
+    for key in &[
+        "period",
+        "fast",
+        "slow",
+        "signal",
+        "mult",
+        "accel",
+        "max_accel",
+    ] {
+        if let Some(val) = params.get(*key) {
+            if let Ok(i) = val.as_int() {
+                param_vec.push(IndicatorParam::Int(i));
+            } else if let Ok(f) = val.as_float() {
+                let scaled = match *key {
+                    "accel" | "max_accel" => (f * 100.0) as i64,
+                    _ => (f * 10.0) as i64,
+                };
+                param_vec.push(IndicatorParam::Int(scaled));
+            }
+        }
+    }
+
+    let key = IndicatorKey {
+        name,
+        params: param_vec,
+    };
+    match store.get(&key, bar_idx) {
+        Some(v) if v.is_nan() => Dynamic::UNIT,
+        Some(v) => Dynamic::from(v),
+        None => Dynamic::UNIT,
+    }
+}
+
 /// Check if all declared indicators have warmed up at a given bar index.
 pub(super) fn indicators_all_ready(
     store: &IndicatorStore,

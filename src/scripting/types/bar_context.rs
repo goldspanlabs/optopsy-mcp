@@ -525,43 +525,12 @@ impl BarContext {
     /// Example: `ctx.indicator_with("keltner_upper", #{ period: 20, mult: 15 })`
     /// Params are converted to the IndicatorKey param vector.
     pub fn indicator_with(&mut self, name: String, params: rhai::Map) -> Dynamic {
-        use crate::scripting::indicators::{IndicatorKey, IndicatorParam};
-
-        // Extract params as integers (matching IndicatorStore convention)
-        let mut param_vec: Vec<IndicatorParam> = Vec::new();
-        // Try known param names in order
-        for key in &[
-            "period",
-            "fast",
-            "slow",
-            "signal",
-            "mult",
-            "accel",
-            "max_accel",
-        ] {
-            if let Some(val) = params.get(*key) {
-                if let Ok(i) = val.as_int() {
-                    param_vec.push(IndicatorParam::Int(i));
-                } else if let Ok(f) = val.as_float() {
-                    // Scale to integer: accel params use *100 (0.02->2), others use *10 (2.0->20)
-                    let scaled = match *key {
-                        "accel" | "max_accel" => (f * 100.0) as i64,
-                        _ => (f * 10.0) as i64,
-                    };
-                    param_vec.push(IndicatorParam::Int(scaled));
-                }
-            }
-        }
-
-        let key = IndicatorKey {
+        crate::scripting::helpers::indicator_lookup_map(
+            &self.indicator_store,
+            self.bar_idx,
             name,
-            params: param_vec,
-        };
-        match self.indicator_store.get(&key, self.bar_idx) {
-            Some(v) if v.is_nan() => Dynamic::UNIT,
-            Some(v) => Dynamic::from(v),
-            None => Dynamic::UNIT,
-        }
+            params,
+        )
     }
 
     // --- Indicator lookback ---

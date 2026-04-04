@@ -3442,9 +3442,10 @@ async fn load_multi_symbol_data(
             bail!("No OHLCV data found for symbol '{sym}'");
         }
 
-        // Resample intraday → daily if needed
+        // Resample intraday → daily only when needed (matching single-symbol logic)
         let data_is_intraday = is_intraday_data(&df);
-        let df = if data_is_intraday {
+        let needs_daily = config.interval == Interval::Daily && data_is_intraday;
+        let df = if needs_daily {
             crate::engine::ohlcv::resample_ohlcv(&df, crate::engine::types::Interval::Daily)?
         } else {
             df
