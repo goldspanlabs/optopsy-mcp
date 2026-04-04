@@ -481,8 +481,10 @@ mod tests {
 
     // ── apply_permutation_gate ──────────────────────────────────────
 
-    /// Build an empty `SweepResponse` with optional ranked results and no full_results.
-    fn empty_response(ranked: Vec<crate::tools::response_types::sweep::SweepResult>) -> SweepResponse {
+    /// Build an empty `SweepResponse` with optional ranked results and no `full_results`.
+    fn empty_response(
+        ranked: Vec<crate::tools::response_types::sweep::SweepResult>,
+    ) -> SweepResponse {
         SweepResponse {
             mode: "grid".into(),
             objective: "sharpe".into(),

@@ -13,8 +13,8 @@ use chrono::NaiveDateTime;
 
 use optopsy_mcp::engine::permutation::apply_permutation_gate;
 use optopsy_mcp::engine::types::{
-    BacktestResult, CashflowLabel, EquityPoint, ExitType, LegDetail, OptionType,
-    PerformanceMetrics, Side, TradeRecord,
+    BacktestQualityStats, BacktestResult, CashflowLabel, EquityPoint, ExitType, LegDetail,
+    OptionType, PerformanceMetrics, Side, TradeRecord,
 };
 use optopsy_mcp::scripting::engine::ScriptBacktestResult;
 use optopsy_mcp::scripting::types::CustomSeriesStore;
@@ -70,11 +70,7 @@ fn trade(id: usize, pnl: f64) -> TradeRecord {
 
 /// Build a `ScriptBacktestResult` from a list of P&Ls.
 fn backtest_from_pnls(pnls: &[f64]) -> ScriptBacktestResult {
-    let trade_log: Vec<TradeRecord> = pnls
-        .iter()
-        .enumerate()
-        .map(|(i, &p)| trade(i, p))
-        .collect();
+    let trade_log: Vec<TradeRecord> = pnls.iter().enumerate().map(|(i, &p)| trade(i, p)).collect();
     ScriptBacktestResult {
         result: BacktestResult {
             symbol: Some("SPY".into()),
@@ -87,7 +83,7 @@ fn backtest_from_pnls(pnls: &[f64]) -> ScriptBacktestResult {
                 unrealized: None,
             }],
             trade_log,
-            quality: Default::default(),
+            quality: BacktestQualityStats::default(),
             warnings: vec![],
         },
         metadata: None,
@@ -122,7 +118,7 @@ fn sweep_result(rank: usize) -> SweepResult {
 }
 
 /// Build a `SweepResponse` with `n` combos, each getting its own P&L series.
-fn build_response(combo_pnls: Vec<Vec<f64>>) -> SweepResponse {
+fn build_response(combo_pnls: &[Vec<f64>]) -> SweepResponse {
     let n = combo_pnls.len();
     SweepResponse {
         mode: "grid".into(),
@@ -148,8 +144,8 @@ fn build_response(combo_pnls: Vec<Vec<f64>>) -> SweepResponse {
 #[test]
 fn strong_edge_combo_is_significant() {
     // 20 trades, all solidly positive — clear directional edge
-    let strong_pnls: Vec<f64> = (0..20).map(|i| 100.0 + i as f64 * 5.0).collect();
-    let response = build_response(vec![strong_pnls]);
+    let strong_pnls: Vec<f64> = (0..20).map(|i| 100.0 + f64::from(i) * 5.0).collect();
+    let response = build_response(&[strong_pnls]);
 
     let result = apply_permutation_gate(response, 2_000, "sharpe", Some(42));
 
@@ -173,7 +169,7 @@ fn no_edge_combo_not_significant() {
     let symmetric: Vec<f64> = (0..20)
         .map(|i| if i % 2 == 0 { 100.0 } else { -100.0 })
         .collect();
-    let response = build_response(vec![symmetric]);
+    let response = build_response(&[symmetric]);
 
     let result = apply_permutation_gate(response, 2_000, "sharpe", Some(42));
 
@@ -194,7 +190,7 @@ fn no_edge_combo_not_significant() {
 /// marks only the strong ones as significant.
 #[test]
 fn mixed_combos_bh_fdr_discriminates() {
-    let strong: Vec<f64> = (0..20).map(|i| 100.0 + i as f64 * 5.0).collect();
+    let strong: Vec<f64> = (0..20).map(|i| 100.0 + f64::from(i) * 5.0).collect();
     let weak: Vec<f64> = (0..20)
         .map(|i| if i % 2 == 0 { 50.0 } else { -50.0 })
         .collect();
@@ -202,7 +198,7 @@ fn mixed_combos_bh_fdr_discriminates() {
         .map(|i| if i % 2 == 0 { 10.0 } else { -15.0 })
         .collect();
 
-    let response = build_response(vec![strong, weak, noise]);
+    let response = build_response(&[strong, weak, noise]);
     let result = apply_permutation_gate(response, 2_000, "sharpe", Some(123));
 
     // All three should have p-values
@@ -236,7 +232,10 @@ fn mixed_combos_bh_fdr_discriminates() {
     let mc = result.multiple_comparisons.as_ref().unwrap();
     let bh = &mc[0];
     assert_eq!(bh.num_tests, 3);
-    assert!(bh.num_significant >= 1, "at least the strong combo survives");
+    assert!(
+        bh.num_significant >= 1,
+        "at least the strong combo survives"
+    );
 
     let bonf = &mc[1];
     assert_eq!(bonf.num_tests, 3);
@@ -248,10 +247,10 @@ fn mixed_combos_bh_fdr_discriminates() {
 /// from multiple comparisons.
 #[test]
 fn insufficient_trades_excluded() {
-    let enough: Vec<f64> = (0..15).map(|i| 80.0 + i as f64 * 3.0).collect();
+    let enough: Vec<f64> = (0..15).map(|i| 80.0 + f64::from(i) * 3.0).collect();
     let too_few: Vec<f64> = vec![100.0, 200.0, -50.0]; // only 3 trades
 
-    let response = build_response(vec![enough, too_few]);
+    let response = build_response(&[enough, too_few]);
     let result = apply_permutation_gate(response, 1_000, "sharpe", Some(99));
 
     // First combo: sufficient trades -> has p-value
@@ -278,8 +277,8 @@ fn deterministic_with_seed() {
     let pnls: Vec<f64> = (0..20)
         .map(|i| if i % 3 == 0 { 150.0 } else { -40.0 })
         .collect();
-    let response1 = build_response(vec![pnls.clone()]);
-    let response2 = build_response(vec![pnls]);
+    let response1 = build_response(std::slice::from_ref(&pnls));
+    let response2 = build_response(std::slice::from_ref(&pnls));
 
     let r1 = apply_permutation_gate(response1, 2_000, "sharpe", Some(777));
     let r2 = apply_permutation_gate(response2, 2_000, "sharpe", Some(777));
@@ -295,10 +294,10 @@ fn deterministic_with_seed() {
 /// All four objectives produce valid p-values.
 #[test]
 fn all_objectives_produce_valid_pvalues() {
-    let pnls: Vec<f64> = (0..20).map(|i| 100.0 + i as f64 * 10.0).collect();
+    let pnls: Vec<f64> = (0..20).map(|i| 100.0 + f64::from(i) * 10.0).collect();
 
     for objective in &["sharpe", "sortino", "calmar", "profit_factor"] {
-        let mut response = build_response(vec![pnls.clone()]);
+        let mut response = build_response(std::slice::from_ref(&pnls));
         response.objective = objective.to_string();
 
         let result = apply_permutation_gate(response, 1_000, objective, Some(42));
@@ -316,15 +315,18 @@ fn all_objectives_produce_valid_pvalues() {
     }
 }
 
-/// best_result is updated to reflect permutation fields after gate application.
+/// `best_result` is updated to reflect permutation fields after gate application.
 #[test]
 fn best_result_reflects_permutation_fields() {
-    let pnls: Vec<f64> = (0..20).map(|i| 100.0 + i as f64 * 5.0).collect();
-    let response = build_response(vec![pnls]);
+    let pnls: Vec<f64> = (0..20).map(|i| 100.0 + f64::from(i) * 5.0).collect();
+    let response = build_response(&[pnls]);
 
     let result = apply_permutation_gate(response, 1_000, "sharpe", Some(42));
 
-    let best = result.best_result.as_ref().expect("best_result should exist");
+    let best = result
+        .best_result
+        .as_ref()
+        .expect("best_result should exist");
     assert!(
         best.p_value.is_some(),
         "best_result should have p_value from ranked_results[0]"
