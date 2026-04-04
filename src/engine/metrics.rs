@@ -128,13 +128,14 @@ fn compute_equity_metrics(
         .iter()
         .scan(initial_capital, |prev, point| {
             let ret = if *prev > 0.0 {
-                (point.equity - *prev) / *prev
+                Some((point.equity - *prev) / *prev)
             } else {
-                0.0
+                None
             };
             *prev = point.equity;
             Some(ret)
         })
+        .flatten()
         .collect();
 
     if returns.is_empty() {
