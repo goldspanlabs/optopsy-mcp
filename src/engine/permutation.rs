@@ -32,11 +32,12 @@ const MAX_PERMUTATIONS: usize = 100_000;
 /// Minimum permutation count to justify parallelism overhead.
 const PAR_THRESHOLD: usize = 1_000;
 
-/// Run sign-flip permutations for indices `[start_idx, start_idx + count)`, each
-/// seeded deterministically from `base_seed + perm_index`. Returns how many
-/// permuted metrics meet or exceed `observed_metric`.
+/// Run sign-flip permutations for absolute indices `[start_idx, start_idx + count)`.
+/// Each permutation seeds its own RNG from `base_seed + perm_index`, making the
+/// random draws for permutation `i` a pure function of `(base_seed, i)` —
+/// completely independent of how permutations are partitioned across threads.
 ///
-/// When `base_seed` is `None`, uses OS entropy (non-deterministic).
+/// When `base_seed` is `None`, uses a single OS-entropy RNG (non-deterministic).
 fn run_signflip_chunk(
     pnls: &[f64],
     observed_metric: f64,
@@ -45,15 +46,30 @@ fn run_signflip_chunk(
     start_idx: usize,
     count: usize,
 ) -> usize {
-    // Seed from the first permutation index in this chunk so that each
-    // permutation's draws are identical regardless of how chunks are split.
-    let mut rng = match base_seed {
-        Some(s) => StdRng::seed_from_u64(s.wrapping_add(start_idx as u64)),
-        None => StdRng::from_os_rng(),
-    };
     let mut flipped = pnls.to_vec();
     let mut hits = 0usize;
-    for _ in 0..count {
+
+    // Non-seeded path: single RNG, no per-perm determinism needed.
+    let Some(seed) = base_seed else {
+        let mut rng = StdRng::from_os_rng();
+        for _ in 0..count {
+            for (i, &original) in pnls.iter().enumerate() {
+                flipped[i] = if rng.random_bool(0.5) {
+                    -original
+                } else {
+                    original
+                };
+            }
+            if compute_metric_from_pnls(&flipped, objective) >= observed_metric {
+                hits += 1;
+            }
+        }
+        return hits;
+    };
+
+    // Seeded path: per-permutation RNG for chunk-invariant determinism.
+    for perm_idx in start_idx..(start_idx + count) {
+        let mut rng = StdRng::seed_from_u64(seed.wrapping_add(perm_idx as u64));
         for (i, &original) in pnls.iter().enumerate() {
             flipped[i] = if rng.random_bool(0.5) {
                 -original
@@ -92,8 +108,9 @@ fn permutation_p_value_seq(
 /// hypothesis that the strategy has no directional edge.
 ///
 /// When a `seed` is provided, results are deterministic and independent of the
-/// Rayon thread pool size — each chunk seeds its RNG from `seed + start_index`,
-/// producing identical draws regardless of how permutations are partitioned.
+/// Rayon thread pool size — each permutation seeds its own RNG from
+/// `seed + perm_index`, so the draws for permutation `i` are a pure function
+/// of `(seed, i)` regardless of how work is partitioned across threads.
 pub fn permutation_p_value(
     pnls: &[f64],
     observed_metric: f64,
