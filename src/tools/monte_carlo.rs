@@ -65,7 +65,6 @@ pub async fn execute(
 
     let mut terminal_values = Vec::with_capacity(n_simulations);
     let mut max_drawdowns = Vec::with_capacity(n_simulations);
-
     for _ in 0..n_simulations {
         let (terminal, max_dd) = simulate_path(&returns, horizon_days, initial_capital, &mut rng);
         terminal_values.push(terminal);
@@ -95,27 +94,23 @@ pub async fn execute(
         })
         .collect();
 
-    // Ruin analysis
-    let prob_loss_10 = terminal_values
-        .iter()
-        .filter(|&&v| v < initial_capital * 0.9)
-        .count() as f64
-        / n_simulations as f64;
-    let prob_loss_25 = terminal_values
-        .iter()
-        .filter(|&&v| v < initial_capital * 0.75)
-        .count() as f64
-        / n_simulations as f64;
-    let prob_loss_50 = terminal_values
-        .iter()
-        .filter(|&&v| v < initial_capital * 0.5)
-        .count() as f64
-        / n_simulations as f64;
-    let prob_negative = terminal_values
-        .iter()
-        .filter(|&&v| v < initial_capital)
-        .count() as f64
-        / n_simulations as f64;
+    // Ruin analysis — single pass over terminal values
+    let n = n_simulations as f64;
+    let (cnt_10, cnt_25, cnt_50, cnt_neg) = terminal_values.iter().fold(
+        (0usize, 0usize, 0usize, 0usize),
+        |(loss_10, loss_25, loss_50, negative), &v| {
+            (
+                loss_10 + usize::from(v < initial_capital * 0.9),
+                loss_25 + usize::from(v < initial_capital * 0.75),
+                loss_50 + usize::from(v < initial_capital * 0.5),
+                negative + usize::from(v < initial_capital),
+            )
+        },
+    );
+    let prob_loss_10 = cnt_10 as f64 / n;
+    let prob_loss_25 = cnt_25 as f64 / n;
+    let prob_loss_50 = cnt_50 as f64 / n;
+    let prob_negative = cnt_neg as f64 / n;
 
     let ruin_analysis = RuinAnalysis {
         prob_loss_10pct: prob_loss_10,

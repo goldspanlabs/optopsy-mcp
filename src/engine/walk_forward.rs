@@ -142,22 +142,19 @@ pub fn cartesian_product(
         return vec![HashMap::new()];
     }
 
-    let mut combos = vec![HashMap::new()];
-
-    for key in &keys {
+    keys.iter().fold(vec![HashMap::new()], |combos, key| {
         let values = &grid[*key];
-        let mut new_combos = Vec::new();
-        for combo in &combos {
-            for val in values {
-                let mut new_combo = combo.clone();
-                new_combo.insert((*key).clone(), val.clone());
-                new_combos.push(new_combo);
-            }
-        }
-        combos = new_combos;
-    }
-
-    combos
+        combos
+            .into_iter()
+            .flat_map(|combo| {
+                values.iter().map(move |val| {
+                    let mut c = combo.clone();
+                    c.insert((*key).clone(), val.clone());
+                    c
+                })
+            })
+            .collect()
+    })
 }
 
 /// Parameters for walk-forward optimization.
