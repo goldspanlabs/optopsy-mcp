@@ -68,6 +68,22 @@ fn run_signflip_chunk(
     hits
 }
 
+/// Compute a p-value sequentially (no internal rayon). Used when the caller
+/// already parallelizes at a higher level (e.g., across combos).
+fn permutation_p_value_seq(
+    pnls: &[f64],
+    observed_metric: f64,
+    objective: &str,
+    n_perms: usize,
+    seed: Option<u64>,
+) -> f64 {
+    if pnls.len() < MIN_TRADES || n_perms == 0 {
+        return 1.0;
+    }
+    let count_ge = run_signflip_chunk(pnls, observed_metric, objective, seed, 0, n_perms);
+    (count_ge as f64 + 1.0) / (n_perms as f64 + 1.0)
+}
+
 /// Compute a one-sided p-value using a sign-flip permutation test.
 ///
 /// For each permutation, randomly flips the sign of each trade P&L (with 50%
@@ -257,23 +273,45 @@ pub fn apply_permutation_gate(
         })
         .collect();
 
-    // Phase 2: Compute p-values in parallel across combos.
-    // Each combo's permutation test is itself parallelized internally, but for
-    // sweeps with many combos × moderate perms, combo-level parallelism dominates.
-    let p_values: Vec<Option<f64>> = combo_pnls
-        .par_iter()
-        .enumerate()
-        .map(|(i, pnls)| {
-            if pnls.len() < MIN_TRADES {
-                return None;
-            }
-            let observed = compute_metric_from_pnls(pnls, objective);
-            let combo_seed = seed.map(|s| s.wrapping_add(i as u64));
-            Some(permutation_p_value(
-                pnls, observed, objective, n_perms, combo_seed,
-            ))
-        })
-        .collect();
+    // Phase 2: Compute p-values — choose a single parallelism level to avoid
+    // nested rayon overhead. With multiple combos, parallelize across combos and
+    // run each permutation test sequentially. With a single combo, let
+    // permutation_p_value parallelize internally across permutations.
+    let testable_count = combo_pnls.iter().filter(|p| p.len() >= MIN_TRADES).count();
+
+    let p_values: Vec<Option<f64>> = if testable_count > 1 {
+        // Many combos: parallelize across combos, sequential per-combo.
+        combo_pnls
+            .par_iter()
+            .enumerate()
+            .map(|(i, pnls)| {
+                if pnls.len() < MIN_TRADES {
+                    return None;
+                }
+                let observed = compute_metric_from_pnls(pnls, objective);
+                let combo_seed = seed.map(|s| s.wrapping_add(i as u64));
+                Some(permutation_p_value_seq(
+                    pnls, observed, objective, n_perms, combo_seed,
+                ))
+            })
+            .collect()
+    } else {
+        // Single combo (or none): let permutation_p_value parallelize internally.
+        combo_pnls
+            .iter()
+            .enumerate()
+            .map(|(i, pnls)| {
+                if pnls.len() < MIN_TRADES {
+                    return None;
+                }
+                let observed = compute_metric_from_pnls(pnls, objective);
+                let combo_seed = seed.map(|s| s.wrapping_add(i as u64));
+                Some(permutation_p_value(
+                    pnls, observed, objective, n_perms, combo_seed,
+                ))
+            })
+            .collect()
+    };
 
     // Phase 3: Write p-values onto results (mutable pass)
     for (i, p) in p_values.iter().enumerate() {
