@@ -3603,7 +3603,6 @@ async fn load_multi_symbol_data(
                 options_by_date,
                 price_table,
                 date_index,
-                last_known: crate::engine::sim_types::LastKnown::new(),
             },
         );
     }

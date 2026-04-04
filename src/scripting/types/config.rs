@@ -189,8 +189,6 @@ pub struct PerSymbolData {
     pub price_table: Option<Arc<PriceTable>>,
     /// Date → PriceTable keys index. `None` if no options data.
     pub date_index: Option<Arc<DateIndex>>,
-    /// Last-known prices for options MTM data-gap fill.
-    pub last_known: LastKnown,
 }
 
 // ---------------------------------------------------------------------------

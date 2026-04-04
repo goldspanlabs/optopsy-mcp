@@ -11,6 +11,9 @@ use chrono::NaiveDateTime;
 use rhai::Dynamic;
 
 use super::config::OhlcvBar;
+use crate::scripting::helpers::{
+    build_strategy_from_legs, indicator_lookup, indicator_lookup_multi, indicators_all_ready, leg,
+};
 use crate::scripting::indicators::IndicatorStore;
 use crate::scripting::options_cache::DatePartitionedOptions;
 
@@ -20,10 +23,7 @@ use crate::scripting::options_cache::DatePartitionedOptions;
 /// and options data — everything needed to read data and build trades.
 #[derive(Clone)]
 pub struct SymbolContext {
-    /// Symbol name (uppercase).
     pub symbol: String,
-
-    // Current bar data (at master timeline bar_idx)
     pub datetime: NaiveDateTime,
     pub open: f64,
     pub high: f64,
@@ -31,8 +31,6 @@ pub struct SymbolContext {
     pub close: f64,
     pub volume: f64,
     pub bar_idx: usize,
-
-    // Shared per-symbol data (Arc for cheap cloning)
     pub indicator_store: Arc<IndicatorStore>,
     pub price_history: Arc<Vec<OhlcvBar>>,
     pub options_by_date: Option<Arc<DatePartitionedOptions>>,
@@ -73,129 +71,82 @@ impl SymbolContext {
 }
 
 // ---------------------------------------------------------------------------
-// Indicator methods — mirrors BarContext API for consistent script authoring
+// Indicator methods — delegates to shared helpers in helpers.rs
 // ---------------------------------------------------------------------------
 
 impl SymbolContext {
+    fn iv(&self, name: &str, period: i64) -> Dynamic {
+        indicator_lookup(&self.indicator_store, self.bar_idx, name, period)
+    }
+    fn ivm(&self, name: &str, params: &[i64]) -> Dynamic {
+        indicator_lookup_multi(&self.indicator_store, self.bar_idx, name, params)
+    }
+
     pub fn sma(&mut self, period: i64) -> Dynamic {
-        self.indicator_value("sma", period)
+        self.iv("sma", period)
     }
     pub fn ema(&mut self, period: i64) -> Dynamic {
-        self.indicator_value("ema", period)
+        self.iv("ema", period)
     }
     pub fn rsi(&mut self, period: i64) -> Dynamic {
-        self.indicator_value("rsi", period)
+        self.iv("rsi", period)
     }
     pub fn atr(&mut self, period: i64) -> Dynamic {
-        self.indicator_value("atr", period)
+        self.iv("atr", period)
     }
     pub fn macd_line(&mut self) -> Dynamic {
-        self.indicator_value_multi("macd_line", &[12, 26, 9])
+        self.ivm("macd_line", &[12, 26, 9])
     }
     pub fn macd_signal(&mut self) -> Dynamic {
-        self.indicator_value_multi("macd_signal", &[12, 26, 9])
+        self.ivm("macd_signal", &[12, 26, 9])
     }
     pub fn macd_hist(&mut self) -> Dynamic {
-        self.indicator_value_multi("macd_hist", &[12, 26, 9])
+        self.ivm("macd_hist", &[12, 26, 9])
     }
     pub fn bbands_upper(&mut self, period: i64) -> Dynamic {
-        self.indicator_value_multi("bbands_upper", &[period, 20])
+        self.ivm("bbands_upper", &[period, 20])
     }
     pub fn bbands_mid(&mut self, period: i64) -> Dynamic {
-        self.indicator_value("bbands_mid", period)
+        self.iv("bbands_mid", period)
     }
     pub fn bbands_lower(&mut self, period: i64) -> Dynamic {
-        self.indicator_value_multi("bbands_lower", &[period, 20])
+        self.ivm("bbands_lower", &[period, 20])
     }
     pub fn stochastic(&mut self, period: i64) -> Dynamic {
-        self.indicator_value("stochastic", period)
+        self.iv("stochastic", period)
     }
     pub fn cci(&mut self, period: i64) -> Dynamic {
-        self.indicator_value("cci", period)
+        self.iv("cci", period)
     }
     pub fn obv(&mut self) -> Dynamic {
-        self.indicator_value_multi("obv", &[])
+        self.ivm("obv", &[])
     }
     pub fn adx(&mut self, period: i64) -> Dynamic {
-        self.indicator_value("adx", period)
+        self.iv("adx", period)
     }
     pub fn plus_di(&mut self, period: i64) -> Dynamic {
-        self.indicator_value("plus_di", period)
+        self.iv("plus_di", period)
     }
     pub fn minus_di(&mut self, period: i64) -> Dynamic {
-        self.indicator_value("minus_di", period)
+        self.iv("minus_di", period)
     }
     pub fn psar(&mut self) -> Dynamic {
-        self.indicator_value_multi("psar", &[2, 20]) // 0.02 accel, 0.20 max
+        self.ivm("psar", &[2, 20])
     }
     pub fn supertrend(&mut self, period: i64) -> Dynamic {
-        self.indicator_value("supertrend", period)
+        self.iv("supertrend", period)
     }
-
-    /// Single-param indicator lookup matching `BarContext::indicator(name, period)`.
     pub fn indicator(&mut self, name: String, period: i64) -> Dynamic {
-        self.indicator_value(&name, period)
+        self.iv(&name, period)
     }
 
-    /// Multi-param indicator lookup by name and params array.
     pub fn indicator_with(&mut self, name: &str, params: rhai::Array) -> Dynamic {
         let int_params: Vec<i64> = params.iter().filter_map(|v| v.as_int().ok()).collect();
-        self.indicator_value_multi(name, &int_params)
+        self.ivm(name, &int_params)
     }
 
-    /// Check if a list of indicators have warmed up at the current bar.
     pub fn indicators_ready(&mut self, indicators: rhai::Array) -> bool {
-        use crate::scripting::indicators::{
-            parse_indicator_declaration, IndicatorKey, IndicatorParam,
-        };
-
-        for item in indicators {
-            let Ok(s) = item.into_immutable_string() else {
-                return false;
-            };
-            let Ok((name, params)) = parse_indicator_declaration(&s) else {
-                return false;
-            };
-            let key = IndicatorKey {
-                name,
-                params: params
-                    .iter()
-                    .map(|&p| IndicatorParam::Int(p as i64))
-                    .collect(),
-            };
-            match self.indicator_store.get(&key, self.bar_idx) {
-                Some(v) if !v.is_nan() => {}
-                _ => return false,
-            }
-        }
-        true
-    }
-
-    // Internal helpers matching BarContext's pattern
-    fn indicator_value(&self, name: &str, period: i64) -> Dynamic {
-        use crate::scripting::indicators::{IndicatorKey, IndicatorParam};
-        let key = IndicatorKey {
-            name: name.to_string(),
-            params: vec![IndicatorParam::Int(period)],
-        };
-        match self.indicator_store.get(&key, self.bar_idx) {
-            Some(v) if v.is_nan() => Dynamic::UNIT,
-            Some(v) => Dynamic::from(v),
-            None => Dynamic::UNIT,
-        }
-    }
-
-    fn indicator_value_multi(&self, name: &str, params: &[i64]) -> Dynamic {
-        use crate::scripting::indicators::{IndicatorKey, IndicatorParam};
-        let key = IndicatorKey {
-            name: name.to_string(),
-            params: params.iter().map(|&p| IndicatorParam::Int(p)).collect(),
-        };
-        match self.indicator_store.get(&key, self.bar_idx) {
-            Some(v) if v.is_nan() => Dynamic::UNIT,
-            Some(v) => Dynamic::from(v),
-            None => Dynamic::UNIT,
-        }
+        indicators_all_ready(&self.indicator_store, self.bar_idx, indicators)
     }
 }
 
@@ -234,147 +185,10 @@ impl SymbolContext {
 }
 
 // ---------------------------------------------------------------------------
-// Options strategy helpers (same API as BarContext)
+// Options strategy helpers — delegates to shared build_strategy_from_legs()
 // ---------------------------------------------------------------------------
 
-impl SymbolContext {
-    /// Resolve a single options leg via the filter pipeline.
-    fn resolve_leg(
-        &self,
-        option_type: &str,
-        target: &crate::engine::types::TargetRange,
-        _dte_target: i32,
-        dte_min: i32,
-        dte_max: i32,
-    ) -> Dynamic {
-        use crate::engine::filters;
-
-        let today = self.datetime.date();
-
-        let today_df = match &self.options_by_date {
-            Some(opts) => match opts.get(today) {
-                Some(df) => df,
-                None => return Dynamic::UNIT,
-            },
-            None => return Dynamic::UNIT,
-        };
-
-        let min_bid_ask = 0.05;
-        let opt_type_code = match option_type.to_lowercase().as_str() {
-            "call" | "c" => "c",
-            "put" | "p" => "p",
-            _ => return Dynamic::UNIT,
-        };
-
-        let filtered = match filters::filter_leg_candidates(
-            today_df.clone(),
-            opt_type_code,
-            dte_max,
-            dte_min,
-            min_bid_ask,
-        ) {
-            Ok(f) if f.height() > 0 => f,
-            _ => return Dynamic::UNIT,
-        };
-
-        let selected = match filters::select_closest_delta(filtered, target) {
-            Ok(s) if s.height() > 0 => s,
-            _ => return Dynamic::UNIT,
-        };
-
-        super::bar_context::row_to_option_map(&selected, 0, today)
-    }
-
-    /// Build a multi-leg options strategy, resolving each leg to a specific contract.
-    /// Returns a map with `legs` array and `net_premium`, or `()` if any leg fails.
-    pub fn build_strategy(&mut self, legs: rhai::Array) -> Dynamic {
-        let mut resolved_legs = Vec::new();
-        let mut net_premium = 0.0;
-
-        for leg_dyn in legs {
-            let Some(leg) = leg_dyn.try_cast::<rhai::Map>() else {
-                return Dynamic::UNIT;
-            };
-
-            let opt_type = leg
-                .get("option_type")
-                .and_then(|v| v.clone().into_immutable_string().ok())
-                .unwrap_or_default()
-                .to_string();
-            let delta = leg
-                .get("delta")
-                .and_then(|v| v.as_float().ok())
-                .unwrap_or(0.30);
-            let dte = leg.get("dte").and_then(|v| v.as_int().ok()).unwrap_or(45);
-            let side = leg
-                .get("side")
-                .and_then(|v| v.clone().into_immutable_string().ok())
-                .unwrap_or_default()
-                .to_string();
-
-            let target = crate::engine::types::TargetRange {
-                target: delta,
-                min: (delta - 0.10).max(0.01),
-                max: (delta + 0.10).min(1.0),
-            };
-            let found = self.resolve_leg(
-                &opt_type,
-                &target,
-                dte as i32,
-                (dte - 15).max(1) as i32,
-                (dte + 15) as i32,
-            );
-            if found.is_unit() {
-                return Dynamic::UNIT;
-            }
-
-            let found_map = found.clone().cast::<rhai::Map>();
-            let bid = found_map
-                .get("bid")
-                .and_then(|v| v.as_float().ok())
-                .unwrap_or(0.0);
-            let ask = found_map
-                .get("ask")
-                .and_then(|v| v.as_float().ok())
-                .unwrap_or(0.0);
-            let mid = f64::midpoint(bid, ask);
-
-            match side.as_str() {
-                "short" => net_premium -= mid,
-                "long" => net_premium += mid,
-                _ => {}
-            }
-
-            let mut leg_map = found_map;
-            leg_map.insert("side".into(), Dynamic::from(side));
-            leg_map.insert("option_type".into(), Dynamic::from(opt_type));
-            resolved_legs.push(Dynamic::from(leg_map));
-        }
-
-        let mut result = rhai::Map::new();
-        result.insert("legs".into(), Dynamic::from(resolved_legs));
-        result.insert("net_premium".into(), Dynamic::from(net_premium));
-        // Tag with symbol so the engine knows which symbol this trade targets
-        result.insert("symbol".into(), Dynamic::from(self.symbol.clone()));
-        Dynamic::from(result)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Named strategy helpers (delegate to build_strategy)
-// ---------------------------------------------------------------------------
-
-/// Build a leg map for passing to `build_strategy()`.
-fn leg(side: &str, option_type: &str, delta: f64, dte: i64) -> Dynamic {
-    let mut m = rhai::Map::new();
-    m.insert("side".into(), Dynamic::from(side.to_string()));
-    m.insert("option_type".into(), Dynamic::from(option_type.to_string()));
-    m.insert("delta".into(), Dynamic::from(delta));
-    m.insert("dte".into(), Dynamic::from(dte));
-    Dynamic::from(m)
-}
-
-/// Wrap a resolved spread into an action map tagged with the symbol.
+/// Wrap a resolved spread into an action map.
 fn wrap_spread_action(resolved: Dynamic) -> Dynamic {
     if resolved.is_unit() {
         return Dynamic::UNIT;
@@ -385,6 +199,15 @@ fn wrap_spread_action(resolved: Dynamic) -> Dynamic {
 }
 
 impl SymbolContext {
+    pub fn build_strategy(&mut self, legs: rhai::Array) -> Dynamic {
+        build_strategy_from_legs(
+            legs,
+            &self.options_by_date,
+            self.datetime,
+            Some(&self.symbol),
+        )
+    }
+
     // Singles
     pub fn long_call(&mut self, delta: f64, dte: i64) -> Dynamic {
         wrap_spread_action(self.build_strategy(vec![leg("long", "call", delta, dte)]))
