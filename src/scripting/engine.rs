@@ -84,6 +84,8 @@ pub struct ValidationResult {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ValidatedConfig {
     pub symbol: String,
+    /// All tradeable symbols. For single-symbol scripts this is `[symbol]`.
+    pub symbols: Vec<String>,
     pub capital: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_date: Option<String>,
@@ -386,6 +388,7 @@ pub fn validate_script(
 
     let config_out = Some(ValidatedConfig {
         symbol: config.symbol,
+        symbols: config.symbols,
         capital: config.capital,
         start_date: config.start_date.map(|d| d.to_string()),
         end_date: config.end_date.map(|d| d.to_string()),
@@ -723,6 +726,7 @@ pub async fn run_script_backtest(
         cross_symbol_data: Arc::clone(&cross_symbol_data),
         config: Arc::clone(&config),
         options_by_date: options_by_date.clone(),
+        per_symbol_data: None, // TODO: populated in multi-symbol path
         custom_series: Arc::clone(&custom_series),
         adjustment_timeline: Arc::clone(&adjustment_timeline),
         split_timeline: Arc::clone(&split_timeline),
@@ -785,7 +789,7 @@ pub async fn run_script_backtest(
         for order in orders_to_process {
             if let Some(fill_price) = order.try_fill(bar.open, bar.high, bar.low, bar.close) {
                 match &order.action {
-                    ScriptAction::OpenStock { side, qty } => {
+                    ScriptAction::OpenStock { side, qty, .. } => {
                         // Stagger check
                         if let Some(min_days) = config.min_days_between_entries {
                             if let Some(last) = last_entry_date {
@@ -800,6 +804,7 @@ pub async fn run_script_backtest(
                             apply_stock_slippage(fill_price, *side, &config.slippage);
                         let pos = ScriptPosition {
                             id: next_id,
+                            symbol: config.symbol.clone(),
                             entry_date: today,
                             inner: ScriptPositionInner::Stock {
                                 side: *side,
@@ -876,6 +881,7 @@ pub async fn run_script_backtest(
                                     position_id: Some(pos_id),
                                     reason: "stop_loss".to_string(),
                                 },
+                                symbol: None,
                                 order_type: OrderType::Stop { price: stop_price },
                                 is_buy: !is_long,
                                 signal: Some("__auto_stop".to_string()),
@@ -907,6 +913,7 @@ pub async fn run_script_backtest(
                                     position_id: Some(pos_id),
                                     reason: "take_profit".to_string(),
                                 },
+                                symbol: None,
                                 order_type: OrderType::Limit { price: limit_price },
                                 is_buy: !is_long,
                                 signal: Some("__auto_target".to_string()),
@@ -1080,7 +1087,7 @@ pub async fn run_script_backtest(
                             );
                         }
                     }
-                    ScriptAction::OpenOptions { legs, qty } => {
+                    ScriptAction::OpenOptions { legs, qty, .. } => {
                         let resolved = resolve_option_legs(legs, &options_by_date, today, &config);
                         if resolved.is_empty() {
                             warnings.push(format!(
@@ -1094,6 +1101,7 @@ pub async fn run_script_backtest(
                             compute_options_entry(&resolved, &config, effective_qty);
                         let pos = ScriptPosition {
                             id: next_id,
+                            symbol: config.symbol.clone(),
                             entry_date: today,
                             inner: ScriptPositionInner::Options {
                                 legs: script_legs,
@@ -1352,6 +1360,7 @@ pub async fn run_script_backtest(
                                     let shares = leg.qty.saturating_mul(*multiplier);
                                     let implicit = ScriptPosition {
                                         id: next_id,
+                                        symbol: config.symbol.clone(),
                                         entry_date: today,
                                         inner: ScriptPositionInner::Stock {
                                             side: Side::Long,
@@ -1496,6 +1505,7 @@ pub async fn run_script_backtest(
 
                             pending_orders.push(PendingOrder {
                                 action: pa.action,
+                                symbol: pa.symbol,
                                 order_type: pa.order_type,
                                 is_buy: pa.is_buy,
                                 signal: pa.signal,
@@ -1753,7 +1763,49 @@ fn parse_config(map: Dynamic) -> Result<ScriptConfig> {
         .try_cast::<rhai::Map>()
         .ok_or_else(|| anyhow::anyhow!("config() must return a Map (#{{}}))"))?;
 
-    let symbol = get_string(&map, "symbol")?;
+    // Parse symbols: support both `symbols: [...]` (multi) and `symbol: "..."` (legacy).
+    // If both are present, `symbols` takes precedence.
+    let symbols: Vec<String> = if let Some(arr_val) = map.get("symbols") {
+        let arr = arr_val
+            .clone()
+            .try_cast::<rhai::Array>()
+            .ok_or_else(|| anyhow::anyhow!("config().symbols must be an array"))?;
+        let syms: Vec<String> = arr
+            .into_iter()
+            .enumerate()
+            .map(|(idx, v)| {
+                let s = v
+                    .into_immutable_string()
+                    .map_err(|_| anyhow::anyhow!("config().symbols[{idx}] must be a string"))?;
+                let trimmed = s.trim().to_uppercase();
+                if trimmed.is_empty() {
+                    bail!("config().symbols[{idx}] must not be empty");
+                }
+                Ok(trimmed)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if syms.is_empty() {
+            bail!("config().symbols must contain at least one symbol");
+        }
+        // Reject duplicates
+        {
+            let mut seen = std::collections::HashSet::new();
+            for s in &syms {
+                if !seen.insert(s.as_str()) {
+                    bail!("config().symbols contains duplicate '{s}'");
+                }
+            }
+        }
+        syms
+    } else {
+        // Legacy single-symbol mode
+        let sym = get_string(&map, "symbol")?;
+        vec![sym.to_uppercase()]
+    };
+
+    // Primary symbol = first in the list (for backward compat: ctx.close, etc.)
+    let symbol = symbols[0].clone();
+
     let capital = get_float(&map, "capital")?;
 
     let interval_str = get_string_or(&map, "interval", "daily".to_string());
@@ -1779,6 +1831,7 @@ fn parse_config(map: Dynamic) -> Result<ScriptConfig> {
 
     Ok(ScriptConfig {
         symbol,
+        symbols,
         capital,
         start_date: get_date_opt(&map, "start_date"),
         end_date: get_date_opt(&map, "end_date"),
@@ -2055,6 +2108,7 @@ struct BarContextFactory {
     cross_symbol_data: Arc<HashMap<String, Vec<CrossSymbolBar>>>,
     config: Arc<ScriptConfig>,
     options_by_date: Option<Arc<DatePartitionedOptions>>,
+    per_symbol_data: Option<Arc<HashMap<String, PerSymbolData>>>,
     custom_series: Arc<Mutex<CustomSeriesStore>>,
     adjustment_timeline: Arc<crate::engine::adjustments::AdjustmentTimeline>,
     split_timeline: Arc<crate::engine::adjustments::AdjustmentTimeline>,
@@ -2258,6 +2312,7 @@ impl BarContextFactory {
             price_history: Arc::clone(&self.price_history),
             cross_symbol_data: Arc::clone(&self.cross_symbol_data),
             options_by_date: self.options_by_date.clone(),
+            per_symbol_data: self.per_symbol_data.clone(),
             config: Arc::clone(&self.config),
             pnl_history: Arc::clone(pnl_history),
             custom_series: Arc::clone(&self.custom_series),
@@ -2696,6 +2751,7 @@ fn build_script_trade_record(
 
     TradeRecord {
         trade_id: pos.id,
+        symbol: Some(pos.symbol.clone()),
         entry_datetime,
         exit_datetime,
         entry_cost,
@@ -2777,6 +2833,8 @@ fn parse_exit_action(result: &Dynamic) -> Option<ScriptAction> {
 /// A parsed action from `on_bar()` with associated order metadata.
 struct ParsedAction {
     action: ScriptAction,
+    /// Target symbol for this action. `None` = primary symbol.
+    symbol: Option<String>,
     order_type: OrderType,
     /// `true` = buy direction, `false` = sell direction for fill logic.
     is_buy: bool,
@@ -2811,7 +2869,11 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ParsedAction> {
                     };
                     let qty = map.get("qty")?.as_int().ok()? as i32;
                     let is_buy = side == Side::Long;
-                    (ScriptAction::OpenStock { side, qty }, is_buy)
+                    let symbol = map
+                        .get("symbol")
+                        .and_then(|v| v.clone().into_immutable_string().ok())
+                        .map(|s| s.to_uppercase());
+                    (ScriptAction::OpenStock { side, qty, symbol }, is_buy)
                 }
                 "close" => {
                     let position_id = map
@@ -2939,7 +3001,11 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ParsedAction> {
                                 | LegSpec::Resolved { side, .. } => *side == Side::Long,
                             })
                             .unwrap_or(true);
-                    (ScriptAction::OpenOptions { legs, qty }, is_buy)
+                    let symbol = map
+                        .get("symbol")
+                        .and_then(|v| v.clone().into_immutable_string().ok())
+                        .map(|s| s.to_uppercase());
+                    (ScriptAction::OpenOptions { legs, qty, symbol }, is_buy)
                 }
                 _ => return None,
             };
@@ -2963,8 +3029,16 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ParsedAction> {
             let trailing_stop =
                 extract_exit_modifier(&map, "trailing_stop_pct", "trailing_stop_dollar");
 
+            // Extract symbol from the action (set by SymbolContext.build_strategy)
+            let symbol = match &action {
+                ScriptAction::OpenStock { symbol, .. }
+                | ScriptAction::OpenOptions { symbol, .. } => symbol.clone(),
+                _ => None,
+            };
+
             Some(ParsedAction {
                 action,
+                symbol,
                 order_type,
                 is_buy,
                 signal,
@@ -3333,6 +3407,208 @@ fn forward_fill_cross_symbol(
     }
 
     result
+}
+
+// ---------------------------------------------------------------------------
+// Multi-symbol data loading helpers
+// ---------------------------------------------------------------------------
+
+/// Load all per-symbol data for a multi-symbol portfolio backtest.
+///
+/// For each symbol: loads OHLCV, adjustments, indicators, and tries to load options.
+/// Returns the per-symbol data map and the master timeline (date intersection).
+///
+/// The master timeline is the intersection of all symbols' OHLCV date ranges,
+/// ensuring every bar has real data for every symbol.
+#[allow(clippy::too_many_lines, clippy::single_match_else, dead_code)]
+async fn load_multi_symbol_data(
+    config: &ScriptConfig,
+    data_loader: &dyn DataLoader,
+    warnings: &mut Vec<String>,
+) -> Result<(HashMap<String, PerSymbolData>, Vec<NaiveDate>)> {
+    use std::collections::BTreeSet;
+
+    // 1. Load OHLCV for all symbols and collect their date sets
+    let mut raw_bars_by_symbol: HashMap<String, Vec<OhlcvBar>> = HashMap::new();
+    let mut date_sets: Vec<BTreeSet<NaiveDate>> = Vec::new();
+
+    for sym in &config.symbols {
+        let df = data_loader
+            .load_ohlcv(sym, config.start_date, config.end_date)
+            .await
+            .with_context(|| format!("Failed to load OHLCV for '{sym}'"))?;
+
+        if df.height() == 0 {
+            bail!("No OHLCV data found for symbol '{sym}'");
+        }
+
+        // Resample intraday → daily only when needed (matching single-symbol logic)
+        let data_is_intraday = is_intraday_data(&df);
+        let needs_daily = config.interval == Interval::Daily && data_is_intraday;
+        let df = if needs_daily {
+            crate::engine::ohlcv::resample_ohlcv(&df, crate::engine::types::Interval::Daily)?
+        } else {
+            df
+        };
+
+        let bars = ohlcv_bars_from_df(&df)?;
+        let dates: BTreeSet<NaiveDate> = bars.iter().map(|b| b.datetime.date()).collect();
+        date_sets.push(dates);
+        raw_bars_by_symbol.insert(sym.clone(), bars);
+    }
+
+    // 2. Compute date intersection (dates where ALL symbols have data)
+    let master_dates: BTreeSet<NaiveDate> = if date_sets.len() == 1 {
+        date_sets.into_iter().next().unwrap()
+    } else {
+        let mut intersection = date_sets[0].clone();
+        for ds in &date_sets[1..] {
+            intersection = intersection.intersection(ds).copied().collect();
+        }
+        intersection
+    };
+
+    if master_dates.is_empty() {
+        bail!(
+            "No overlapping dates across symbols: {}",
+            config.symbols.join(", ")
+        );
+    }
+
+    let master_dates_vec: Vec<NaiveDate> = master_dates.iter().copied().collect();
+
+    // Report date range trimming
+    for sym in &config.symbols {
+        let bars = &raw_bars_by_symbol[sym];
+        let sym_start = bars.first().map(|b| b.datetime.date());
+        let sym_end = bars.last().map(|b| b.datetime.date());
+        let master_start = master_dates_vec.first().copied();
+        let master_end = master_dates_vec.last().copied();
+        if sym_start != master_start || sym_end != master_end {
+            warnings.push(format!(
+                "{sym}: OHLCV range {}-{} trimmed to intersection {}-{}",
+                sym_start.map_or("?".into(), |d| d.to_string()),
+                sym_end.map_or("?".into(), |d| d.to_string()),
+                master_start.map_or("?".into(), |d| d.to_string()),
+                master_end.map_or("?".into(), |d| d.to_string()),
+            ));
+        }
+    }
+
+    // 3. For each symbol: filter bars to intersection, load adjustments, indicators, options
+    let mut per_symbol: HashMap<String, PerSymbolData> = HashMap::new();
+
+    for sym in &config.symbols {
+        let raw_bars = raw_bars_by_symbol.remove(sym).unwrap();
+
+        // Filter bars to master timeline dates
+        let bars: Vec<OhlcvBar> = raw_bars
+            .into_iter()
+            .filter(|b| master_dates.contains(&b.datetime.date()))
+            .collect();
+
+        // Load adjustments (propagate real errors, don't silently default to empty)
+        let splits = data_loader
+            .load_splits(sym)
+            .with_context(|| format!("Failed to load splits for '{sym}'"))?;
+        let dividends = data_loader
+            .load_dividends(sym)
+            .with_context(|| format!("Failed to load dividends for '{sym}'"))?;
+        let closes: Vec<(NaiveDate, f64)> =
+            bars.iter().map(|b| (b.datetime.date(), b.close)).collect();
+
+        let split_timeline = Arc::new(crate::engine::adjustments::AdjustmentTimeline::build(
+            &splits,
+            &[],
+            &[],
+        ));
+        let adjustment_timeline = Arc::new(crate::engine::adjustments::AdjustmentTimeline::build(
+            &splits, &dividends, &closes,
+        ));
+
+        // Apply split adjustment to simulation bars
+        let bars: Vec<OhlcvBar> = if split_timeline.is_empty() {
+            bars
+        } else {
+            bars.iter()
+                .map(|b| {
+                    let factor = split_timeline.factor_at(b.datetime.date());
+                    OhlcvBar {
+                        datetime: b.datetime,
+                        open: b.open * factor,
+                        high: b.high * factor,
+                        low: b.low * factor,
+                        close: b.close * factor,
+                        volume: b.volume,
+                    }
+                })
+                .collect()
+        };
+
+        // Build indicator bars (dividend-adjusted)
+        let indicator_bars: Vec<OhlcvBar> = if adjustment_timeline.is_empty() {
+            bars.clone()
+        } else {
+            bars.iter()
+                .map(|b| {
+                    let split_factor = split_timeline.factor_at(b.datetime.date());
+                    let full_factor = adjustment_timeline.factor_at(b.datetime.date());
+                    let div_factor = if split_factor.abs() > f64::EPSILON {
+                        full_factor / split_factor
+                    } else {
+                        1.0
+                    };
+                    OhlcvBar {
+                        datetime: b.datetime,
+                        open: b.open * div_factor,
+                        high: b.high * div_factor,
+                        low: b.low * div_factor,
+                        close: b.close * div_factor,
+                        volume: b.volume,
+                    }
+                })
+                .collect()
+        };
+
+        let indicator_store = Arc::new(IndicatorStore::build(
+            &config.declared_indicators,
+            &indicator_bars,
+        )?);
+
+        // Try to load options (non-fatal if missing)
+        let (options_by_date, price_table, date_index) = match data_loader
+            .load_options(sym, config.start_date, config.end_date)
+            .await
+        {
+            Ok(df) => {
+                let (pt, _days, di) = crate::engine::price_table::build_price_table(&df)?;
+                let obd = DatePartitionedOptions::from_df(&df, &config.expiration_filter)?;
+                (Some(Arc::new(obd)), Some(Arc::new(pt)), Some(Arc::new(di)))
+            }
+            Err(e) => {
+                // No options data for this symbol — that's fine (e.g., VIX, futures)
+                // but surface the reason so parsing errors aren't silently swallowed
+                tracing::info!(symbol = sym, error = %e, "No options data available — OHLCV only");
+                warnings.push(format!("{sym}: no options data ({e:#})"));
+                (None, None, None)
+            }
+        };
+
+        per_symbol.insert(
+            sym.clone(),
+            PerSymbolData {
+                bars: Arc::new(bars),
+                indicator_store,
+                split_timeline,
+                adjustment_timeline,
+                options_by_date,
+                price_table,
+                date_index,
+            },
+        );
+    }
+
+    Ok((per_symbol, master_dates_vec))
 }
 
 /// Convert a Polars DataFrame (with OHLCV columns) to `Vec<OhlcvBar>`.

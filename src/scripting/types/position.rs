@@ -14,6 +14,9 @@ use crate::engine::types::{OptionType, Side};
 #[derive(Debug, Clone)]
 pub struct ScriptPosition {
     pub id: usize,
+    /// Symbol this position belongs to. Used for per-symbol MTM, fill routing,
+    /// and attribution in multi-symbol portfolio backtests.
+    pub symbol: String,
     pub entry_date: NaiveDate,
     pub inner: ScriptPositionInner,
     pub entry_cost: f64,
@@ -107,6 +110,9 @@ impl ScriptPosition {
 impl ScriptPosition {
     pub fn get_id(&mut self) -> i64 {
         self.id as i64
+    }
+    pub fn get_symbol(&mut self) -> String {
+        self.symbol.clone()
     }
     pub fn get_entry_date(&mut self) -> String {
         self.entry_date.to_string()

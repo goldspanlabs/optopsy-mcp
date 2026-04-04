@@ -4,7 +4,7 @@ use rhai::{Dynamic, Engine};
 
 use super::dsl;
 use super::helpers;
-use super::types::{BarContext, PortfolioState, ScriptPosition};
+use super::types::{BarContext, PortfolioState, ScriptPosition, SymbolContext};
 
 /// Build a sandboxed Rhai engine with all custom types and functions registered.
 #[must_use]
@@ -33,6 +33,7 @@ pub fn build_engine() -> Engine {
 
     // Register custom types
     register_bar_context(&mut engine);
+    register_symbol_context(&mut engine);
     register_script_position(&mut engine);
     register_portfolio_state(&mut engine);
 
@@ -192,14 +193,102 @@ fn register_bar_context(engine: &mut Engine) {
     engine.register_fn("price_of", BarContext::price_of);
     engine.register_fn("price_of_col", BarContext::price_of_col);
 
+    // Multi-symbol portfolio: ctx.sym("SPY") returns a SymbolContext
+    engine.register_fn("sym", BarContext::sym);
+    engine.register_fn("symbols", BarContext::symbols);
+
     // Custom series plotting
     engine.register_fn("plot", BarContext::plot);
     engine.register_fn("plot_with", BarContext::plot_with);
 }
 
+/// Register `SymbolContext` as a Rhai custom type with getters and methods.
+///
+/// `SymbolContext` is returned by `ctx.sym("SYMBOL")` in multi-symbol scripts.
+/// It provides OHLCV getters, indicators, and strategy helpers scoped to one symbol.
+fn register_symbol_context(engine: &mut Engine) {
+    // Property getters
+    engine.register_get("symbol", SymbolContext::get_symbol);
+    engine.register_get("open", SymbolContext::get_open);
+    engine.register_get("high", SymbolContext::get_high);
+    engine.register_get("low", SymbolContext::get_low);
+    engine.register_get("close", SymbolContext::get_close);
+    engine.register_get("volume", SymbolContext::get_volume);
+    engine.register_get("bar_idx", SymbolContext::get_bar_idx);
+    engine.register_get("date", SymbolContext::get_date);
+    engine.register_get("datetime", SymbolContext::get_datetime);
+
+    // Indicators
+    engine.register_fn("sma", SymbolContext::sma);
+    engine.register_fn("ema", SymbolContext::ema);
+    engine.register_fn("rsi", SymbolContext::rsi);
+    engine.register_fn("atr", SymbolContext::atr);
+    engine.register_fn("macd_line", SymbolContext::macd_line);
+    engine.register_fn("macd_signal", SymbolContext::macd_signal);
+    engine.register_fn("macd_hist", SymbolContext::macd_hist);
+    engine.register_fn("bbands_upper", SymbolContext::bbands_upper);
+    engine.register_fn("bbands_mid", SymbolContext::bbands_mid);
+    engine.register_fn("bbands_lower", SymbolContext::bbands_lower);
+    engine.register_fn("stochastic", SymbolContext::stochastic);
+    engine.register_fn("cci", SymbolContext::cci);
+    engine.register_fn("obv", SymbolContext::obv);
+    engine.register_fn("adx", SymbolContext::adx);
+    engine.register_fn("plus_di", SymbolContext::plus_di);
+    engine.register_fn("minus_di", SymbolContext::minus_di);
+    engine.register_fn("psar", SymbolContext::psar);
+    engine.register_fn("supertrend", SymbolContext::supertrend);
+    engine.register_fn("indicator", SymbolContext::indicator);
+    engine.register_fn("indicators_ready", SymbolContext::indicators_ready);
+    engine.register_fn("indicator_with", SymbolContext::indicator_with);
+
+    // Position sizing helpers (use price from this symbol's bar)
+    engine.register_fn(
+        "size_by_equity",
+        |ctx: &mut SymbolContext, fraction: f64, equity: f64| -> i64 {
+            if ctx.close <= 0.0 {
+                return 0;
+            }
+            ((equity * fraction) / ctx.close).floor() as i64
+        },
+    );
+
+    // Historical bar lookback
+    engine.register_fn("high", |ctx: &mut SymbolContext, n: i64| -> Dynamic {
+        ctx.high_at(n)
+    });
+    engine.register_fn("low", |ctx: &mut SymbolContext, n: i64| -> Dynamic {
+        ctx.low_at(n)
+    });
+    engine.register_fn("open", |ctx: &mut SymbolContext, n: i64| -> Dynamic {
+        ctx.open_at(n)
+    });
+    engine.register_fn("close", |ctx: &mut SymbolContext, n: i64| -> Dynamic {
+        ctx.close_at(n)
+    });
+
+    // Options strategy helpers
+    engine.register_fn("build_strategy", SymbolContext::build_strategy);
+    engine.register_fn("long_call", SymbolContext::long_call);
+    engine.register_fn("short_call", SymbolContext::short_call);
+    engine.register_fn("long_put", SymbolContext::long_put);
+    engine.register_fn("short_put", SymbolContext::short_put);
+    engine.register_fn("covered_call", SymbolContext::covered_call);
+    engine.register_fn("bull_call_spread", SymbolContext::bull_call_spread);
+    engine.register_fn("bear_call_spread", SymbolContext::bear_call_spread);
+    engine.register_fn("bull_put_spread", SymbolContext::bull_put_spread);
+    engine.register_fn("bear_put_spread", SymbolContext::bear_put_spread);
+    engine.register_fn("long_straddle", SymbolContext::long_straddle);
+    engine.register_fn("short_straddle", SymbolContext::short_straddle);
+    engine.register_fn("long_strangle", SymbolContext::long_strangle);
+    engine.register_fn("short_strangle", SymbolContext::short_strangle);
+    engine.register_fn("iron_condor", SymbolContext::iron_condor);
+    engine.register_fn("iron_butterfly", SymbolContext::iron_butterfly);
+}
+
 /// Register `ScriptPosition` as a Rhai custom type with getters.
 fn register_script_position(engine: &mut Engine) {
     engine.register_get("id", ScriptPosition::get_id);
+    engine.register_get("symbol", ScriptPosition::get_symbol);
     engine.register_get("entry_date", ScriptPosition::get_entry_date);
     engine.register_get("expiration", ScriptPosition::get_expiration);
     engine.register_get("dte", ScriptPosition::get_dte);

@@ -67,6 +67,9 @@ pub struct BarContext {
     // Options data, pre-partitioned by date (None for pure stock backtests)
     pub options_by_date: Option<Arc<crate::scripting::options_cache::DatePartitionedOptions>>,
 
+    // Per-symbol data for multi-symbol portfolio backtests (None in single-symbol mode)
+    pub per_symbol_data: Option<Arc<HashMap<String, super::config::PerSymbolData>>>,
+
     // Config reference for ctx.config.defaults access
     pub config: Arc<ScriptConfig>,
 
@@ -278,16 +281,12 @@ impl BarContext {
 
     // --- Indicators (current bar) ---
     pub(in crate::scripting) fn indicator_value(&self, name: &str, period: i64) -> Dynamic {
-        use crate::scripting::indicators::{IndicatorKey, IndicatorParam};
-        let key = IndicatorKey {
-            name: name.to_string(),
-            params: vec![IndicatorParam::Int(period)],
-        };
-        match self.indicator_store.get(&key, self.bar_idx) {
-            Some(v) if v.is_nan() => Dynamic::UNIT,
-            Some(v) => Dynamic::from(v),
-            None => Dynamic::UNIT, // indicator not pre-computed
-        }
+        crate::scripting::helpers::indicator_lookup(
+            &self.indicator_store,
+            self.bar_idx,
+            name,
+            period,
+        )
     }
 
     fn indicator_value_at(&self, name: &str, period: i64, bars_ago: i64) -> Dynamic {
@@ -526,43 +525,12 @@ impl BarContext {
     /// Example: `ctx.indicator_with("keltner_upper", #{ period: 20, mult: 15 })`
     /// Params are converted to the IndicatorKey param vector.
     pub fn indicator_with(&mut self, name: String, params: rhai::Map) -> Dynamic {
-        use crate::scripting::indicators::{IndicatorKey, IndicatorParam};
-
-        // Extract params as integers (matching IndicatorStore convention)
-        let mut param_vec: Vec<IndicatorParam> = Vec::new();
-        // Try known param names in order
-        for key in &[
-            "period",
-            "fast",
-            "slow",
-            "signal",
-            "mult",
-            "accel",
-            "max_accel",
-        ] {
-            if let Some(val) = params.get(*key) {
-                if let Ok(i) = val.as_int() {
-                    param_vec.push(IndicatorParam::Int(i));
-                } else if let Ok(f) = val.as_float() {
-                    // Scale to integer: accel params use *100 (0.02->2), others use *10 (2.0->20)
-                    let scaled = match *key {
-                        "accel" | "max_accel" => (f * 100.0) as i64,
-                        _ => (f * 10.0) as i64,
-                    };
-                    param_vec.push(IndicatorParam::Int(scaled));
-                }
-            }
-        }
-
-        let key = IndicatorKey {
+        crate::scripting::helpers::indicator_lookup_map(
+            &self.indicator_store,
+            self.bar_idx,
             name,
-            params: param_vec,
-        };
-        match self.indicator_store.get(&key, self.bar_idx) {
-            Some(v) if v.is_nan() => Dynamic::UNIT,
-            Some(v) => Dynamic::from(v),
-            None => Dynamic::UNIT,
-        }
+            params,
+        )
     }
 
     // --- Indicator lookback ---
@@ -621,16 +589,12 @@ impl BarContext {
     // --- Multi-param indicator overloads ---
 
     fn indicator_value_multi(&self, name: &str, params: &[i64]) -> Dynamic {
-        use crate::scripting::indicators::{IndicatorKey, IndicatorParam};
-        let key = IndicatorKey {
-            name: name.to_string(),
-            params: params.iter().map(|&p| IndicatorParam::Int(p)).collect(),
-        };
-        match self.indicator_store.get(&key, self.bar_idx) {
-            Some(v) if v.is_nan() => Dynamic::UNIT,
-            Some(v) => Dynamic::from(v),
-            None => Dynamic::UNIT,
-        }
+        crate::scripting::helpers::indicator_lookup_multi(
+            &self.indicator_store,
+            self.bar_idx,
+            name,
+            params,
+        )
     }
 
     pub fn macd_line_custom(&mut self, fast: i64, slow: i64, signal: i64) -> Dynamic {
@@ -664,128 +628,12 @@ impl BarContext {
     ///
     /// Works for any structure — single legs, spreads, condors, butterflies, etc.
     pub fn build_strategy(&mut self, legs: rhai::Array) -> Dynamic {
-        let mut resolved_legs = Vec::new();
-        let mut net_premium = 0.0;
-
-        for leg_dyn in legs {
-            let Some(leg) = leg_dyn.try_cast::<rhai::Map>() else {
-                return Dynamic::UNIT;
-            };
-
-            let opt_type = leg
-                .get("option_type")
-                .and_then(|v| v.clone().into_immutable_string().ok())
-                .unwrap_or_default()
-                .to_string();
-            let delta = leg
-                .get("delta")
-                .and_then(|v| v.as_float().ok())
-                .unwrap_or(0.30);
-            let dte = leg.get("dte").and_then(|v| v.as_int().ok()).unwrap_or(45);
-            let side = leg
-                .get("side")
-                .and_then(|v| v.clone().into_immutable_string().ok())
-                .unwrap_or_default()
-                .to_string();
-
-            // Resolve this leg to a specific contract
-            let target = crate::engine::types::TargetRange {
-                target: delta,
-                min: (delta - 0.10).max(0.01),
-                max: (delta + 0.10).min(1.0),
-            };
-            let found = self.resolve_leg(
-                &opt_type,
-                &target,
-                dte as i32,
-                (dte - 15).max(1) as i32,
-                (dte + 15) as i32,
-            );
-            if found.is_unit() {
-                return Dynamic::UNIT; // any failed leg -> entire strategy fails
-            }
-
-            let found_map = found.clone().cast::<rhai::Map>();
-
-            // Compute premium contribution
-            let bid = found_map
-                .get("bid")
-                .and_then(|v| v.as_float().ok())
-                .unwrap_or(0.0);
-            let ask = found_map
-                .get("ask")
-                .and_then(|v| v.as_float().ok())
-                .unwrap_or(0.0);
-            let mid = f64::midpoint(bid, ask);
-
-            match side.as_str() {
-                "short" => net_premium -= mid,
-                "long" => net_premium += mid,
-                _ => {}
-            }
-
-            // Build resolved leg with side and type
-            let mut leg_map = found_map;
-            leg_map.insert("side".into(), Dynamic::from(side));
-            leg_map.insert("option_type".into(), Dynamic::from(opt_type));
-            resolved_legs.push(Dynamic::from(leg_map));
-        }
-
-        let mut result = rhai::Map::new();
-        result.insert("legs".into(), Dynamic::from(resolved_legs));
-        result.insert("net_premium".into(), Dynamic::from(net_premium));
-        Dynamic::from(result)
-    }
-
-    /// Resolve a single leg to a specific contract via the filter pipeline.
-    fn resolve_leg(
-        &self,
-        option_type: &str,
-        target: &crate::engine::types::TargetRange,
-        _dte_target: i32,
-        dte_min: i32,
-        dte_max: i32,
-    ) -> Dynamic {
-        use crate::engine::filters;
-
-        let today = self.datetime.date();
-
-        // O(1) lookup: get today's options slice (~5K-10K rows)
-        let today_df = match &self.options_by_date {
-            Some(opts) => match opts.get(today) {
-                Some(df) => df,
-                None => return Dynamic::UNIT,
-            },
-            None => return Dynamic::UNIT,
-        };
-
-        let min_bid_ask = 0.05;
-
-        let opt_type_code = match option_type.to_lowercase().as_str() {
-            "call" | "c" => "c",
-            "put" | "p" => "p",
-            _ => return Dynamic::UNIT,
-        };
-
-        // Filter the small daily slice by type, DTE, quotes (clone since we borrow from cache)
-        let filtered = match filters::filter_leg_candidates(
-            today_df.clone(),
-            opt_type_code,
-            dte_max,
-            dte_min,
-            min_bid_ask,
-        ) {
-            Ok(f) if f.height() > 0 => f,
-            _ => return Dynamic::UNIT,
-        };
-
-        // Select closest delta
-        let selected = match filters::select_closest_delta(filtered, target) {
-            Ok(s) if s.height() > 0 => s,
-            _ => return Dynamic::UNIT,
-        };
-
-        row_to_option_map(&selected, 0, today)
+        crate::scripting::helpers::build_strategy_from_legs(
+            legs,
+            &self.options_by_date,
+            self.datetime,
+            None, // no symbol tag for single-symbol BarContext
+        )
     }
     // --- Cross-symbol ---
     pub fn price_of(&mut self, symbol: String) -> Dynamic {
@@ -809,6 +657,69 @@ impl BarContext {
                 _ => Dynamic::UNIT,
             })
             .unwrap_or(Dynamic::UNIT)
+    }
+
+    // --- Multi-symbol: ctx.sym("SYMBOL") ---
+
+    /// Return a `SymbolContext` for the given symbol, providing access to that
+    /// symbol's OHLCV data, indicators, and strategy helpers at the current bar.
+    ///
+    /// Returns `()` if the symbol is not in the portfolio's `symbols` list or
+    /// if `per_symbol_data` is not available (single-symbol mode).
+    pub fn sym(&mut self, symbol: String) -> Dynamic {
+        let upper = symbol.to_uppercase();
+        let Some(psd) = &self.per_symbol_data else {
+            // Single-symbol mode — check if requesting the primary symbol
+            if upper == self.config.symbol {
+                return Dynamic::from(super::symbol_context::SymbolContext {
+                    symbol: upper,
+                    datetime: self.datetime,
+                    open: self.open,
+                    high: self.high,
+                    low: self.low,
+                    close: self.close,
+                    volume: self.volume,
+                    bar_idx: self.bar_idx,
+                    indicator_store: Arc::clone(&self.indicator_store),
+                    price_history: Arc::clone(&self.price_history),
+                    options_by_date: self.options_by_date.clone(),
+                });
+            }
+            return Dynamic::UNIT;
+        };
+
+        let Some(data) = psd.get(&upper) else {
+            return Dynamic::UNIT;
+        };
+
+        let Some(bar) = data.bars.get(self.bar_idx) else {
+            return Dynamic::UNIT;
+        };
+
+        Dynamic::from(super::symbol_context::SymbolContext {
+            symbol: upper,
+            datetime: bar.datetime,
+            open: bar.open,
+            high: bar.high,
+            low: bar.low,
+            close: bar.close,
+            volume: bar.volume,
+            bar_idx: self.bar_idx,
+            indicator_store: Arc::clone(&data.indicator_store),
+            price_history: Arc::clone(&data.bars),
+            options_by_date: data.options_by_date.clone(),
+        })
+    }
+
+    /// Return an array of all tradeable symbol names in the portfolio.
+    pub fn symbols(&mut self) -> Dynamic {
+        let arr: rhai::Array = self
+            .config
+            .symbols
+            .iter()
+            .map(|s| Dynamic::from(s.clone()))
+            .collect();
+        Dynamic::from(arr)
     }
 
     // --- Position sizing (see helpers.rs for implementations) ---
@@ -1023,7 +934,11 @@ fn parse_indicator_ref(s: &str) -> (String, i64) {
 
 /// Convert a DataFrame row to a Rhai Map for find_option results.
 /// Returns `#{ strike, bid, ask, delta, expiration, dte }` or `()`.
-fn row_to_option_map(df: &polars::prelude::DataFrame, row: usize, today: NaiveDate) -> Dynamic {
+pub(in crate::scripting) fn row_to_option_map(
+    df: &polars::prelude::DataFrame,
+    row: usize,
+    today: NaiveDate,
+) -> Dynamic {
     use polars::prelude::*;
 
     let get_f64 =
@@ -1141,6 +1056,7 @@ mod tests {
 
         let config = ScriptConfig {
             symbol: "TEST".to_string(),
+            symbols: vec!["TEST".to_string()],
             capital: 100_000.0,
             start_date: None,
             end_date: None,
@@ -1176,6 +1092,7 @@ mod tests {
             price_history: Arc::new(price_history),
             cross_symbol_data: Arc::new(HashMap::new()),
             options_by_date: None,
+            per_symbol_data: None,
             config: Arc::new(config),
             pnl_history: Arc::new(vec![]),
             custom_series: Arc::new(Mutex::new(CustomSeriesStore {
