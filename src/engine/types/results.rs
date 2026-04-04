@@ -118,6 +118,9 @@ pub struct LegDetail {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TradeRecord {
     pub trade_id: usize,
+    /// Symbol this trade was executed on. `None` for legacy single-symbol results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
     #[serde(with = "super::epoch_serde")]
     #[schemars(with = "i64")]
     pub entry_datetime: NaiveDateTime,
@@ -172,6 +175,7 @@ impl TradeRecord {
     ) -> Self {
         Self {
             trade_id,
+            symbol: None,
             entry_datetime,
             exit_datetime,
             entry_amount: entry_cost.abs(),

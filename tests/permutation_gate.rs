@@ -36,6 +36,7 @@ fn trade(id: usize, pnl: f64) -> TradeRecord {
 
     TradeRecord {
         trade_id: id,
+        symbol: None,
         entry_datetime: dt(0),
         exit_datetime: dt(30),
         entry_cost,
