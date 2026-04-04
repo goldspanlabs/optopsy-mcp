@@ -4,8 +4,14 @@ use std::collections::HashMap;
 
 use chrono::NaiveDate;
 
+use std::sync::Arc;
+
 use crate::constants::TRADING_DAYS_PER_YEAR;
+use crate::engine::adjustments::AdjustmentTimeline;
+use crate::engine::sim_types::{DateIndex, LastKnown, PriceTable};
 use crate::engine::types::{Commission, ExpirationFilter, Slippage, TradeSelector};
+use crate::scripting::indicators::IndicatorStore;
+use crate::scripting::options_cache::DatePartitionedOptions;
 
 // ---------------------------------------------------------------------------
 // ScriptConfig — parsed from the Rhai config() callback return value
@@ -15,7 +21,11 @@ use crate::engine::types::{Commission, ExpirationFilter, Slippage, TradeSelector
 #[derive(Debug, Clone)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct ScriptConfig {
+    /// Primary symbol — kept for backward compatibility with single-symbol scripts.
+    /// In multi-symbol mode, this is `symbols[0]`.
     pub symbol: String,
+    /// All tradeable symbols in the portfolio. For single-symbol scripts this is `[symbol]`.
+    pub symbols: Vec<String>,
     pub capital: f64,
     pub start_date: Option<NaiveDate>,
     pub end_date: Option<NaiveDate>,
@@ -156,6 +166,34 @@ pub struct CrossSymbolBar {
 }
 
 // ---------------------------------------------------------------------------
+// PerSymbolData — per-symbol data for multi-symbol portfolio backtests
+// ---------------------------------------------------------------------------
+
+/// All loaded data for a single tradeable symbol in a multi-symbol backtest.
+///
+/// Each symbol gets its own OHLCV bars, adjustment timelines, indicators, and
+/// (optionally) options data. Bars are filtered to the master timeline (the
+/// date intersection of all symbols' OHLCV data).
+pub struct PerSymbolData {
+    /// OHLCV bars (split-adjusted, filtered to master timeline).
+    pub bars: Arc<Vec<OhlcvBar>>,
+    /// Pre-computed indicators on dividend-adjusted bars.
+    pub indicator_store: Arc<IndicatorStore>,
+    /// Split-only adjustment timeline (for strike-vs-price comparisons).
+    pub split_timeline: Arc<AdjustmentTimeline>,
+    /// Full adjustment timeline (splits + dividends, for `adjusted_close`).
+    pub adjustment_timeline: Arc<AdjustmentTimeline>,
+    /// Options chain partitioned by date. `None` if symbol has no options data.
+    pub options_by_date: Option<Arc<DatePartitionedOptions>>,
+    /// O(1) options quote lookup table. `None` if no options data.
+    pub price_table: Option<Arc<PriceTable>>,
+    /// Date → PriceTable keys index. `None` if no options data.
+    pub date_index: Option<Arc<DateIndex>>,
+    /// Last-known prices for options MTM data-gap fill.
+    pub last_known: LastKnown,
+}
+
+// ---------------------------------------------------------------------------
 // Order types — next-bar execution model
 // ---------------------------------------------------------------------------
 
@@ -199,6 +237,8 @@ pub enum ExitModifier {
 pub struct PendingOrder {
     /// The action to execute when this order is filled.
     pub action: ScriptAction,
+    /// Target symbol for fill-price resolution. `None` = primary symbol.
+    pub symbol: Option<String>,
     /// The order type determining fill conditions.
     pub order_type: OrderType,
     /// Explicit buy/sell direction for fill logic. `true` = buy (long entry or
@@ -309,9 +349,16 @@ pub enum ScriptAction {
     OpenOptions {
         legs: Vec<LegSpec>,
         qty: Option<i32>,
+        /// Target symbol. `None` = primary symbol (backward compat).
+        symbol: Option<String>,
     },
     /// Open a stock position.
-    OpenStock { side: Side, qty: i32 },
+    OpenStock {
+        side: Side,
+        qty: i32,
+        /// Target symbol. `None` = primary symbol (backward compat).
+        symbol: Option<String>,
+    },
     /// Close a specific position.
     Close {
         position_id: Option<usize>,
@@ -350,8 +397,6 @@ pub enum LegSpec {
 // ---------------------------------------------------------------------------
 // ScriptSimContext — internal engine state (not exposed to scripts)
 // ---------------------------------------------------------------------------
-
-use crate::engine::sim_types::{DateIndex, LastKnown, PriceTable};
 
 /// Internal state maintained by the unified scripting engine.
 /// Scripts never see this — it bridges the clean Rhai API to the native engine's

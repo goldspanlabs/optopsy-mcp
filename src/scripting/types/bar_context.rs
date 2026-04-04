@@ -67,6 +67,9 @@ pub struct BarContext {
     // Options data, pre-partitioned by date (None for pure stock backtests)
     pub options_by_date: Option<Arc<crate::scripting::options_cache::DatePartitionedOptions>>,
 
+    // Per-symbol data for multi-symbol portfolio backtests (None in single-symbol mode)
+    pub per_symbol_data: Option<Arc<HashMap<String, super::config::PerSymbolData>>>,
+
     // Config reference for ctx.config.defaults access
     pub config: Arc<ScriptConfig>,
 
@@ -811,6 +814,69 @@ impl BarContext {
             .unwrap_or(Dynamic::UNIT)
     }
 
+    // --- Multi-symbol: ctx.sym("SYMBOL") ---
+
+    /// Return a `SymbolContext` for the given symbol, providing access to that
+    /// symbol's OHLCV data, indicators, and strategy helpers at the current bar.
+    ///
+    /// Returns `()` if the symbol is not in the portfolio's `symbols` list or
+    /// if `per_symbol_data` is not available (single-symbol mode).
+    pub fn sym(&mut self, symbol: String) -> Dynamic {
+        let Some(psd) = &self.per_symbol_data else {
+            // Single-symbol mode — check if requesting the primary symbol
+            if symbol == self.config.symbol {
+                return Dynamic::from(super::symbol_context::SymbolContext {
+                    symbol,
+                    datetime: self.datetime,
+                    open: self.open,
+                    high: self.high,
+                    low: self.low,
+                    close: self.close,
+                    volume: self.volume,
+                    bar_idx: self.bar_idx,
+                    indicator_store: Arc::clone(&self.indicator_store),
+                    price_history: Arc::clone(&self.price_history),
+                    options_by_date: self.options_by_date.clone(),
+                });
+            }
+            return Dynamic::UNIT;
+        };
+
+        let upper = symbol.to_uppercase();
+        let Some(data) = psd.get(&upper) else {
+            return Dynamic::UNIT;
+        };
+
+        let Some(bar) = data.bars.get(self.bar_idx) else {
+            return Dynamic::UNIT;
+        };
+
+        Dynamic::from(super::symbol_context::SymbolContext {
+            symbol: upper,
+            datetime: bar.datetime,
+            open: bar.open,
+            high: bar.high,
+            low: bar.low,
+            close: bar.close,
+            volume: bar.volume,
+            bar_idx: self.bar_idx,
+            indicator_store: Arc::clone(&data.indicator_store),
+            price_history: Arc::clone(&data.bars),
+            options_by_date: data.options_by_date.clone(),
+        })
+    }
+
+    /// Return an array of all tradeable symbol names in the portfolio.
+    pub fn symbols(&mut self) -> Dynamic {
+        let arr: rhai::Array = self
+            .config
+            .symbols
+            .iter()
+            .map(|s| Dynamic::from(s.clone()))
+            .collect();
+        Dynamic::from(arr)
+    }
+
     // --- Position sizing (see helpers.rs for implementations) ---
 
     // --- Historical bar lookback (MQL4-inspired) ---
@@ -1023,7 +1089,11 @@ fn parse_indicator_ref(s: &str) -> (String, i64) {
 
 /// Convert a DataFrame row to a Rhai Map for find_option results.
 /// Returns `#{ strike, bid, ask, delta, expiration, dte }` or `()`.
-fn row_to_option_map(df: &polars::prelude::DataFrame, row: usize, today: NaiveDate) -> Dynamic {
+pub(super) fn row_to_option_map(
+    df: &polars::prelude::DataFrame,
+    row: usize,
+    today: NaiveDate,
+) -> Dynamic {
     use polars::prelude::*;
 
     let get_f64 =
@@ -1141,6 +1211,7 @@ mod tests {
 
         let config = ScriptConfig {
             symbol: "TEST".to_string(),
+            symbols: vec!["TEST".to_string()],
             capital: 100_000.0,
             start_date: None,
             end_date: None,
@@ -1176,6 +1247,7 @@ mod tests {
             price_history: Arc::new(price_history),
             cross_symbol_data: Arc::new(HashMap::new()),
             options_by_date: None,
+            per_symbol_data: None,
             config: Arc::new(config),
             pnl_history: Arc::new(vec![]),
             custom_series: Arc::new(Mutex::new(CustomSeriesStore {

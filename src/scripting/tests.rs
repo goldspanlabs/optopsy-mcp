@@ -618,6 +618,7 @@ mod tests {
         let bar = &bars[bar_idx];
         let config = Arc::new(ScriptConfig {
             symbol: "TEST".into(),
+            symbols: vec!["TEST".into()],
             capital: 50000.0,
             start_date: None,
             end_date: None,
@@ -653,6 +654,7 @@ mod tests {
             price_history: Arc::new(bars.to_vec()),
             cross_symbol_data: Arc::new(HashMap::new()),
             options_by_date: None,
+            per_symbol_data: None,
             config,
             pnl_history: Arc::new(vec![]),
             custom_series: Arc::new(std::sync::Mutex::new(
@@ -812,6 +814,7 @@ mod tests {
         let bars = make_bars(&[100.0]);
         let positions = vec![
             ScriptPosition {
+                symbol: "TEST".into(),
                 id: 1,
                 entry_date: bars[0].datetime.date(),
                 inner: ScriptPositionInner::Stock {
@@ -830,6 +833,7 @@ mod tests {
                 trailing_stop: None,
             },
             ScriptPosition {
+                symbol: "TEST".into(),
                 id: 2,
                 entry_date: bars[0].datetime.date(),
                 inner: ScriptPositionInner::Stock {
@@ -1417,6 +1421,7 @@ mod tests {
         let bars = make_bars(&[100.0]);
         let positions = vec![
             ScriptPosition {
+                symbol: "TEST".into(),
                 id: 1,
                 entry_date: bars[0].datetime.date(),
                 inner: ScriptPositionInner::Stock {
@@ -1435,6 +1440,7 @@ mod tests {
                 trailing_stop: None,
             },
             ScriptPosition {
+                symbol: "TEST".into(),
                 id: 2,
                 entry_date: bars[0].datetime.date(),
                 inner: ScriptPositionInner::Stock {
@@ -1572,7 +1578,9 @@ mod tests {
         use crate::scripting::types::{OrderType, PendingOrder, ScriptAction};
 
         let order = PendingOrder {
+            symbol: None,
             action: ScriptAction::OpenStock {
+                symbol: None,
                 side: Side::Long,
                 qty: 100,
             },
@@ -1597,7 +1605,9 @@ mod tests {
         use crate::scripting::types::{OrderType, PendingOrder, ScriptAction};
 
         let order = PendingOrder {
+            symbol: None,
             action: ScriptAction::OpenStock {
+                symbol: None,
                 side: Side::Long,
                 qty: 100,
             },
@@ -1630,7 +1640,9 @@ mod tests {
         use crate::scripting::types::{OrderType, PendingOrder, ScriptAction};
 
         let order = PendingOrder {
+            symbol: None,
             action: ScriptAction::OpenStock {
+                symbol: None,
                 side: Side::Long,
                 qty: 100,
             },
@@ -1663,7 +1675,9 @@ mod tests {
         use crate::scripting::types::{OrderType, PendingOrder, ScriptAction};
 
         let order = PendingOrder {
+            symbol: None,
             action: ScriptAction::OpenStock {
+                symbol: None,
                 side: Side::Short,
                 qty: 100,
             },
@@ -1692,7 +1706,9 @@ mod tests {
         use crate::scripting::types::{OrderType, PendingOrder, ScriptAction};
 
         let order = PendingOrder {
+            symbol: None,
             action: ScriptAction::OpenStock {
+                symbol: None,
                 side: Side::Long,
                 qty: 100,
             },
@@ -1717,7 +1733,9 @@ mod tests {
         use crate::scripting::types::{OrderType, PendingOrder, ScriptAction};
 
         let order = PendingOrder {
+            symbol: None,
             action: ScriptAction::OpenStock {
+                symbol: None,
                 side: Side::Long,
                 qty: 100,
             },
@@ -1740,7 +1758,9 @@ mod tests {
         use crate::scripting::types::{OrderType, PendingOrder, ScriptAction};
 
         let order = PendingOrder {
+            symbol: None,
             action: ScriptAction::OpenStock {
+                symbol: None,
                 side: Side::Long,
                 qty: 100,
             },
@@ -1784,6 +1804,7 @@ mod tests {
         use crate::scripting::types::{ScriptPosition, ScriptPositionInner};
 
         let pos = ScriptPosition {
+            symbol: "TEST".into(),
             id: 1,
             entry_date: chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
             inner: ScriptPositionInner::Stock {
