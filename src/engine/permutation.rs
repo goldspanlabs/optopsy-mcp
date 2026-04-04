@@ -32,18 +32,28 @@ const MAX_PERMUTATIONS: usize = 100_000;
 /// Minimum permutation count to justify parallelism overhead.
 const PAR_THRESHOLD: usize = 1_000;
 
-/// Run `n_perms` sign-flip permutations on a single RNG, returning the count
-/// of permuted metrics that meet or exceed `observed_metric`.
+/// Run sign-flip permutations for indices `[start_idx, start_idx + count)`, each
+/// seeded deterministically from `base_seed + perm_index`. Returns how many
+/// permuted metrics meet or exceed `observed_metric`.
+///
+/// When `base_seed` is `None`, uses OS entropy (non-deterministic).
 fn run_signflip_chunk(
     pnls: &[f64],
     observed_metric: f64,
     objective: &str,
-    n_perms: usize,
-    rng: &mut StdRng,
+    base_seed: Option<u64>,
+    start_idx: usize,
+    count: usize,
 ) -> usize {
+    // Seed from the first permutation index in this chunk so that each
+    // permutation's draws are identical regardless of how chunks are split.
+    let mut rng = match base_seed {
+        Some(s) => StdRng::seed_from_u64(s.wrapping_add(start_idx as u64)),
+        None => StdRng::from_os_rng(),
+    };
     let mut flipped = pnls.to_vec();
-    let mut count = 0usize;
-    for _ in 0..n_perms {
+    let mut hits = 0usize;
+    for _ in 0..count {
         for (i, &original) in pnls.iter().enumerate() {
             flipped[i] = if rng.random_bool(0.5) {
                 -original
@@ -52,10 +62,10 @@ fn run_signflip_chunk(
             };
         }
         if compute_metric_from_pnls(&flipped, objective) >= observed_metric {
-            count += 1;
+            hits += 1;
         }
     }
-    count
+    hits
 }
 
 /// Compute a one-sided p-value using a sign-flip permutation test.
@@ -64,6 +74,10 @@ fn run_signflip_chunk(
 /// probability), recomputes the objective metric, and counts how often the
 /// permuted metric meets or exceeds the observed value. This tests the null
 /// hypothesis that the strategy has no directional edge.
+///
+/// When a `seed` is provided, results are deterministic and independent of the
+/// Rayon thread pool size — each chunk seeds its RNG from `seed + start_index`,
+/// producing identical draws regardless of how permutations are partitioned.
 pub fn permutation_p_value(
     pnls: &[f64],
     observed_metric: f64,
@@ -76,32 +90,29 @@ pub fn permutation_p_value(
     }
 
     let count_ge = if n_perms >= PAR_THRESHOLD {
-        // Parallel: partition permutations across rayon threads, each with an
-        // independent RNG seeded deterministically from the base seed + chunk index.
-        let n_threads = rayon::current_num_threads().max(1);
-        let chunk_size = n_perms / n_threads;
-        let remainder = n_perms % n_threads;
+        // Cap chunks so each has meaningful work (avoids empty tasks on large pools).
+        let n_chunks = rayon::current_num_threads().min(n_perms).max(1);
+        let chunk_size = n_perms / n_chunks;
+        let remainder = n_perms % n_chunks;
 
-        (0..n_threads)
+        (0..n_chunks)
             .into_par_iter()
             .map(|t| {
                 let perms_this_chunk = chunk_size + usize::from(t < remainder);
-                if perms_this_chunk == 0 {
-                    return 0usize;
-                }
-                let mut rng = match seed {
-                    Some(s) => StdRng::seed_from_u64(s.wrapping_add(t as u64 * 1_000_003)),
-                    None => StdRng::from_os_rng(),
-                };
-                run_signflip_chunk(pnls, observed_metric, objective, perms_this_chunk, &mut rng)
+                // Compute the starting permutation index for this chunk.
+                let start_idx = t * chunk_size + t.min(remainder);
+                run_signflip_chunk(
+                    pnls,
+                    observed_metric,
+                    objective,
+                    seed,
+                    start_idx,
+                    perms_this_chunk,
+                )
             })
             .sum::<usize>()
     } else {
-        let mut rng = match seed {
-            Some(s) => StdRng::seed_from_u64(s),
-            None => StdRng::from_os_rng(),
-        };
-        run_signflip_chunk(pnls, observed_metric, objective, n_perms, &mut rng)
+        run_signflip_chunk(pnls, observed_metric, objective, seed, 0, n_perms)
     };
 
     // Add 1 to numerator and denominator (conservative estimator)
