@@ -822,11 +822,12 @@ impl BarContext {
     /// Returns `()` if the symbol is not in the portfolio's `symbols` list or
     /// if `per_symbol_data` is not available (single-symbol mode).
     pub fn sym(&mut self, symbol: String) -> Dynamic {
+        let upper = symbol.to_uppercase();
         let Some(psd) = &self.per_symbol_data else {
             // Single-symbol mode — check if requesting the primary symbol
-            if symbol == self.config.symbol {
+            if upper == self.config.symbol {
                 return Dynamic::from(super::symbol_context::SymbolContext {
-                    symbol,
+                    symbol: upper,
                     datetime: self.datetime,
                     open: self.open,
                     high: self.high,
@@ -842,7 +843,6 @@ impl BarContext {
             return Dynamic::UNIT;
         };
 
-        let upper = symbol.to_uppercase();
         let Some(data) = psd.get(&upper) else {
             return Dynamic::UNIT;
         };

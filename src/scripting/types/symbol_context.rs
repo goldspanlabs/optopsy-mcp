@@ -73,7 +73,7 @@ impl SymbolContext {
 }
 
 // ---------------------------------------------------------------------------
-// Indicator methods (same API as BarContext)
+// Indicator methods — mirrors BarContext API for consistent script authoring
 // ---------------------------------------------------------------------------
 
 impl SymbolContext {
@@ -107,8 +107,8 @@ impl SymbolContext {
     pub fn bbands_lower(&mut self, period: i64) -> Dynamic {
         self.indicator_value_multi("bbands_lower", &[period, 20])
     }
-    pub fn stochastic(&mut self) -> Dynamic {
-        self.indicator_value_multi("stochastic", &[14, 3, 3])
+    pub fn stochastic(&mut self, period: i64) -> Dynamic {
+        self.indicator_value("stochastic", period)
     }
     pub fn cci(&mut self, period: i64) -> Dynamic {
         self.indicator_value("cci", period)
@@ -126,10 +126,10 @@ impl SymbolContext {
         self.indicator_value("minus_di", period)
     }
     pub fn psar(&mut self) -> Dynamic {
-        self.indicator_value_multi("psar", &[])
+        self.indicator_value_multi("psar", &[2, 20]) // 0.02 accel, 0.20 max
     }
-    pub fn supertrend(&mut self) -> Dynamic {
-        self.indicator_value_multi("supertrend", &[])
+    pub fn supertrend(&mut self, period: i64) -> Dynamic {
+        self.indicator_value("supertrend", period)
     }
 
     /// Generic indicator lookup by name and params (matches `BarContext::indicator`).

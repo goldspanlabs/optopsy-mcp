@@ -15,7 +15,11 @@
 | `ctx.sym("SYMBOL")` method | `types/bar_context.rs` | Done |
 | Symbol field on `ScriptAction`, `PendingOrder`, `ScriptPosition`, `TradeRecord` | Various | Done |
 
-## User-Facing API (Already Working)
+## User-Facing API (Defined, Not Yet Wired End-to-End)
+
+> The types and Rhai registrations below are complete. However, `per_symbol_data`
+> is currently `None` in the simulation loop, so `ctx.sym("QQQ")` will return
+> `()` at runtime until the simulation loop wiring (below) is implemented.
 
 ```rhai
 fn config() {

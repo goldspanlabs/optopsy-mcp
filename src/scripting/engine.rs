@@ -1772,8 +1772,18 @@ fn parse_config(map: Dynamic) -> Result<ScriptConfig> {
             .ok_or_else(|| anyhow::anyhow!("config().symbols must be an array"))?;
         let syms: Vec<String> = arr
             .into_iter()
-            .filter_map(|v| v.into_immutable_string().ok().map(|s| s.to_uppercase()))
-            .collect();
+            .enumerate()
+            .map(|(idx, v)| {
+                let s = v
+                    .into_immutable_string()
+                    .map_err(|_| anyhow::anyhow!("config().symbols[{idx}] must be a string"))?;
+                let trimmed = s.trim().to_uppercase();
+                if trimmed.is_empty() {
+                    bail!("config().symbols[{idx}] must not be empty");
+                }
+                Ok(trimmed)
+            })
+            .collect::<Result<Vec<_>>>()?;
         if syms.is_empty() {
             bail!("config().symbols must contain at least one symbol");
         }
@@ -2853,7 +2863,7 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ParsedAction> {
                     let symbol = map
                         .get("symbol")
                         .and_then(|v| v.clone().into_immutable_string().ok())
-                        .map(|s| s.to_string());
+                        .map(|s| s.to_uppercase());
                     (ScriptAction::OpenStock { side, qty, symbol }, is_buy)
                 }
                 "close" => {
@@ -2985,7 +2995,7 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ParsedAction> {
                     let symbol = map
                         .get("symbol")
                         .and_then(|v| v.clone().into_immutable_string().ok())
-                        .map(|s| s.to_string());
+                        .map(|s| s.to_uppercase());
                     (ScriptAction::OpenOptions { legs, qty, symbol }, is_buy)
                 }
                 _ => return None,
@@ -3487,9 +3497,13 @@ async fn load_multi_symbol_data(
             .filter(|b| master_dates.contains(&b.datetime.date()))
             .collect();
 
-        // Load adjustments
-        let splits = data_loader.load_splits(sym).unwrap_or_default();
-        let dividends = data_loader.load_dividends(sym).unwrap_or_default();
+        // Load adjustments (propagate real errors, don't silently default to empty)
+        let splits = data_loader
+            .load_splits(sym)
+            .with_context(|| format!("Failed to load splits for '{sym}'"))?;
+        let dividends = data_loader
+            .load_dividends(sym)
+            .with_context(|| format!("Failed to load dividends for '{sym}'"))?;
         let closes: Vec<(NaiveDate, f64)> =
             bars.iter().map(|b| (b.datetime.date(), b.close)).collect();
 
@@ -3561,9 +3575,11 @@ async fn load_multi_symbol_data(
                 let obd = DatePartitionedOptions::from_df(&df, &config.expiration_filter)?;
                 (Some(Arc::new(obd)), Some(Arc::new(pt)), Some(Arc::new(di)))
             }
-            Err(_) => {
+            Err(e) => {
                 // No options data for this symbol — that's fine (e.g., VIX, futures)
-                tracing::info!(symbol = sym, "No options data available — OHLCV only");
+                // but surface the reason so parsing errors aren't silently swallowed
+                tracing::info!(symbol = sym, error = %e, "No options data available — OHLCV only");
+                warnings.push(format!("{sym}: no options data ({e:#})"));
                 (None, None, None)
             }
         };
