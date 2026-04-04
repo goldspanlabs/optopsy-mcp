@@ -29,15 +29,41 @@ const MAX_PERMUTATIONS: usize = 100_000;
 // Core: compute p-value from trade P&Ls via sign-flip test
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Minimum permutation count to justify parallelism overhead.
+const PAR_THRESHOLD: usize = 1_000;
+
+/// Run `n_perms` sign-flip permutations on a single RNG, returning the count
+/// of permuted metrics that meet or exceed `observed_metric`.
+fn run_signflip_chunk(
+    pnls: &[f64],
+    observed_metric: f64,
+    objective: &str,
+    n_perms: usize,
+    rng: &mut StdRng,
+) -> usize {
+    let mut flipped = pnls.to_vec();
+    let mut count = 0usize;
+    for _ in 0..n_perms {
+        for (i, &original) in pnls.iter().enumerate() {
+            flipped[i] = if rng.random_bool(0.5) {
+                -original
+            } else {
+                original
+            };
+        }
+        if compute_metric_from_pnls(&flipped, objective) >= observed_metric {
+            count += 1;
+        }
+    }
+    count
+}
+
 /// Compute a one-sided p-value using a sign-flip permutation test.
 ///
 /// For each permutation, randomly flips the sign of each trade P&L (with 50%
 /// probability), recomputes the objective metric, and counts how often the
 /// permuted metric meets or exceeds the observed value. This tests the null
 /// hypothesis that the strategy has no directional edge.
-/// Minimum permutation count to justify parallelism overhead.
-const PAR_THRESHOLD: usize = 1_000;
-
 pub fn permutation_p_value(
     pnls: &[f64],
     observed_metric: f64,
@@ -67,44 +93,15 @@ pub fn permutation_p_value(
                     Some(s) => StdRng::seed_from_u64(s.wrapping_add(t as u64 * 1_000_003)),
                     None => StdRng::from_os_rng(),
                 };
-                let mut flipped = pnls.to_vec();
-                let mut local_count = 0usize;
-                for _ in 0..perms_this_chunk {
-                    for (i, &original) in pnls.iter().enumerate() {
-                        flipped[i] = if rng.random_bool(0.5) {
-                            -original
-                        } else {
-                            original
-                        };
-                    }
-                    if compute_metric_from_pnls(&flipped, objective) >= observed_metric {
-                        local_count += 1;
-                    }
-                }
-                local_count
+                run_signflip_chunk(pnls, observed_metric, objective, perms_this_chunk, &mut rng)
             })
             .sum::<usize>()
     } else {
-        // Sequential: not enough work to justify thread pool overhead.
         let mut rng = match seed {
             Some(s) => StdRng::seed_from_u64(s),
             None => StdRng::from_os_rng(),
         };
-        let mut flipped = pnls.to_vec();
-        let mut count = 0usize;
-        for _ in 0..n_perms {
-            for (i, &original) in pnls.iter().enumerate() {
-                flipped[i] = if rng.random_bool(0.5) {
-                    -original
-                } else {
-                    original
-                };
-            }
-            if compute_metric_from_pnls(&flipped, objective) >= observed_metric {
-                count += 1;
-            }
-        }
-        count
+        run_signflip_chunk(pnls, observed_metric, objective, n_perms, &mut rng)
     };
 
     // Add 1 to numerator and denominator (conservative estimator)
@@ -484,58 +481,48 @@ mod tests {
 
     // ── apply_permutation_gate ──────────────────────────────────────
 
-    #[test]
-    fn gate_noop_when_zero_perms() {
-        let response = SweepResponse {
+    /// Build an empty `SweepResponse` with optional ranked results and no full_results.
+    fn empty_response(ranked: Vec<crate::tools::response_types::sweep::SweepResult>) -> SweepResponse {
+        SweepResponse {
             mode: "grid".into(),
             objective: "sharpe".into(),
-            combinations_total: 0,
-            combinations_run: 0,
+            combinations_total: ranked.len(),
+            combinations_run: ranked.len(),
             combinations_failed: 0,
             best_result: None,
-            ranked_results: Vec::new(),
+            ranked_results: ranked,
             dimension_sensitivity: HashMap::default(),
             convergence_trace: None,
             execution_time_ms: 0,
             multiple_comparisons: None,
             full_results: Vec::new(),
-        };
+        }
+    }
+
+    #[test]
+    fn gate_noop_when_zero_perms() {
+        let response = empty_response(Vec::new());
         let result = apply_permutation_gate(response, 0, "sharpe", None);
         assert!(result.multiple_comparisons.is_none());
     }
 
     #[test]
     fn gate_noop_when_no_full_results() {
-        // Verifies the permutation gate is a no-op when full_results is empty,
-        // regardless of sweep mode.
-        let response = SweepResponse {
-            mode: "bayesian".into(),
-            objective: "sharpe".into(),
-            combinations_total: 1,
-            combinations_run: 1,
-            combinations_failed: 0,
-            best_result: None,
-            ranked_results: vec![crate::tools::response_types::sweep::SweepResult {
-                rank: 1,
-                params: HashMap::default(),
-                sharpe: 1.0,
-                sortino: 1.0,
-                pnl: 100.0,
-                trades: 10,
-                win_rate: 0.6,
-                max_drawdown: 0.1,
-                profit_factor: 2.0,
-                cagr: 0.1,
-                calmar: 1.0,
-                p_value: None,
-                significant: None,
-            }],
-            dimension_sensitivity: HashMap::default(),
-            convergence_trace: None,
-            execution_time_ms: 0,
-            multiple_comparisons: None,
-            full_results: Vec::new(),
-        };
+        let response = empty_response(vec![crate::tools::response_types::sweep::SweepResult {
+            rank: 1,
+            params: HashMap::default(),
+            sharpe: 1.0,
+            sortino: 1.0,
+            pnl: 100.0,
+            trades: 10,
+            win_rate: 0.6,
+            max_drawdown: 0.1,
+            profit_factor: 2.0,
+            cagr: 0.1,
+            calmar: 1.0,
+            p_value: None,
+            significant: None,
+        }]);
         let result = apply_permutation_gate(response, 1000, "sharpe", Some(42));
         assert!(
             result.multiple_comparisons.is_none(),
