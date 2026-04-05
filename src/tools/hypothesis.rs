@@ -1,7 +1,7 @@
 //! Generate trading hypotheses by scanning multiple dimensions for statistically
 //! significant patterns. Returns ranked hypotheses with deployable signal specs.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -10,7 +10,7 @@ use crate::data::cache::CachedStore;
 use crate::engine::hypothesis::{generate_hypotheses, HypothesisConfig};
 use crate::engine::types::HypothesisDimension;
 use crate::tools::ai_format;
-use crate::tools::ai_helpers::compute_years_cutoff;
+use crate::tools::ai_helpers;
 use crate::tools::response_types::{HypothesisParams, HypothesisResponse, PriceBar};
 
 /// Execute the `generate_hypotheses` tool.
@@ -39,24 +39,19 @@ pub async fn execute(
         dims
     });
 
-    let cutoff_str = compute_years_cutoff(params.years);
-
     // Load OHLCV for each symbol
     let mut all_prices: HashMap<String, Vec<PriceBar>> = HashMap::new();
     for sym in &params.symbols {
         let upper = sym.to_uppercase();
-        let resp = crate::tools::raw_prices::load_and_execute(
+        let prices = ai_helpers::load_prices(
             cache,
             &upper,
-            Some(&cutoff_str),
-            None,
-            None, // no limit — need full history
+            params.years,
+            2,
             crate::engine::types::Interval::Daily,
-            None,
         )
-        .await
-        .with_context(|| format!("Failed to load OHLCV data for {upper}"))?;
-        all_prices.insert(upper, resp.prices);
+        .await?;
+        all_prices.insert(upper, prices);
     }
 
     // For single-symbol mode, scan the first symbol

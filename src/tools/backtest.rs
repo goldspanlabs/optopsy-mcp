@@ -167,24 +167,15 @@ async fn execute_single(
         .unwrap_or_else(|| params.strategy.clone());
     let response = exec_result.response;
 
-    // Prefer the resolved symbol from the engine result (handles extern_symbol defaults),
-    // fall back to params only if the engine didn't populate it.
+    // Symbol must come from the engine result (resolved from asset/extern_symbol).
     let symbol = response
         .result
         .symbol
         .as_deref()
         .filter(|s| !s.is_empty())
-        .map_or_else(
-            || {
-                params
-                    .params
-                    .get("symbol")
-                    .and_then(Value::as_str)
-                    .unwrap_or("UNKNOWN")
-                    .to_owned()
-            },
-            str::to_owned,
-        );
+        .or_else(|| params.params.get("symbol").and_then(Value::as_str))
+        .ok_or_else(|| anyhow::anyhow!("No symbol resolved — declare an `asset` in the script"))?
+        .to_owned();
     let capital = params
         .params
         .get("CAPITAL")
@@ -250,23 +241,21 @@ async fn execute_sweep(
         server.adjustment_store.clone(),
     ));
 
-    // 4. Extract symbol from params, falling back to extern_symbol defaults from the script
+    // 4. Extract symbol from params or extern_symbol defaults in the script
     let symbol = params
         .params
         .get("symbol")
         .and_then(Value::as_str)
-        .map_or_else(
-            || {
-                crate::scripting::engine::resolve_symbols_from_extern_params(
-                    &script_source,
-                    &params.params,
-                )
-                .into_iter()
-                .next()
-                .unwrap_or_else(|| "UNKNOWN".to_owned())
-            },
-            str::to_owned,
-        );
+        .map(str::to_owned)
+        .or_else(|| {
+            crate::scripting::engine::resolve_symbols_from_extern_params(
+                &script_source,
+                &params.params,
+            )
+            .into_iter()
+            .next()
+        })
+        .ok_or_else(|| anyhow::anyhow!("No symbol resolved — declare an `asset` in the script"))?;
 
     // 5. Build CreateSweepRequest for the shared helpers
     let req = CreateSweepRequest {

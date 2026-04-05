@@ -98,18 +98,30 @@ pub(crate) fn resolve_strategy_source_from_store(
     name_or_id: &str,
 ) -> Result<(String, String), (StatusCode, String)> {
     // Try exact ID match
-    if let Ok(Some(source)) = store.get_source(name_or_id) {
-        return Ok((name_or_id.to_string(), source));
-    }
-    // Fall back to case-insensitive name match
-    if let Ok(Some((id, source))) = store.get_source_by_name(name_or_id) {
-        return Ok((id, source));
-    }
+    let (id, source) = if let Ok(Some(source)) = store.get_source(name_or_id) {
+        (name_or_id.to_string(), source)
+    } else if let Ok(Some((id, source))) = store.get_source_by_name(name_or_id) {
+        (id, source)
+    } else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("Strategy '{name_or_id}' not found"),
+        ));
+    };
 
-    Err((
-        StatusCode::NOT_FOUND,
-        format!("Strategy '{name_or_id}' not found"),
-    ))
+    // Auto-transpile Trading DSL to Rhai
+    let source = if crate::scripting::dsl::is_trading_dsl(&source) {
+        crate::scripting::dsl::transpile(&source).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("DSL transpile error: {e}"),
+            )
+        })?
+    } else {
+        source
+    };
+
+    Ok((id, source))
 }
 
 /// Resolve strategy source from `AppState` (convenience wrapper).
@@ -309,7 +321,7 @@ pub async fn create_sweep(
             .params
             .get("symbol")
             .and_then(Value::as_str)
-            .unwrap_or("UNKNOWN")
+            .unwrap_or("pending")
             .to_owned();
 
         // Progress tracking via atomics

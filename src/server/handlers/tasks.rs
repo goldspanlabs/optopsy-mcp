@@ -154,11 +154,13 @@ pub async fn submit_backtest(
     State(state): State<AppState>,
     Json(req): Json<SubmitBacktestRequest>,
 ) -> Json<SubmitResponse> {
+    // Symbol from params is a pre-execution hint; actual symbol is resolved
+    // from the engine result after the backtest completes.
     let symbol = req
         .params
         .get("symbol")
         .and_then(Value::as_str)
-        .unwrap_or("UNKNOWN")
+        .unwrap_or("pending")
         .to_owned();
 
     let params_json =
@@ -247,10 +249,18 @@ pub async fn submit_backtest(
                     .and_then(Value::as_f64)
                     .unwrap_or(0.0);
 
+                // Prefer symbol from engine result (resolves extern_symbol defaults)
+                let resolved_symbol = response
+                    .result
+                    .symbol
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(&symbol);
+
                 match super::backtests::persist_backtest(
                     run_store.as_ref(),
                     &strategy_key,
-                    &symbol,
+                    resolved_symbol,
                     capital,
                     &req.params,
                     &response,
@@ -287,11 +297,12 @@ pub async fn submit_sweep(
     State(state): State<AppState>,
     Json(req): Json<SubmitSweepRequest>,
 ) -> Result<Json<SubmitResponse>, (StatusCode, String)> {
+    // Symbol from params is a pre-execution hint; resolved from script later.
     let symbol = req
         .params
         .get("symbol")
         .and_then(Value::as_str)
-        .unwrap_or("UNKNOWN")
+        .unwrap_or("pending")
         .to_owned();
 
     let params_json =
@@ -364,6 +375,17 @@ pub async fn submit_sweep(
             task_for_progress
                 .progress_total
                 .store(tot, Ordering::Relaxed);
+        };
+
+        // Resolve symbol from script before script_source is moved into sweep config
+        let resolved_symbol = if req.params.contains_key("symbol") {
+            symbol.clone()
+        } else {
+            let syms = crate::scripting::engine::resolve_symbols_from_extern_params(
+                &script_source,
+                &req.params,
+            );
+            syms.into_iter().next().unwrap_or(symbol.clone())
         };
 
         let sweep_result = match req.mode.as_str() {
@@ -450,7 +472,7 @@ pub async fn submit_sweep(
                 match persist_sweep_to_store(
                     run_store.as_ref(),
                     &strategy_key,
-                    &symbol,
+                    &resolved_symbol,
                     &sweep_req,
                     &sweep_response,
                     &script_meta,
@@ -486,12 +508,16 @@ pub async fn submit_walk_forward(
     State(state): State<AppState>,
     Json(req): Json<SubmitWalkForwardRequest>,
 ) -> Result<Json<SubmitResponse>, (StatusCode, String)> {
+    // Symbol from params; resolved from script source later if not provided
     let symbol = req
         .params
         .get("symbol")
         .and_then(Value::as_str)
-        .unwrap_or("UNKNOWN")
+        .unwrap_or("pending")
         .to_owned();
+
+    // Will be overwritten with resolved symbol after script is loaded
+    let symbol_from_params = req.params.contains_key("symbol");
 
     let params_json =
         serde_json::to_value(&req.params).unwrap_or(Value::Object(serde_json::Map::default()));
@@ -542,6 +568,19 @@ pub async fn submit_walk_forward(
                     return;
                 }
             };
+
+        // Resolve symbol from script if not explicitly in params
+        let symbol = if symbol_from_params {
+            symbol
+        } else {
+            crate::scripting::engine::resolve_symbols_from_extern_params(
+                &script_source,
+                &req.params,
+            )
+            .into_iter()
+            .next()
+            .unwrap_or(symbol)
+        };
 
         let loader =
             CachingDataLoader::new(Arc::clone(&server.cache), server.adjustment_store.clone());

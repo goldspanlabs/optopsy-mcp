@@ -5,18 +5,19 @@
 //! via an Augmented Dickey-Fuller (ADF) test. Cointegrated pairs are candidates
 //! for mean-reversion / statistical arbitrage strategies.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::sync::Arc;
 
-use crate::constants::CALENDAR_DAYS_PER_YEAR;
-
 use crate::data::cache::CachedStore;
+use crate::tools::ai_helpers::{
+    epoch_to_date_string, load_prices, mean, subsample_to_max, variance,
+};
 use crate::tools::response_types::{
     AdfTestResult, CointegrationResponse, CriticalValues, SpreadPoint, SpreadStats,
 };
 
 /// Execute the cointegration test.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::similar_names)]
 pub async fn execute(
     cache: &Arc<CachedStore>,
     symbol_a: &str,
@@ -25,40 +26,30 @@ pub async fn execute(
 ) -> Result<CointegrationResponse> {
     let upper_a = symbol_a.to_uppercase();
     let upper_b = symbol_b.to_uppercase();
-    let cutoff = chrono::Utc::now().date_naive()
-        - chrono::Duration::days(i64::from(years) * CALENDAR_DAYS_PER_YEAR);
-    let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
 
-    // Load both price series
-    let resp_a = crate::tools::raw_prices::load_and_execute(
+    // Load both price series using shared helper
+    let prices_a_bars = load_prices(
         cache,
         &upper_a,
-        Some(&cutoff_str),
-        None,
-        None,
+        years,
+        30,
         crate::engine::types::Interval::Daily,
-        None,
     )
-    .await
-    .context(format!("Failed to load OHLCV data for {upper_a}"))?;
-
-    let resp_b = crate::tools::raw_prices::load_and_execute(
+    .await?;
+    let prices_b_bars = load_prices(
         cache,
         &upper_b,
-        Some(&cutoff_str),
-        None,
-        None,
+        years,
+        30,
         crate::engine::types::Interval::Daily,
-        None,
     )
-    .await
-    .context(format!("Failed to load OHLCV data for {upper_b}"))?;
+    .await?;
 
     // Align by date (inner join)
     let (dates, idx_a, idx_b) =
-        crate::tools::ai_helpers::align_by_date(&resp_a.prices, &resp_b.prices);
-    let prices_a: Vec<f64> = idx_a.iter().map(|&i| resp_a.prices[i].close).collect();
-    let prices_b: Vec<f64> = idx_b.iter().map(|&i| resp_b.prices[i].close).collect();
+        crate::tools::ai_helpers::align_by_date(&prices_a_bars, &prices_b_bars);
+    let prices_a: Vec<f64> = idx_a.iter().map(|&i| prices_a_bars[i].close).collect();
+    let prices_b: Vec<f64> = idx_b.iter().map(|&i| prices_b_bars[i].close).collect();
 
     let n = prices_a.len();
     if n < 30 {
@@ -83,15 +74,8 @@ pub async fn execute(
     let is_cointegrated = adf.is_stationary;
 
     // Spread statistics
-    let spread_mean = spread.iter().sum::<f64>() / spread.len() as f64;
-    let spread_std = {
-        let variance = spread
-            .iter()
-            .map(|s| (s - spread_mean).powi(2))
-            .sum::<f64>()
-            / (n - 1) as f64;
-        variance.sqrt()
-    };
+    let spread_mean = mean(&spread);
+    let spread_std = variance(&spread).sqrt();
     let current_spread = *spread.last().unwrap_or(&0.0);
     let z_score = if spread_std > 0.0 {
         (current_spread - spread_mean) / spread_std
@@ -116,53 +100,23 @@ pub async fn execute(
     };
 
     // Build spread time series (subsample to max 500)
-    let date_strs: Vec<String> = dates
+    let all_spread_points: Vec<SpreadPoint> = spread
         .iter()
-        .map(|&d| {
-            chrono::DateTime::from_timestamp(d, 0)
-                .map_or_else(|| d.to_string(), |dt| dt.format("%Y-%m-%d").to_string())
+        .zip(dates.iter())
+        .map(|(s, &d)| {
+            let z = if spread_std > 0.0 {
+                (s - spread_mean) / spread_std
+            } else {
+                0.0
+            };
+            SpreadPoint {
+                date: epoch_to_date_string(d),
+                spread: *s,
+                z_score: z,
+            }
         })
         .collect();
-
-    let spread_series: Vec<SpreadPoint> = if spread.len() > 500 {
-        let step = spread.len() / 500;
-        spread
-            .iter()
-            .zip(date_strs.iter())
-            .enumerate()
-            .filter(|(i, _)| i % step == 0)
-            .take(500)
-            .map(|(_, (s, d))| {
-                let z = if spread_std > 0.0 {
-                    (s - spread_mean) / spread_std
-                } else {
-                    0.0
-                };
-                SpreadPoint {
-                    date: d.clone(),
-                    spread: *s,
-                    z_score: z,
-                }
-            })
-            .collect()
-    } else {
-        spread
-            .iter()
-            .zip(date_strs.iter())
-            .map(|(s, d)| {
-                let z = if spread_std > 0.0 {
-                    (s - spread_mean) / spread_std
-                } else {
-                    0.0
-                };
-                SpreadPoint {
-                    date: d.clone(),
-                    spread: *s,
-                    z_score: z,
-                }
-            })
-            .collect()
-    };
+    let spread_series = subsample_to_max(all_spread_points, 500);
 
     // Build response
     let summary = if is_cointegrated {

@@ -3,11 +3,12 @@
 //! Takes multiple symbols, computes the covariance matrix from historical returns,
 //! and finds optimal portfolio weights under three different objective functions.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::sync::Arc;
 
-use crate::constants::{CALENDAR_DAYS_PER_YEAR, TRADING_DAYS_PER_YEAR};
+use crate::constants::TRADING_DAYS_PER_YEAR;
 use crate::data::cache::CachedStore;
+use crate::tools::ai_helpers;
 use crate::tools::response_types::{
     AssetStats, CorrelationEntry, OptimalWeight, OptimizationResult, PortfolioOptimizeResponse,
 };
@@ -24,90 +25,22 @@ pub async fn execute(
     years: u32,
     risk_free_rate: f64,
 ) -> Result<PortfolioOptimizeResponse> {
-    let cutoff = chrono::Utc::now().date_naive()
-        - chrono::Duration::days(i64::from(years) * CALENDAR_DAYS_PER_YEAR);
-    let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
-
-    // Load returns for all symbols
-    let mut all_returns: Vec<Vec<f64>> = Vec::new();
-    let mut upper_symbols: Vec<String> = Vec::new();
-
-    for sym in symbols {
-        let upper = sym.to_uppercase();
-        let resp = crate::tools::raw_prices::load_and_execute(
-            cache,
-            &upper,
-            Some(&cutoff_str),
-            None,
-            None,
-            crate::engine::types::Interval::Daily,
-            None,
-        )
-        .await
-        .context(format!("Failed to load OHLCV data for {upper}"))?;
-
-        let returns: Vec<f64> = resp
-            .prices
-            .windows(2)
-            .filter_map(|w| {
-                if w[0].close == 0.0 {
-                    None
-                } else {
-                    Some((w[1].close - w[0].close) / w[0].close)
-                }
-            })
-            .filter(|r| r.is_finite())
-            .collect();
-
-        if returns.len() < 30 {
-            anyhow::bail!(
-                "Insufficient data for {upper}: {} observations (need 30)",
-                returns.len()
-            );
-        }
-
-        all_returns.push(returns);
-        upper_symbols.push(upper);
-    }
+    let (upper_symbols, aligned) =
+        ai_helpers::load_aligned_returns(cache, symbols, years, 30).await?;
 
     let n_assets = upper_symbols.len();
+    let min_len = aligned[0].len();
 
-    // Align all return series to minimum length (from the end)
-    let aligned = crate::tools::ai_helpers::align_to_min_len(&all_returns);
-    let min_len = aligned.first().map_or(0, Vec::len);
-    if min_len < 30 {
-        anyhow::bail!("Insufficient aligned observations: {min_len}");
-    }
-
-    // Compute mean returns and covariance matrix
-    let means: Vec<f64> = aligned
-        .iter()
-        .map(|r| r.iter().sum::<f64>() / r.len() as f64)
-        .collect();
-
+    // Compute mean returns and annualized stats
+    let means: Vec<f64> = aligned.iter().map(|r| ai_helpers::mean(r)).collect();
     let annualized_returns: Vec<f64> = means.iter().map(|m| m * TRADING_DAYS_PER_YEAR).collect();
     let annualized_vols: Vec<f64> = aligned
         .iter()
-        .map(|r| {
-            let m = r.iter().sum::<f64>() / r.len() as f64;
-            let var = r.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (r.len() - 1) as f64;
-            var.sqrt() * TRADING_DAYS_PER_YEAR.sqrt()
-        })
+        .map(|r| ai_helpers::variance(r).sqrt() * TRADING_DAYS_PER_YEAR.sqrt())
         .collect();
 
     // Covariance matrix (annualized)
-    let mut cov_matrix = vec![vec![0.0_f64; n_assets]; n_assets];
-    for i in 0..n_assets {
-        for j in 0..n_assets {
-            let cov: f64 = aligned[i]
-                .iter()
-                .zip(aligned[j].iter())
-                .map(|(a, b)| (a - means[i]) * (b - means[j]))
-                .sum::<f64>()
-                / (min_len - 1) as f64;
-            cov_matrix[i][j] = cov * TRADING_DAYS_PER_YEAR; // Annualize
-        }
-    }
+    let cov_matrix = ai_helpers::covariance_matrix(&aligned, &means, TRADING_DAYS_PER_YEAR);
 
     // Correlation matrix
     let mut correlation_entries = Vec::new();

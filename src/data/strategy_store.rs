@@ -45,9 +45,15 @@ pub struct StrategyRow {
 impl StrategyRow {
     /// Convert to `ScriptMeta`, extracting `extern()` params from source.
     pub fn into_script_meta(self) -> ScriptMeta {
-        let params = extract_extern_params(&self.source);
+        // Transpile DSL to Rhai for param/metadata extraction
+        let rhai_source = if crate::scripting::dsl::is_trading_dsl(&self.source) {
+            crate::scripting::dsl::transpile(&self.source).unwrap_or_else(|_| self.source.clone())
+        } else {
+            self.source.clone()
+        };
+        let params = extract_extern_params(&rhai_source);
         let profiles = {
-            let meta = parse_script_meta(&self.id, &self.source);
+            let meta = parse_script_meta(&self.id, &rhai_source);
             meta.profiles
         };
 
@@ -60,26 +66,6 @@ impl StrategyRow {
             hypothesis: self.hypothesis,
             tags: self.tags,
             regime: self.regime,
-            profiles,
-        }
-    }
-
-    /// Convert to `ScriptMeta` without extracting extern params (fast path for listing).
-    pub fn to_script_meta_fast(&self) -> ScriptMeta {
-        let profiles = {
-            let meta = parse_script_meta(&self.id, &self.source);
-            meta.profiles
-        };
-
-        ScriptMeta {
-            id: self.id.clone(),
-            name: self.name.clone(),
-            description: self.description.clone(),
-            category: self.category.clone(),
-            params: Vec::new(),
-            hypothesis: self.hypothesis.clone(),
-            tags: self.tags.clone(),
-            regime: self.regime.clone(),
             profiles,
         }
     }

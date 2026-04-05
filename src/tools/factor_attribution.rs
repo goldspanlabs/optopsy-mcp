@@ -39,19 +39,17 @@ pub async fn execute(
     let mut factor_names = vec!["Market".to_string()];
     let mut factor_series: Vec<Vec<f64>> = vec![market_returns.clone()];
 
+    // Helper: compute difference series between two return vectors
+    let diff_series =
+        |a: &[f64], b: &[f64]| -> Vec<f64> { a.iter().zip(b.iter()).map(|(x, y)| x - y).collect() };
+
     // Try to load SMB proxy (small cap - large cap)
     let small_cap = factor_proxies
         .and_then(|fp| fp.small_cap.as_deref())
         .unwrap_or("IWM");
     if let Ok(small_ret) = load_returns(cache, &small_cap.to_uppercase(), &cutoff_str).await {
-        // SMB = small cap returns - market returns (approximate)
-        let smb: Vec<f64> = small_ret
-            .iter()
-            .zip(market_returns.iter())
-            .map(|(s, m)| s - m)
-            .collect();
         factor_names.push("SMB (Size)".to_string());
-        factor_series.push(smb);
+        factor_series.push(diff_series(&small_ret, &market_returns));
     }
 
     // Try to load HML proxies (value - growth)
@@ -65,13 +63,8 @@ pub async fn execute(
         load_returns(cache, &value_sym.to_uppercase(), &cutoff_str).await,
         load_returns(cache, &growth_sym.to_uppercase(), &cutoff_str).await,
     ) {
-        let hml: Vec<f64> = val_ret
-            .iter()
-            .zip(grw_ret.iter())
-            .map(|(v, g)| v - g)
-            .collect();
         factor_names.push("HML (Value)".to_string());
-        factor_series.push(hml);
+        factor_series.push(diff_series(&val_ret, &grw_ret));
     }
 
     // Try to load Momentum proxy
@@ -79,26 +72,20 @@ pub async fn execute(
         .and_then(|fp| fp.momentum.as_deref())
         .unwrap_or("MTUM");
     if let Ok(mom_ret) = load_returns(cache, &mom_sym.to_uppercase(), &cutoff_str).await {
-        let mom: Vec<f64> = mom_ret
-            .iter()
-            .zip(market_returns.iter())
-            .map(|(m, mkt)| m - mkt)
-            .collect();
         factor_names.push("Momentum".to_string());
-        factor_series.push(mom);
+        factor_series.push(diff_series(&mom_ret, &market_returns));
     }
 
-    // Align all series to minimum length
-    let mut all_series = vec![target_returns];
+    // Align all series to minimum length from the end
+    let mut all_series: Vec<Vec<f64>> = vec![target_returns];
     all_series.extend(factor_series);
-    let mut aligned = crate::tools::ai_helpers::align_to_min_len(&all_series);
-    let n = aligned[0].len();
+    let mut trimmed = crate::tools::ai_helpers::align_to_min_len(&all_series);
+    let n = trimmed[0].len();
     if n < 30 {
         anyhow::bail!("Insufficient aligned observations: {n} (need at least 30)");
     }
-    let y = aligned.remove(0);
-    let factors = aligned;
-    let _k = factors.len() + 1; // +1 for intercept
+    let y = trimmed.remove(0);
+    let factors = trimmed;
 
     // Multi-factor OLS regression: y = alpha + sum(beta_i * factor_i) + epsilon
     let result = multi_factor_ols(&y, &factors);
