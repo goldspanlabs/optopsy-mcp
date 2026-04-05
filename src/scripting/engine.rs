@@ -960,13 +960,31 @@ pub async fn run_script_backtest(
                 .or(position_sym.as_deref())
                 .unwrap_or(&config.symbol);
             let fill_bar = if let Some(psd) = &ctx_factory.per_symbol_data {
-                psd.get(target_sym).and_then(|d| d.bars.get(bar_idx))
+                if let Some(d) = psd.get(target_sym) {
+                    d.bars.get(bar_idx)
+                } else {
+                    // Unknown symbol in multi-symbol mode — drop with warning
+                    warnings.push(format!(
+                        "Order for unknown symbol '{target_sym}' dropped (not in symbols list)"
+                    ));
+                    continue;
+                }
             } else {
+                // Single-symbol mode: ignore order.symbol — only config.symbol
+                // has loaded data, so filling against a different symbol's label
+                // would produce silently incorrect pricing.
                 Some(bar)
             };
             let Some(fill_bar) = fill_bar else {
                 unfilled_orders.push(order);
                 continue;
+            };
+            // In single-symbol mode, force target_sym to config.symbol regardless
+            // of what the order requested, to prevent mislabeled positions.
+            let target_sym = if ctx_factory.per_symbol_data.is_none() {
+                config.symbol.as_str()
+            } else {
+                target_sym
             };
             if let Some(fill_price) =
                 order.try_fill(fill_bar.open, fill_bar.high, fill_bar.low, fill_bar.close)
