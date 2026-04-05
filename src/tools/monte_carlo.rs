@@ -33,8 +33,8 @@ pub async fn execute(
     let upper = symbol.to_uppercase();
     let cutoff_str = ai_helpers::compute_years_cutoff(years);
     let returns = ai_helpers::load_returns(cache, &upper, &cutoff_str).await?;
-    if returns.len() < 30 {
-        anyhow::bail!("Insufficient return observations: {}", returns.len());
+    if returns.len() < 60 {
+        anyhow::bail!("Insufficient return observations: {} (need at least 60)", returns.len());
     }
 
     // Run simulations

@@ -168,10 +168,10 @@ pub(crate) fn pearson_p_value(r: f64, n: usize) -> Option<f64> {
 }
 
 /// Load returns for multiple symbols, align to common length (from end), and
-/// return `(upper_symbols, aligned_returns, min_len)`.
+/// return `(upper_symbols, aligned_returns)`.
 ///
-/// Each return series is trimmed from the end so all have `min_len` observations.
-/// Fails if any symbol has fewer than `min_bars` observations after filtering.
+/// Each return series is trimmed from the end so all have the same number of
+/// observations. Fails if any symbol has fewer than `min_bars` observations.
 pub(crate) async fn load_aligned_returns(
     cache: &Arc<CachedStore>,
     symbols: &[String],
@@ -213,26 +213,43 @@ pub(crate) async fn load_aligned_returns(
 }
 
 /// Compute the mean of a slice of f64 values.
+///
+/// # Panics
+///
+/// Panics if `data` is empty.
 pub(crate) fn mean(data: &[f64]) -> f64 {
+    assert!(!data.is_empty(), "mean requires non-empty data");
     data.iter().sum::<f64>() / data.len() as f64
 }
 
 /// Compute sample variance (N-1 denominator) of a slice.
+///
+/// # Panics
+///
+/// Panics if `data` has fewer than 2 elements.
 pub(crate) fn variance(data: &[f64]) -> f64 {
+    assert!(data.len() >= 2, "variance requires at least 2 observations");
     let m = mean(data);
     data.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (data.len() - 1) as f64
 }
 
 /// Compute annualized covariance matrix from daily return series.
 ///
-/// All series must have the same length. Returns an n×n matrix (Vec of Vecs).
+/// All series must have the same length and at least 2 observations.
+/// `aligned` must be non-empty. Returns an n×n matrix (Vec of Vecs).
+///
+/// # Panics
+///
+/// Panics if `aligned` is empty or any series has fewer than 2 elements.
 pub(crate) fn covariance_matrix(
     aligned: &[Vec<f64>],
     means: &[f64],
     annualization_factor: f64,
 ) -> Vec<Vec<f64>> {
+    assert!(!aligned.is_empty(), "covariance_matrix requires non-empty aligned series");
     let n_assets = aligned.len();
     let n_obs = aligned[0].len();
+    assert!(n_obs >= 2, "covariance_matrix requires at least 2 observations");
     let mut cov = vec![vec![0.0_f64; n_assets]; n_assets];
     for i in 0..n_assets {
         for j in i..n_assets {
@@ -327,5 +344,53 @@ mod tests {
                 "non-intraday interval {interval} should match epoch_to_date_string"
             );
         }
+    }
+
+    // ─── mean / variance / covariance_matrix ───────────────────────────
+
+    #[test]
+    fn mean_basic() {
+        let data = [1.0, 2.0, 3.0, 4.0, 5.0];
+        assert!((mean(&data) - 3.0).abs() < 1e-10);
+    }
+
+    #[test]
+    #[should_panic(expected = "mean requires non-empty data")]
+    fn mean_empty_panics() {
+        mean(&[]);
+    }
+
+    #[test]
+    fn variance_basic() {
+        let data = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0];
+        let v = variance(&data);
+        // Sample variance = 4.571...
+        assert!((v - 4.571_428_571_428_571).abs() < 1e-6);
+    }
+
+    #[test]
+    #[should_panic(expected = "variance requires at least 2 observations")]
+    fn variance_single_element_panics() {
+        variance(&[1.0]);
+    }
+
+    #[test]
+    fn covariance_matrix_2x2_symmetric() {
+        let series = vec![vec![1.0, 2.0, 3.0], vec![2.0, 4.0, 6.0]];
+        let means: Vec<f64> = series.iter().map(|s| mean(s)).collect();
+        let cov = covariance_matrix(&series, &means, 1.0);
+        assert_eq!(cov.len(), 2);
+        assert_eq!(cov[0].len(), 2);
+        // Symmetry
+        assert!((cov[0][1] - cov[1][0]).abs() < 1e-10);
+        // Perfectly correlated: cov[0][1] should equal sqrt(var_a * var_b)
+        assert!(cov[0][1] > 0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "covariance_matrix requires non-empty aligned series")]
+    fn covariance_matrix_empty_panics() {
+        let empty: Vec<Vec<f64>> = vec![];
+        covariance_matrix(&empty, &[], 1.0);
     }
 }
