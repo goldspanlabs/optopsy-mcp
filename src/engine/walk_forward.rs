@@ -283,8 +283,31 @@ pub async fn execute(
         .load_ohlcv(&params.symbol, start_date, end_date)
         .await?;
 
-    // Extract unique sorted dates
-    let dates = crate::engine::ohlcv::extract_unique_dates(&ohlcv)?;
+    // Extract unique sorted dates — intersect with options data range if the
+    // strategy uses options, so walk-forward windows don't span dates with no
+    // options chain data.
+    let mut dates = crate::engine::ohlcv::extract_unique_dates(&ohlcv)?;
+
+    // Check if script uses options by looking for "options: true" in the source
+    let uses_options = script_source.contains("options: true");
+    if uses_options {
+        if let Ok(options_df) = data_loader
+            .load_options(&params.symbol, start_date, end_date)
+            .await
+        {
+            if let Ok(opt_dates) = crate::engine::ohlcv::extract_unique_dates(&options_df) {
+                if let (Some(&opt_start), Some(&opt_end)) = (opt_dates.first(), opt_dates.last()) {
+                    dates.retain(|d| *d >= opt_start && *d <= opt_end);
+                    tracing::info!(
+                        "Walk-forward: narrowed date range to options data ({} to {}, {} dates)",
+                        opt_start,
+                        opt_end,
+                        dates.len()
+                    );
+                }
+            }
+        }
+    }
 
     // Compute window boundaries
     let windows = compute_windows(&dates, params.n_windows, params.train_pct, &params.mode)?;
