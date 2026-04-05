@@ -22,10 +22,6 @@ use rhai::{Dynamic, Engine, Position};
 /// Call this from `build_engine()` after registering types and functions.
 pub fn register_dsl_syntax(engine: &mut Engine) {
     register_buy_shares(engine);
-    // NOTE: `sell validated` must be registered BEFORE `sell` because the raw
-    // `sell` parser yields to `sell validated` by returning Ok(None) on the
-    // "validated" lookahead, allowing Rhai to fall back to fixed-token matches.
-    register_sell_validated(engine);
     register_sell_shares(engine);
     // NOTE: "close position" syntax is NOT registered because "close" conflicts
     // with ctx.close (a BarContext property). The transpiler handles this by
@@ -249,11 +245,6 @@ fn register_sell_shares(engine: &mut Engine) {
 }
 
 /// `sell validated` is now handled by the unified `register_sell_shares`.
-/// This function is kept as a no-op so the registration call site doesn't change.
-fn register_sell_validated(_engine: &mut Engine) {
-    // Merged into register_sell_shares
-}
-
 /// `exit_position REASON` → `close_position(REASON)`
 ///
 /// Uses `exit_position` instead of `close position` because `close` conflicts
