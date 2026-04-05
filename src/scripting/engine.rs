@@ -385,31 +385,7 @@ pub fn validate_script(
 
     // Auto-detect symbols from extern_symbol params if not specified in config
     if config.symbols.is_empty() {
-        let mut symbol_values: Vec<String> = Vec::new();
-        for ep in &extern_params {
-            if ep.role == "symbol" {
-                let value = params
-                    .get(&ep.name)
-                    .or_else(|| {
-                        params
-                            .iter()
-                            .find(|(k, _)| k.eq_ignore_ascii_case(&ep.name))
-                            .map(|(_, v)| v)
-                    })
-                    .and_then(|v| v.as_str().map(String::from))
-                    .or_else(|| {
-                        ep.default
-                            .as_ref()
-                            .and_then(|d| d.as_str().map(String::from))
-                    });
-                if let Some(sym) = value {
-                    let sym = sym.trim().to_uppercase();
-                    if !sym.is_empty() && !symbol_values.contains(&sym) {
-                        symbol_values.push(sym);
-                    }
-                }
-            }
-        }
+        let symbol_values = resolve_symbols_from_extern_params(script_source, params);
         if symbol_values.is_empty() {
             diagnostics.push(ValidationDiagnostic {
                 level: DiagnosticLevel::Error,
@@ -567,34 +543,7 @@ pub async fn run_script_backtest(
 
     // 3a. Auto-detect symbols from extern_symbol params if not specified in config()
     if config.symbols.is_empty() {
-        let extern_params = super::stdlib::extract_extern_params(script_source);
-        let mut symbol_values: Vec<String> = Vec::new();
-        for ep in &extern_params {
-            if ep.role == "symbol" {
-                // Resolve value from params map (case-insensitive) or fall back to default.
-                // Supports both "symbol" and "SYMBOL" param keys for backward compat.
-                let value = params
-                    .get(&ep.name)
-                    .or_else(|| {
-                        params
-                            .iter()
-                            .find(|(k, _)| k.eq_ignore_ascii_case(&ep.name))
-                            .map(|(_, v)| v)
-                    })
-                    .and_then(|v| v.as_str().map(String::from))
-                    .or_else(|| {
-                        ep.default
-                            .as_ref()
-                            .and_then(|d| d.as_str().map(String::from))
-                    });
-                if let Some(sym) = value {
-                    let sym = sym.trim().to_uppercase();
-                    if !sym.is_empty() && !symbol_values.contains(&sym) {
-                        symbol_values.push(sym);
-                    }
-                }
-            }
-        }
+        let symbol_values = resolve_symbols_from_extern_params(script_source, params);
         if symbol_values.is_empty() {
             bail!(
                 "No symbols specified: declare extern_symbol() params or set symbol/symbols in config()"
@@ -2053,6 +2002,42 @@ fn has_fn(ast: &AST, name: &str, arity: usize) -> bool {
 // ---------------------------------------------------------------------------
 // Config parsing
 // ---------------------------------------------------------------------------
+
+/// Resolve symbol values from `extern_symbol` params, using case-insensitive
+/// param lookup with fallback to defaults. Shared by `validate_script` and
+/// `run_script_backtest` to prevent logic drift.
+fn resolve_symbols_from_extern_params(
+    script_source: &str,
+    params: &HashMap<String, serde_json::Value>,
+) -> Vec<String> {
+    let extern_params = super::stdlib::extract_extern_params(script_source);
+    let mut symbols: Vec<String> = Vec::new();
+    for ep in &extern_params {
+        if ep.role == "symbol" {
+            let value = params
+                .get(&ep.name)
+                .or_else(|| {
+                    params
+                        .iter()
+                        .find(|(k, _)| k.eq_ignore_ascii_case(&ep.name))
+                        .map(|(_, v)| v)
+                })
+                .and_then(|v| v.as_str().map(String::from))
+                .or_else(|| {
+                    ep.default
+                        .as_ref()
+                        .and_then(|d| d.as_str().map(String::from))
+                });
+            if let Some(sym) = value {
+                let sym = sym.trim().to_uppercase();
+                if !sym.is_empty() && !symbols.contains(&sym) {
+                    symbols.push(sym);
+                }
+            }
+        }
+    }
+    symbols
+}
 
 /// Parse the Rhai Map returned by `config()` into `ScriptConfig`.
 fn parse_config(map: Dynamic) -> Result<ScriptConfig> {

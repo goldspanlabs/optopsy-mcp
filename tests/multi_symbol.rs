@@ -490,10 +490,10 @@ fn on_bar(ctx) { [] }
 async fn stock_mtm_uses_correct_symbol_close() {
     let loader = make_two_symbol_loader();
 
-    // Buy QQQ on bar 0, exit on bar 3.
-    // QQQ: open=200.5 (bar 0 fill on bar 1 = bar1.open = 198.5),
-    //      close=194 on bar 3.
-    // P&L = (194 - 198.5) * 5 = -22.5
+    // Buy QQQ on bar 0; the order fills on bar 1 at QQQ's open (198.5).
+    // There is no explicit exit in the script, so with `auto_close_on_end: true`
+    // the position remains open until the final bar and should use QQQ's own
+    // close for MTM/closing rather than SPY's.
     let script = r#"
 let spy_sym = extern_symbol("spy_sym", "SPY", "primary");
 let qqq_sym = extern_symbol("qqq_sym", "QQQ", "secondary");
