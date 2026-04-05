@@ -569,7 +569,7 @@ fn default_wf_train_pct() -> f64 {
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 #[garde(context(()))]
 pub struct WalkForwardToolParams {
-    /// Strategy script name (filename without `.rhai` extension from `scripts/strategies/`).
+    /// Strategy script name (filename without extension from `scripts/strategies/`).
     #[garde(length(min = 1), pattern(r"^[A-Za-z0-9._-]+$"))]
     pub strategy: String,
 

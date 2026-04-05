@@ -251,10 +251,23 @@ pub async fn execute(
     let script_source = if let Some(src) = params.script_source {
         src
     } else {
-        let script_path = format!("scripts/strategies/{}.rhai", params.strategy);
-        tokio::fs::read_to_string(&script_path)
+        let trading_path = format!("scripts/strategies/{}.trading", params.strategy);
+        let rhai_path = format!("scripts/strategies/{}.rhai", params.strategy);
+        let script_path = if tokio::fs::metadata(&trading_path).await.is_ok() {
+            trading_path
+        } else {
+            rhai_path
+        };
+        let raw = tokio::fs::read_to_string(&script_path)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to read strategy script '{script_path}': {e}"))?
+            .map_err(|e| anyhow::anyhow!("Failed to read strategy script '{script_path}': {e}"))?;
+        // Auto-transpile Trading DSL to Rhai
+        if crate::scripting::dsl::is_trading_dsl(&raw) {
+            crate::scripting::dsl::transpile(&raw)
+                .map_err(|e| anyhow::anyhow!("DSL transpile error: {e}"))?
+        } else {
+            raw
+        }
     };
 
     // Load OHLCV data to get the date range

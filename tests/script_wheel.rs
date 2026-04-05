@@ -1,6 +1,6 @@
-//! Integration tests for the wheel strategy Rhai script.
+//! Integration tests for the wheel strategy script.
 //!
-//! Verifies that `scripts/strategies/wheel.rhai` produces correct backtest
+//! Verifies that `scripts/strategies/wheel.trading` produces correct backtest
 //! results using synthetic options data, and that the output format matches
 //! what the frontend expects.
 
@@ -11,6 +11,7 @@ use chrono::NaiveDate;
 use polars::prelude::*;
 
 use optopsy_mcp::data::parquet::DATETIME_COL;
+use optopsy_mcp::scripting::dsl;
 use optopsy_mcp::scripting::engine::{run_script_backtest, DataLoader, ScriptBacktestResult};
 use optopsy_mcp::scripting::types::OhlcvBar;
 
@@ -154,11 +155,12 @@ fn wheel_params() -> std::collections::HashMap<String, serde_json::Value> {
 // Tests
 // ---------------------------------------------------------------------------
 
-/// Verify `wheel.rhai` compiles and `config()` returns valid settings.
+/// Verify `wheel.trading` compiles and `config()` returns valid settings.
 #[tokio::test]
 async fn wheel_script_compiles_and_configures() {
-    let script_source =
-        std::fs::read_to_string("scripts/strategies/wheel.rhai").expect("wheel.rhai should exist");
+    let trading_source = std::fs::read_to_string("scripts/strategies/wheel.trading")
+        .expect("wheel.trading should exist");
+    let script_source = dsl::transpile(&trading_source).expect("wheel.trading should transpile");
     let params = wheel_params();
 
     // Verify it compiles (register extern() overloads so top-level calls resolve)
@@ -190,7 +192,7 @@ async fn wheel_script_compiles_and_configures() {
         },
     );
     let ast = engine.compile(&script_source);
-    assert!(ast.is_ok(), "wheel.rhai should compile: {:?}", ast.err());
+    assert!(ast.is_ok(), "wheel.trading should compile: {:?}", ast.err());
 
     // Verify config() can be called with params in scope
     let ast = ast.unwrap();
@@ -224,7 +226,7 @@ async fn wheel_script_compiles_and_configures() {
     );
 }
 
-/// Run wheel.rhai with synthetic data: put expires OTM (premium collected).
+/// Run wheel.trading with synthetic data: put expires OTM (premium collected).
 ///
 /// Next-bar execution: order queued on bar 0, fills on bar 1, expires on bar 2.
 #[tokio::test(flavor = "multi_thread")]
@@ -250,7 +252,8 @@ async fn wheel_script_put_expires_otm() {
         options_df: options_df.clone(),
     };
 
-    let script_source = std::fs::read_to_string("scripts/strategies/wheel.rhai").unwrap();
+    let trading_source = std::fs::read_to_string("scripts/strategies/wheel.trading").unwrap();
+    let script_source = dsl::transpile(&trading_source).expect("wheel.trading should transpile");
     let mut params = wheel_params();
     params.insert("TAKE_PROFIT".to_string(), serde_json::json!(null));
 
@@ -477,7 +480,8 @@ async fn wheel_script_result_has_expected_fields() {
         options_df,
     };
 
-    let script_source = std::fs::read_to_string("scripts/strategies/wheel.rhai").unwrap();
+    let trading_source = std::fs::read_to_string("scripts/strategies/wheel.trading").unwrap();
+    let script_source = dsl::transpile(&trading_source).expect("wheel.trading should transpile");
     let mut params = wheel_params();
     params.insert("TAKE_PROFIT".to_string(), serde_json::json!(null));
 
@@ -585,7 +589,8 @@ async fn wheel_full_cycle_assignment_and_called_away() {
     };
 
     // Use the wheel script with params
-    let script_source = std::fs::read_to_string("scripts/strategies/wheel.rhai").unwrap();
+    let trading_source = std::fs::read_to_string("scripts/strategies/wheel.trading").unwrap();
+    let script_source = dsl::transpile(&trading_source).expect("wheel.trading should transpile");
     let mut params = wheel_params();
     params.insert("TAKE_PROFIT".to_string(), serde_json::json!(null));
 

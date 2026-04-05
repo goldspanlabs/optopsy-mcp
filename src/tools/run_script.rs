@@ -19,7 +19,7 @@ const STRATEGIES_DIR: &str = "scripts/strategies";
 /// Parameters for the `run_script` MCP tool.
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct RunScriptParams {
-    /// Strategy script filename (without `.rhai` extension).
+    /// Strategy script filename (without extension).
     #[garde(skip)]
     pub strategy: Option<String>,
 
@@ -267,9 +267,22 @@ fn load_strategy(
     Ok((name_or_id.to_string(), source))
 }
 
-/// Load a strategy script from `scripts/strategies/{name}.rhai`.
+/// Load a strategy script from `scripts/strategies/`. Tries `.trading` first, then `.rhai`.
 fn load_strategy_file(name: &str) -> Result<String> {
-    let path = PathBuf::from(STRATEGIES_DIR).join(format!("{name}.rhai"));
-    std::fs::read_to_string(&path)
-        .map_err(|e| anyhow::anyhow!("Strategy '{name}' not found at '{}': {e}", path.display()))
+    let trading_path = PathBuf::from(STRATEGIES_DIR).join(format!("{name}.trading"));
+    if trading_path.exists() {
+        return std::fs::read_to_string(&trading_path).map_err(|e| {
+            anyhow::anyhow!(
+                "Strategy '{name}' not found at '{}': {e}",
+                trading_path.display()
+            )
+        });
+    }
+    let rhai_path = PathBuf::from(STRATEGIES_DIR).join(format!("{name}.rhai"));
+    std::fs::read_to_string(&rhai_path).map_err(|e| {
+        anyhow::anyhow!(
+            "Strategy '{name}' not found at '{}': {e}",
+            rhai_path.display()
+        )
+    })
 }

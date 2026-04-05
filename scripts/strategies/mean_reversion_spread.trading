@@ -1,0 +1,80 @@
+# Mean-Reversion Bull Put Spread
+# Sells bull put spreads on RSI dips within an uptrend, with volatility-adaptive
+# delta selection and dynamic exit rules using multiple indicators.
+
+strategy "Mean-Reversion Bull Put Spread"
+  capital CAPITAL
+  interval daily
+  data ohlcv, options
+  indicators sma:50, sma:200, ema:20, rsi:14, atr:14, bbands_upper:20, bbands_lower:20, bbands_mid:20, stochastic:14
+  slippage SLIPPAGE
+  expiration_filter monthly
+  category options
+  description "Bull put spreads on RSI dips with volatility-adaptive delta and dynamic exits"
+  hypothesis "RSI dips below 40 in uptrending markets revert, profiting bull put spreads"
+  tags mean_reversion, spreads, bull_put, rsi
+  regime uptrend, moderate_volatility
+
+asset symbol = "SPY"
+
+extern SLIPPAGE = "mid" "Slippage model" choices mid, spread
+
+state consecutive_losses = 0
+
+on each bar
+  skip when bar_idx < 200
+  skip when has positions
+  require sma:50, sma:200, rsi:14, atr:14
+
+  # Trend filter: uptrend
+  skip when sma(50) <= sma(200)
+
+  # RSI dip
+  skip when rsi(14) >= 40.0
+
+  # Pause after 3 consecutive losses
+  skip when consecutive_losses >= 3
+
+  # Volatility-adaptive delta
+  raw let bb_upper = ctx.bbands_upper(20);
+  raw let bb_lower = ctx.bbands_lower(20);
+  raw let bb_mid = ctx.bbands_mid(20);
+  raw let high_vol = if bb_upper != () && bb_lower != () && bb_mid != () && bb_mid > 0.0 { (bb_upper - bb_lower) / bb_mid > 0.08 } else { false };
+  raw let short_put_delta = if high_vol { 0.20 } else { 0.30 };
+  raw let long_put_delta = if high_vol { 0.10 } else { 0.15 };
+
+  # ATR-adaptive DTE
+  raw let atr_pct = ctx.atr(14) / ctx.close;
+  raw let target_dte = if atr_pct > 0.02 { 45 } else { 30 };
+
+  # Build bull put spread
+  raw let spread = ctx.bull_put_spread(short_put_delta, long_put_delta, target_dte);
+  raw if spread != () { __actions.push(spread); }
+
+on exit check
+  # Take profit at 50%
+  raw if pos.pnl_pct > 0.50 { return close_position("take_profit"); }
+
+  # RSI overbought + partial profit
+  raw let rsi = ctx.rsi(14);
+  raw if rsi != () && rsi > 70.0 && pos.pnl_pct > 0.20 { return close_position("take_profit"); }
+
+  # Stop loss at 200%
+  raw if pos.pnl_pct < -2.0 { return close_position("stop_loss"); }
+
+  # Trend reversal: death cross
+  raw let sma50 = ctx.sma(50);
+  raw let sma200 = ctx.sma(200);
+  raw if sma50 != () && sma200 != () && sma50 < sma200 { return close_position("stop_loss"); }
+
+  # Channel breakdown: close below 20-bar low
+  raw let channel_low = ctx.lowest_low(20);
+  raw if ctx.close < channel_low * 0.98 { return close_position("stop_loss"); }
+
+  hold position
+
+on position closed
+  when pos.pnl < 0 then
+    add 1 to consecutive_losses
+  otherwise
+    set consecutive_losses to 0

@@ -1,0 +1,62 @@
+# IBS Mean Reversion Strategy
+# Buys when price pulls back below a volatility-adjusted channel and IBS shows
+# intraday weakness (close in bottom 30% of range). Exits when close breaks
+# above yesterday's high.
+
+strategy "IBS Mean Reversion"
+  capital CAPITAL
+  interval daily
+  data ohlcv
+  indicators atr:14
+  category stock
+  description "Stock mean reversion using IBS indicator with volatility-adjusted entry channel"
+  hypothesis "Low IBS readings (< threshold) in uptrending markets revert within days"
+  tags mean_reversion, options, short_put, ibs
+  regime uptrend, low_volatility
+
+asset symbol = "SPY"
+
+extern IBS_THRESHOLD = 0.3 "IBS entry threshold"
+extern LOOKBACK = 10 "Highest-high lookback period"
+extern CHANNEL_MULT = 2.5 "Channel width multiplier"
+extern RISK_PCT = 0.02 "Fraction of equity to risk per trade"
+extern ATR_MULT = 2.0 "ATR multiplier for stop distance"
+
+on each bar
+  skip when bar_idx < 25
+  skip when has positions
+
+  # IBS = (close - low) / (high - low)
+  raw let bar_range = ctx.high - ctx.low;
+  raw if bar_range <= 0.0 { return []; }
+  raw let ibs = (ctx.close - ctx.low) / bar_range;
+
+  # Highest high over last LOOKBACK bars
+  raw let hh = ctx.highest_high(LOOKBACK);
+
+  # 25-day average high and average low (manual calc via lookback)
+  raw let sum_high = 0.0;
+  raw let sum_low = 0.0;
+  raw for i in range(0, 25) { let h = ctx.high(i); let l = ctx.low(i); if h == () || l == () { return []; } sum_high += h; sum_low += l; }
+  raw let avg_high = sum_high / 25.0;
+  raw let avg_low = sum_low / 25.0;
+
+  # Entry threshold
+  raw let threshold = hh - CHANNEL_MULT * (avg_high - avg_low);
+
+  raw if ctx.close < threshold && ibs < IBS_THRESHOLD {
+  raw   let atr = ctx.atr(14);
+  raw   let qty = if atr != () && atr > 0.0 { ctx.size_by_risk(RISK_PCT, ctx.close - ATR_MULT * atr) } else { ctx.size_by_equity(0.10) };
+  raw   if qty <= 0 { return []; }
+  raw   __actions.push(buy_stock(symbol, qty));
+  raw }
+
+on exit check
+  # Exit when close > yesterday's high
+  raw let prev_high = ctx.high(1);
+  raw if prev_high == () { return hold_position(); }
+
+  when close > prev_high then
+    close position "close_above_prev_high"
+  otherwise
+    hold position

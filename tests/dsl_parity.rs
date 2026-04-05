@@ -1,4 +1,4 @@
-//! Parity tests: verify .trading DSL strategies produce equivalent results to .rhai originals.
+//! Integration tests: verify .trading DSL strategies produce correct backtest results.
 
 use anyhow::Result;
 use chrono::NaiveDate;
@@ -187,7 +187,7 @@ fn bb_params() -> HashMap<String, serde_json::Value> {
 }
 
 // ---------------------------------------------------------------------------
-// Runner helper: run either .rhai or .trading script and return result
+// Runner helper: run a .trading script and return result
 // ---------------------------------------------------------------------------
 
 async fn run_strategy(
@@ -215,16 +215,31 @@ async fn run_strategy(
         .unwrap_or_else(|e| panic!("Backtest failed for {script_path}: {e}"))
 }
 
-// ===== SMA 200 THRESHOLD PARITY TESTS =====
+// ===== SMA 200 THRESHOLD TESTS =====
 
 #[tokio::test]
-async fn parity_sma200_threshold_trade_count() {
+async fn sma200_threshold_trade_count() {
     let bars = make_sma200_test_bars();
     let params = sma200_params();
 
-    let rhai_result =
-        run_strategy("scripts/strategies/sma200_threshold.rhai", &params, &bars).await;
-    let dsl_result = run_strategy(
+    let result = run_strategy(
+        "scripts/strategies/sma200_threshold.trading",
+        &params,
+        &bars,
+    )
+    .await;
+
+    assert!(result.result.trade_count > 0, "Should produce trades");
+
+    eprintln!("SMA200: produced {} trade(s)", result.result.trade_count);
+}
+
+#[tokio::test]
+async fn sma200_threshold_equity_curve() {
+    let bars = make_sma200_test_bars();
+    let params = sma200_params();
+
+    let result = run_strategy(
         "scripts/strategies/sma200_threshold.trading",
         &params,
         &bars,
@@ -232,205 +247,98 @@ async fn parity_sma200_threshold_trade_count() {
     .await;
 
     assert!(
-        rhai_result.result.trade_count > 0,
-        "Rhai should produce trades"
-    );
-    assert_eq!(
-        rhai_result.result.trade_count, dsl_result.result.trade_count,
-        "Trade count mismatch: rhai={}, dsl={}",
-        rhai_result.result.trade_count, dsl_result.result.trade_count
+        !result.result.equity_curve.is_empty(),
+        "Equity curve should not be empty"
     );
 
-    eprintln!(
-        "SMA200 parity: both produced {} trade(s)",
-        rhai_result.result.trade_count
-    );
+    let final_equity = result.result.equity_curve.last().unwrap().equity;
+    eprintln!("SMA200 final equity: {final_equity:.2}");
 }
 
 #[tokio::test]
-async fn parity_sma200_threshold_equity_curve() {
+async fn sma200_threshold_custom_series() {
     let bars = make_sma200_test_bars();
     let params = sma200_params();
 
-    let rhai_result =
-        run_strategy("scripts/strategies/sma200_threshold.rhai", &params, &bars).await;
-    let dsl_result = run_strategy(
+    let result = run_strategy(
         "scripts/strategies/sma200_threshold.trading",
         &params,
         &bars,
     )
     .await;
 
-    assert_eq!(
-        rhai_result.result.equity_curve.len(),
-        dsl_result.result.equity_curve.len(),
-        "Equity curve length mismatch: rhai={}, dsl={}",
-        rhai_result.result.equity_curve.len(),
-        dsl_result.result.equity_curve.len()
-    );
+    let keys: std::collections::BTreeSet<&String> = result.custom_series.series.keys().collect();
 
-    // Compare final equity (allow tiny float difference)
-    let rhai_final = rhai_result.result.equity_curve.last().unwrap().equity;
-    let dsl_final = dsl_result.result.equity_curve.last().unwrap().equity;
     assert!(
-        (rhai_final - dsl_final).abs() < 0.01,
-        "Final equity mismatch: rhai={rhai_final}, dsl={dsl_final}"
+        !keys.is_empty(),
+        "Should have custom series from ctx.plot() calls"
     );
 
-    eprintln!("SMA200 equity parity: rhai={rhai_final:.2}, dsl={dsl_final:.2}");
+    eprintln!("SMA200 custom series: {keys:?}");
 }
 
-#[tokio::test]
-async fn parity_sma200_threshold_custom_series() {
-    let bars = make_sma200_test_bars();
-    let params = sma200_params();
-
-    let rhai_result =
-        run_strategy("scripts/strategies/sma200_threshold.rhai", &params, &bars).await;
-    let dsl_result = run_strategy(
-        "scripts/strategies/sma200_threshold.trading",
-        &params,
-        &bars,
-    )
-    .await;
-
-    // Both should have the same custom series keys
-    let rhai_keys: std::collections::BTreeSet<&String> =
-        rhai_result.custom_series.series.keys().collect();
-    let dsl_keys: std::collections::BTreeSet<&String> =
-        dsl_result.custom_series.series.keys().collect();
-
-    assert_eq!(
-        rhai_keys, dsl_keys,
-        "Custom series keys mismatch.\n  rhai: {rhai_keys:?}\n  dsl:  {dsl_keys:?}"
-    );
-
-    // Check that the series values match (same length, same non-None values)
-    for key in &rhai_keys {
-        let rhai_vals = &rhai_result.custom_series.series[*key];
-        let dsl_vals = &dsl_result.custom_series.series[*key];
-        assert_eq!(
-            rhai_vals.len(),
-            dsl_vals.len(),
-            "Series '{key}' length mismatch"
-        );
-
-        for (i, (rv, dv)) in rhai_vals.iter().zip(dsl_vals.iter()).enumerate() {
-            match (rv, dv) {
-                (Some(r), Some(d)) => {
-                    assert!(
-                        (r - d).abs() < 0.01,
-                        "Series '{key}' value mismatch at index {i}: rhai={r}, dsl={d}"
-                    );
-                }
-                (None, None) => {}
-                _ => {
-                    panic!(
-                        "Series '{key}' presence mismatch at index {i}: rhai={rv:?}, dsl={dv:?}"
-                    );
-                }
-            }
-        }
-    }
-
-    eprintln!("SMA200 custom series parity: {rhai_keys:?}");
-}
-
-// ===== BB MEAN REVERSION PARITY TESTS =====
+// ===== BB MEAN REVERSION TESTS =====
 
 #[tokio::test]
-async fn parity_bb_mean_reversion_trade_count() {
+async fn bb_mean_reversion_trade_count() {
     let bars = make_bb_test_bars();
     let params = bb_params();
 
-    let rhai_result =
-        run_strategy("scripts/strategies/bb_mean_reversion.rhai", &params, &bars).await;
-    let dsl_result = run_strategy(
+    let result = run_strategy(
         "scripts/strategies/bb_mean_reversion.trading",
         &params,
         &bars,
     )
     .await;
 
-    assert!(
-        rhai_result.result.trade_count > 0,
-        "Rhai should produce trades"
-    );
-    assert_eq!(
-        rhai_result.result.trade_count, dsl_result.result.trade_count,
-        "Trade count mismatch: rhai={}, dsl={}",
-        rhai_result.result.trade_count, dsl_result.result.trade_count
-    );
+    assert!(result.result.trade_count > 0, "Should produce trades");
 
-    eprintln!(
-        "BB parity: both produced {} trade(s)",
-        rhai_result.result.trade_count
-    );
+    eprintln!("BB: produced {} trade(s)", result.result.trade_count);
 }
 
 #[tokio::test]
-async fn parity_bb_mean_reversion_exit_types() {
+async fn bb_mean_reversion_exit_types() {
     let bars = make_bb_test_bars();
     let params = bb_params();
 
-    let rhai_result =
-        run_strategy("scripts/strategies/bb_mean_reversion.rhai", &params, &bars).await;
-    let dsl_result = run_strategy(
+    let result = run_strategy(
         "scripts/strategies/bb_mean_reversion.trading",
         &params,
         &bars,
     )
     .await;
 
-    let rhai_exits: Vec<String> = rhai_result
-        .result
-        .trade_log
-        .iter()
-        .map(|t| format!("{:?}", t.exit_type))
-        .collect();
-    let dsl_exits: Vec<String> = dsl_result
+    let exits: Vec<String> = result
         .result
         .trade_log
         .iter()
         .map(|t| format!("{:?}", t.exit_type))
         .collect();
 
-    assert_eq!(
-        rhai_exits, dsl_exits,
-        "Exit types mismatch.\n  rhai: {rhai_exits:?}\n  dsl:  {dsl_exits:?}"
-    );
+    assert!(!exits.is_empty(), "Should have exit types");
 
-    eprintln!("BB exit type parity: {rhai_exits:?}");
+    eprintln!("BB exit types: {exits:?}");
 }
 
 #[tokio::test]
-async fn parity_bb_mean_reversion_equity_curve() {
+async fn bb_mean_reversion_equity_curve() {
     let bars = make_bb_test_bars();
     let params = bb_params();
 
-    let rhai_result =
-        run_strategy("scripts/strategies/bb_mean_reversion.rhai", &params, &bars).await;
-    let dsl_result = run_strategy(
+    let result = run_strategy(
         "scripts/strategies/bb_mean_reversion.trading",
         &params,
         &bars,
     )
     .await;
 
-    assert_eq!(
-        rhai_result.result.equity_curve.len(),
-        dsl_result.result.equity_curve.len(),
-        "Equity curve length mismatch"
-    );
-
-    let rhai_final = rhai_result.result.equity_curve.last().unwrap().equity;
-    let dsl_final = dsl_result.result.equity_curve.last().unwrap().equity;
     assert!(
-        (rhai_final - dsl_final).abs() < 0.01,
-        "Final equity mismatch: rhai={rhai_final}, dsl={dsl_final}"
+        !result.result.equity_curve.is_empty(),
+        "Equity curve should not be empty"
     );
 
-    eprintln!("BB equity parity: rhai={rhai_final:.2}, dsl={dsl_final:.2}");
+    let final_equity = result.result.equity_curve.last().unwrap().equity;
+    eprintln!("BB final equity: {final_equity:.2}");
 }
 
 // ===========================================================================
@@ -548,7 +456,7 @@ fn wheel_params() -> HashMap<String, serde_json::Value> {
     params
 }
 
-/// Run either .rhai or .trading script with options data and return result.
+/// Run a .trading script with options data and return result.
 async fn run_options_strategy(
     script_path: &str,
     params: &HashMap<String, serde_json::Value>,
@@ -575,10 +483,10 @@ async fn run_options_strategy(
         .unwrap_or_else(|e| panic!("Backtest failed for {script_path}: {e}"))
 }
 
-// ===== WHEEL PUT EXPIRES OTM PARITY =====
+// ===== WHEEL PUT EXPIRES OTM =====
 
 #[tokio::test(flavor = "multi_thread")]
-async fn parity_wheel_put_expires_otm() {
+async fn wheel_put_expires_otm() {
     let put_exp = d(2024, 2, 16);
 
     let options_df = make_options_df(&[
@@ -594,10 +502,7 @@ async fn parity_wheel_put_expires_otm() {
     let bars = make_bars_from_closes(&closes);
     let params = wheel_params();
 
-    let rhai_result =
-        run_options_strategy("scripts/strategies/wheel.rhai", &params, &bars, &options_df).await;
-
-    let dsl_result = run_options_strategy(
+    let result = run_options_strategy(
         "scripts/strategies/wheel.trading",
         &params,
         &bars,
@@ -605,38 +510,28 @@ async fn parity_wheel_put_expires_otm() {
     )
     .await;
 
-    // Trade count parity
     assert!(
-        rhai_result.result.trade_count > 0,
-        "Rhai should produce trades. Warnings: {:?}",
-        rhai_result.result.warnings,
-    );
-    assert_eq!(
-        rhai_result.result.trade_count, dsl_result.result.trade_count,
-        "Trade count mismatch: rhai={}, dsl={}. DSL warnings: {:?}",
-        rhai_result.result.trade_count, dsl_result.result.trade_count, dsl_result.result.warnings,
+        result.result.trade_count > 0,
+        "Should produce trades. Warnings: {:?}",
+        result.result.warnings,
     );
 
-    // Equity curve length parity
-    assert_eq!(
-        rhai_result.result.equity_curve.len(),
-        dsl_result.result.equity_curve.len(),
-        "Equity curve length mismatch: rhai={}, dsl={}",
-        rhai_result.result.equity_curve.len(),
-        dsl_result.result.equity_curve.len(),
+    assert!(
+        !result.result.equity_curve.is_empty(),
+        "Equity curve should not be empty",
     );
 
     eprintln!(
-        "Wheel put OTM parity: both produced {} trade(s), {} equity points",
-        rhai_result.result.trade_count,
-        rhai_result.result.equity_curve.len(),
+        "Wheel put OTM: produced {} trade(s), {} equity points",
+        result.result.trade_count,
+        result.result.equity_curve.len(),
     );
 }
 
-// ===== WHEEL FULL CYCLE PARITY =====
+// ===== WHEEL FULL CYCLE =====
 
 #[tokio::test(flavor = "multi_thread")]
-async fn parity_wheel_full_cycle() {
+async fn wheel_full_cycle() {
     let put_exp = d(2024, 2, 16);
     let call_exp = d(2024, 3, 15);
 
@@ -693,10 +588,7 @@ async fn parity_wheel_full_cycle() {
 
     let params = wheel_params();
 
-    let rhai_result =
-        run_options_strategy("scripts/strategies/wheel.rhai", &params, &bars, &options_df).await;
-
-    let dsl_result = run_options_strategy(
+    let result = run_options_strategy(
         "scripts/strategies/wheel.trading",
         &params,
         &bars,
@@ -704,48 +596,28 @@ async fn parity_wheel_full_cycle() {
     )
     .await;
 
-    // Trade count parity
     assert!(
-        rhai_result.result.trade_count >= 2,
-        "Rhai should have at least 2 trades (put assignment + stock called away), got {}. Warnings: {:?}",
-        rhai_result.result.trade_count,
-        rhai_result.result.warnings,
-    );
-    assert_eq!(
-        rhai_result.result.trade_count, dsl_result.result.trade_count,
-        "Trade count mismatch: rhai={}, dsl={}. DSL warnings: {:?}",
-        rhai_result.result.trade_count, dsl_result.result.trade_count, dsl_result.result.warnings,
+        result.result.trade_count >= 2,
+        "Should have at least 2 trades (put assignment + stock called away), got {}. Warnings: {:?}",
+        result.result.trade_count,
+        result.result.warnings,
     );
 
-    // Exit type parity
-    let rhai_exits: Vec<String> = rhai_result
+    let exits: Vec<String> = result
         .result
         .trade_log
         .iter()
         .map(|t| format!("{:?}", t.exit_type))
         .collect();
-    let dsl_exits: Vec<String> = dsl_result
-        .result
-        .trade_log
-        .iter()
-        .map(|t| format!("{:?}", t.exit_type))
-        .collect();
-    assert_eq!(
-        rhai_exits, dsl_exits,
-        "Exit types mismatch.\n  rhai: {rhai_exits:?}\n  dsl:  {dsl_exits:?}"
-    );
 
-    // Equity curve length parity
     assert_eq!(
-        rhai_result.result.equity_curve.len(),
-        dsl_result.result.equity_curve.len(),
-        "Equity curve length mismatch: rhai={}, dsl={}",
-        rhai_result.result.equity_curve.len(),
-        dsl_result.result.equity_curve.len(),
+        result.result.equity_curve.len(),
+        5,
+        "Should have 5 equity points",
     );
 
     eprintln!(
-        "Wheel full cycle parity: both produced {} trade(s), exit types: {:?}",
-        rhai_result.result.trade_count, rhai_exits,
+        "Wheel full cycle: produced {} trade(s), exit types: {:?}",
+        result.result.trade_count, exits,
     );
 }

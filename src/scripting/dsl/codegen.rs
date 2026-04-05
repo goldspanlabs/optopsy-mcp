@@ -361,6 +361,10 @@ fn config_value(val: &str) -> String {
         v if v.parse::<f64>().is_ok() => v.to_string(),
         v if v.starts_with('"') => v.to_string(),
         v if v.starts_with("params.") => v.to_string(),
+        // All-caps or contains underscore → treat as variable reference (extern param)
+        v if v.chars().all(|c| c.is_ascii_uppercase() || c == '_') && !v.is_empty() => {
+            v.to_string()
+        }
         other => format!("\"{other}\""),
     }
 }
@@ -407,7 +411,7 @@ fn generate_config(out: &mut String, s: &StrategyBlock, program: &DslProgram) {
     if has_engine {
         out.push_str("        engine: #{\n");
         if let Some(ref slip) = s.slippage {
-            out.push_str(&format!("            slippage: \"{slip}\",\n"));
+            out.push_str(&format!("            slippage: {},\n", config_value(slip)));
         }
         if let Some(ref ef) = s.expiration_filter {
             out.push_str(&format!("            expiration_filter: \"{ef}\",\n"));

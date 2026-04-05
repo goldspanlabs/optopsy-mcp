@@ -4,6 +4,7 @@ use anyhow::Result;
 use chrono::NaiveDate;
 use polars::prelude::*;
 
+use optopsy_mcp::scripting::dsl;
 use optopsy_mcp::scripting::engine::{run_script_backtest, DataLoader};
 use optopsy_mcp::scripting::types::OhlcvBar;
 
@@ -153,8 +154,10 @@ fn make_bb_test_bars() -> Vec<OhlcvBar> {
 /// Verify the script compiles and `config()` returns valid settings.
 #[tokio::test]
 async fn bb_script_compiles_and_configures() {
-    let script_source = std::fs::read_to_string("scripts/strategies/bb_mean_reversion.rhai")
-        .expect("bb_mean_reversion.rhai should exist");
+    let trading_source = std::fs::read_to_string("scripts/strategies/bb_mean_reversion.trading")
+        .expect("bb_mean_reversion.trading should exist");
+    let script_source =
+        dsl::transpile(&trading_source).expect("bb_mean_reversion.trading should transpile");
     let params = bb_params();
 
     let mut engine = optopsy_mcp::scripting::registration::build_engine();
@@ -187,7 +190,7 @@ async fn bb_script_compiles_and_configures() {
     let ast = engine.compile(&script_source);
     assert!(
         ast.is_ok(),
-        "bb_mean_reversion.rhai should compile: {:?}",
+        "bb_mean_reversion.trading should compile: {:?}",
         ast.err()
     );
 
@@ -221,8 +224,10 @@ async fn bb_entry_on_breakout_exit_on_reversion() {
         ohlcv_df: bars_to_df(&bars),
     };
 
+    let trading_source =
+        std::fs::read_to_string("scripts/strategies/bb_mean_reversion.trading").unwrap();
     let script_source =
-        std::fs::read_to_string("scripts/strategies/bb_mean_reversion.rhai").unwrap();
+        dsl::transpile(&trading_source).expect("bb_mean_reversion.trading should transpile");
     let params = bb_params();
 
     let result = run_script_backtest(&script_source, &params, &loader, None, None, None).await;
@@ -311,8 +316,10 @@ async fn bb_max_hold_exit() {
         ohlcv_df: bars_to_df(&bars),
     };
 
+    let trading_source =
+        std::fs::read_to_string("scripts/strategies/bb_mean_reversion.trading").unwrap();
     let script_source =
-        std::fs::read_to_string("scripts/strategies/bb_mean_reversion.rhai").unwrap();
+        dsl::transpile(&trading_source).expect("bb_mean_reversion.trading should transpile");
     let params = bb_params();
 
     let result = run_script_backtest(&script_source, &params, &loader, None, None, None).await;

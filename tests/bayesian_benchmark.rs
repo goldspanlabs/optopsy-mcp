@@ -30,6 +30,7 @@ fn wheel_base_params() -> HashMap<String, Value> {
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires real SPY data"]
+#[allow(clippy::too_many_lines)]
 async fn bayesian_wheel_call_dte_benchmark() {
     let data_dir = PathBuf::from("data");
     let spy_path = data_dir.join("options").join("SPY.parquet");
@@ -38,8 +39,10 @@ async fn bayesian_wheel_call_dte_benchmark() {
         "SPY options data not found at {spy_path:?}"
     );
 
-    let script_source =
-        std::fs::read_to_string("scripts/strategies/wheel.rhai").expect("wheel.rhai not found");
+    let trading_source = std::fs::read_to_string("scripts/strategies/wheel.trading")
+        .expect("wheel.trading not found");
+    let script_source = optopsy_mcp::scripting::dsl::transpile(&trading_source)
+        .expect("wheel.trading should transpile");
 
     let cache = Arc::new(CachedStore::new(data_dir, "options".to_string()));
     let loader = CachingDataLoader::new(cache, None);

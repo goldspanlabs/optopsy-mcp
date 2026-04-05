@@ -477,7 +477,7 @@ pub trait ChatStore: Send + Sync {
 // Backend-agnostic seeding
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// One-time migration: seed strategies from `.rhai` files if the store is empty.
+/// One-time migration: seed strategies from script files if the store is empty.
 ///
 /// Works with any `StrategyStore` backend (`SQLite`, Postgres, etc.). Call on
 /// startup — if the store already has strategies, this is a no-op. Returns

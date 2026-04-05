@@ -5,6 +5,7 @@ use chrono::NaiveDate;
 use polars::prelude::*;
 use std::collections::HashMap;
 
+use optopsy_mcp::scripting::dsl;
 use optopsy_mcp::scripting::engine::{run_script_backtest, DataLoader};
 use optopsy_mcp::scripting::types::OhlcvBar;
 
@@ -116,8 +117,10 @@ async fn sma200_threshold_runs_and_produces_trades() {
     let df = bars_to_df(&bars);
     let loader = TestDataLoader { ohlcv_df: df };
 
-    let script = std::fs::read_to_string("scripts/strategies/sma200_threshold.rhai")
-        .expect("sma200_threshold.rhai should exist");
+    let trading_source = std::fs::read_to_string("scripts/strategies/sma200_threshold.trading")
+        .expect("sma200_threshold.trading should exist");
+    let script =
+        dsl::transpile(&trading_source).expect("sma200_threshold.trading should transpile");
 
     let result = run_script_backtest(&script, &sma200_params(), &loader, None, None, None)
         .await
@@ -173,8 +176,10 @@ async fn sma200_threshold_no_trades_before_warmup() {
     let df = bars_to_df(&bars);
     let loader = TestDataLoader { ohlcv_df: df };
 
-    let script = std::fs::read_to_string("scripts/strategies/sma200_threshold.rhai")
-        .expect("sma200_threshold.rhai should exist");
+    let trading_source = std::fs::read_to_string("scripts/strategies/sma200_threshold.trading")
+        .expect("sma200_threshold.trading should exist");
+    let script =
+        dsl::transpile(&trading_source).expect("sma200_threshold.trading should transpile");
 
     let result = run_script_backtest(&script, &sma200_params(), &loader, None, None, None)
         .await

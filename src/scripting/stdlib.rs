@@ -454,7 +454,7 @@ pub fn extract_extern_params(script_source: &str) -> Vec<ExternParam> {
         .unwrap_or_default()
 }
 
-/// List `.rhai` strategy scripts with parsed metadata.
+/// List `.trading` and `.rhai` strategy scripts with parsed metadata.
 #[must_use]
 pub fn list_scripts() -> Vec<ScriptMeta> {
     let dir = std::path::Path::new("scripts/strategies");
@@ -465,7 +465,9 @@ pub fn list_scripts() -> Vec<ScriptMeta> {
         .filter_map(|e| {
             let e = e.ok()?;
             let filename = e.file_name().to_string_lossy().to_string();
-            let id = filename.strip_suffix(".rhai")?;
+            let id = filename
+                .strip_suffix(".trading")
+                .or_else(|| filename.strip_suffix(".rhai"))?;
             let source = std::fs::read_to_string(e.path()).ok()?;
             let mut meta = parse_script_meta(id, &source);
             meta.params = extract_extern_params(&source);
