@@ -72,17 +72,15 @@ fn register_buy_shares(engine: &mut Engine) {
             })?;
 
             // Read `symbol` from scope (set by extern_symbol or let binding)
-            let sym = context
-                .scope()
-                .get_value::<rhai::ImmutableString>("symbol")
-                .map(Dynamic::from)
-                .unwrap_or_else(|| Dynamic::from(""));
-
             let mut map = rhai::Map::new();
             map.insert("action".into(), "open_stock".into());
             map.insert("side".into(), "long".into());
             map.insert("qty".into(), Dynamic::from(qty_int));
-            map.insert("symbol".into(), sym);
+            // Only insert symbol if it exists in scope; omitting lets the engine
+            // fall back to config.symbol instead of matching on empty string.
+            if let Some(sym) = context.scope().get_value::<rhai::ImmutableString>("symbol") {
+                map.insert("symbol".into(), Dynamic::from(sym));
+            }
             Ok(Dynamic::from_map(map))
         },
     );
@@ -132,17 +130,13 @@ fn register_sell_shares(engine: &mut Engine) {
                 ))
             })?;
 
-            let sym = context
-                .scope()
-                .get_value::<rhai::ImmutableString>("symbol")
-                .map(Dynamic::from)
-                .unwrap_or_else(|| Dynamic::from(""));
-
             let mut map = rhai::Map::new();
             map.insert("action".into(), "open_stock".into());
             map.insert("side".into(), "short".into());
             map.insert("qty".into(), Dynamic::from(qty_int));
-            map.insert("symbol".into(), sym);
+            if let Some(sym) = context.scope().get_value::<rhai::ImmutableString>("symbol") {
+                map.insert("symbol".into(), Dynamic::from(sym));
+            }
             Ok(Dynamic::from_map(map))
         },
     );
@@ -176,17 +170,13 @@ fn register_sell_validated(engine: &mut Engine) {
                     return Ok(Dynamic::UNIT);
                 }
 
-                let sym = context
-                    .scope()
-                    .get_value::<rhai::ImmutableString>("symbol")
-                    .map(Dynamic::from)
-                    .unwrap_or_else(|| Dynamic::from(""));
-
                 let mut map = rhai::Map::new();
                 map.insert("action".into(), "open_stock".into());
                 map.insert("side".into(), "short".into());
                 map.insert("qty".into(), Dynamic::from(requested));
-                map.insert("symbol".into(), sym);
+                if let Some(sym) = context.scope().get_value::<rhai::ImmutableString>("symbol") {
+                    map.insert("symbol".into(), Dynamic::from(sym));
+                }
                 Ok(Dynamic::from_map(map))
             },
         )

@@ -384,6 +384,12 @@ pub fn validate_script(
             if ep.role == "symbol" {
                 let value = params
                     .get(&ep.name)
+                    .or_else(|| {
+                        params
+                            .iter()
+                            .find(|(k, _)| k.eq_ignore_ascii_case(&ep.name))
+                            .map(|(_, v)| v)
+                    })
                     .and_then(|v| v.as_str().map(String::from))
                     .or_else(|| {
                         ep.default
@@ -554,9 +560,16 @@ pub async fn run_script_backtest(
         let mut symbol_values: Vec<String> = Vec::new();
         for ep in &extern_params {
             if ep.role == "symbol" {
-                // Resolve value from params map, fall back to default
+                // Resolve value from params map (case-insensitive) or fall back to default.
+                // Supports both "symbol" and "SYMBOL" param keys for backward compat.
                 let value = params
                     .get(&ep.name)
+                    .or_else(|| {
+                        params
+                            .iter()
+                            .find(|(k, _)| k.eq_ignore_ascii_case(&ep.name))
+                            .map(|(_, v)| v)
+                    })
                     .and_then(|v| v.as_str().map(String::from))
                     .or_else(|| {
                         ep.default
@@ -608,15 +621,25 @@ pub async fn run_script_backtest(
 
     if config.symbols.len() > 1 {
         // ----- Multi-symbol path -----
+
+        // Coerce interval to daily if options are needed (mirrors single-symbol path)
+        if config.needs_options && config.interval != Interval::Daily {
+            early_warnings.push(format!(
+                "Options require daily data; coercing interval from {:?} to Daily",
+                config.interval
+            ));
+            config.interval = Interval::Daily;
+        }
+
         let (psd, _master_dates) =
             load_multi_symbol_data(&config, data_loader, &mut early_warnings).await?;
 
         // Use first symbol's data as the primary loop driver.
         // All symbols share the same dates after intersection.
         let first = &config.symbols[0];
-        let first_data = psd
-            .get(first)
-            .expect("first symbol must be in per_symbol_data");
+        let first_data = psd.get(first).with_context(|| {
+            format!("multi-symbol data load succeeded but '{first}' missing from per_symbol_data")
+        })?;
         price_history = Arc::clone(&first_data.bars);
         indicator_store = Arc::clone(&first_data.indicator_store);
         split_timeline = Arc::clone(&first_data.split_timeline);
@@ -904,8 +927,24 @@ pub async fn run_script_backtest(
         let mut unfilled_orders: Vec<PendingOrder> = Vec::new();
         let mut auto_exit_orders: Vec<PendingOrder> = Vec::new();
         for order in orders_to_process {
-            // Resolve the target symbol's bar for fill checks (multi-symbol support)
-            let target_sym = order.symbol.as_deref().unwrap_or(&config.symbol);
+            // Resolve the target symbol's bar for fill checks (multi-symbol support).
+            // For close orders, derive the symbol from the referenced position so
+            // auto stop-loss/take-profit orders fill against the correct market.
+            let position_sym: Option<String> = match &order.action {
+                ScriptAction::Close {
+                    position_id: Some(pid),
+                    ..
+                } => positions
+                    .iter()
+                    .find(|p| p.id == *pid)
+                    .map(|p| p.symbol.clone()),
+                _ => None,
+            };
+            let target_sym = order
+                .symbol
+                .as_deref()
+                .or(position_sym.as_deref())
+                .unwrap_or(&config.symbol);
             let fill_bar = if let Some(psd) = &ctx_factory.per_symbol_data {
                 psd.get(target_sym).and_then(|d| d.bars.get(bar_idx))
             } else {
@@ -1701,16 +1740,18 @@ pub async fn run_script_backtest(
             pos.current_date = today;
         }
 
-        // Update last_known prices for data-gap fill pricing
-        if let Some(psd) = &ctx_factory.per_symbol_data {
-            // Multi-symbol: update each symbol's last_known independently
-            for (_sym, data) in psd.iter() {
-                if let (Some(pt), Some(di)) = (&data.price_table, &data.date_index) {
-                    let mut lk = data.last_known.lock().unwrap_or_else(|e| e.into_inner());
-                    crate::engine::positions::update_last_known(pt, di, today, &mut lk);
+        // Update last_known prices for data-gap fill pricing (options only)
+        if config.needs_options {
+            if let Some(psd) = &ctx_factory.per_symbol_data {
+                for (_sym, data) in psd.iter() {
+                    if let (Some(pt), Some(di)) = (&data.price_table, &data.date_index) {
+                        let mut lk = data.last_known.lock().unwrap_or_else(|e| e.into_inner());
+                        crate::engine::positions::update_last_known(pt, di, today, &mut lk);
+                    }
                 }
             }
-        } else if let (Some(pt), Some(di)) = (&price_table, &date_index) {
+        }
+        if let (Some(pt), Some(di)) = (&price_table, &date_index) {
             crate::engine::positions::update_last_known(pt, di, today, &mut last_known);
         }
 
@@ -1738,16 +1779,22 @@ pub async fn run_script_backtest(
                 ScriptPositionInner::Options {
                     legs, multiplier, ..
                 } => {
-                    // MTM each leg using PriceTable / last_known
+                    // MTM each leg using PriceTable / last_known.
+                    // Lock once per position (not per leg) to reduce mutex overhead.
+                    let sym_lk_guard = ctx_factory
+                        .per_symbol_data
+                        .as_ref()
+                        .and_then(|psd| psd.get(&pos.symbol))
+                        .map(|d| d.last_known.lock().unwrap_or_else(|e| e.into_inner()));
+
                     let mut pos_pnl = 0.0;
                     for leg in legs.iter_mut() {
-                        // In multi-symbol mode, use per-symbol PriceTable and last_known
                         let current = if let Some(psd) = &ctx_factory.per_symbol_data {
                             if let Some(data) = psd.get(&pos.symbol) {
-                                let lk = data.last_known.lock().unwrap_or_else(|e| e.into_inner());
+                                let lk_ref = sym_lk_guard.as_deref().unwrap();
                                 lookup_option_price(
                                     &data.price_table,
-                                    &lk,
+                                    lk_ref,
                                     today,
                                     leg.expiration,
                                     leg.strike,
@@ -3806,28 +3853,30 @@ async fn load_multi_symbol_data(
             &indicator_bars,
         )?);
 
-        // Try to load options (non-fatal if missing)
-        let (options_by_date, price_table, date_index) = match data_loader
-            .load_options(sym, config.start_date, config.end_date)
-            .await
-        {
-            Ok(df) if df.height() > 0 => {
-                let (pt, _days, di) = crate::engine::price_table::build_price_table(&df)?;
-                let obd = DatePartitionedOptions::from_df(&df, &config.expiration_filter)?;
-                (Some(Arc::new(obd)), Some(Arc::new(pt)), Some(Arc::new(di)))
+        // Only load options when the script needs them (avoids I/O and warnings
+        // for stock-only multi-symbol scripts).
+        let (options_by_date, price_table, date_index) = if config.needs_options {
+            match data_loader
+                .load_options(sym, config.start_date, config.end_date)
+                .await
+            {
+                Ok(df) if df.height() > 0 => {
+                    let (pt, _days, di) = crate::engine::price_table::build_price_table(&df)?;
+                    let obd = DatePartitionedOptions::from_df(&df, &config.expiration_filter)?;
+                    (Some(Arc::new(obd)), Some(Arc::new(pt)), Some(Arc::new(di)))
+                }
+                Ok(_) => {
+                    tracing::info!(symbol = sym, "Options data empty — OHLCV only");
+                    (None, None, None)
+                }
+                Err(e) => {
+                    tracing::info!(symbol = sym, error = %e, "No options data available — OHLCV only");
+                    warnings.push(format!("{sym}: no options data ({e:#})"));
+                    (None, None, None)
+                }
             }
-            Ok(_) => {
-                // Empty DataFrame — no options data
-                tracing::info!(symbol = sym, "Options data empty — OHLCV only");
-                (None, None, None)
-            }
-            Err(e) => {
-                // No options data for this symbol — that's fine (e.g., VIX, futures)
-                // but surface the reason so parsing errors aren't silently swallowed
-                tracing::info!(symbol = sym, error = %e, "No options data available — OHLCV only");
-                warnings.push(format!("{sym}: no options data ({e:#})"));
-                (None, None, None)
-            }
+        } else {
+            (None, None, None)
         };
 
         per_symbol.insert(
