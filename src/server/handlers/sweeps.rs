@@ -98,7 +98,7 @@ pub(crate) fn resolve_strategy_source_from_store(
     name_or_id: &str,
 ) -> Result<(String, String), (StatusCode, String)> {
     // Try exact ID match
-    let (id, source) = if let Ok(Some(source)) = store.get_source(name_or_id) {
+    let (id, raw) = if let Ok(Some(source)) = store.get_source(name_or_id) {
         (name_or_id.to_string(), source)
     } else if let Ok(Some((id, source))) = store.get_source_by_name(name_or_id) {
         (id, source)
@@ -109,18 +109,9 @@ pub(crate) fn resolve_strategy_source_from_store(
         ));
     };
 
-    // Auto-transpile Trading DSL to Rhai
-    let source = if crate::scripting::dsl::is_trading_dsl(&source) {
-        crate::scripting::dsl::transpile(&source).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("DSL transpile error: {e}"),
-            )
-        })?
-    } else {
-        source
-    };
-
+    // Transpile .trading DSL → Rhai if needed (single shared helper)
+    let source = crate::tools::run_script::maybe_transpile(raw)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     Ok((id, source))
 }
 
