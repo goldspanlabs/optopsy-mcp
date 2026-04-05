@@ -282,9 +282,11 @@ pub async fn execute(
         bail!("params_grid produced no parameter combinations");
     }
 
-    // Build base params: start from caller-provided params, then ensure SYMBOL and CAPITAL
+    // Build base params: start from caller-provided params, then ensure SYMBOL and CAPITAL.
+    // Inject both SYMBOL (legacy) and symbol (extern_symbol) so scripts using either work.
     let mut base_params: HashMap<String, Value> = params.base_params.unwrap_or_default();
     base_params.insert("SYMBOL".to_string(), serde_json::json!(params.symbol));
+    base_params.insert("symbol".to_string(), serde_json::json!(params.symbol));
     base_params.insert("CAPITAL".to_string(), serde_json::json!(params.capital));
 
     // Profile merge if requested

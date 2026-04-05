@@ -3224,9 +3224,17 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ParsedAction> {
                                 | LegSpec::Resolved { side, .. } => *side == Side::Long,
                             })
                             .unwrap_or(true);
+                    // Symbol may be on the outer action map or nested inside the
+                    // "spread" sub-map (set by SymbolContext.build_strategy).
                     let symbol = map
                         .get("symbol")
-                        .and_then(|v| v.clone().into_immutable_string().ok())
+                        .cloned()
+                        .or_else(|| {
+                            map.get("spread")
+                                .and_then(|s| s.clone().try_cast::<rhai::Map>())
+                                .and_then(|m| m.get("symbol").cloned())
+                        })
+                        .and_then(|v| v.into_immutable_string().ok())
                         .map(|s| s.to_uppercase());
                     (ScriptAction::OpenOptions { legs, qty, symbol }, is_buy)
                 }

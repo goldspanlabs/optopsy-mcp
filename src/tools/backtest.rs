@@ -170,6 +170,7 @@ async fn execute_single(
     let symbol = params
         .params
         .get("SYMBOL")
+        .or_else(|| params.params.get("symbol"))
         .and_then(Value::as_str)
         .unwrap_or("UNKNOWN")
         .to_owned();
@@ -242,6 +243,7 @@ async fn execute_sweep(
     let symbol = params
         .params
         .get("SYMBOL")
+        .or_else(|| params.params.get("symbol"))
         .and_then(Value::as_str)
         .unwrap_or("UNKNOWN")
         .to_owned();
