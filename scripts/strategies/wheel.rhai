@@ -6,6 +6,7 @@
 //! regime: sideways, low_volatility
 
 // CAPITAL is universal — provided by the FE dialog via params map.
+// symbol is set via extern_symbol() below; defaults to "SPY", overridable via params.
 let symbol = extern_symbol("symbol", "SPY", "Ticker to trade");
 
 // Top-level variables persist across bars (Rhai scope is preserved).

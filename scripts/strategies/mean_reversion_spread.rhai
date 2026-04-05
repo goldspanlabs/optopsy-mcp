@@ -9,6 +9,7 @@
 // delta selection and dynamic exit rules using multiple indicators.
 //
 // CAPITAL is universal — provided by the FE dialog via params map.
+// symbol is set via extern_symbol() below; defaults to "SPY", overridable via params.
 let symbol = extern_symbol("symbol", "SPY", "Ticker to trade");
 let SLIPPAGE = extern("SLIPPAGE", "mid", "Slippage model", ["mid", "spread"]);
 
