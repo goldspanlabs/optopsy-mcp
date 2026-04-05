@@ -176,7 +176,7 @@ fn make_two_symbol_loader() -> MultiSymbolLoader {
 
 fn default_params() -> std::collections::HashMap<String, serde_json::Value> {
     let mut params = std::collections::HashMap::new();
-    params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
+    params.insert("symbol".to_string(), serde_json::json!("SPY"));
     params.insert("CAPITAL".to_string(), serde_json::json!(100_000));
     params
 }

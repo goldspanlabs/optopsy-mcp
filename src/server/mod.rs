@@ -639,7 +639,7 @@ impl OptopsyServer {
     /// ```json
     /// {
     ///   "strategy": "short_put",
-    ///   "params": { "SYMBOL": "SPY", "CAPITAL": 50000, "DELTA_TARGET": 0.30, "DTE_TARGET": 45 }
+    ///   "params": { "symbol": "SPY", "CAPITAL": 50000, "DELTA_TARGET": 0.30, "DTE_TARGET": 45 }
     /// }
     /// ```
     ///
@@ -647,7 +647,7 @@ impl OptopsyServer {
     /// ```json
     /// {
     ///   "strategy": "short_put",
-    ///   "params": { "SYMBOL": "SPY", "CAPITAL": 50000 },
+    ///   "params": { "symbol": "SPY", "CAPITAL": 50000 },
     ///   "sweep_params": [
     ///     { "name": "DELTA_TARGET", "start": 0.10, "stop": 0.40, "step": 0.05 },
     ///     { "name": "DTE_TARGET", "param_type": "int", "start": 30, "stop": 60, "step": 5 }

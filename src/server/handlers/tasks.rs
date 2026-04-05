@@ -156,8 +156,7 @@ pub async fn submit_backtest(
 ) -> Json<SubmitResponse> {
     let symbol = req
         .params
-        .get("SYMBOL")
-        .or_else(|| req.params.get("symbol"))
+        .get("symbol")
         .and_then(Value::as_str)
         .unwrap_or("UNKNOWN")
         .to_owned();
@@ -290,8 +289,7 @@ pub async fn submit_sweep(
 ) -> Result<Json<SubmitResponse>, (StatusCode, String)> {
     let symbol = req
         .params
-        .get("SYMBOL")
-        .or_else(|| req.params.get("symbol"))
+        .get("symbol")
         .and_then(Value::as_str)
         .unwrap_or("UNKNOWN")
         .to_owned();
@@ -490,8 +488,7 @@ pub async fn submit_walk_forward(
 ) -> Result<Json<SubmitResponse>, (StatusCode, String)> {
     let symbol = req
         .params
-        .get("SYMBOL")
-        .or_else(|| req.params.get("symbol"))
+        .get("symbol")
         .and_then(Value::as_str)
         .unwrap_or("UNKNOWN")
         .to_owned();

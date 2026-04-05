@@ -178,8 +178,7 @@ async fn execute_single(
             || {
                 params
                     .params
-                    .get("SYMBOL")
-                    .or_else(|| params.params.get("symbol"))
+                    .get("symbol")
                     .and_then(Value::as_str)
                     .unwrap_or("UNKNOWN")
                     .to_owned()
@@ -254,8 +253,7 @@ async fn execute_sweep(
     // 4. Extract symbol from params, falling back to extern_symbol defaults from the script
     let symbol = params
         .params
-        .get("SYMBOL")
-        .or_else(|| params.params.get("symbol"))
+        .get("symbol")
         .and_then(Value::as_str)
         .map_or_else(
             || {

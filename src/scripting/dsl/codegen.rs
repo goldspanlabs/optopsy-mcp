@@ -356,7 +356,7 @@ enum CallbackKind {
 /// numeric values pass through, and other identifiers are quoted as strings.
 fn config_value(val: &str) -> String {
     match val {
-        "SYMBOL" => "params.SYMBOL".to_string(),
+        "SYMBOL" | "symbol" => "params.symbol".to_string(),
         "CAPITAL" => "params.CAPITAL".to_string(),
         v if v.parse::<f64>().is_ok() => v.to_string(),
         v if v.starts_with('"') => v.to_string(),

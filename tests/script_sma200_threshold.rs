@@ -72,7 +72,7 @@ impl DataLoader for TestDataLoader {
 
 fn sma200_params() -> HashMap<String, serde_json::Value> {
     let mut params = HashMap::new();
-    params.insert("SYMBOL".to_string(), serde_json::json!("TEST"));
+    params.insert("symbol".to_string(), serde_json::json!("TEST"));
     params.insert("CAPITAL".to_string(), serde_json::json!(100_000));
     params
 }

@@ -362,7 +362,7 @@ mod tests {
     #[test]
     fn test_params_map_injection() {
         let mut params = HashMap::new();
-        params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
+        params.insert("symbol".to_string(), serde_json::json!("SPY"));
         params.insert("CAPITAL".to_string(), serde_json::json!(50000.0));
         params.insert("STOP_LOSS".to_string(), serde_json::json!(null));
 
@@ -371,7 +371,7 @@ mod tests {
 
         let map = scope.get_value::<rhai::Map>("params").unwrap();
         assert_eq!(
-            map.get("SYMBOL")
+            map.get("symbol")
                 .unwrap()
                 .clone()
                 .into_immutable_string()
@@ -389,12 +389,12 @@ mod tests {
         let engine = build_engine();
 
         let mut params = HashMap::new();
-        params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
+        params.insert("symbol".to_string(), serde_json::json!("SPY"));
         params.insert("CAPITAL".to_string(), serde_json::json!(50000));
 
         let source = r"
             fn config() {
-                #{ symbol: params.SYMBOL, capital: params.CAPITAL }
+                #{ symbol: params.symbol, capital: params.CAPITAL }
             }
         ";
 
@@ -456,19 +456,19 @@ mod tests {
     #[test]
     fn test_params_scope_rebuild() {
         let mut params = HashMap::new();
-        params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
+        params.insert("symbol".to_string(), serde_json::json!("SPY"));
 
         let mut scope = Scope::new();
         stdlib::inject_params_map(&mut scope, &params);
 
         // Update via inject_into_scope (sweep path)
         let mut new_params = HashMap::new();
-        new_params.insert("SYMBOL".to_string(), serde_json::json!("QQQ"));
+        new_params.insert("symbol".to_string(), serde_json::json!("QQQ"));
         stdlib::inject_into_scope(&mut scope, &new_params);
 
         let map = scope.get_value::<rhai::Map>("params").unwrap();
         assert_eq!(
-            map.get("SYMBOL")
+            map.get("symbol")
                 .unwrap()
                 .clone()
                 .into_immutable_string()

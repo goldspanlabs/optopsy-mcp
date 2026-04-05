@@ -43,7 +43,7 @@ fn backtest_body(strategy: &str) -> String {
     serde_json::json!({
         "strategy": strategy,
         "params": {
-            "SYMBOL": "SPY"
+            "symbol": "SPY"
         }
     })
     .to_string()
@@ -367,7 +367,7 @@ async fn sse_stream_delivers_events() {
     let body = serde_json::json!({
         "strategy": strategy_id,
         "params": {
-            "SYMBOL": "SPY"
+            "symbol": "SPY"
         }
     })
     .to_string();

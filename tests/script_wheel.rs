@@ -136,7 +136,7 @@ fn make_bars_from_closes(closes: &BTreeMap<NaiveDate, f64>) -> Vec<OhlcvBar> {
 /// Standard wheel params used across tests.
 fn wheel_params() -> std::collections::HashMap<String, serde_json::Value> {
     let mut params = std::collections::HashMap::new();
-    params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
+    params.insert("symbol".to_string(), serde_json::json!("SPY"));
     params.insert("CAPITAL".to_string(), serde_json::json!(100_000));
     params.insert("PUT_DELTA".to_string(), serde_json::json!(0.30));
     params.insert("PUT_DTE".to_string(), serde_json::json!(45));
@@ -330,7 +330,7 @@ async fn wheel_script_stock_only_smoke_test() {
     let script = r#"
         fn config() {
             #{
-                symbol: params.SYMBOL,
+                symbol: params.symbol,
                 capital: params.CAPITAL,
                 interval: "daily",
                 data: #{ ohlcv: true, options: false },
@@ -354,7 +354,7 @@ async fn wheel_script_stock_only_smoke_test() {
     "#;
 
     let mut params = std::collections::HashMap::new();
-    params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
+    params.insert("symbol".to_string(), serde_json::json!("SPY"));
     params.insert("CAPITAL".to_string(), serde_json::json!(100_000.0));
 
     let result = run_script_backtest(script, &params, &loader, None, None, None)
@@ -421,7 +421,7 @@ async fn script_opens_options_position() {
     let script = r#"
         fn config() {
             #{
-                symbol: params.SYMBOL,
+                symbol: params.symbol,
                 capital: params.CAPITAL,
                 interval: "daily",
                 data: #{ ohlcv: true, options: true },
@@ -440,7 +440,7 @@ async fn script_opens_options_position() {
     "#;
 
     let mut params = std::collections::HashMap::new();
-    params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
+    params.insert("symbol".to_string(), serde_json::json!("SPY"));
     params.insert("CAPITAL".to_string(), serde_json::json!(100_000.0));
 
     let result = run_script_backtest(script, &params, &loader, None, None, None)

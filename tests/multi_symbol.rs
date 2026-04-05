@@ -3,7 +3,7 @@
 //! Verifies:
 //! - `extern_symbol` auto-detection builds `config.symbols`
 //! - Multi-symbol data loading (different bars per symbol)
-//! - `ctx.sym("SYMBOL")` returns correct per-symbol data
+//! - `ctx.sym("symbol")` returns correct per-symbol data
 //! - `buy_stock(symbol, qty)` targets the correct symbol
 //! - Trade records carry the correct symbol field
 //! - Single-symbol `extern_symbol` works (backward compat)

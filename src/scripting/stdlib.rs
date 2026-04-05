@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use rhai::Dynamic;
 
 /// Build a Rhai `Map` from JSON parameters and push it into scope as an
-/// immutable `params` constant.  Scripts access values via `params.SYMBOL`,
+/// immutable `params` constant.  Scripts access values via `params.symbol`,
 /// `params.CAPITAL`, etc.
 ///
 /// Callers must pass `null` for optional parameters they want to leave unset —
@@ -441,7 +441,7 @@ pub fn extract_extern_params(script_source: &str) -> Vec<ExternParam> {
         return Vec::new();
     };
 
-    // Inject an empty params map so scripts referencing params.SYMBOL etc.
+    // Inject an empty params map so scripts referencing params.symbol etc.
     // don't crash during extraction (they'll just get unit values).
     let mut scope = rhai::Scope::new();
     scope.push_constant("params", rhai::Map::new());

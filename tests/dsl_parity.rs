@@ -110,7 +110,7 @@ fn make_sma200_test_bars() -> Vec<OhlcvBar> {
 
 fn sma200_params() -> HashMap<String, serde_json::Value> {
     let mut params = HashMap::new();
-    params.insert("SYMBOL".to_string(), serde_json::json!("TEST"));
+    params.insert("symbol".to_string(), serde_json::json!("TEST"));
     params.insert("CAPITAL".to_string(), serde_json::json!(100_000));
     params
 }
@@ -181,7 +181,7 @@ fn make_bb_test_bars() -> Vec<OhlcvBar> {
 
 fn bb_params() -> HashMap<String, serde_json::Value> {
     let mut params = HashMap::new();
-    params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
+    params.insert("symbol".to_string(), serde_json::json!("SPY"));
     params.insert("CAPITAL".to_string(), serde_json::json!(100_000));
     params
 }
@@ -534,7 +534,7 @@ fn make_bars_from_closes(closes: &BTreeMap<NaiveDate, f64>) -> Vec<OhlcvBar> {
 
 fn wheel_params() -> HashMap<String, serde_json::Value> {
     let mut params = HashMap::new();
-    params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
+    params.insert("symbol".to_string(), serde_json::json!("SPY"));
     params.insert("CAPITAL".to_string(), serde_json::json!(100_000));
     params.insert("PUT_DELTA".to_string(), serde_json::json!(0.30));
     params.insert("PUT_DTE".to_string(), serde_json::json!(45));

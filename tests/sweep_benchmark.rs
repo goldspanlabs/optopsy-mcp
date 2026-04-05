@@ -18,7 +18,7 @@ use optopsy_mcp::scripting::engine::{CachingDataLoader, CancelCallback, DataLoad
 
 fn wheel_base_params() -> HashMap<String, Value> {
     let mut params = HashMap::new();
-    params.insert("SYMBOL".to_string(), json!("SPY"));
+    params.insert("symbol".to_string(), json!("SPY"));
     params.insert("CAPITAL".to_string(), json!(100_000));
     params.insert("PUT_DELTA".to_string(), json!(0.30));
     params.insert("PUT_DTE".to_string(), json!(45));

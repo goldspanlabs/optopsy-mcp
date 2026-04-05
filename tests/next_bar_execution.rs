@@ -84,7 +84,7 @@ fn bars_to_df(bars: &[OhlcvBar]) -> DataFrame {
 
 fn default_params() -> HashMap<String, serde_json::Value> {
     let mut params = HashMap::new();
-    params.insert("SYMBOL".to_string(), serde_json::json!("TEST"));
+    params.insert("symbol".to_string(), serde_json::json!("TEST"));
     params.insert("CAPITAL".to_string(), serde_json::json!(100_000.0));
     params
 }
@@ -142,7 +142,7 @@ async fn market_order_fills_at_next_bar_open() {
     let script = r#"
         fn config() {
             #{
-                symbol: params.SYMBOL,
+                symbol: params.symbol,
                 capital: params.CAPITAL,
                 interval: "daily",
                 data: #{ ohlcv: true, options: false },
@@ -243,7 +243,7 @@ async fn limit_buy_fills_at_limit_price() {
     let script = r#"
         fn config() {
             #{
-                symbol: params.SYMBOL,
+                symbol: params.symbol,
                 capital: params.CAPITAL,
                 interval: "daily",
                 data: #{ ohlcv: true, options: false },
@@ -347,7 +347,7 @@ async fn stop_buy_fills_on_breakout() {
     let script = r#"
         fn config() {
             #{
-                symbol: params.SYMBOL,
+                symbol: params.symbol,
                 capital: params.CAPITAL,
                 interval: "daily",
                 data: #{ ohlcv: true, options: false },
@@ -470,7 +470,7 @@ async fn cancel_orders_prevents_fill() {
     let script = r#"
         fn config() {
             #{
-                symbol: params.SYMBOL,
+                symbol: params.symbol,
                 capital: params.CAPITAL,
                 interval: "daily",
                 data: #{ ohlcv: true, options: false },
@@ -588,7 +588,7 @@ async fn position_awareness_exposed_to_script() {
 
         fn config() {
             #{
-                symbol: params.SYMBOL,
+                symbol: params.symbol,
                 capital: params.CAPITAL,
                 interval: "daily",
                 data: #{ ohlcv: true, options: false },
@@ -702,7 +702,7 @@ async fn multiple_orders_same_bar_both_fill() {
     let script = r#"
         fn config() {
             #{
-                symbol: params.SYMBOL,
+                symbol: params.symbol,
                 capital: params.CAPITAL,
                 interval: "daily",
                 data: #{ ohlcv: true, options: false },
