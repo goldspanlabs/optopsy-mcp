@@ -316,11 +316,11 @@ pub fn validate_script(
 
     // 3. Initialize scope and call config()
     // Merge defaults into params so validation works without caller-provided values.
-    // Universal params (SYMBOL, CAPITAL) are always needed but not declared via extern().
+    // Universal params (symbol, CAPITAL) are always needed but not declared via extern().
     // Extern params with defaults are also merged.
     let mut merged_params = params.clone();
     merged_params
-        .entry("SYMBOL".to_string())
+        .entry("symbol".to_string())
         .or_insert_with(|| serde_json::json!("SPY"));
     merged_params
         .entry("CAPITAL".to_string())
