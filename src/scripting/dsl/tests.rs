@@ -110,7 +110,9 @@ strategy "Iron Condor Income"
 asset symbol = "SPY"
 
 extern PUT_DELTA = 0.30 "Short put delta"
+extern PUT_WING = 0.15 "Long put wing delta"
 extern CALL_DELTA = 0.30 "Short call delta"
+extern CALL_WING = 0.15 "Long call wing delta"
 extern DTE = 45 "Target DTE"
 extern PROFIT_TARGET = 0.50 "Take profit percentage"
 
@@ -118,7 +120,7 @@ on each bar
   require rsi:14
   skip when has positions
   skip when rsi(14) > 70
-  open iron_condor(PUT_DELTA, CALL_DELTA, DTE)
+  open iron_condor(PUT_DELTA, PUT_WING, CALL_DELTA, CALL_WING, DTE)
 
 on exit check
   when pos.pnl_pct > PROFIT_TARGET then
@@ -141,7 +143,7 @@ on exit check
     assert!(rhai.contains("max_positions: 1"));
 
     // Strategy call should be ctx-qualified
-    assert!(rhai.contains("ctx.iron_condor(PUT_DELTA, CALL_DELTA, DTE)"));
+    assert!(rhai.contains("ctx.iron_condor(PUT_DELTA, PUT_WING, CALL_DELTA, CALL_WING, DTE)"));
 
     // Chained when/otherwise should generate if/else if/else
     assert!(rhai.contains("if pos.pnl_pct > PROFIT_TARGET"));
