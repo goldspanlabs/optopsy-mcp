@@ -240,12 +240,19 @@ fn on_exit_check(ctx, pos) {
         "Should have at least one trade"
     );
 
-    // Verify trade used QQQ prices (QQQ opens at 200.5 on day 1, closes at 192 on day 5)
+    // Verify trade symbol and that QQQ prices were used (not SPY's).
+    // QQQ is declining (200→192), so auto-closed P&L should be negative.
+    // SPY is rising (100→108), so if SPY prices were used, P&L would be positive.
     let trade = &result.result.trade_log[0];
     assert_eq!(
         trade.symbol.as_deref(),
         Some("QQQ"),
         "Trade should be for QQQ"
+    );
+    assert!(
+        trade.pnl < 0.0,
+        "QQQ is declining, P&L should be negative (proves QQQ prices used), got {}",
+        trade.pnl
     );
 }
 
@@ -322,6 +329,27 @@ fn on_exit_check(ctx, pos) {
 
     assert_eq!(spy_trades.len(), 1, "Should have 1 SPY trade");
     assert_eq!(qqq_trades.len(), 1, "Should have 1 QQQ trade");
+
+    // Verify P&L uses correct per-symbol prices (not primary symbol for both).
+    // SPY: rising (100→108). Buy queued bar 0, fill bar 1 open (101.5), auto-close bar 4 close (108).
+    // SPY P&L = (108 - 101.5) * 10 = 65.0
+    let spy_pnl = spy_trades[0].pnl;
+    assert!(
+        spy_pnl > 0.0,
+        "SPY is rising, P&L should be positive, got {spy_pnl}"
+    );
+
+    // QQQ: falling (200→192). Buy queued bar 1, fill bar 2 open (196.5), auto-close bar 4 close (192).
+    // QQQ P&L = (192 - 196.5) * 5 = -22.5
+    let qqq_pnl = qqq_trades[0].pnl;
+    assert!(
+        qqq_pnl < 0.0,
+        "QQQ is falling, P&L should be negative, got {qqq_pnl}"
+    );
+
+    // Cross-check: if engine used SPY prices for QQQ's P&L, it would be
+    // (108 - 101.5) * 5 = +32.5, which is positive. The negative assertion above
+    // catches this bug.
 }
 
 // ---------------------------------------------------------------------------
@@ -334,11 +362,14 @@ fn on_exit_check(ctx, pos) {
 async fn ctx_sym_returns_correct_prices() {
     let loader = make_two_symbol_loader();
 
-    // Script checks prices on bar 2: SPY close=104, QQQ close=196
-    // Buys SPY only if SPY.close < QQQ.close (always true in our test data)
+    // Script uses ctx.sym() to read per-symbol prices and stores them in metadata.
+    // On bar 2: SPY close=104, QQQ close=196. We verify both values.
     let script = r#"
 let spy_sym = extern_symbol("spy_sym", "SPY", "long leg");
 let qqq_sym = extern_symbol("qqq_sym", "QQQ", "short leg");
+
+let spy_close_bar2 = 0.0;
+let qqq_close_bar2 = 0.0;
 
 fn config() {
     #{
@@ -350,21 +381,29 @@ fn config() {
 }
 
 fn on_bar(ctx) {
-    if ctx.bar_idx != 2 || ctx.has_positions() { return []; }
+    if ctx.bar_idx == 2 {
+        let spy = ctx.sym(spy_sym);
+        let qqq = ctx.sym(qqq_sym);
+        spy_close_bar2 = spy.close;
+        qqq_close_bar2 = qqq.close;
 
-    let spy = ctx.sym(spy_sym);
-    let qqq = ctx.sym(qqq_sym);
-
-    // SPY close on bar 2 = 104, QQQ close on bar 2 = 196
-    // Only buy if SPY.close < QQQ.close (should be true)
-    if spy.close < qqq.close {
-        return [buy_stock(spy_sym, 1)];
+        // Only buy if SPY.close < QQQ.close (104 < 196 = true)
+        if spy.close < qqq.close {
+            return [buy_stock(spy_sym, 1)];
+        }
     }
     []
 }
 
 fn on_exit_check(ctx, pos) {
     hold_position()
+}
+
+fn on_end(ctx) {
+    #{
+        spy_close: spy_close_bar2,
+        qqq_close: qqq_close_bar2,
+    }
 }
 "#;
 
@@ -378,6 +417,30 @@ fn on_exit_check(ctx, pos) {
     assert_eq!(
         result.result.trade_count, 1,
         "Should have 1 trade (condition was true: SPY 104 < QQQ 196)"
+    );
+
+    // Verify the actual close prices returned by ctx.sym()
+    let metadata = result.metadata.expect("on_end should return metadata");
+    let spy_close = metadata
+        .get("spy_close")
+        .expect("metadata should have spy_close")
+        .as_float()
+        .expect("spy_close should be a float");
+    let qqq_close = metadata
+        .get("qqq_close")
+        .expect("metadata should have qqq_close")
+        .as_float()
+        .expect("qqq_close should be a float");
+
+    // SPY bar 2 close = 100 + 2*2 = 104.0
+    assert!(
+        (spy_close - 104.0).abs() < 0.01,
+        "ctx.sym(SPY).close on bar 2 should be 104.0, got {spy_close}"
+    );
+    // QQQ bar 2 close = 200 - 2*2 = 196.0
+    assert!(
+        (qqq_close - 196.0).abs() < 0.01,
+        "ctx.sym(QQQ).close on bar 2 should be 196.0, got {qqq_close}"
     );
 }
 
@@ -606,11 +669,13 @@ on exit check
         result.result.equity_curve.len() >= 4,
         "Should have equity curve entries for each bar"
     );
-    // Last equity point should differ from initial capital (position is open)
+    // SPY is rising (100→108), so equity should be ABOVE initial capital.
+    // If no position was opened, equity would equal capital exactly.
+    // If QQQ prices were used instead (declining), equity would be below capital.
     let last_equity = result.result.equity_curve.last().unwrap().equity;
     assert!(
-        (last_equity - 100_000.0).abs() > 0.01,
-        "Equity should differ from initial capital (open position), got {last_equity}"
+        last_equity > 100_000.0,
+        "SPY is rising, equity should be above initial capital (proves position opened with SPY data), got {last_equity}"
     );
 }
 
@@ -649,5 +714,12 @@ on exit check
         result.result.symbol.as_deref(),
         Some("QQQ"),
         "Symbol should be overridden to QQQ via params"
+    );
+    // QQQ is declining (200→192), so equity should be BELOW initial capital.
+    // If SPY data was used instead (rising), equity would be above capital.
+    let last_equity = result.result.equity_curve.last().unwrap().equity;
+    assert!(
+        last_equity < 100_000.0,
+        "QQQ is declining, equity should be below initial capital (proves QQQ data used), got {last_equity}"
     );
 }
