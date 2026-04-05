@@ -97,30 +97,36 @@ pub(crate) fn resolve_strategy_source_from_store(
     store: &dyn crate::data::traits::StrategyStore,
     name_or_id: &str,
 ) -> Result<(String, String), (StatusCode, String)> {
-    // Try exact ID match
-    let (id, source) = if let Ok(Some(source)) = store.get_source(name_or_id) {
-        (name_or_id.to_string(), source)
-    } else if let Ok(Some((id, source))) = store.get_source_by_name(name_or_id) {
-        (id, source)
-    } else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            format!("Strategy '{name_or_id}' not found"),
-        ));
-    };
-
-    // Auto-transpile Trading DSL to Rhai
-    let source = if crate::scripting::dsl::is_trading_dsl(&source) {
-        crate::scripting::dsl::transpile(&source).map_err(|e| {
-            (
+    // Try exact ID match, then fall back to case-insensitive name match.
+    // Store errors are propagated as 500; only a successful-but-empty lookup yields 404.
+    let (id, raw) = match store.get_source(name_or_id) {
+        Ok(Some(source)) => (name_or_id.to_string(), source),
+        Ok(None) => match store.get_source_by_name(name_or_id) {
+            Ok(Some((id, source))) => (id, source),
+            Ok(None) => {
+                return Err((
+                    StatusCode::NOT_FOUND,
+                    format!("Strategy '{name_or_id}' not found"),
+                ));
+            }
+            Err(e) => {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to resolve strategy '{name_or_id}' by name: {e}"),
+                ));
+            }
+        },
+        Err(e) => {
+            return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("DSL transpile error: {e}"),
-            )
-        })?
-    } else {
-        source
+                format!("Failed to resolve strategy '{name_or_id}' by id: {e}"),
+            ));
+        }
     };
 
+    // Transpile .trading DSL → Rhai if needed (single shared helper)
+    let source = crate::tools::run_script::maybe_transpile(raw)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     Ok((id, source))
 }
 

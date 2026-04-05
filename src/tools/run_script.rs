@@ -207,13 +207,22 @@ fn indicator_thresholds(decl: &str) -> Vec<f64> {
 // Script resolution
 // ---------------------------------------------------------------------------
 
+/// Transpile `.trading` DSL to Rhai if the source looks like DSL, otherwise
+/// return it unchanged.  This is the **single** place where DSL→Rhai
+/// conversion is applied before execution.
+pub fn maybe_transpile(source: String) -> Result<String> {
+    if crate::scripting::dsl::is_trading_dsl(&source) {
+        crate::scripting::dsl::transpile(&source)
+            .map_err(|e| anyhow::Error::new(e).context("DSL transpilation failed"))
+    } else {
+        Ok(source)
+    }
+}
+
 /// Resolve the script source code from the strategy store or inline source.
 ///
 /// Returns `(Option<strategy_id>, source)` — the resolved strategy UUID (None
-/// for inline scripts) and the script source code.
-///
-/// If the source is Trading DSL (`.trading` format), it is automatically
-/// transpiled to Rhai before being returned.
+/// for inline scripts) and the Rhai source code (transpiled from DSL if needed).
 pub fn resolve_script_source(
     params: &RunScriptParams,
     strategy_store: Option<&dyn StrategyStore>,
@@ -230,16 +239,7 @@ pub fn resolve_script_source(
             )
         }
     };
-
-    // Auto-transpile Trading DSL to Rhai
-    let source = if crate::scripting::dsl::is_trading_dsl(&source) {
-        crate::scripting::dsl::transpile(&source)
-            .map_err(|e| anyhow::anyhow!("DSL transpile error: {e}"))?
-    } else {
-        source
-    };
-
-    Ok((id, source))
+    Ok((id, maybe_transpile(source)?))
 }
 
 /// Load a strategy by ID or display name from the database, falling back to
