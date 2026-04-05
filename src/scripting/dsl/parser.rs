@@ -49,7 +49,6 @@ pub struct StrategyBlock {
     pub slippage: Option<String>,
     pub expiration_filter: Option<String>,
     pub max_positions: Option<i64>,
-    pub symbols: Vec<String>,
     pub cross_symbols: Vec<String>,
     pub procedural: bool,
     pub category: Option<String>,
@@ -397,7 +396,6 @@ fn parse_strategy_block(lines: &[Line], start: usize) -> Result<(StrategyBlock, 
         slippage: None,
         expiration_filter: None,
         max_positions: None,
-        symbols: vec![],
         cross_symbols: vec![],
         procedural,
         category: None,
@@ -412,26 +410,7 @@ fn parse_strategy_block(lines: &[Line], start: usize) -> Result<(StrategyBlock, 
         let line = &lines[i];
         let content = &line.content;
 
-        if let Some(rest) = content.strip_prefix("symbols ") {
-            let syms: Vec<String> = rest
-                .split(',')
-                .map(|s| s.trim().to_uppercase())
-                .filter(|s| !s.is_empty())
-                .collect();
-            if syms.len() < 2 {
-                return Err(DslError::new(
-                    line.num,
-                    "symbols requires at least 2 tickers (use `symbol` for a single ticker)",
-                ));
-            }
-            let mut seen = std::collections::HashSet::new();
-            for sym in &syms {
-                if !seen.insert(sym.as_str()) {
-                    return Err(DslError::new(line.num, format!("duplicate symbol: {sym}")));
-                }
-            }
-            block.symbols = syms;
-        } else if let Some(rest) = content.strip_prefix("symbol ") {
+        if let Some(rest) = content.strip_prefix("symbol ") {
             block.symbol = rest.trim().to_string();
         } else if let Some(rest) = content.strip_prefix("capital ") {
             block.capital = rest.trim().to_string();
