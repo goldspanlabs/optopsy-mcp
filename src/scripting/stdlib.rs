@@ -469,8 +469,16 @@ pub fn list_scripts() -> Vec<ScriptMeta> {
                 .strip_suffix(".trading")
                 .or_else(|| filename.strip_suffix(".rhai"))?;
             let source = std::fs::read_to_string(e.path()).ok()?;
-            let mut meta = parse_script_meta(id, &source);
-            meta.params = extract_extern_params(&source);
+
+            // For .trading files, transpile to Rhai for metadata and param extraction
+            let rhai_source = if filename.ends_with(".trading") {
+                crate::scripting::dsl::transpile(&source).ok()?
+            } else {
+                source
+            };
+
+            let mut meta = parse_script_meta(id, &rhai_source);
+            meta.params = extract_extern_params(&rhai_source);
             Some(meta)
         })
         .collect();
