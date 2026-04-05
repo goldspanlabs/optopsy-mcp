@@ -7,7 +7,7 @@ use crate::constants::P_VALUE_THRESHOLD;
 use crate::data::cache::CachedStore;
 use crate::stats;
 use crate::tools::ai_format;
-use crate::tools::ai_helpers::load_prices;
+use crate::tools::ai_helpers;
 use crate::tools::response_types::DistributionSource;
 use crate::tools::response_types::{DistributionResponse, HistogramBin, NormalityTest, TailRatio};
 
@@ -22,27 +22,15 @@ pub async fn execute(
     {
         DistributionSource::PriceReturns { symbol, years } => {
             let upper = symbol.to_uppercase();
-            let prices = load_prices(
-                cache,
-                symbol,
-                *years,
-                2,
-                crate::engine::types::Interval::Daily,
+            let cutoff_str = ai_helpers::compute_years_cutoff(*years);
+            let returns = ai_helpers::load_returns(cache, &upper, &cutoff_str).await?;
+            // Convert to percentage for display
+            let returns_pct: Vec<f64> = returns.iter().map(|r| r * 100.0).collect();
+            (
+                returns_pct,
+                format!("{upper} daily returns (%)"),
+                Some(upper),
             )
-            .await?;
-
-            let returns: Vec<f64> = prices
-                .windows(2)
-                .filter_map(|w| {
-                    if w[0].close == 0.0 {
-                        None
-                    } else {
-                        Some((w[1].close - w[0].close) / w[0].close * 100.0)
-                    }
-                })
-                .collect();
-
-            (returns, format!("{upper} daily returns (%)"), Some(upper))
         }
         DistributionSource::TradePnl { values, label } => {
             if values.is_empty() {
