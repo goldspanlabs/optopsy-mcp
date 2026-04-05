@@ -206,15 +206,10 @@ async fn bb_script_compiles_and_configures() {
         .unwrap();
 
     let config_map = config.cast::<rhai::Map>();
-    assert_eq!(
-        config_map
-            .get("symbol")
-            .unwrap()
-            .clone()
-            .into_immutable_string()
-            .unwrap()
-            .as_str(),
-        "SPY"
+    // symbol is no longer in config — it's declared via extern_symbol()
+    assert!(
+        !config_map.contains_key("symbol"),
+        "symbol should not be in config"
     );
 }
 

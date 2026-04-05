@@ -84,8 +84,9 @@ pub fn json_to_dynamic(value: &serde_json::Value) -> Dynamic {
     }
 }
 
-/// A script parameter declared via `extern("NAME", default, "description")` or
-/// `extern("NAME", default, "description", ["opt1", "opt2"])` for enum params.
+/// A script parameter declared via `extern("NAME", default, "description")`,
+/// `extern("NAME", default, "description", ["opt1", "opt2"])` for enum params,
+/// or `extern_symbol("NAME", default, "description")` for symbol params.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ExternParam {
     /// Parameter name (e.g., "PUT_DELTA")
@@ -100,6 +101,10 @@ pub struct ExternParam {
     /// Allowed values for enum-style params (renders as dropdown in UI)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<serde_json::Value>,
+    /// Role tag — "symbol" for symbol params, empty for regular params.
+    /// Symbol params are auto-collected into `config.symbols` by the engine.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub role: String,
 }
 
 /// Metadata extracted from a script's `//!` doc-comment header.
@@ -356,6 +361,7 @@ pub fn extract_extern_params(script_source: &str) -> Vec<ExternParam> {
                     description: desc.to_string(),
                     param_type,
                     options: Vec::new(),
+                    role: String::new(),
                 });
             }
             if default.is_unit() {
@@ -395,6 +401,31 @@ pub fn extract_extern_params(script_source: &str) -> Vec<ExternParam> {
                     description: desc.to_string(),
                     param_type,
                     options,
+                    role: String::new(),
+                });
+            }
+            if default.is_unit() {
+                Dynamic::from("")
+            } else {
+                default
+            }
+        },
+    );
+
+    // Register extern_symbol(name, default, description) — symbol param form
+    let collector_sym = collected.clone();
+    engine.register_fn(
+        "extern_symbol",
+        move |name: &str, default: Dynamic, desc: &str| -> Dynamic {
+            let (default_val, param_type) = dynamic_to_json(&default);
+            if let Ok(mut params) = collector_sym.lock() {
+                params.push(ExternParam {
+                    name: name.to_string(),
+                    default: default_val,
+                    description: desc.to_string(),
+                    param_type,
+                    options: Vec::new(),
+                    role: "symbol".to_string(),
                 });
             }
             if default.is_unit() {

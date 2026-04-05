@@ -208,9 +208,9 @@ pub fn test_app_state_with_ohlcv() -> (AppState, TempDir, String) {
 
     // Seed a simple buy-and-hold stock strategy
     let strategy_source = r#"
+let symbol = extern_symbol("symbol", "SPY", "ticker");
 fn config() {
     #{
-        symbol: params.SYMBOL,
         capital: params.CAPITAL,
         interval: "1min",
         auto_close_on_end: true,
@@ -221,7 +221,7 @@ fn config() {
 }
 fn on_bar(ctx) {
     if ctx.bar_idx == 0 {
-        return [buy_stock(1)];
+        return [buy_stock(symbol, 1)];
     }
     []
 }

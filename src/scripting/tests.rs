@@ -933,7 +933,7 @@ mod tests {
     #[test]
     fn test_buy_stock_helper() {
         use crate::scripting::helpers;
-        let result = helpers::buy_stock(100);
+        let result = helpers::buy_stock("SPY".to_string(), 100);
         let map = result.cast::<rhai::Map>();
         assert_eq!(
             map.get("action")
@@ -959,7 +959,7 @@ mod tests {
     #[test]
     fn test_sell_stock_helper() {
         use crate::scripting::helpers;
-        let result = helpers::sell_stock(50);
+        let result = helpers::sell_stock("SPY".to_string(), 50);
         let map = result.cast::<rhai::Map>();
         assert_eq!(
             map.get("side")
@@ -1022,13 +1022,13 @@ mod tests {
             "close"
         );
 
-        // buy_stock(qty) returns #{ action: "open_stock", side: "long", qty }
-        let result: Dynamic = engine.eval("buy_stock(100)").unwrap();
+        // buy_stock(symbol, qty) returns #{ action: "open_stock", side: "long", qty, symbol }
+        let result: Dynamic = engine.eval(r#"buy_stock("SPY", 100)"#).unwrap();
         let map = result.cast::<rhai::Map>();
         assert_eq!(map.get("qty").unwrap().as_int().unwrap(), 100);
 
-        // sell_stock(qty) returns #{ action: "open_stock", side: "short", qty }
-        let result: Dynamic = engine.eval("sell_stock(50)").unwrap();
+        // sell_stock(symbol, qty) returns #{ action: "open_stock", side: "short", qty, symbol }
+        let result: Dynamic = engine.eval(r#"sell_stock("SPY", 50)"#).unwrap();
         let map = result.cast::<rhai::Map>();
         assert_eq!(
             map.get("side")
@@ -1284,15 +1284,15 @@ mod tests {
         // Verify the function names are registered (they need a BarContext to call,
         // but we can check they compile in a script)
         let result = engine.compile(
-            r"
+            r#"
             fn on_bar(ctx) {
                 let q1 = ctx.size_by_equity(0.5);
                 let q2 = ctx.size_by_risk(0.02, 95.0);
                 let q3 = ctx.size_by_volatility(1000.0, 14);
                 let q4 = ctx.size_by_kelly(0.5, 0);
-                [buy_stock(q1)]
+                [buy_stock("SPY", q1)]
             }
-            ",
+            "#,
         );
         assert!(
             result.is_ok(),
@@ -1836,7 +1836,7 @@ mod tests {
     fn test_helper_buy_limit() {
         use crate::scripting::helpers;
 
-        let result = helpers::buy_limit(100, 150.0);
+        let result = helpers::buy_limit("SPY".to_string(), 100, 150.0);
         let map = result.cast::<rhai::Map>();
         assert_eq!(
             map.get("order_type")
@@ -1863,7 +1863,7 @@ mod tests {
     fn test_helper_sell_stop() {
         use crate::scripting::helpers;
 
-        let result = helpers::sell_stop(50, 145.0);
+        let result = helpers::sell_stop("SPY".to_string(), 50, 145.0);
         let map = result.cast::<rhai::Map>();
         assert_eq!(
             map.get("order_type")
@@ -1907,7 +1907,7 @@ mod tests {
     fn test_helper_buy_stop_limit() {
         use crate::scripting::helpers;
 
-        let result = helpers::buy_stop_limit(100, 155.0, 153.0);
+        let result = helpers::buy_stop_limit("SPY".to_string(), 100, 155.0, 153.0);
         let map = result.cast::<rhai::Map>();
         assert_eq!(
             map.get("order_type")
@@ -1920,5 +1920,22 @@ mod tests {
         );
         assert_eq!(map.get("stop_price").unwrap().as_float().unwrap(), 155.0);
         assert_eq!(map.get("limit_price").unwrap().as_float().unwrap(), 153.0);
+    }
+
+    #[test]
+    fn test_extern_symbol_extraction() {
+        let source = r#"
+let symbol = extern_symbol("symbol", "SPY", "ticker to trade");
+fn config() { #{capital: 100000} }
+fn on_bar(ctx) { [] }
+"#;
+        let params = crate::scripting::stdlib::extract_extern_params(source);
+        let sym_params: Vec<_> = params.iter().filter(|p| p.role == "symbol").collect();
+        assert_eq!(sym_params.len(), 1, "Should find 1 symbol param");
+        assert_eq!(sym_params[0].name, "symbol");
+        assert_eq!(
+            sym_params[0].default,
+            Some(serde_json::Value::String("SPY".to_string()))
+        );
     }
 }

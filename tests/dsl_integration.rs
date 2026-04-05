@@ -75,6 +75,105 @@ impl DataLoader for TestDataLoader {
     }
 }
 
+fn dt(y: i32, m: u32, day: u32) -> chrono::NaiveDateTime {
+    NaiveDate::from_ymd_opt(y, m, day)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+}
+
+struct MultiSymbolLoader {
+    data: std::collections::HashMap<String, DataFrame>,
+}
+
+#[async_trait::async_trait]
+impl DataLoader for MultiSymbolLoader {
+    async fn load_ohlcv(
+        &self,
+        symbol: &str,
+        _start: Option<NaiveDate>,
+        _end: Option<NaiveDate>,
+    ) -> Result<DataFrame> {
+        self.data
+            .get(&symbol.to_uppercase())
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("No OHLCV data for '{symbol}'"))
+    }
+
+    async fn load_options(
+        &self,
+        _symbol: &str,
+        _start: Option<NaiveDate>,
+        _end: Option<NaiveDate>,
+    ) -> Result<DataFrame> {
+        Ok(DataFrame::empty())
+    }
+
+    fn load_splits(
+        &self,
+        _symbol: &str,
+    ) -> Result<Vec<optopsy_mcp::data::adjustment_store::SplitRow>> {
+        Ok(vec![])
+    }
+
+    fn load_dividends(
+        &self,
+        _symbol: &str,
+    ) -> Result<Vec<optopsy_mcp::data::adjustment_store::DividendRow>> {
+        Ok(vec![])
+    }
+}
+
+/// SPY: 100, 102, 104, 106, 108 (rising)
+/// QQQ: 200, 198, 196, 194, 192 (falling)
+fn make_two_symbol_loader() -> MultiSymbolLoader {
+    let dates = [
+        dt(2024, 1, 2),
+        dt(2024, 1, 3),
+        dt(2024, 1, 4),
+        dt(2024, 1, 5),
+        dt(2024, 1, 8),
+    ];
+
+    let spy_bars: Vec<OhlcvBar> = dates
+        .iter()
+        .enumerate()
+        .map(|(i, &datetime)| {
+            let close = 100.0 + (i as f64) * 2.0;
+            OhlcvBar {
+                datetime,
+                open: close - 0.5,
+                high: close + 1.0,
+                low: close - 1.0,
+                close,
+                volume: 1_000_000.0,
+            }
+        })
+        .collect();
+
+    let qqq_bars: Vec<OhlcvBar> = dates
+        .iter()
+        .enumerate()
+        .map(|(i, &datetime)| {
+            let close = 200.0 - (i as f64) * 2.0;
+            OhlcvBar {
+                datetime,
+                open: close + 0.5,
+                high: close + 1.0,
+                low: close - 1.0,
+                close,
+                volume: 2_000_000.0,
+            }
+        })
+        .collect();
+
+    let mut data = std::collections::HashMap::new();
+    data.insert("SPY".to_string(), bars_to_df(&spy_bars));
+    data.insert("QQQ".to_string(), bars_to_df(&qqq_bars));
+
+    MultiSymbolLoader { data }
+}
+
 fn default_params() -> std::collections::HashMap<String, serde_json::Value> {
     let mut params = std::collections::HashMap::new();
     params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
@@ -107,6 +206,23 @@ fn build_test_engine(
               _opts: rhai::Array|
               -> rhai::Dynamic {
             if let Some(value) = p4.get(name) {
+                optopsy_mcp::scripting::stdlib::json_to_dynamic(value)
+            } else {
+                default
+            }
+        },
+    );
+    let p_sym = params.clone();
+    engine.register_fn(
+        "extern_symbol",
+        move |name: &str, default: rhai::Dynamic, _desc: &str| -> rhai::Dynamic {
+            // Case-insensitive lookup to mirror production behavior
+            if let Some(value) = p_sym.get(name).or_else(|| {
+                p_sym
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                    .map(|(_, v)| v)
+            }) {
                 optopsy_mcp::scripting::stdlib::json_to_dynamic(value)
             } else {
                 default
@@ -208,15 +324,10 @@ fn dsl_sma_crossover_compiles_and_configures() {
         transpile_compile_and_configure("scripts/strategies/sma_crossover.trading", &params);
 
     // Verify config fields
-    assert_eq!(
-        config
-            .get("symbol")
-            .unwrap()
-            .clone()
-            .into_immutable_string()
-            .unwrap()
-            .as_str(),
-        "SPY"
+    // symbol is no longer in config — it's declared via asset
+    assert!(
+        !config.contains_key("symbol"),
+        "symbol should not be in config"
     );
     assert_eq!(
         config
@@ -480,4 +591,101 @@ fn all_rhai_strategies_compile_with_dsl_syntax() {
             )
         });
     }
+}
+
+// ===========================================================================
+// Multi-Symbol DSL Tests
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Test: `buy N shares of IDENT` targets the correct symbol
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dsl_buy_shares_of_trades_correct_symbol() {
+    // No `symbol` in strategy block — both symbols declared via asset.
+    // Uses `buy N shares of IDENT` to target each symbol explicitly.
+    let dsl_source = r#"
+strategy "Multi Symbol"
+  interval daily
+  data ohlcv
+
+asset spy = "SPY" "long leg"
+asset qqq = "QQQ" "short leg"
+"#;
+
+    let rhai = dsl::transpile(dsl_source).unwrap();
+    let config_start = rhai.find("fn config()").unwrap();
+    let header = &rhai[..config_start];
+
+    let script = format!(
+        r#"{header}
+fn config() {{
+    #{{
+        capital: 100000,
+        interval: "daily",
+        auto_close_on_end: true,
+        data: #{{ ohlcv: true }},
+    }}
+}}
+
+fn on_bar(ctx) {{
+    if ctx.bar_idx == 0 {{
+        return [buy 10 shares of spy];
+    }}
+    if ctx.bar_idx == 1 {{
+        return [buy 5 shares of qqq];
+    }}
+    []
+}}
+
+fn on_exit_check(ctx, pos) {{
+    hold_position()
+}}
+"#
+    );
+
+    let loader = make_two_symbol_loader();
+    let mut params = std::collections::HashMap::new();
+    params.insert("CAPITAL".to_string(), serde_json::json!(100_000.0));
+
+    let result = run_script_backtest(&script, &params, &loader, None, None, None)
+        .await
+        .expect("Multi-symbol DSL backtest should succeed");
+
+    // Should have 2 trades (auto-closed at end)
+    assert_eq!(
+        result.result.trade_count, 2,
+        "Should have 2 trades (SPY + QQQ)"
+    );
+
+    let spy_trades: Vec<_> = result
+        .result
+        .trade_log
+        .iter()
+        .filter(|t| t.symbol.as_deref() == Some("SPY"))
+        .collect();
+    let qqq_trades: Vec<_> = result
+        .result
+        .trade_log
+        .iter()
+        .filter(|t| t.symbol.as_deref() == Some("QQQ"))
+        .collect();
+
+    assert_eq!(spy_trades.len(), 1, "Should have 1 SPY trade");
+    assert_eq!(qqq_trades.len(), 1, "Should have 1 QQQ trade");
+
+    // SPY is rising → positive P&L
+    assert!(
+        spy_trades[0].pnl > 0.0,
+        "SPY is rising, P&L should be positive, got {}",
+        spy_trades[0].pnl
+    );
+
+    // QQQ is falling → negative P&L
+    assert!(
+        qqq_trades[0].pnl < 0.0,
+        "QQQ is falling, P&L should be negative, got {}",
+        qqq_trades[0].pnl
+    );
 }

@@ -5,7 +5,9 @@
 //! tags: wheel, premium_selling, covered_call, cash_secured_put
 //! regime: sideways, low_volatility
 
-// SYMBOL and CAPITAL are universal — provided by the FE dialog via params map.
+// CAPITAL is universal — provided by the FE dialog via params map.
+// symbol is set via extern_symbol() below; defaults to "SPY", overridable via params.
+let symbol = extern_symbol("symbol", "SPY", "Ticker to trade");
 
 // Top-level variables persist across bars (Rhai scope is preserved).
 // Use these for state machines, counters, or tracking values between callbacks.
@@ -38,7 +40,6 @@ let _group = "Cycle 1";
 // ---------------------------------------------------------------------------
 fn config() {
     #{
-        symbol: params.SYMBOL,
         capital: params.CAPITAL,
         interval: "daily",
         data: #{

@@ -257,7 +257,7 @@ async fn e2e_backtest_runs_through_task_manager() {
         post_json(
             "/tasks/backtest",
             &format!(
-                r#"{{"strategy":"{strategy_id}","params":{{"SYMBOL":"NVDA","CAPITAL":100000}}}}"#
+                r#"{{"strategy":"{strategy_id}","params":{{"symbol":"NVDA","CAPITAL":100000}}}}"#
             ),
         ),
     )

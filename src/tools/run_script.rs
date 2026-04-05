@@ -211,22 +211,35 @@ fn indicator_thresholds(decl: &str) -> Vec<f64> {
 ///
 /// Returns `(Option<strategy_id>, source)` — the resolved strategy UUID (None
 /// for inline scripts) and the script source code.
+///
+/// If the source is Trading DSL (`.trading` format), it is automatically
+/// transpiled to Rhai before being returned.
 pub fn resolve_script_source(
     params: &RunScriptParams,
     strategy_store: Option<&dyn StrategyStore>,
 ) -> Result<(Option<String>, String)> {
-    match (&params.strategy, &params.script) {
+    let (id, source) = match (&params.strategy, &params.script) {
         (Some(name_or_id), _) => {
             let (id, source) = load_strategy(name_or_id, strategy_store)?;
-            Ok((Some(id), source))
+            (Some(id), source)
         }
-        (None, Some(script)) => Ok((None, script.clone())),
+        (None, Some(script)) => (None, script.clone()),
         (None, None) => {
             anyhow::bail!(
                 "Either 'strategy' (script filename) or 'script' (inline source) is required"
             )
         }
-    }
+    };
+
+    // Auto-transpile Trading DSL to Rhai
+    let source = if crate::scripting::dsl::is_trading_dsl(&source) {
+        crate::scripting::dsl::transpile(&source)
+            .map_err(|e| anyhow::anyhow!("DSL transpile error: {e}"))?
+    } else {
+        source
+    };
+
+    Ok((id, source))
 }
 
 /// Load a strategy by ID or display name from the database, falling back to

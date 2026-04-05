@@ -155,7 +155,7 @@ fn config() {
 
 fn on_bar(ctx) {
     if ctx.rsi(14) < 30.0 {
-        buy_stock(100)
+        buy_stock("SPY", 100)
     } else {
         hold_position()
     }

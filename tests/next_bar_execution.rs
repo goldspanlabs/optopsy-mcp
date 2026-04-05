@@ -93,7 +93,7 @@ fn default_params() -> HashMap<String, serde_json::Value> {
 // Market order: verify next-bar fill at open price
 // ---------------------------------------------------------------------------
 
-/// Bar 0: script queues `buy_stock(100)` → market order
+/// Bar 0: script queues `buy_stock("SPY", 100)` → market order
 /// Bar 1: fills at bar 1 open (105.0), NOT bar 0 close (100.0)
 /// Bar 2: exit triggers, close at bar 2 close (110.0)
 /// Bar 3: extra bar (final bar orders cancelled)
@@ -152,7 +152,7 @@ async fn market_order_fills_at_next_bar_open() {
 
         fn on_bar(ctx) {
             if !ctx.has_positions() && ctx.bar_idx == 0 {
-                return [buy_stock(100)];
+                return [buy_stock("SPY", 100)];
             }
             []
         }
@@ -185,7 +185,7 @@ async fn market_order_fills_at_next_bar_open() {
 // Limit order: fills only when price reaches limit
 // ---------------------------------------------------------------------------
 
-/// Bar 0: script queues `buy_limit(100, 98.0)` — buy if price dips to 98
+/// Bar 0: script queues `buy_limit("SPY", 100, 98.0)` — buy if price dips to 98
 /// Bar 1: low=99.0 > 98.0 → no fill
 /// Bar 2: low=96.0 ≤ 98.0 → fills at 98.0
 /// Bar 3: exit
@@ -253,7 +253,7 @@ async fn limit_buy_fills_at_limit_price() {
 
         fn on_bar(ctx) {
             if !ctx.has_positions() && ctx.bar_idx == 0 {
-                return [buy_limit(100, 98.0)];
+                return [buy_limit("SPY", 100, 98.0)];
             }
             []
         }
@@ -289,7 +289,7 @@ async fn limit_buy_fills_at_limit_price() {
 // Stop order: fills when price breaches stop level
 // ---------------------------------------------------------------------------
 
-/// Bar 0: script queues `buy_stop(100, 105.0)` — buy on breakout above 105
+/// Bar 0: script queues `buy_stop("SPY", 100, 105.0)` — buy on breakout above 105
 /// Bar 1: high=103 < 105 → no fill
 /// Bar 2: high=107 ≥ 105 → fills at 105.0
 /// Bar 3: exit
@@ -357,7 +357,7 @@ async fn stop_buy_fills_on_breakout() {
 
         fn on_bar(ctx) {
             if !ctx.has_positions() && ctx.bar_idx == 0 {
-                return [buy_stop(100, 105.0)];
+                return [buy_stop("SPY", 100, 105.0)];
             }
             []
         }
@@ -393,7 +393,7 @@ async fn stop_buy_fills_on_breakout() {
 // cancel_orders: queued orders are cancelled before fill
 // ---------------------------------------------------------------------------
 
-/// Bar 0: script queues `buy_limit(100, 90.0)` — limit order that won't fill immediately
+/// Bar 0: script queues `buy_limit("SPY", 100, 90.0)` — limit order that won't fill immediately
 /// Bar 1: low=99 > 90, limit not reached → still pending. Script calls `cancel_orders()`
 /// Bar 2: low=85 < 90 — would have filled, but order was cancelled on bar 1
 /// Bar 3: script queues a new `buy_stock` (market)
@@ -481,7 +481,7 @@ async fn cancel_orders_prevents_fill() {
         fn on_bar(ctx) {
             if ctx.bar_idx == 0 {
                 // Queue a limit buy at 90 — won't fill on bar 1 (low=99)
-                return [buy_limit(100, 90.0)];
+                return [buy_limit("SPY", 100, 90.0)];
             }
             if ctx.bar_idx == 1 {
                 // Cancel the pending limit order before it can fill on bar 2
@@ -489,7 +489,7 @@ async fn cancel_orders_prevents_fill() {
             }
             if ctx.bar_idx == 3 && !ctx.has_positions() {
                 // Queue a fresh market buy
-                return [buy_stock(100)];
+                return [buy_stock("SPY", 100)];
             }
             []
         }
@@ -598,7 +598,7 @@ async fn position_awareness_exposed_to_script() {
 
         fn on_bar(ctx) {
             if ctx.bar_idx == 0 {
-                return [buy_stock(100)];
+                return [buy_stock("SPY", 100)];
             }
             // Record awareness on bar 2 (position filled on bar 1, so 1 bar since entry)
             if ctx.bar_idx == 2 {
@@ -713,7 +713,7 @@ async fn multiple_orders_same_bar_both_fill() {
 
         fn on_bar(ctx) {
             if ctx.bar_idx == 0 {
-                return [buy_stock(50), buy_stock(30)];
+                return [buy_stock("SPY", 50), buy_stock("SPY", 30)];
             }
             []
         }

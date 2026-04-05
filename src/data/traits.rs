@@ -494,14 +494,32 @@ pub fn seed_strategies_if_empty(store: &dyn StrategyStore, scripts_dir: &Path) -
     let mut seeded = 0;
     for entry in entries.flatten() {
         let filename = entry.file_name().to_string_lossy().to_string();
-        let Some(id) = filename.strip_suffix(".rhai") else {
+
+        // Accept both .rhai and .trading files
+        let id = if let Some(id) = filename.strip_suffix(".rhai") {
+            id.to_string()
+        } else if let Some(id) = filename.strip_suffix(".trading") {
+            id.to_string()
+        } else {
             continue;
         };
+
         let Ok(source) = std::fs::read_to_string(entry.path()) else {
             continue;
         };
 
-        let meta = parse_script_meta(id, &source);
+        // For .trading files, transpile to Rhai to extract //! metadata,
+        // but store the original DSL source (transpiled on demand at runtime).
+        let meta_source = if filename.ends_with(".trading") {
+            match crate::scripting::dsl::transpile(&source) {
+                Ok(rhai) => rhai,
+                Err(_) => continue,
+            }
+        } else {
+            source.clone()
+        };
+
+        let meta = parse_script_meta(&id, &meta_source);
         store.upsert(&StrategyRow {
             id: uuid::Uuid::new_v4().to_string(),
             name: meta.name,

@@ -250,7 +250,7 @@ pub fn generate(program: &DslProgram) -> String {
 
     out.push_str("// Auto-generated from Trading DSL — do not edit by hand.\n\n");
 
-    // Extern params
+    // Extern params (including extern_symbol)
     for p in &program.params {
         generate_param(&mut out, p);
     }
@@ -368,7 +368,7 @@ fn config_value(val: &str) -> String {
 fn generate_config(out: &mut String, s: &StrategyBlock, program: &DslProgram) {
     out.push_str("fn config() {\n");
     out.push_str("    #{\n");
-    out.push_str(&format!("        symbol: {},\n", config_value(&s.symbol)));
+    // symbol is now declared via asset — not in config
     out.push_str(&format!("        capital: {},\n", config_value(&s.capital)));
     out.push_str(&format!("        interval: \"{}\",\n", s.interval));
 
@@ -437,7 +437,12 @@ fn generate_config(out: &mut String, s: &StrategyBlock, program: &DslProgram) {
 // ---------------------------------------------------------------------------
 
 fn generate_param(out: &mut String, p: &ParamDecl) {
-    if p.choices.is_empty() {
+    if p.is_symbol {
+        out.push_str(&format!(
+            "let {} = extern_symbol(\"{}\", {}, \"{}\");\n",
+            p.name, p.name, p.default, p.description
+        ));
+    } else if p.choices.is_empty() {
         out.push_str(&format!(
             "let {} = extern(\"{}\", {}, \"{}\");\n",
             p.name, p.name, p.default, p.description
@@ -632,18 +637,21 @@ fn generate_stmts(
                 qty_expr,
                 order_type,
                 exit_modifiers,
+                symbol: target_sym,
                 ..
             } => {
                 let qty = rewrite_expr(qty_expr);
+                // Validation guarantees target_sym is always Some
+                let sym = target_sym.as_deref().expect("buy requires 'of IDENT'");
                 let call = match order_type {
-                    OrderModifier::Market => format!("buy_stock({qty})"),
+                    OrderModifier::Market => format!("buy_stock({sym}, {qty})"),
                     OrderModifier::Limit { price } => {
                         let p = rewrite_expr(price);
-                        format!("buy_limit({qty}, {p})")
+                        format!("buy_limit({sym}, {qty}, {p})")
                     }
                     OrderModifier::Stop { price } => {
                         let p = rewrite_expr(price);
-                        format!("buy_stop({qty}, {p})")
+                        format!("buy_stop({sym}, {qty}, {p})")
                     }
                 };
 
@@ -671,20 +679,23 @@ fn generate_stmts(
                 qty_expr,
                 order_type,
                 exit_modifiers,
+                symbol: target_sym,
                 ..
             } => {
                 let qty = rewrite_expr(qty_expr);
+                // Validation guarantees target_sym is always Some
+                let sym = target_sym.as_deref().expect("sell requires 'of IDENT'");
                 // Build the guarded call with __sell_qty directly to avoid
                 // string-replace corruption when qty appears in price expressions.
                 let call_with_guard = match order_type {
-                    OrderModifier::Market => "sell_stock(__sell_qty)".to_string(),
+                    OrderModifier::Market => format!("sell_stock({sym}, __sell_qty)"),
                     OrderModifier::Limit { price } => {
                         let p = rewrite_expr(price);
-                        format!("sell_limit(__sell_qty, {p})")
+                        format!("sell_limit({sym}, __sell_qty, {p})")
                     }
                     OrderModifier::Stop { price } => {
                         let p = rewrite_expr(price);
-                        format!("sell_stop(__sell_qty, {p})")
+                        format!("sell_stop({sym}, __sell_qty, {p})")
                     }
                 };
 

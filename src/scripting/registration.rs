@@ -31,6 +31,15 @@ pub fn build_engine() -> Engine {
         );
     });
 
+    // Stub extern_symbol(name, default, description) — no-op in the base engine.
+    // The real implementation is registered by run_script_backtest / validate_script
+    // which overrides this with param resolution. This stub exists so scripts
+    // can compile without error when using build_engine() directly (e.g., DSL tests).
+    engine.register_fn(
+        "extern_symbol",
+        |_name: &str, default: rhai::Dynamic, _desc: &str| -> rhai::Dynamic { default },
+    );
+
     // Register custom types
     register_bar_context(&mut engine);
     register_symbol_context(&mut engine);

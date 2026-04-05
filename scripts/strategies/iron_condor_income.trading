@@ -3,7 +3,6 @@
 # Takes profit at 50% or exits on time decay.
 
 strategy "Iron Condor Income"
-  symbol SPY
   capital CAPITAL
   interval daily
   data ohlcv, options
@@ -16,6 +15,8 @@ strategy "Iron Condor Income"
   hypothesis "Range-bound markets with compressed Bollinger Bands favor premium selling via iron condors"
   tags iron_condor, premium_selling, volatility
   regime range_bound, low_volatility
+
+asset symbol = "SPY"
 
 extern SHORT_PUT_DELTA = 0.20 "Short put delta target"
 extern SHORT_CALL_DELTA = 0.20 "Short call delta target"

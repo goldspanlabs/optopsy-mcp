@@ -40,7 +40,6 @@ pub struct DslProgram {
 #[derive(Debug)]
 pub struct StrategyBlock {
     pub name: String,
-    pub symbol: String,
     pub capital: String,
     pub interval: String,
     pub data_ohlcv: bool,
@@ -65,6 +64,7 @@ pub struct ParamDecl {
     pub default: String,
     pub description: String,
     pub choices: Vec<String>,
+    pub is_symbol: bool,
 }
 
 /// A `state` variable declaration with initial value.
@@ -133,12 +133,14 @@ pub enum Stmt {
         qty_expr: String,
         order_type: OrderModifier,
         exit_modifiers: ExitModifiers,
+        symbol: Option<String>,
         line: usize,
     },
     Sell {
         qty_expr: String,
         order_type: OrderModifier,
         exit_modifiers: ExitModifiers,
+        symbol: Option<String>,
         line: usize,
     },
     CancelOrders {
@@ -262,6 +264,11 @@ pub fn parse(source: &str) -> Result<DslProgram, DslError> {
             }
             program.strategy = Some(block);
             i = next;
+        } else if content.starts_with("asset ") {
+            let mut p = parse_asset(line)?;
+            p.is_symbol = true;
+            program.params.push(p);
+            i += 1;
         } else if content.starts_with("extern ") {
             program.params.push(parse_extern(line)?);
             i += 1;
@@ -387,7 +394,6 @@ fn parse_strategy_block(lines: &[Line], start: usize) -> Result<(StrategyBlock, 
 
     let mut block = StrategyBlock {
         name,
-        symbol: "params.SYMBOL".to_string(),
         capital: "params.CAPITAL".to_string(),
         interval: "daily".to_string(),
         data_ohlcv: true,
@@ -410,9 +416,7 @@ fn parse_strategy_block(lines: &[Line], start: usize) -> Result<(StrategyBlock, 
         let line = &lines[i];
         let content = &line.content;
 
-        if let Some(rest) = content.strip_prefix("symbol ") {
-            block.symbol = rest.trim().to_string();
-        } else if let Some(rest) = content.strip_prefix("capital ") {
+        if let Some(rest) = content.strip_prefix("capital ") {
             block.capital = rest.trim().to_string();
         } else if let Some(rest) = content.strip_prefix("interval ") {
             block.interval = rest.trim().to_string();
@@ -607,6 +611,56 @@ fn parse_extern(line: &Line) -> Result<ParamDecl, DslError> {
         default,
         description,
         choices,
+        is_symbol: false,
+    })
+}
+
+fn parse_asset(line: &Line) -> Result<ParamDecl, DslError> {
+    // asset NAME = "DEFAULT"
+    // asset NAME = "DEFAULT" "description"  (optional)
+    let rest = line.content.strip_prefix("asset ").unwrap();
+
+    let eq_pos = rest
+        .find('=')
+        .ok_or_else(|| DslError::new(line.num, "asset requires '=' (e.g., asset spy = \"SPY\")"))?;
+
+    let name = rest[..eq_pos].trim().to_string();
+    let after_eq = rest[eq_pos + 1..].trim();
+
+    // Parse default value (quoted string like "SPY")
+    if !after_eq.starts_with('"') {
+        return Err(DslError::new(
+            line.num,
+            "asset default must be a quoted string (e.g., \"SPY\")",
+        ));
+    }
+    let after_open = &after_eq[1..];
+    let close = after_open
+        .find('"')
+        .ok_or_else(|| DslError::new(line.num, "unterminated default string"))?;
+    let default = after_eq[..close + 2].to_string(); // include quotes
+
+    // Optional description
+    let remainder = after_open[close + 1..].trim();
+    let description = if let Some(desc_inner) = remainder.strip_prefix('"') {
+        let desc_end = desc_inner
+            .find('"')
+            .ok_or_else(|| DslError::new(line.num, "unterminated description string"))?;
+        desc_inner[..desc_end].to_string()
+    } else {
+        name.clone()
+    };
+
+    if name.is_empty() {
+        return Err(DslError::new(line.num, "asset requires a name"));
+    }
+
+    Ok(ParamDecl {
+        name,
+        default,
+        description,
+        choices: vec![],
+        is_symbol: true,
     })
 }
 
@@ -705,22 +759,24 @@ fn parse_statements(lines: &[Line]) -> Result<Vec<Stmt>, DslError> {
                 "'otherwise' without a preceding 'when'",
             ));
         } else if let Some(rest) = strip_prefix_ci(content, "Buy ") {
-            let (qty_expr, order_type) = parse_order_statement(rest, line.num)?;
+            let (qty_expr, order_type, symbol) = parse_order_statement(rest, line.num)?;
             let (exit_modifiers, consumed) = parse_exit_modifiers(lines, i)?;
             stmts.push(Stmt::Buy {
                 qty_expr,
                 order_type,
                 exit_modifiers,
+                symbol,
                 line: line.num,
             });
             i += 1 + consumed;
         } else if let Some(rest) = strip_prefix_ci(content, "Sell ") {
-            let (qty_expr, order_type) = parse_order_statement(rest, line.num)?;
+            let (qty_expr, order_type, symbol) = parse_order_statement(rest, line.num)?;
             let (exit_modifiers, consumed) = parse_exit_modifiers(lines, i)?;
             stmts.push(Stmt::Sell {
                 qty_expr,
                 order_type,
                 exit_modifiers,
+                symbol,
                 line: line.num,
             });
             i += 1 + consumed;
@@ -1278,7 +1334,14 @@ fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
 /// - `100 shares at market`                    → Market order (shorthand)
 /// - `100 shares at 150.00 limit`              → Limit order (shorthand)
 /// - `100 shares`                              → Market order (implicit)
-fn parse_order_statement(rest: &str, line_num: usize) -> Result<(String, OrderModifier), DslError> {
+fn parse_order_statement(
+    rest: &str,
+    line_num: usize,
+) -> Result<(String, OrderModifier, Option<String>), DslError> {
+    // Extract trailing "of IDENTIFIER" before parsing the rest.
+    // Matches: "N shares of spy", "N shares of spy next bar at market", etc.
+    let (rest, target_symbol) = extract_of_symbol(rest);
+
     // Canonical form: "N shares next bar at ..."
     if let Some(shares_pos) = rest.find(" shares next bar at ") {
         let qty_expr = rest[..shares_pos].trim().to_string();
@@ -1287,7 +1350,7 @@ fn parse_order_statement(rest: &str, line_num: usize) -> Result<(String, OrderMo
         if qty_expr.is_empty() {
             return Err(DslError::new(line_num, "Buy/Sell requires a quantity"));
         }
-        return Ok((qty_expr, order_type));
+        return Ok((qty_expr, order_type, target_symbol));
     }
 
     // Shorthand: "N shares at ..."
@@ -1298,13 +1361,13 @@ fn parse_order_statement(rest: &str, line_num: usize) -> Result<(String, OrderMo
         if qty_expr.is_empty() {
             return Err(DslError::new(line_num, "Buy/Sell requires a quantity"));
         }
-        return Ok((qty_expr, order_type));
+        return Ok((qty_expr, order_type, target_symbol));
     }
 
     // Implicit market: "N shares" or bare expression
     let qty_expr = rest
         .strip_suffix(" shares")
-        .unwrap_or(rest)
+        .unwrap_or(&rest)
         .trim()
         .to_string();
 
@@ -1312,7 +1375,37 @@ fn parse_order_statement(rest: &str, line_num: usize) -> Result<(String, OrderMo
         return Err(DslError::new(line_num, "Buy/Sell requires a quantity"));
     }
 
-    Ok((qty_expr, OrderModifier::Market))
+    Ok((qty_expr, OrderModifier::Market, target_symbol))
+}
+
+/// Extract `of IDENTIFIER` from an order statement.
+/// Returns the remaining string (without the "of ..." part) and the symbol if found.
+///
+/// Handles patterns like:
+/// - "10 shares of spy" → ("10 shares", Some("spy"))
+/// - "10 shares of spy next bar at market" → ("10 shares next bar at market", Some("spy"))
+/// - "10 shares" → ("10 shares", None)
+fn extract_of_symbol(input: &str) -> (String, Option<String>) {
+    // Look for " of " after "shares"
+    if let Some(shares_pos) = input.find(" shares of ") {
+        let after_of = &input[shares_pos + " shares of ".len()..];
+        // The symbol is the next word (identifier)
+        let sym_end = after_of
+            .find(|c: char| !c.is_alphanumeric() && c != '_')
+            .unwrap_or(after_of.len());
+        let sym = after_of[..sym_end].trim();
+        if !sym.is_empty() {
+            let remainder_after_sym = after_of[sym_end..].trim();
+            let mut rebuilt = input[..shares_pos].to_string();
+            rebuilt.push_str(" shares");
+            if !remainder_after_sym.is_empty() {
+                rebuilt.push(' ');
+                rebuilt.push_str(remainder_after_sym);
+            }
+            return (rebuilt, Some(sym.to_string()));
+        }
+    }
+    (input.to_string(), None)
 }
 
 /// Parse the order type after "at": "market", "PRICE limit", or "PRICE stop".
@@ -1369,12 +1462,13 @@ mod tests {
 
     #[test]
     fn test_preprocess_strips_comments_and_blanks() {
-        let source = "# comment\nstrategy \"Test\"\n\n  symbol AAPL\n  # another comment\n  interval daily\n";
+        let source =
+            "# comment\nstrategy \"Test\"\n\n  interval daily\n  # another comment\n  data ohlcv\n";
         let lines = preprocess(source);
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0].content, "strategy \"Test\"");
         assert_eq!(lines[0].indent, 0);
-        assert_eq!(lines[1].content, "symbol AAPL");
+        assert_eq!(lines[1].content, "interval daily");
         assert!(lines[1].indent > 0);
     }
 
@@ -1422,12 +1516,13 @@ mod tests {
     fn test_parse_minimal_program() {
         let source = r#"
 strategy "Test"
-  symbol AAPL
   interval daily
+
+asset symbol = "AAPL"
 
 on each bar
   skip when has positions
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
         let program = parse(source).unwrap();
         assert!(program.strategy.is_some());
@@ -1440,8 +1535,9 @@ on each bar
     fn test_parse_when_otherwise_chain() {
         let source = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+asset symbol = "SPY"
 
 on exit check
   when pos.pnl_pct > 0.50 then
@@ -1477,7 +1573,7 @@ on exit check
 
     #[test]
     fn test_rejects_missing_strategy() {
-        let source = "on each bar\n  buy 100 shares\n";
+        let source = "on each bar\n  buy 100 shares of symbol\n";
         let err = parse(source).unwrap_err();
         assert!(err.message.contains("missing required 'strategy' block"));
     }
@@ -1486,14 +1582,15 @@ on exit check
     fn test_rejects_duplicate_blocks() {
         let source = r#"
 strategy "Test"
-  symbol SPY
   interval daily
 
-on each bar
-  buy 100 shares
+asset symbol = "SPY"
 
 on each bar
-  sell 50 shares
+  buy 100 shares of symbol
+
+on each bar
+  sell 50 shares of symbol
 "#;
         let err = parse(source).unwrap_err();
         assert!(err.message.contains("duplicate"));

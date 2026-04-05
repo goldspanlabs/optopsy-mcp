@@ -10,14 +10,14 @@
 // Sells when price drops 3% below the 200-day SMA.
 // Plots the entry (+4%) and exit (-3%) threshold bands for charting.
 //
-// Required params: SYMBOL, CAPITAL
+// Required params: CAPITAL
+let symbol = extern_symbol("symbol", "SPY", "Ticker to trade");
 
 let entry_threshold = extern("ENTRY_THRESHOLD", 0.04, "Entry threshold above SMA (e.g. 0.04 = +4%)");
 let exit_threshold  = extern("EXIT_THRESHOLD", 0.03, "Exit threshold below SMA (e.g. 0.03 = -3%)");
 
 fn config() {
     #{
-        symbol: params.SYMBOL,
         capital: params.CAPITAL,
         interval: "daily",
         data: #{
@@ -43,7 +43,7 @@ fn on_bar(ctx) {
     if ctx.close > upper {
         let qty = ctx.size_by_equity(1.0);
         if qty <= 0 { return []; }
-        [buy_stock(qty)]
+        [buy_stock(symbol, qty)]
     } else {
         []
     }

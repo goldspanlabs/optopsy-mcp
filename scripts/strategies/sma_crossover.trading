@@ -3,7 +3,6 @@
 # Written in the natural-language Trading DSL.
 
 strategy "SMA Crossover"
-  symbol SYMBOL
   capital CAPITAL
   interval daily
   data ohlcv
@@ -13,6 +12,8 @@ strategy "SMA Crossover"
   hypothesis "Golden cross with momentum filter reduces false breakout entries"
   tags trend_following, sma, crossover
   regime trending, bullish
+
+asset symbol = "SPY"
 
 extern ENTRY_THRESHOLD = 0.04 "Percentage above SMA to trigger entry"
 extern EXIT_THRESHOLD = 0.03 "Percentage below SMA to trigger exit"
@@ -30,7 +31,7 @@ on each bar
   plot "Entry Threshold" at upper
 
   when close > upper and sma(50) > sma(200) then
-    Buy size_by_equity(1.0) shares next bar at market
+    Buy size_by_equity(1.0) shares of symbol next bar at market
 
 on exit check
   set lower to sma(200) * (1 - EXIT_THRESHOLD)
