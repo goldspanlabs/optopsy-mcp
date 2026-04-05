@@ -508,12 +508,16 @@ pub async fn submit_walk_forward(
     State(state): State<AppState>,
     Json(req): Json<SubmitWalkForwardRequest>,
 ) -> Result<Json<SubmitResponse>, (StatusCode, String)> {
+    // Symbol from params; resolved from script source later if not provided
     let symbol = req
         .params
         .get("symbol")
         .and_then(Value::as_str)
         .unwrap_or("pending")
         .to_owned();
+
+    // Will be overwritten with resolved symbol after script is loaded
+    let symbol_from_params = req.params.contains_key("symbol");
 
     let params_json =
         serde_json::to_value(&req.params).unwrap_or(Value::Object(serde_json::Map::default()));
@@ -564,6 +568,19 @@ pub async fn submit_walk_forward(
                     return;
                 }
             };
+
+        // Resolve symbol from script if not explicitly in params
+        let symbol = if symbol_from_params {
+            symbol
+        } else {
+            crate::scripting::engine::resolve_symbols_from_extern_params(
+                &script_source,
+                &req.params,
+            )
+            .into_iter()
+            .next()
+            .unwrap_or(symbol)
+        };
 
         let loader =
             CachingDataLoader::new(Arc::clone(&server.cache), server.adjustment_store.clone());

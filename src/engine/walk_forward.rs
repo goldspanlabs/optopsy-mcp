@@ -356,7 +356,7 @@ pub async fn execute(
                 serde_json::json!(window.train_end.to_string()),
             );
 
-            if let Ok(result) = run_script_backtest(
+            match run_script_backtest(
                 &script_source,
                 &run_params,
                 data_loader,
@@ -366,14 +366,19 @@ pub async fn execute(
             )
             .await
             {
-                // Capture precomputed data from the first successful run
-                if precomputed.is_none() {
-                    precomputed = result.precomputed_options;
+                Err(e) => {
+                    tracing::warn!(combo = combo_idx, "Walk-forward training run failed: {e:#}");
                 }
-                let metric = extract_metric(&result.result, &params.objective);
-                if metric.is_finite() && metric > best_metric {
-                    best_metric = metric;
-                    best_params = combo.clone();
+                Ok(result) => {
+                    // Capture precomputed data from the first successful run
+                    if precomputed.is_none() {
+                        precomputed = result.precomputed_options;
+                    }
+                    let metric = extract_metric(&result.result, &params.objective);
+                    if metric.is_finite() && metric > best_metric {
+                        best_metric = metric;
+                        best_params = combo.clone();
+                    }
                 }
             }
 
