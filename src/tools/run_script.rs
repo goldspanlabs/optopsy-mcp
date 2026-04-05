@@ -213,7 +213,7 @@ fn indicator_thresholds(decl: &str) -> Vec<f64> {
 pub fn maybe_transpile(source: String) -> Result<String> {
     if crate::scripting::dsl::is_trading_dsl(&source) {
         crate::scripting::dsl::transpile(&source)
-            .map_err(|e| anyhow::anyhow!("DSL transpilation failed: {e}"))
+            .map_err(|e| anyhow::Error::new(e).context("DSL transpilation failed"))
     } else {
         Ok(source)
     }
