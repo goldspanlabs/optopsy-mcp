@@ -261,13 +261,7 @@ pub async fn execute(
         let raw = tokio::fs::read_to_string(&script_path)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to read strategy script '{script_path}': {e}"))?;
-        // Auto-transpile Trading DSL to Rhai
-        if crate::scripting::dsl::is_trading_dsl(&raw) {
-            crate::scripting::dsl::transpile(&raw)
-                .map_err(|e| anyhow::anyhow!("DSL transpile error: {e}"))?
-        } else {
-            raw
-        }
+        crate::tools::run_script::maybe_transpile(raw)?
     };
 
     // Load OHLCV data to get the date range
