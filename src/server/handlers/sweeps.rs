@@ -309,7 +309,7 @@ pub async fn create_sweep(
             .params
             .get("symbol")
             .and_then(Value::as_str)
-            .unwrap_or("SPY")
+            .unwrap_or("pending")
             .to_owned();
 
         // Progress tracking via atomics

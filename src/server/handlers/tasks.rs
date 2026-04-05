@@ -154,11 +154,13 @@ pub async fn submit_backtest(
     State(state): State<AppState>,
     Json(req): Json<SubmitBacktestRequest>,
 ) -> Json<SubmitResponse> {
+    // Symbol from params is a pre-execution hint; actual symbol is resolved
+    // from the engine result after the backtest completes.
     let symbol = req
         .params
         .get("symbol")
         .and_then(Value::as_str)
-        .unwrap_or("SPY")
+        .unwrap_or("pending")
         .to_owned();
 
     let params_json =
@@ -295,12 +297,12 @@ pub async fn submit_sweep(
     State(state): State<AppState>,
     Json(req): Json<SubmitSweepRequest>,
 ) -> Result<Json<SubmitResponse>, (StatusCode, String)> {
-    // Symbol may not be in params — will be resolved from script later
+    // Symbol from params is a pre-execution hint; resolved from script later.
     let symbol = req
         .params
         .get("symbol")
         .and_then(Value::as_str)
-        .unwrap_or("SPY")
+        .unwrap_or("pending")
         .to_owned();
 
     let params_json =
@@ -510,7 +512,7 @@ pub async fn submit_walk_forward(
         .params
         .get("symbol")
         .and_then(Value::as_str)
-        .unwrap_or("SPY")
+        .unwrap_or("pending")
         .to_owned();
 
     let params_json =
