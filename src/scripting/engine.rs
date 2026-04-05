@@ -3803,10 +3803,15 @@ async fn load_multi_symbol_data(
             .load_options(sym, config.start_date, config.end_date)
             .await
         {
-            Ok(df) => {
+            Ok(df) if df.height() > 0 => {
                 let (pt, _days, di) = crate::engine::price_table::build_price_table(&df)?;
                 let obd = DatePartitionedOptions::from_df(&df, &config.expiration_filter)?;
                 (Some(Arc::new(obd)), Some(Arc::new(pt)), Some(Arc::new(di)))
+            }
+            Ok(_) => {
+                // Empty DataFrame — no options data
+                tracing::info!(symbol = sym, "Options data empty — OHLCV only");
+                (None, None, None)
             }
             Err(e) => {
                 // No options data for this symbol — that's fine (e.g., VIX, futures)
