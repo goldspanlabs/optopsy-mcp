@@ -1522,7 +1522,7 @@ asset symbol = "AAPL"
 
 on each bar
   skip when has positions
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
         let program = parse(source).unwrap();
         assert!(program.strategy.is_some());
@@ -1573,7 +1573,7 @@ on exit check
 
     #[test]
     fn test_rejects_missing_strategy() {
-        let source = "on each bar\n  buy 100 shares\n";
+        let source = "on each bar\n  buy 100 shares of symbol\n";
         let err = parse(source).unwrap_err();
         assert!(err.message.contains("missing required 'strategy' block"));
     }
@@ -1587,10 +1587,10 @@ strategy "Test"
 asset symbol = "SPY"
 
 on each bar
-  buy 100 shares
+  buy 100 shares of symbol
 
 on each bar
-  sell 50 shares
+  sell 50 shares of symbol
 "#;
         let err = parse(source).unwrap_err();
         assert!(err.message.contains("duplicate"));

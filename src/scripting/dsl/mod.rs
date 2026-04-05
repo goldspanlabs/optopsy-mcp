@@ -57,6 +57,7 @@ pub fn transpile(source: &str) -> Result<String, DslError> {
     validate::check_interval_time_keywords(&program)?;
     validate::check_portfolio_access(&program)?;
     validate::check_quantifiers(&program)?;
+    validate::check_order_symbols(&program)?;
     Ok(codegen::generate(&program))
 }
 

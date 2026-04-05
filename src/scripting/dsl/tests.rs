@@ -13,7 +13,7 @@ asset symbol = "AAPL"
 
 on each bar
   skip when has positions
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -50,7 +50,7 @@ on each bar
   require sma:50, sma:200
   skip when has positions
   when close > sma(200) * (1 + THRESHOLD) then
-    buy size_by_equity(1.0) shares
+    buy size_by_equity(1.0) shares of symbol
 
 on exit check
   when close < sma(200) then
@@ -159,7 +159,7 @@ strategy "Sell Test"
 asset symbol = "AAPL"
 
 on each bar
-  sell 50 shares
+  sell 50 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -184,7 +184,7 @@ on each bar
   set upper to sma(200) * 1.05
   plot "Upper Band" at upper
   plot "RSI" at rsi(14) as subchart
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -204,7 +204,7 @@ asset symbol = "SPY"
 on each bar
   skip when has positions
   when close > 100 and rsi(14) < 30 or volume > 1000000 then
-    buy 100 shares
+    buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -236,7 +236,7 @@ asset symbol = "SPY"
 
 on each bar
   when close > 100
-    buy 100 shares
+    buy 100 shares of symbol
 "#;
     let err = transpile(dsl).unwrap_err();
     assert!(err.message.contains("then"));
@@ -256,7 +256,7 @@ state counter = 0
 on each bar
   set counter to counter + 1
   add 5 to counter
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -276,7 +276,7 @@ asset symbol = "SPY"
 
 on each bar
   when price_of("QQQ") > close then
-    buy 100 shares
+    buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -368,6 +368,46 @@ on each bar
 }
 
 #[test]
+fn test_buy_without_of_is_error() {
+    let dsl = r#"
+strategy "Bad"
+  interval daily
+  data ohlcv
+
+asset symbol = "SPY"
+
+on each bar
+  buy 10 shares
+"#;
+
+    let err = transpile(dsl).unwrap_err();
+    assert!(
+        err.to_string().contains("target symbol"),
+        "Should error on buy without of: {err}"
+    );
+}
+
+#[test]
+fn test_sell_without_of_is_error() {
+    let dsl = r#"
+strategy "Bad"
+  interval daily
+  data ohlcv
+
+asset symbol = "SPY"
+
+on each bar
+  sell 10 shares
+"#;
+
+    let err = transpile(dsl).unwrap_err();
+    assert!(
+        err.to_string().contains("target symbol"),
+        "Should error on sell without of: {err}"
+    );
+}
+
+#[test]
 fn test_transpile_extern_with_choices() {
     let dsl = r#"
 strategy "Test"
@@ -378,7 +418,7 @@ asset symbol = "SPY"
 extern MODE = "fast" "Execution mode" choices fast, slow
 
 on each bar
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -395,7 +435,7 @@ asset symbol = "SPY"
 
 on each bar
   raw let x = 42;
-  buy x shares
+  buy x shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -414,7 +454,7 @@ state total_bars = 0
 
 on each bar
   add 1 to total_bars
-  buy 100 shares
+  buy 100 shares of symbol
 
 on end
   raw print("Done: " + total_bars);
@@ -436,9 +476,9 @@ asset symbol = "SPY"
 
 on each bar
   when close > 100 then
-    buy 50 shares
+    buy 50 shares of symbol
   when rsi(14) < 30 then
-    buy 50 shares
+    buy 50 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -507,7 +547,7 @@ on each bar
   for each pos in positions()
     when pos.pnl_pct < -0.5 then
       close position pos.id "stop_loss"
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -527,7 +567,7 @@ state balance = 100
 
 on each bar
   subtract 10 from balance
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -547,7 +587,7 @@ state factor = 1.0
 on each bar
   multiply factor by 1.05
   divide factor by 2
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -592,7 +632,7 @@ asset symbol = "SPY"
 state _group = "Cycle 1"
 
 on each bar
-  buy 100 shares
+  buy 100 shares of symbol
 
 on position closed
   set _group to "Cycle 2"
@@ -618,7 +658,7 @@ state total_pnl = 0.0
 on each bar
   for each pos in positions()
     add pos.unrealized_pnl to total_pnl
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -639,7 +679,7 @@ on each bar
   raw let bb_width = (ctx.bbands_upper(20) - ctx.bbands_lower(20)) / ctx.sma(20);
   raw let regime = if bb_width > 0.08 { "volatile" } else { "normal" };
   when regime == "normal" then
-    buy 100 shares
+    buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -660,7 +700,7 @@ strategy "Test"
 asset symbol = "SPY"
 
 on each bar
-  buy 100 shares at 150.00 limit
+  buy 100 shares of symbol at 150.00 limit
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -679,7 +719,7 @@ strategy "Test"
 asset symbol = "SPY"
 
 on each bar
-  buy 100 shares at 155.00 stop
+  buy 100 shares of symbol at 155.00 stop
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -698,7 +738,7 @@ strategy "Test"
 asset symbol = "SPY"
 
 on each bar
-  sell 50 shares at 200.00 limit
+  sell 50 shares of symbol at 200.00 limit
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -717,7 +757,7 @@ strategy "Test"
 asset symbol = "SPY"
 
 on each bar
-  sell 50 shares at entry_price - 2.0 stop
+  sell 50 shares of symbol at entry_price - 2.0 stop
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -740,7 +780,7 @@ strategy "Test"
 asset symbol = "SPY"
 
 on each bar
-  buy 100 shares at market
+  buy 100 shares of symbol at market
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -760,7 +800,7 @@ asset symbol = "SPY"
 
 on each bar
   cancel all orders
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -780,7 +820,7 @@ asset symbol = "SPY"
 
 on each bar
   cancel orders "old_entry"
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -801,7 +841,7 @@ asset symbol = "SPY"
 on each bar
   skip when market_position != 0
   when entry_price > 0 and bars_since_entry > 5 then
-    sell current_shares shares
+    sell current_shares shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -820,7 +860,7 @@ strategy "Test"
 asset symbol = "SPY"
 
 on each bar
-  buy 100 shares at close - atr(14) * 2 limit
+  buy 100 shares of symbol at close - atr(14) * 2 limit
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -839,7 +879,7 @@ strategy "Test"
 asset symbol = "SPY"
 
 on each bar
-  Buy 100 shares next bar at market
+  Buy 100 shares of symbol next bar at market
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -858,7 +898,7 @@ strategy "Test"
 asset symbol = "SPY"
 
 on each bar
-  Sell 50 shares next bar at 200.00 limit
+  Sell 50 shares of symbol next bar at 200.00 limit
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -878,7 +918,7 @@ strategy "Test"
 asset symbol = "SPY"
 
 on each bar
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     // Uppercase (TradeStation-style)
@@ -889,7 +929,7 @@ strategy "Test"
 asset symbol = "SPY"
 
 on each bar
-  Buy 100 shares next bar at market
+  Buy 100 shares of symbol next bar at market
 "#;
 
     let rhai_lower = transpile(dsl_lower).unwrap();
@@ -913,7 +953,7 @@ asset symbol = "SPY"
 on each bar
   require sma:50
   when close[1] > sma(50)[1] and close < sma(50) then
-    Buy size_by_equity(1.0) shares next bar at market
+    Buy size_by_equity(1.0) shares of symbol next bar at market
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -939,7 +979,7 @@ asset symbol = "SPY"
 on each bar
   require sma:50, sma:200
   when sma(50) crosses above sma(200) then
-    Buy 100 shares next bar at market
+    Buy 100 shares of symbol next bar at market
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -968,7 +1008,7 @@ extern FAST = 50 "Fast MA"
 require sma:50, sma:200
 
 when no positions and sma(50) crosses above sma(200) then
-  Buy size_by_equity(1.0) shares next bar at market
+  Buy size_by_equity(1.0) shares of symbol next bar at market
 
 when has positions and close crosses below sma(50) then
   close position "signal_exit"
@@ -1010,7 +1050,7 @@ strategy "Test" procedural
 asset symbol = "SPY"
 
 on each bar
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let err = transpile(dsl).unwrap_err();
@@ -1029,7 +1069,7 @@ strategy "Test"
 
 asset symbol = "SPY"
 
-buy 100 shares
+buy 100 shares of symbol
 "#;
 
     let err = transpile(dsl).unwrap_err();
@@ -1052,7 +1092,7 @@ state counter = 0
 
 add 1 to counter
 when counter > 10 and no positions then
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -1075,7 +1115,7 @@ asset symbol = "SPY"
 
 on each bar
   when sma(200) > ema(50) and rsi(14) < 30 then
-    buy 100 shares
+    buy 100 shares of symbol
 "#;
     let rhai = transpile(dsl).unwrap();
     assert!(rhai.contains("\"sma:200\""), "Missing sma:200.\n{rhai}");
@@ -1094,7 +1134,7 @@ asset symbol = "SPY"
 
 on each bar
   when sma(200) > 0 then
-    buy 100 shares
+    buy 100 shares of symbol
 "#;
     let rhai = transpile(dsl).unwrap();
     assert!(
@@ -1117,7 +1157,7 @@ asset symbol = "SPY"
 
 on each bar
   when sma(50)[1] > sma(200)[1] and rsi(14) crosses above 30 then
-    buy 100 shares
+    buy 100 shares of symbol
 "#;
     let rhai = transpile(dsl).unwrap();
     assert!(rhai.contains("\"sma:50\""), "Missing sma:50.\n{rhai}");
@@ -1135,7 +1175,7 @@ asset symbol = "SPY"
 
 require sma:50
 when sma(50) > close then
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
     let rhai = transpile(dsl).unwrap();
     assert!(
@@ -1153,7 +1193,7 @@ strategy "Test"
 asset symbol = "SPY"
 
 on each bar
-  Buy 100 shares next bar at market
+  Buy 100 shares of symbol next bar at market
     stop_loss 5%
     profit_target 10%
 "#;
@@ -1185,7 +1225,7 @@ strategy "Test"
 asset symbol = "SPY"
 
 on each bar
-  Buy 100 shares next bar at market
+  Buy 100 shares of symbol next bar at market
     stop_loss $500
 "#;
     let rhai = transpile(dsl).unwrap();
@@ -1204,7 +1244,7 @@ strategy "Test"
 asset symbol = "SPY"
 
 on each bar
-  Buy 100 shares next bar at market
+  Buy 100 shares of symbol next bar at market
     trailing_stop 3%
 "#;
     let rhai = transpile(dsl).unwrap();
@@ -1223,7 +1263,7 @@ strategy "Test"
 asset symbol = "SPY"
 
 on each bar
-  Buy 100 shares next bar at market
+  Buy 100 shares of symbol next bar at market
 "#;
     let rhai = transpile(dsl).unwrap();
     assert!(
@@ -1242,7 +1282,7 @@ strategy "Test" procedural
 asset symbol = "SPY"
 
 when no positions and close > sma(200) then
-  Buy 100 shares next bar at market
+  Buy 100 shares of symbol next bar at market
     stop_loss 5%
     profit_target 10%
     trailing_stop 3%
@@ -1272,7 +1312,7 @@ strategy "SMA Threshold"
 asset symbol = "SPY"
 
 on each bar
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -1312,7 +1352,7 @@ strategy "Minimal"
 asset symbol = "SPY"
 
 on each bar
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -1346,7 +1386,7 @@ state stock = #{price: 0.0, basis: 0.0}
 on each bar
   set stock.price to close
   set stock.basis to close * 0.95
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -1374,7 +1414,7 @@ state totals = #{premium: 0.0, count: 0}
 on each bar
   add 1.5 to totals.premium
   add 1 to totals.count
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -1467,7 +1507,7 @@ asset symbol = "SPY"
 
 on each bar
   skip when day_of_week == monday
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -1487,7 +1527,7 @@ asset symbol = "SPY"
 
 on each bar
   skip when month == january
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -1508,7 +1548,7 @@ asset symbol = "SPY"
 on each bar
   skip when time < 10:00
   skip when time > 15:30
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -1532,7 +1572,7 @@ asset symbol = "SPY"
 
 on each bar
   skip when is_first_bar
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -1552,7 +1592,7 @@ asset symbol = "SPY"
 
 on each bar
   skip when is_expiry_week
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -1572,7 +1612,7 @@ asset symbol = "SPY"
 
 on each bar
   skip when trading_days_left < 3
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -1612,7 +1652,7 @@ asset symbol = "SPY"
 
 on each bar
   skip when time < 10:00
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let err = transpile(dsl).unwrap_err();
@@ -1636,7 +1676,7 @@ asset symbol = "SPY"
 
 on each bar
   skip when is_first_bar
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let err = transpile(dsl).unwrap_err();
@@ -1656,7 +1696,7 @@ asset symbol = "SPY"
 
 on each bar
   skip when minutes_since_open < 30
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let err = transpile(dsl).unwrap_err();
@@ -1676,7 +1716,7 @@ asset symbol = "SPY"
 
 on each bar
   skip when day_of_week == friday
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -1720,7 +1760,7 @@ asset symbol = "SPY"
 
 on each bar
   skip when time < 9:30
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -1741,7 +1781,7 @@ asset symbol = "SPY"
 on each bar
   skip when time() < 10:00
   skip when minutes_since_open() < 30
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -1765,7 +1805,7 @@ asset symbol = "SPY"
 
 on each bar
   skip when time < 25:00
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let err = transpile(dsl).unwrap_err();
@@ -1789,7 +1829,7 @@ asset symbol = "SPY"
 
 on each bar
   skip when time > 10:75
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let err = transpile(dsl).unwrap_err();
@@ -1814,7 +1854,7 @@ asset symbol = "SPY"
 extern monday = 1 "A variable named monday"
 
 on each bar
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let err = transpile(dsl).unwrap_err();
@@ -1835,7 +1875,7 @@ asset symbol = "SPY"
 state may = 0
 
 on each bar
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let err = transpile(dsl).unwrap_err();
@@ -1857,7 +1897,7 @@ extern monday_count = 0 "Not a reserved name"
 state may_trades = 0
 
 on each bar
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     // Should not error — these are not exact matches
@@ -1876,7 +1916,7 @@ asset symbol = "SPY"
 
 on each bar
   set march to 3
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let err = transpile(dsl).unwrap_err();
@@ -1922,7 +1962,7 @@ extern VIX_THRESHOLD = 20 "VIX threshold"
 
 on each bar
   set target_delta to 0.15 if close > sma(200) else 0.30
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -1942,7 +1982,7 @@ asset symbol = "SPY"
 
 on each bar
   set size to 1.0 if rsi(14) < 30 else 0.5 if rsi(14) > 70 else 0.75
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -1967,7 +2007,7 @@ asset symbol = "SPY"
 
 on each bar
   skip when portfolio.exposure_pct > 0.50
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -1989,7 +2029,7 @@ asset symbol = "SPY"
 on each bar
   skip when portfolio.drawdown < -0.10
   skip when portfolio.net_delta > 100
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -2016,7 +2056,7 @@ on each bar
   when portfolio.long_count >= 5 then
     hold position
   otherwise
-    buy 100 shares
+    buy 100 shares of symbol
 "#;
 
     let rhai = transpile(dsl).unwrap();
@@ -2037,7 +2077,7 @@ asset symbol = "SPY"
 
 on each bar
   skip when portfolio.foo > 1
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let err = transpile(dsl).unwrap_err();
@@ -2059,7 +2099,7 @@ asset symbol = "SPY"
 
 on each bar
   set portfolio.cash to 1000
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let err = transpile(dsl).unwrap_err();
@@ -2363,7 +2403,7 @@ asset symbol = "SPY"
 
 on each bar
   skip when portfolio.exposure_pct > 0.50
-  buy 100 shares
+  buy 100 shares of symbol
 
 on exit check
   when any leg in pos.legs has delta > 0.50 then

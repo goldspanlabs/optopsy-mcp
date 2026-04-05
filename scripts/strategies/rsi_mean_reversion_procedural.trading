@@ -18,7 +18,7 @@ extern OVERBOUGHT = 70 "RSI overbought threshold"
 require rsi:14, sma:200
 
 when no positions and rsi(14) crosses above OVERSOLD and close > sma(200) then
-  Buy size_by_equity(1.0) shares next bar at market
+  Buy size_by_equity(1.0) shares of symbol next bar at market
     stop_loss 5%
     profit_target 10%
 

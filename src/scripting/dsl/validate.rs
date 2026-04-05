@@ -596,6 +596,57 @@ const NUMERIC_LEG_FIELDS: &[&str] = &["delta", "strike", "current_price", "entry
 /// Check that quantifier statements (`when any/all`) are only used where `pos` is
 /// in scope: inside `on_exit_check` (implicit) or nested inside `for each pos in positions`.
 /// Also validates leg field references.
+/// Check that all buy/sell statements specify a target symbol via `of IDENT`.
+pub fn check_order_symbols(program: &DslProgram) -> Result<(), DslError> {
+    for block in all_blocks(program) {
+        check_order_symbols_in_stmts(block)?;
+    }
+    Ok(())
+}
+
+fn check_order_symbols_in_stmts(stmts: &[Stmt]) -> Result<(), DslError> {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Buy {
+                symbol: None, line, ..
+            }
+            | Stmt::Sell {
+                symbol: None, line, ..
+            } => {
+                return Err(DslError::new(
+                    *line,
+                    "buy/sell requires a target symbol (e.g., `buy 10 shares of spy`)",
+                ));
+            }
+            Stmt::When {
+                then_body,
+                else_body,
+                ..
+            } => {
+                check_order_symbols_in_stmts(then_body)?;
+                if let Some(ref eb) = else_body {
+                    check_order_symbols_in_stmts(eb)?;
+                }
+            }
+            Stmt::WhenAnyAll {
+                then_body,
+                else_body,
+                ..
+            } => {
+                check_order_symbols_in_stmts(then_body)?;
+                if let Some(ref eb) = else_body {
+                    check_order_symbols_in_stmts(eb)?;
+                }
+            }
+            Stmt::ForEach { body, .. } | Stmt::TryOpen { body, .. } => {
+                check_order_symbols_in_stmts(body)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 pub fn check_quantifiers(program: &DslProgram) -> Result<(), DslError> {
     // In on_exit_check, quantifiers are allowed at any nesting level (pos is implicit)
     if let Some(ref stmts) = program.on_exit_check {

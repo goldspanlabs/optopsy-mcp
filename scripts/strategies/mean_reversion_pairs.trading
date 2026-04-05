@@ -44,7 +44,7 @@ on each bar
 
   when not in_trade and spread > mean + ENTRY_Z then
     set qty to size_by_risk(RISK_PCT, close - atr(14) * 2)
-    Buy qty shares next bar at market
+    Buy qty shares of symbol next bar at market
     set in_trade to true
 
 on exit check

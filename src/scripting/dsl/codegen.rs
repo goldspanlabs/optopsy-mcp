@@ -641,7 +641,8 @@ fn generate_stmts(
                 ..
             } => {
                 let qty = rewrite_expr(qty_expr);
-                let sym = target_sym.as_deref().unwrap_or("symbol");
+                // Validation guarantees target_sym is always Some
+                let sym = target_sym.as_deref().expect("buy requires 'of IDENT'");
                 let call = match order_type {
                     OrderModifier::Market => format!("buy_stock({sym}, {qty})"),
                     OrderModifier::Limit { price } => {
@@ -682,7 +683,8 @@ fn generate_stmts(
                 ..
             } => {
                 let qty = rewrite_expr(qty_expr);
-                let sym = target_sym.as_deref().unwrap_or("symbol");
+                // Validation guarantees target_sym is always Some
+                let sym = target_sym.as_deref().expect("sell requires 'of IDENT'");
                 // Build the guarded call with __sell_qty directly to avoid
                 // string-replace corruption when qty appears in price expressions.
                 let call_with_guard = match order_type {

@@ -25,7 +25,7 @@ on each bar
     set stop_price to close - atr(14) * ATR_MULT
     set qty to size_by_risk(RISK_PCT, stop_price)
     when qty > 0 then
-      Buy qty shares next bar at market
+      Buy qty shares of symbol next bar at market
 
 on exit check
   when pos.days_held >= MAX_HOLD then
