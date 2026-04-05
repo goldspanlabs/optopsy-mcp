@@ -117,7 +117,13 @@ fn build_test_engine(
     engine.register_fn(
         "extern_symbol",
         move |name: &str, default: rhai::Dynamic, _desc: &str| -> rhai::Dynamic {
-            if let Some(value) = p_sym.get(name) {
+            // Case-insensitive lookup to mirror production behavior
+            if let Some(value) = p_sym.get(name).or_else(|| {
+                p_sym
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                    .map(|(_, v)| v)
+            }) {
                 optopsy_mcp::scripting::stdlib::json_to_dynamic(value)
             } else {
                 default

@@ -951,9 +951,12 @@ pub async fn run_script_backtest(
                     .map(|p| p.symbol.clone()),
                 _ => None,
             };
+            // Normalize: treat empty/whitespace-only symbols as None so the
+            // fallback to config.symbol works reliably.
             let target_sym = order
                 .symbol
                 .as_deref()
+                .filter(|s| !s.trim().is_empty())
                 .or(position_sym.as_deref())
                 .unwrap_or(&config.symbol);
             let fill_bar = if let Some(psd) = &ctx_factory.per_symbol_data {
@@ -3153,7 +3156,10 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ParsedAction> {
                     let symbol = map
                         .get("symbol")
                         .and_then(|v| v.clone().into_immutable_string().ok())
-                        .map(|s| s.to_uppercase());
+                        .and_then(|s| {
+                            let t = s.trim();
+                            (!t.is_empty()).then(|| t.to_uppercase())
+                        });
                     (ScriptAction::OpenStock { side, qty, symbol }, is_buy)
                 }
                 "close" => {
@@ -3293,7 +3299,10 @@ fn parse_bar_actions(result: &Dynamic) -> Vec<ParsedAction> {
                                 .and_then(|m| m.get("symbol").cloned())
                         })
                         .and_then(|v| v.into_immutable_string().ok())
-                        .map(|s| s.to_uppercase());
+                        .and_then(|s| {
+                            let t = s.trim();
+                            (!t.is_empty()).then(|| t.to_uppercase())
+                        });
                     (ScriptAction::OpenOptions { legs, qty, symbol }, is_buy)
                 }
                 _ => return None,
@@ -3707,8 +3716,9 @@ fn forward_fill_cross_symbol(
 /// For each symbol: loads OHLCV, adjustments, indicators, and tries to load options.
 /// Returns the per-symbol data map and the master timeline (date intersection).
 ///
-/// The master timeline is the intersection of all symbols' OHLCV date ranges,
-/// ensuring every bar has real data for every symbol.
+/// The master timeline is the intersection of all symbols' daily OHLCV date ranges,
+/// ensuring every bar has real data for every symbol. Multi-symbol backtests
+/// require daily data; intraday intervals must be coerced to daily before calling.
 #[allow(clippy::too_many_lines, clippy::single_match_else)]
 async fn load_multi_symbol_data(
     config: &ScriptConfig,
@@ -3716,6 +3726,17 @@ async fn load_multi_symbol_data(
     warnings: &mut Vec<String>,
 ) -> Result<(HashMap<String, PerSymbolData>, Vec<NaiveDate>)> {
     use std::collections::BTreeSet;
+
+    // Multi-symbol backtests require daily bars because the master timeline is
+    // built by intersecting NaiveDate sets. Intraday intervals would produce
+    // misaligned bar indices across symbols.
+    if config.interval != Interval::Daily {
+        bail!(
+            "Multi-symbol backtests require daily interval (got {:?}). \
+             Coerce to daily or use single-symbol mode for intraday data.",
+            config.interval
+        );
+    }
 
     // 1. Load OHLCV for all symbols and collect their date sets
     let mut raw_bars_by_symbol: HashMap<String, Vec<OhlcvBar>> = HashMap::new();
