@@ -216,7 +216,7 @@ pub async fn create_backtest(
                             req.params
                                 .get("symbol")
                                 .and_then(Value::as_str)
-                                .unwrap_or("UNKNOWN")
+                                .unwrap_or("SPY")
                                 .to_owned()
                         },
                         str::to_owned,
