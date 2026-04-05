@@ -225,11 +225,17 @@ pub fn validate_script(
     );
 
     // extern_symbol behaves identically to extern at validation time
+    // Uses case-insensitive lookup for backward compat (SYMBOL vs symbol)
     let params_clone_sym = params.clone();
     engine.register_fn(
         "extern_symbol",
         move |name: &str, default: rhai::Dynamic, _desc: &str| -> rhai::Dynamic {
-            if let Some(value) = params_clone_sym.get(name) {
+            if let Some(value) = params_clone_sym.get(name).or_else(|| {
+                params_clone_sym
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                    .map(|(_, v)| v)
+            }) {
                 super::stdlib::json_to_dynamic(value)
             } else if default.is_unit() {
                 rhai::Dynamic::from(format!("ERROR: Required parameter '{name}' not provided"))
@@ -520,12 +526,17 @@ pub async fn run_script_backtest(
         },
     );
 
-    // extern_symbol — identical to extern at runtime (role tag is only for extraction)
+    // extern_symbol — identical to extern at runtime (role tag is only for extraction).
+    // Uses case-insensitive lookup so SYMBOL (legacy) resolves for extern_symbol("symbol", ...).
     let p = Arc::clone(&params_arc);
     engine.register_fn(
         "extern_symbol",
         move |name: &str, default: Dynamic, _desc: &str| -> Dynamic {
-            if let Some(value) = p.get(name) {
+            if let Some(value) = p.get(name).or_else(|| {
+                p.iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                    .map(|(_, v)| v)
+            }) {
                 super::stdlib::json_to_dynamic(value)
             } else if default.is_unit() {
                 Dynamic::from(format!("ERROR: Required parameter '{name}' not provided"))
