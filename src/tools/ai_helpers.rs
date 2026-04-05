@@ -167,6 +167,89 @@ pub(crate) fn pearson_p_value(r: f64, n: usize) -> Option<f64> {
     }
 }
 
+/// Load returns for multiple symbols, align to common length (from end), and
+/// return `(upper_symbols, aligned_returns, min_len)`.
+///
+/// Each return series is trimmed from the end so all have `min_len` observations.
+/// Fails if any symbol has fewer than `min_bars` observations after filtering.
+pub(crate) async fn load_aligned_returns(
+    cache: &Arc<CachedStore>,
+    symbols: &[String],
+    years: u32,
+    min_bars: usize,
+) -> anyhow::Result<(Vec<String>, Vec<Vec<f64>>)> {
+    let cutoff_str = compute_years_cutoff(years);
+    let mut all_returns: Vec<Vec<f64>> = Vec::with_capacity(symbols.len());
+    let mut upper_symbols: Vec<String> = Vec::with_capacity(symbols.len());
+
+    for sym in symbols {
+        let upper = sym.to_uppercase();
+        let returns = load_returns(cache, &upper, &cutoff_str).await?;
+        if returns.len() < min_bars {
+            anyhow::bail!(
+                "Insufficient data for {upper}: {} observations (need {min_bars})",
+                returns.len()
+            );
+        }
+        all_returns.push(returns);
+        upper_symbols.push(upper);
+    }
+
+    let min_len = all_returns.iter().map(Vec::len).min().unwrap_or(0);
+    if min_len < min_bars {
+        anyhow::bail!("Insufficient aligned observations: {min_len} (need at least {min_bars})");
+    }
+
+    // Trim all series to common length from the end (most recent data)
+    let aligned: Vec<Vec<f64>> = all_returns
+        .into_iter()
+        .map(|r| {
+            let start = r.len() - min_len;
+            r[start..].to_vec()
+        })
+        .collect();
+
+    Ok((upper_symbols, aligned))
+}
+
+/// Compute the mean of a slice of f64 values.
+pub(crate) fn mean(data: &[f64]) -> f64 {
+    data.iter().sum::<f64>() / data.len() as f64
+}
+
+/// Compute sample variance (N-1 denominator) of a slice.
+pub(crate) fn variance(data: &[f64]) -> f64 {
+    let m = mean(data);
+    data.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (data.len() - 1) as f64
+}
+
+/// Compute annualized covariance matrix from daily return series.
+///
+/// All series must have the same length. Returns an n×n matrix (Vec of Vecs).
+pub(crate) fn covariance_matrix(
+    aligned: &[Vec<f64>],
+    means: &[f64],
+    annualization_factor: f64,
+) -> Vec<Vec<f64>> {
+    let n_assets = aligned.len();
+    let n_obs = aligned[0].len();
+    let mut cov = vec![vec![0.0_f64; n_assets]; n_assets];
+    for i in 0..n_assets {
+        for j in i..n_assets {
+            let c: f64 = aligned[i]
+                .iter()
+                .zip(aligned[j].iter())
+                .map(|(a, b)| (a - means[i]) * (b - means[j]))
+                .sum::<f64>()
+                / (n_obs - 1) as f64
+                * annualization_factor;
+            cov[i][j] = c;
+            cov[j][i] = c;
+        }
+    }
+    cov
+}
+
 /// Parse a date string parameter with a descriptive error.
 pub(crate) fn parse_date_param(
     date_str: &str,
