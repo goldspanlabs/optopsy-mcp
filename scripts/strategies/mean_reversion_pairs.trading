@@ -14,7 +14,7 @@ strategy "Mean Reversion Pairs"
   tags mean_reversion, pairs_trading, cross_asset
   regime range_bound
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 extern LOOKBACK = 20 "Z-score lookback period"
 extern ENTRY_Z = 2.0 "Z-score threshold for entry"

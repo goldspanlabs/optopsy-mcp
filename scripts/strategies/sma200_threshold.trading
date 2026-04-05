@@ -10,7 +10,7 @@ strategy "SMA 200 Threshold (DSL)"
   tags trend_following, momentum, sma
   regime trending, bullish
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 extern ENTRY_THRESHOLD = 0.04 "Entry threshold above SMA (e.g. 0.04 = +4%)"
 extern EXIT_THRESHOLD = 0.03 "Exit threshold below SMA (e.g. 0.03 = -3%)"

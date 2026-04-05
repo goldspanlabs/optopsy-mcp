@@ -368,7 +368,7 @@ fn config_value(val: &str) -> String {
 fn generate_config(out: &mut String, s: &StrategyBlock, program: &DslProgram) {
     out.push_str("fn config() {\n");
     out.push_str("    #{\n");
-    // symbol is now declared via extern_symbol() — not in config
+    // symbol is now declared via asset — not in config
     out.push_str(&format!("        capital: {},\n", config_value(&s.capital)));
     out.push_str(&format!("        interval: \"{}\",\n", s.interval));
 

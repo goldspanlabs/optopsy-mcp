@@ -9,7 +9,7 @@ strategy "Buy and Hold"
   interval daily
   data ohlcv
 
-extern_symbol symbol = "AAPL"
+asset symbol = "AAPL"
 
 on each bar
   skip when has positions
@@ -40,7 +40,7 @@ strategy "SMA Crossover"
   data ohlcv
   indicators sma:50, sma:200
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 extern THRESHOLD = 0.04 "Entry threshold"
 state wins = 0
@@ -107,7 +107,7 @@ strategy "Iron Condor Income"
   expiration_filter monthly
   max_positions 1
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 extern PUT_DELTA = 0.30 "Short put delta"
 extern CALL_DELTA = 0.30 "Short call delta"
@@ -156,7 +156,7 @@ strategy "Sell Test"
   interval daily
   data ohlcv
 
-extern_symbol symbol = "AAPL"
+asset symbol = "AAPL"
 
 on each bar
   sell 50 shares
@@ -178,7 +178,7 @@ strategy "Plot Test"
   data ohlcv
   indicators sma:200
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   set upper to sma(200) * 1.05
@@ -199,7 +199,7 @@ strategy "Boolean Test"
   interval daily
   data ohlcv
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when has positions
@@ -232,7 +232,7 @@ fn test_error_on_when_without_then() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   when close > 100
@@ -249,7 +249,7 @@ strategy "Test"
   interval daily
   data ohlcv
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 state counter = 0
 
@@ -272,7 +272,7 @@ strategy "Pairs"
   data ohlcv
   cross_symbols QQQ, IWM
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   when price_of("QQQ") > close then
@@ -291,8 +291,8 @@ strategy "Multi"
   interval daily
   data ohlcv
 
-extern_symbol spy = "SPY" "long leg"
-extern_symbol qqq = "QQQ" "short leg"
+asset spy = "SPY" "long leg"
+asset qqq = "QQQ" "short leg"
 
 on each bar
   buy 10 shares of spy
@@ -308,7 +308,7 @@ on each bar
         rhai.contains("sell_stock(qqq, __sell_qty)"),
         "Should target qqq variable.\nGenerated:\n{rhai}"
     );
-    // extern_symbol should generate extern_symbol() not extern()
+    // asset should generate extern_symbol() not extern()
     assert!(
         rhai.contains("extern_symbol(\"spy\""),
         "Should emit extern_symbol call.\nGenerated:\n{rhai}"
@@ -322,8 +322,8 @@ strategy "Multi"
   interval daily
   data ohlcv
 
-extern_symbol spy = "SPY" "long leg"
-extern_symbol qqq = "QQQ" "short leg"
+asset spy = "SPY" "long leg"
+asset qqq = "QQQ" "short leg"
 
 on each bar
   buy 10 shares of spy at 150.00 limit
@@ -348,8 +348,8 @@ strategy "Multi"
   interval daily
   data ohlcv
 
-extern_symbol spy = "SPY" "long leg"
-extern_symbol qqq = "QQQ" "short leg"
+asset spy = "SPY" "long leg"
+asset qqq = "QQQ" "short leg"
 
 on each bar
   buy 10 shares of spy at 95.00 stop
@@ -373,7 +373,7 @@ fn test_transpile_extern_with_choices() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 extern MODE = "fast" "Execution mode" choices fast, slow
 
@@ -391,7 +391,7 @@ fn test_transpile_raw_escape_hatch() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   raw let x = 42;
@@ -408,7 +408,7 @@ fn test_transpile_on_end_callback() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 state total_bars = 0
 
@@ -432,7 +432,7 @@ fn test_independent_when_blocks_without_otherwise() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   when close > 100 then
@@ -460,7 +460,7 @@ fn test_when_chain_with_otherwise_produces_else_if() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on exit check
   when pos.pnl_pct > 0.50 then
@@ -501,7 +501,7 @@ fn test_for_each_loop() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   for each pos in positions()
@@ -521,7 +521,7 @@ fn test_subtract_from() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 state balance = 100
 
@@ -540,7 +540,7 @@ fn test_multiply_and_divide() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 state factor = 1.0
 
@@ -563,7 +563,7 @@ strategy "Test"
   interval daily
   data ohlcv, options
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on exit check
   when pos.legs[0].strike > close then
@@ -587,7 +587,7 @@ fn test_underscore_group_variable() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 state _group = "Cycle 1"
 
@@ -611,7 +611,7 @@ fn test_for_each_with_complex_body() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 state total_pnl = 0.0
 
@@ -633,7 +633,7 @@ strategy "Test"
   interval daily
   data ohlcv
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   raw let bb_width = (ctx.bbands_upper(20) - ctx.bbands_lower(20)) / ctx.sma(20);
@@ -657,7 +657,7 @@ fn test_buy_limit_order() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   buy 100 shares at 150.00 limit
@@ -676,7 +676,7 @@ fn test_buy_stop_order() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   buy 100 shares at 155.00 stop
@@ -695,7 +695,7 @@ fn test_sell_limit_order() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   sell 50 shares at 200.00 limit
@@ -714,7 +714,7 @@ fn test_sell_stop_order() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   sell 50 shares at entry_price - 2.0 stop
@@ -737,7 +737,7 @@ fn test_buy_at_market_explicit() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   buy 100 shares at market
@@ -756,7 +756,7 @@ fn test_cancel_all_orders() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   cancel all orders
@@ -776,7 +776,7 @@ fn test_cancel_orders_by_signal() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   cancel orders "old_entry"
@@ -796,7 +796,7 @@ fn test_position_awareness_properties() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when market_position != 0
@@ -817,7 +817,7 @@ fn test_dynamic_limit_price_expression() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   buy 100 shares at close - atr(14) * 2 limit
@@ -836,7 +836,7 @@ fn test_capitalized_buy_next_bar_at_market() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   Buy 100 shares next bar at market
@@ -855,7 +855,7 @@ fn test_capitalized_sell_next_bar_at_limit() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   Sell 50 shares next bar at 200.00 limit
@@ -875,7 +875,7 @@ fn test_both_cases_accepted() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   buy 100 shares
@@ -886,7 +886,7 @@ on each bar
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   Buy 100 shares next bar at market
@@ -908,7 +908,7 @@ strategy "Lookback Test"
   data ohlcv
   indicators sma:50, rsi:14
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   require sma:50
@@ -934,7 +934,7 @@ strategy "Cross Test"
   interval daily
   indicators sma:50, sma:200
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   require sma:50, sma:200
@@ -961,7 +961,7 @@ strategy "SMA Cross" procedural
   interval daily
   indicators sma:50, sma:200
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 extern FAST = 50 "Fast MA"
 
@@ -1007,7 +1007,7 @@ fn test_procedural_rejects_event_blocks() {
 strategy "Test" procedural
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   buy 100 shares
@@ -1027,7 +1027,7 @@ fn test_callback_rejects_bare_statements() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 buy 100 shares
 "#;
@@ -1046,7 +1046,7 @@ fn test_procedural_with_state() {
 strategy "Test" procedural
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 state counter = 0
 
@@ -1071,7 +1071,7 @@ fn test_auto_detect_indicators_from_body() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   when sma(200) > ema(50) and rsi(14) < 30 then
@@ -1090,7 +1090,7 @@ strategy "Test"
   interval daily
   indicators atr:14
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   when sma(200) > 0 then
@@ -1113,7 +1113,7 @@ fn test_auto_detect_from_lookback_and_crossover() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   when sma(50)[1] > sma(200)[1] and rsi(14) crosses above 30 then
@@ -1131,7 +1131,7 @@ fn test_no_indicators_line_needed_procedural() {
 strategy "Test" procedural
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 require sma:50
 when sma(50) > close then
@@ -1150,7 +1150,7 @@ fn test_transpile_per_order_stop_loss() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   Buy 100 shares next bar at market
@@ -1182,7 +1182,7 @@ fn test_transpile_per_order_dollar_stop() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   Buy 100 shares next bar at market
@@ -1201,7 +1201,7 @@ fn test_transpile_per_order_trailing_stop() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   Buy 100 shares next bar at market
@@ -1220,7 +1220,7 @@ fn test_transpile_buy_without_modifiers_unchanged() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   Buy 100 shares next bar at market
@@ -1239,7 +1239,7 @@ fn test_transpile_procedural_with_per_order_stops() {
 strategy "Test" procedural
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 when no positions and close > sma(200) then
   Buy 100 shares next bar at market
@@ -1269,7 +1269,7 @@ strategy "SMA Threshold"
   tags trend_following, momentum, sma
   regime trending, bullish
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   buy 100 shares
@@ -1309,7 +1309,7 @@ strategy "Minimal"
   capital CAPITAL
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   buy 100 shares
@@ -1339,7 +1339,7 @@ fn test_set_dotted_path() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 state stock = #{price: 0.0, basis: 0.0}
 
@@ -1367,7 +1367,7 @@ fn test_compound_assignment_dotted_path() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 state totals = #{premium: 0.0, count: 0}
 
@@ -1395,7 +1395,7 @@ strategy "Test"
   interval daily
   data ohlcv, options
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 state min_strike = 100.0
 
@@ -1432,7 +1432,7 @@ strategy "Test" procedural
   interval daily
   data ohlcv, options
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 try open short_put(0.30, 45) as order
   skip when close < sma(200)
@@ -1463,7 +1463,7 @@ fn test_day_of_week_with_name() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when day_of_week == monday
@@ -1483,7 +1483,7 @@ fn test_month_name_mapping() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when month == january
@@ -1503,7 +1503,7 @@ fn test_time_literal_intraday() {
 strategy "Test"
   interval 5m
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when time < 10:00
@@ -1528,7 +1528,7 @@ fn test_is_first_bar_intraday() {
 strategy "Test"
   interval 15m
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when is_first_bar
@@ -1548,7 +1548,7 @@ fn test_is_expiry_week_daily() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when is_expiry_week
@@ -1568,7 +1568,7 @@ fn test_trading_days_left_daily() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when trading_days_left < 3
@@ -1588,7 +1588,7 @@ fn test_is_quarter_end_daily() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   when is_quarter_end then
@@ -1608,7 +1608,7 @@ fn test_intraday_keyword_error_on_daily() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when time < 10:00
@@ -1632,7 +1632,7 @@ fn test_intraday_keyword_error_is_first_bar_daily() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when is_first_bar
@@ -1652,7 +1652,7 @@ fn test_intraday_keyword_error_minutes_since_open_daily() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when minutes_since_open < 30
@@ -1672,7 +1672,7 @@ fn test_day_names_all_map_correctly() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when day_of_week == friday
@@ -1692,7 +1692,7 @@ fn test_multiple_time_keywords_combined() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when day_of_week == monday
@@ -1716,7 +1716,7 @@ fn test_time_literal_single_digit_hour() {
 strategy "Test"
   interval 5m
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when time < 9:30
@@ -1736,7 +1736,7 @@ fn test_callable_properties_with_parens_also_work() {
 strategy "Test"
   interval 5m
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when time() < 10:00
@@ -1761,7 +1761,7 @@ fn test_invalid_time_literal_compile_error() {
 strategy "Test"
   interval 5m
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when time < 25:00
@@ -1785,7 +1785,7 @@ fn test_invalid_time_minute_compile_error() {
 strategy "Test"
   interval 5m
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when time > 10:75
@@ -1809,7 +1809,7 @@ fn test_reserved_name_extern_day() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 extern monday = 1 "A variable named monday"
 
@@ -1830,7 +1830,7 @@ fn test_reserved_name_state_month() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 state may = 0
 
@@ -1851,7 +1851,7 @@ fn test_non_reserved_name_accepted() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 extern monday_count = 0 "Not a reserved name"
 state may_trades = 0
@@ -1872,7 +1872,7 @@ fn test_reserved_name_set_variable() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   set march to 3
@@ -1892,7 +1892,7 @@ fn test_reserved_name_for_each_variable() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   for each friday in pos.legs
@@ -1916,7 +1916,7 @@ fn test_inline_if_else_in_set() {
 strategy "Test"
   interval 5m
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 extern VIX_THRESHOLD = 20 "VIX threshold"
 
@@ -1938,7 +1938,7 @@ fn test_inline_if_else_chained_in_set() {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   set size to 1.0 if rsi(14) < 30 else 0.5 if rsi(14) > 70 else 0.75
@@ -1963,7 +1963,7 @@ strategy "Portfolio Test"
   interval daily
   data ohlcv
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when portfolio.exposure_pct > 0.50
@@ -1984,7 +1984,7 @@ strategy "Portfolio Skip"
   interval daily
   data ohlcv
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when portfolio.drawdown < -0.10
@@ -2010,7 +2010,7 @@ strategy "Portfolio Guard"
   interval daily
   data ohlcv
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   when portfolio.long_count >= 5 then
@@ -2033,7 +2033,7 @@ strategy "Bad Portfolio"
   interval daily
   data ohlcv
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when portfolio.foo > 1
@@ -2055,7 +2055,7 @@ strategy "Bad Assignment"
   interval daily
   data ohlcv
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   set portfolio.cash to 1000
@@ -2081,7 +2081,7 @@ strategy "Delta Check"
   interval daily
   data ohlcv, options
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on exit check
   when any leg in pos.legs has delta > 0.50 then
@@ -2108,7 +2108,7 @@ strategy "All Legs Check"
   interval daily
   data ohlcv, options
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on exit check
   when all legs in pos.legs have current_price < 0.05 then
@@ -2135,7 +2135,7 @@ strategy "Binding Test"
   interval daily
   data ohlcv, options
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on exit check
   when any leg in pos.legs has delta > 0.50 as hot_leg then
@@ -2162,7 +2162,7 @@ strategy "Sum Delta"
   interval daily
   data ohlcv, options
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on exit check
   when pos.legs.sum(delta) > 1.0 then
@@ -2189,7 +2189,7 @@ strategy "Count Legs"
   interval daily
   data ohlcv, options
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on exit check
   when pos.legs.count(side == "long") > 2 then
@@ -2216,7 +2216,7 @@ strategy "Min Price"
   interval daily
   data ohlcv, options
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on exit check
   when pos.legs.min(current_price) < 0.05 then
@@ -2243,7 +2243,7 @@ strategy "Multi Agg"
   interval daily
   data ohlcv, options
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on exit check
   when pos.legs.sum(delta) + pos.legs.max(strike) > 100 then
@@ -2267,7 +2267,7 @@ strategy "Bad Quantifier"
   interval daily
   data ohlcv, options
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   when any leg in pos.legs has delta > 0.50 then
@@ -2289,7 +2289,7 @@ strategy "Nested Quantifier"
   interval daily
   data ohlcv, options
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   for each pos in positions
@@ -2313,7 +2313,7 @@ strategy "Bad Field"
   interval daily
   data ohlcv, options
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on exit check
   when any leg in pos.legs has foo > 1 then
@@ -2335,7 +2335,7 @@ strategy "Bad Agg"
   interval daily
   data ohlcv, options
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on exit check
   when pos.legs.sum(option_type) > 1 then
@@ -2359,7 +2359,7 @@ strategy "Combined"
   interval daily
   data ohlcv, options
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when portfolio.exposure_pct > 0.50
@@ -2384,7 +2384,7 @@ strategy "Avg Delta"
   interval daily
   data ohlcv, options
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on exit check
   when pos.legs.avg(delta) > 0.30 then

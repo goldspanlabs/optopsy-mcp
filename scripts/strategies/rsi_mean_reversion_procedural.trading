@@ -10,7 +10,7 @@ strategy "RSI Mean Reversion" procedural
   tags mean_reversion, rsi, momentum
   regime trending, bullish
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 extern OVERSOLD = 30 "RSI oversold threshold"
 extern OVERBOUGHT = 70 "RSI overbought threshold"

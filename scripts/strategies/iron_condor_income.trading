@@ -16,7 +16,7 @@ strategy "Iron Condor Income"
   tags iron_condor, premium_selling, volatility
   regime range_bound, low_volatility
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 extern SHORT_PUT_DELTA = 0.20 "Short put delta target"
 extern SHORT_CALL_DELTA = 0.20 "Short call delta target"

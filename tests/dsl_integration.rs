@@ -324,7 +324,7 @@ fn dsl_sma_crossover_compiles_and_configures() {
         transpile_compile_and_configure("scripts/strategies/sma_crossover.trading", &params);
 
     // Verify config fields
-    // symbol is no longer in config — it's declared via extern_symbol()
+    // symbol is no longer in config — it's declared via asset
     assert!(
         !config.contains_key("symbol"),
         "symbol should not be in config"
@@ -603,15 +603,15 @@ fn all_rhai_strategies_compile_with_dsl_syntax() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn dsl_buy_shares_of_trades_correct_symbol() {
-    // No `symbol` in strategy block — both symbols declared via extern_symbol.
+    // No `symbol` in strategy block — both symbols declared via asset.
     // Uses `buy N shares of IDENT` to target each symbol explicitly.
     let dsl_source = r#"
 strategy "Multi Symbol"
   interval daily
   data ohlcv
 
-extern_symbol spy = "SPY" "long leg"
-extern_symbol qqq = "QQQ" "short leg"
+asset spy = "SPY" "long leg"
+asset qqq = "QQQ" "short leg"
 "#;
 
     let rhai = dsl::transpile(dsl_source).unwrap();

@@ -571,7 +571,7 @@ strategy "Test Buy"
   interval daily
   data ohlcv
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when has positions
@@ -614,7 +614,7 @@ strategy "Test Sell"
   interval daily
   data ohlcv
 
-extern_symbol symbol = "AAPL"
+asset symbol = "AAPL"
 
 on each bar
   skip when not has positions
@@ -642,7 +642,7 @@ strategy "DSL Buy and Hold"
   interval daily
   data ohlcv
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when has positions
@@ -694,7 +694,7 @@ strategy "DSL Override"
   interval daily
   data ohlcv
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   skip when has positions

@@ -10,7 +10,7 @@ strategy "BB Mean Reversion (DSL)"
   tags mean_reversion, bollinger_bands
   regime range_bound, low_volatility
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 extern BB_PERIOD = 20 "Bollinger Band period"
 extern RISK_PCT = 0.02 "Fraction of equity to risk per trade"

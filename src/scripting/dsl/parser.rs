@@ -264,8 +264,8 @@ pub fn parse(source: &str) -> Result<DslProgram, DslError> {
             }
             program.strategy = Some(block);
             i = next;
-        } else if content.starts_with("extern_symbol ") {
-            let mut p = parse_extern_symbol(line)?;
+        } else if content.starts_with("asset ") {
+            let mut p = parse_asset(line)?;
             p.is_symbol = true;
             program.params.push(p);
             i += 1;
@@ -615,17 +615,14 @@ fn parse_extern(line: &Line) -> Result<ParamDecl, DslError> {
     })
 }
 
-fn parse_extern_symbol(line: &Line) -> Result<ParamDecl, DslError> {
-    // extern_symbol NAME = "DEFAULT"
-    // extern_symbol NAME = "DEFAULT" "description"  (optional)
-    let rest = line.content.strip_prefix("extern_symbol ").unwrap();
+fn parse_asset(line: &Line) -> Result<ParamDecl, DslError> {
+    // asset NAME = "DEFAULT"
+    // asset NAME = "DEFAULT" "description"  (optional)
+    let rest = line.content.strip_prefix("asset ").unwrap();
 
-    let eq_pos = rest.find('=').ok_or_else(|| {
-        DslError::new(
-            line.num,
-            "extern_symbol requires '=' (e.g., extern_symbol spy = \"SPY\")",
-        )
-    })?;
+    let eq_pos = rest
+        .find('=')
+        .ok_or_else(|| DslError::new(line.num, "asset requires '=' (e.g., asset spy = \"SPY\")"))?;
 
     let name = rest[..eq_pos].trim().to_string();
     let after_eq = rest[eq_pos + 1..].trim();
@@ -634,7 +631,7 @@ fn parse_extern_symbol(line: &Line) -> Result<ParamDecl, DslError> {
     if !after_eq.starts_with('"') {
         return Err(DslError::new(
             line.num,
-            "extern_symbol default must be a quoted string (e.g., \"SPY\")",
+            "asset default must be a quoted string (e.g., \"SPY\")",
         ));
     }
     let after_open = &after_eq[1..];
@@ -655,7 +652,7 @@ fn parse_extern_symbol(line: &Line) -> Result<ParamDecl, DslError> {
     };
 
     if name.is_empty() {
-        return Err(DslError::new(line.num, "extern_symbol requires a name"));
+        return Err(DslError::new(line.num, "asset requires a name"));
     }
 
     Ok(ParamDecl {
@@ -1521,7 +1518,7 @@ mod tests {
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "AAPL"
+asset symbol = "AAPL"
 
 on each bar
   skip when has positions
@@ -1540,7 +1537,7 @@ on each bar
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on exit check
   when pos.pnl_pct > 0.50 then
@@ -1587,7 +1584,7 @@ on exit check
 strategy "Test"
   interval daily
 
-extern_symbol symbol = "SPY"
+asset symbol = "SPY"
 
 on each bar
   buy 100 shares
