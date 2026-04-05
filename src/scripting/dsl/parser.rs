@@ -133,12 +133,14 @@ pub enum Stmt {
         qty_expr: String,
         order_type: OrderModifier,
         exit_modifiers: ExitModifiers,
+        symbol: Option<String>,
         line: usize,
     },
     Sell {
         qty_expr: String,
         order_type: OrderModifier,
         exit_modifiers: ExitModifiers,
+        symbol: Option<String>,
         line: usize,
     },
     CancelOrders {
@@ -705,22 +707,24 @@ fn parse_statements(lines: &[Line]) -> Result<Vec<Stmt>, DslError> {
                 "'otherwise' without a preceding 'when'",
             ));
         } else if let Some(rest) = strip_prefix_ci(content, "Buy ") {
-            let (qty_expr, order_type) = parse_order_statement(rest, line.num)?;
+            let (qty_expr, order_type, symbol) = parse_order_statement(rest, line.num)?;
             let (exit_modifiers, consumed) = parse_exit_modifiers(lines, i)?;
             stmts.push(Stmt::Buy {
                 qty_expr,
                 order_type,
                 exit_modifiers,
+                symbol,
                 line: line.num,
             });
             i += 1 + consumed;
         } else if let Some(rest) = strip_prefix_ci(content, "Sell ") {
-            let (qty_expr, order_type) = parse_order_statement(rest, line.num)?;
+            let (qty_expr, order_type, symbol) = parse_order_statement(rest, line.num)?;
             let (exit_modifiers, consumed) = parse_exit_modifiers(lines, i)?;
             stmts.push(Stmt::Sell {
                 qty_expr,
                 order_type,
                 exit_modifiers,
+                symbol,
                 line: line.num,
             });
             i += 1 + consumed;
@@ -1278,7 +1282,14 @@ fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
 /// - `100 shares at market`                    → Market order (shorthand)
 /// - `100 shares at 150.00 limit`              → Limit order (shorthand)
 /// - `100 shares`                              → Market order (implicit)
-fn parse_order_statement(rest: &str, line_num: usize) -> Result<(String, OrderModifier), DslError> {
+fn parse_order_statement(
+    rest: &str,
+    line_num: usize,
+) -> Result<(String, OrderModifier, Option<String>), DslError> {
+    // Extract trailing "of IDENTIFIER" before parsing the rest.
+    // Matches: "N shares of spy", "N shares of spy next bar at market", etc.
+    let (rest, target_symbol) = extract_of_symbol(rest);
+
     // Canonical form: "N shares next bar at ..."
     if let Some(shares_pos) = rest.find(" shares next bar at ") {
         let qty_expr = rest[..shares_pos].trim().to_string();
@@ -1287,7 +1298,7 @@ fn parse_order_statement(rest: &str, line_num: usize) -> Result<(String, OrderMo
         if qty_expr.is_empty() {
             return Err(DslError::new(line_num, "Buy/Sell requires a quantity"));
         }
-        return Ok((qty_expr, order_type));
+        return Ok((qty_expr, order_type, target_symbol));
     }
 
     // Shorthand: "N shares at ..."
@@ -1298,13 +1309,13 @@ fn parse_order_statement(rest: &str, line_num: usize) -> Result<(String, OrderMo
         if qty_expr.is_empty() {
             return Err(DslError::new(line_num, "Buy/Sell requires a quantity"));
         }
-        return Ok((qty_expr, order_type));
+        return Ok((qty_expr, order_type, target_symbol));
     }
 
     // Implicit market: "N shares" or bare expression
     let qty_expr = rest
         .strip_suffix(" shares")
-        .unwrap_or(rest)
+        .unwrap_or(&rest)
         .trim()
         .to_string();
 
@@ -1312,7 +1323,37 @@ fn parse_order_statement(rest: &str, line_num: usize) -> Result<(String, OrderMo
         return Err(DslError::new(line_num, "Buy/Sell requires a quantity"));
     }
 
-    Ok((qty_expr, OrderModifier::Market))
+    Ok((qty_expr, OrderModifier::Market, target_symbol))
+}
+
+/// Extract `of IDENTIFIER` from an order statement.
+/// Returns the remaining string (without the "of ..." part) and the symbol if found.
+///
+/// Handles patterns like:
+/// - "10 shares of spy" → ("10 shares", Some("spy"))
+/// - "10 shares of spy next bar at market" → ("10 shares next bar at market", Some("spy"))
+/// - "10 shares" → ("10 shares", None)
+fn extract_of_symbol(input: &str) -> (String, Option<String>) {
+    // Look for " of " after "shares"
+    if let Some(shares_pos) = input.find(" shares of ") {
+        let after_of = &input[shares_pos + " shares of ".len()..];
+        // The symbol is the next word (identifier)
+        let sym_end = after_of
+            .find(|c: char| !c.is_alphanumeric() && c != '_')
+            .unwrap_or(after_of.len());
+        let sym = after_of[..sym_end].trim();
+        if !sym.is_empty() {
+            let remainder_after_sym = after_of[sym_end..].trim();
+            let mut rebuilt = input[..shares_pos].to_string();
+            rebuilt.push_str(" shares");
+            if !remainder_after_sym.is_empty() {
+                rebuilt.push(' ');
+                rebuilt.push_str(remainder_after_sym);
+            }
+            return (rebuilt, Some(sym.to_string()));
+        }
+    }
+    (input.to_string(), None)
 }
 
 /// Parse the order type after "at": "market", "PRICE limit", or "PRICE stop".

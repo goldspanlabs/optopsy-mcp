@@ -655,18 +655,20 @@ fn generate_stmts(
                 qty_expr,
                 order_type,
                 exit_modifiers,
+                symbol: target_sym,
                 ..
             } => {
                 let qty = rewrite_expr(qty_expr);
+                let sym = target_sym.as_deref().unwrap_or("symbol");
                 let call = match order_type {
-                    OrderModifier::Market => format!("buy_stock(symbol, {qty})"),
+                    OrderModifier::Market => format!("buy_stock({sym}, {qty})"),
                     OrderModifier::Limit { price } => {
                         let p = rewrite_expr(price);
-                        format!("buy_limit(symbol, {qty}, {p})")
+                        format!("buy_limit({sym}, {qty}, {p})")
                     }
                     OrderModifier::Stop { price } => {
                         let p = rewrite_expr(price);
-                        format!("buy_stop(symbol, {qty}, {p})")
+                        format!("buy_stop({sym}, {qty}, {p})")
                     }
                 };
 
@@ -694,20 +696,22 @@ fn generate_stmts(
                 qty_expr,
                 order_type,
                 exit_modifiers,
+                symbol: target_sym,
                 ..
             } => {
                 let qty = rewrite_expr(qty_expr);
+                let sym = target_sym.as_deref().unwrap_or("symbol");
                 // Build the guarded call with __sell_qty directly to avoid
                 // string-replace corruption when qty appears in price expressions.
                 let call_with_guard = match order_type {
-                    OrderModifier::Market => "sell_stock(symbol, __sell_qty)".to_string(),
+                    OrderModifier::Market => format!("sell_stock({sym}, __sell_qty)"),
                     OrderModifier::Limit { price } => {
                         let p = rewrite_expr(price);
-                        format!("sell_limit(symbol, __sell_qty, {p})")
+                        format!("sell_limit({sym}, __sell_qty, {p})")
                     }
                     OrderModifier::Stop { price } => {
                         let p = rewrite_expr(price);
-                        format!("sell_stop(symbol, __sell_qty, {p})")
+                        format!("sell_stop({sym}, __sell_qty, {p})")
                     }
                 };
 

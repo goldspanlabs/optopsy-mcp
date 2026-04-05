@@ -276,6 +276,78 @@ on each bar
 }
 
 #[test]
+fn test_transpile_buy_shares_of_symbol() {
+    let dsl = r#"
+strategy "Multi"
+  symbol SPY
+  interval daily
+  data ohlcv
+
+on each bar
+  buy 10 shares of spy
+  sell 5 shares of qqq
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("buy_stock(spy, 10)"),
+        "Should target spy variable.\nGenerated:\n{rhai}"
+    );
+    assert!(
+        rhai.contains("sell_stock(qqq, __sell_qty)"),
+        "Should target qqq variable.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_transpile_buy_shares_of_with_limit() {
+    let dsl = r#"
+strategy "Multi"
+  symbol SPY
+  interval daily
+  data ohlcv
+
+on each bar
+  buy 10 shares of spy at 150.00 limit
+  sell 5 shares of qqq at 200.00 limit
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("buy_limit(spy, 10, 150.00)"),
+        "Should target spy with limit.\nGenerated:\n{rhai}"
+    );
+    assert!(
+        rhai.contains("sell_limit(qqq, __sell_qty, 200.00)"),
+        "Should target qqq with limit.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
+fn test_transpile_buy_shares_of_with_stop() {
+    let dsl = r#"
+strategy "Multi"
+  symbol SPY
+  interval daily
+  data ohlcv
+
+on each bar
+  buy 10 shares of spy at 95.00 stop
+  sell 5 shares of qqq at 210.00 stop
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+    assert!(
+        rhai.contains("buy_stop(spy, 10, 95.00)"),
+        "Should target spy with stop.\nGenerated:\n{rhai}"
+    );
+    assert!(
+        rhai.contains("sell_stop(qqq, __sell_qty, 210.00)"),
+        "Should target qqq with stop.\nGenerated:\n{rhai}"
+    );
+}
+
+#[test]
 fn test_transpile_extern_with_choices() {
     let dsl = r#"
 strategy "Test"
