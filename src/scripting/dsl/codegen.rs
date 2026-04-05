@@ -250,25 +250,41 @@ pub fn generate(program: &DslProgram) -> String {
 
     out.push_str("// Auto-generated from Trading DSL — do not edit by hand.\n\n");
 
-    // Symbol extern — emitted from the strategy block's symbol field
+    // Symbol extern — emitted from the strategy block's symbol/symbols field
     if let Some(ref strat) = program.strategy {
-        let sym_val = &strat.symbol;
-        // Always bind to `symbol` so buy_stock(symbol, N) works regardless of DSL source.
-        // Default to "SPY" when no explicit symbol is given; callers override via params.
-        if sym_val == "params.SYMBOL" || sym_val == "SYMBOL" {
-            out.push_str("let symbol = extern_symbol(\"symbol\", \"SPY\", \"ticker to trade\");\n");
-        } else if sym_val.starts_with("params.") {
-            // Custom param name, e.g., params.TICKER → extern_symbol("TICKER", ...) bound to `symbol`
-            let param_name = sym_val.strip_prefix("params.").unwrap_or(sym_val);
-            out.push_str(&format!(
-                "let symbol = extern_symbol(\"{param_name}\", \"SPY\", \"ticker to trade\");\n"
-            ));
+        if strat.symbols.len() >= 2 {
+            // Multi-symbol: emit one extern_symbol per ticker, alias first as `symbol`
+            for (i, sym) in strat.symbols.iter().enumerate() {
+                let var_name = sym.to_lowercase();
+                let sym_upper = sym.to_uppercase();
+                out.push_str(&format!(
+                    "let {var_name} = extern_symbol(\"{var_name}\", \"{sym_upper}\", \"ticker\");\n"
+                ));
+                if i == 0 {
+                    out.push_str(&format!("let symbol = {var_name};\n"));
+                }
+            }
         } else {
-            // Literal symbol like "AAPL" — use as default
-            let sym_upper = sym_val.to_uppercase();
-            out.push_str(&format!(
-                "let symbol = extern_symbol(\"symbol\", \"{sym_upper}\", \"ticker to trade\");\n"
-            ));
+            let sym_val = &strat.symbol;
+            // Always bind to `symbol` so buy_stock(symbol, N) works regardless of DSL source.
+            // Default to "SPY" when no explicit symbol is given; callers override via params.
+            if sym_val == "params.SYMBOL" || sym_val == "SYMBOL" {
+                out.push_str(
+                    "let symbol = extern_symbol(\"symbol\", \"SPY\", \"ticker to trade\");\n",
+                );
+            } else if sym_val.starts_with("params.") {
+                // Custom param name, e.g., params.TICKER → extern_symbol("TICKER", ...) bound to `symbol`
+                let param_name = sym_val.strip_prefix("params.").unwrap_or(sym_val);
+                out.push_str(&format!(
+                    "let symbol = extern_symbol(\"{param_name}\", \"SPY\", \"ticker to trade\");\n"
+                ));
+            } else {
+                // Literal symbol like "AAPL" — use as default
+                let sym_upper = sym_val.to_uppercase();
+                out.push_str(&format!(
+                    "let symbol = extern_symbol(\"symbol\", \"{sym_upper}\", \"ticker to trade\");\n"
+                ));
+            }
         }
         out.push('\n');
     }

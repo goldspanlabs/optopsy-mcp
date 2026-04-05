@@ -75,6 +75,106 @@ impl DataLoader for TestDataLoader {
     }
 }
 
+fn dt(y: i32, m: u32, day: u32) -> chrono::NaiveDateTime {
+    NaiveDate::from_ymd_opt(y, m, day)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+}
+
+/// Data loader that returns different OHLCV data per symbol.
+struct MultiSymbolLoader {
+    data: std::collections::HashMap<String, DataFrame>,
+}
+
+#[async_trait::async_trait]
+impl DataLoader for MultiSymbolLoader {
+    async fn load_ohlcv(
+        &self,
+        symbol: &str,
+        _start: Option<NaiveDate>,
+        _end: Option<NaiveDate>,
+    ) -> Result<DataFrame> {
+        self.data
+            .get(&symbol.to_uppercase())
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("No OHLCV data for '{symbol}'"))
+    }
+
+    async fn load_options(
+        &self,
+        _symbol: &str,
+        _start: Option<NaiveDate>,
+        _end: Option<NaiveDate>,
+    ) -> Result<DataFrame> {
+        Ok(DataFrame::empty())
+    }
+
+    fn load_splits(
+        &self,
+        _symbol: &str,
+    ) -> Result<Vec<optopsy_mcp::data::adjustment_store::SplitRow>> {
+        Ok(vec![])
+    }
+
+    fn load_dividends(
+        &self,
+        _symbol: &str,
+    ) -> Result<Vec<optopsy_mcp::data::adjustment_store::DividendRow>> {
+        Ok(vec![])
+    }
+}
+
+/// SPY: 100, 102, 104, 106, 108 (rising)
+/// QQQ: 200, 198, 196, 194, 192 (falling)
+fn make_two_symbol_loader() -> MultiSymbolLoader {
+    let dates = [
+        dt(2024, 1, 2),
+        dt(2024, 1, 3),
+        dt(2024, 1, 4),
+        dt(2024, 1, 5),
+        dt(2024, 1, 8),
+    ];
+
+    let spy_bars: Vec<OhlcvBar> = dates
+        .iter()
+        .enumerate()
+        .map(|(i, &datetime)| {
+            let close = 100.0 + (i as f64) * 2.0;
+            OhlcvBar {
+                datetime,
+                open: close - 0.5,
+                high: close + 1.0,
+                low: close - 1.0,
+                close,
+                volume: 1_000_000.0,
+            }
+        })
+        .collect();
+
+    let qqq_bars: Vec<OhlcvBar> = dates
+        .iter()
+        .enumerate()
+        .map(|(i, &datetime)| {
+            let close = 200.0 - (i as f64) * 2.0;
+            OhlcvBar {
+                datetime,
+                open: close + 0.5,
+                high: close + 1.0,
+                low: close - 1.0,
+                close,
+                volume: 2_000_000.0,
+            }
+        })
+        .collect();
+
+    let mut data = std::collections::HashMap::new();
+    data.insert("SPY".to_string(), bars_to_df(&spy_bars));
+    data.insert("QQQ".to_string(), bars_to_df(&qqq_bars));
+
+    MultiSymbolLoader { data }
+}
+
 fn default_params() -> std::collections::HashMap<String, serde_json::Value> {
     let mut params = std::collections::HashMap::new();
     params.insert("SYMBOL".to_string(), serde_json::json!("SPY"));
@@ -486,4 +586,304 @@ fn all_rhai_strategies_compile_with_dsl_syntax() {
             )
         });
     }
+}
+
+// ===========================================================================
+// Multi-Symbol DSL Tests
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Test: `symbols` keyword transpiles to multiple extern_symbol bindings
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dsl_symbols_transpiles_to_multiple_extern_symbol() {
+    let dsl_source = r#"
+strategy "Pairs Trade"
+  symbols SPY, QQQ
+  interval daily
+  data ohlcv
+
+on each bar
+  skip when has positions
+  buy 10 shares
+"#;
+
+    let rhai = dsl::transpile(dsl_source).unwrap();
+
+    // Should have two extern_symbol calls
+    assert!(
+        rhai.contains(r#"extern_symbol("spy", "SPY", "ticker")"#),
+        "Should emit extern_symbol for SPY.\nGenerated:\n{rhai}"
+    );
+    assert!(
+        rhai.contains(r#"extern_symbol("qqq", "QQQ", "ticker")"#),
+        "Should emit extern_symbol for QQQ.\nGenerated:\n{rhai}"
+    );
+
+    // First symbol should be aliased as `symbol` for backward compat
+    assert!(
+        rhai.contains("let symbol = spy;"),
+        "First symbol should be aliased as `symbol`.\nGenerated:\n{rhai}"
+    );
+
+    // buy_stock should use symbol (backward compat)
+    assert!(
+        rhai.contains("buy_stock(symbol, 10)"),
+        "buy_stock should use symbol.\nGenerated:\n{rhai}"
+    );
+
+    // symbol should NOT be in config
+    assert!(
+        !rhai.contains("symbol:"),
+        "symbol should not be in config.\nGenerated:\n{rhai}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test: `symbols` keyword compiles and configures
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dsl_multi_symbol_compiles_and_configures() {
+    let dsl_source = r#"
+strategy "Pairs Trade"
+  symbols SPY, QQQ
+  interval daily
+  data ohlcv
+
+on each bar
+  skip when has positions
+  buy 10 shares
+
+on exit check
+  hold position
+"#;
+
+    let rhai = dsl::transpile(dsl_source).unwrap();
+
+    let mut params = default_params();
+    params.insert("spy".to_string(), serde_json::json!("SPY"));
+    params.insert("qqq".to_string(), serde_json::json!("QQQ"));
+
+    let engine = build_test_engine(&params);
+    let ast = engine.compile(&rhai).unwrap_or_else(|e| {
+        panic!("Multi-symbol DSL should compile.\nError: {e}\nGenerated:\n{rhai}")
+    });
+
+    let mut scope = rhai::Scope::new();
+    optopsy_mcp::scripting::stdlib::inject_params_map(&mut scope, &params);
+    let _ = engine
+        .eval_ast_with_scope::<rhai::Dynamic>(&mut scope, &ast)
+        .unwrap_or_else(|e| panic!("Top-level eval failed: {e}"));
+
+    let options = rhai::CallFnOptions::new()
+        .eval_ast(false)
+        .rewind_scope(false);
+    let config: rhai::Dynamic = engine
+        .call_fn_with_options(options, &mut scope, &ast, "config", ())
+        .unwrap_or_else(|e| panic!("config() failed: {e}"));
+
+    let config = config.cast::<rhai::Map>();
+    assert!(
+        !config.contains_key("symbol"),
+        "symbol should not be in config for multi-symbol DSL"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test: Multi-symbol DSL runs end-to-end backtest
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dsl_multi_symbol_runs_backtest() {
+    let dsl_source = r#"
+strategy "Pairs Trade"
+  symbols SPY, QQQ
+  interval daily
+  data ohlcv
+
+on each bar
+  skip when has positions
+  buy 10 shares
+
+on exit check
+  hold position
+"#;
+
+    let rhai = dsl::transpile(dsl_source).unwrap();
+
+    let loader = make_two_symbol_loader();
+    let mut params = std::collections::HashMap::new();
+    params.insert("CAPITAL".to_string(), serde_json::json!(100_000.0));
+
+    let result = run_script_backtest(&rhai, &params, &loader, None, None, None)
+        .await
+        .expect("Multi-symbol DSL backtest should succeed");
+
+    // First symbol (SPY) should be the primary
+    assert_eq!(
+        result.result.symbol.as_deref(),
+        Some("SPY"),
+        "Primary symbol should be SPY (first in symbols list)"
+    );
+
+    // SPY is rising, equity should be above initial capital
+    let last_equity = result.result.equity_curve.last().unwrap().equity;
+    assert!(
+        last_equity > 100_000.0,
+        "SPY is rising, equity should be above initial capital, got {last_equity}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test: Multi-symbol DSL with explicit per-symbol trading via ctx.sym()
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dsl_multi_symbol_trades_both_symbols() {
+    // This test uses inline Rhai callbacks to trade both symbols,
+    // verifying that the `symbols` keyword correctly sets up both
+    // extern_symbol bindings that the engine auto-detects.
+    let dsl_source = r#"
+strategy "Pairs Trade"
+  symbols SPY, QQQ
+  interval daily
+  data ohlcv
+"#;
+
+    // Transpile just the strategy block, then append hand-written callbacks
+    // that trade both symbols using the generated bindings.
+    let mut rhai = dsl::transpile(dsl_source).unwrap();
+
+    // The transpiler generates on_bar/on_exit_check stubs for empty bodies.
+    // Replace them with multi-symbol trading logic.
+    // Since the DSL has no body, the transpiled on_bar is minimal.
+    // We append raw Rhai to override the callbacks.
+    // Actually, let's just use a full Rhai script that imports the extern_symbol
+    // bindings from the transpiled header.
+
+    // Extract just the header (extern_symbol bindings) from transpiled output
+    let config_start = rhai.find("fn config()").unwrap();
+    let header = rhai[..config_start].to_string();
+
+    // Build a complete script using the transpiled extern_symbol bindings
+    rhai = format!(
+        r#"{header}
+fn config() {{
+    #{{
+        capital: 100000,
+        interval: "daily",
+        auto_close_on_end: true,
+        data: #{{ ohlcv: true }},
+    }}
+}}
+
+fn on_bar(ctx) {{
+    if ctx.bar_idx == 0 {{
+        return [buy_stock(spy, 10)];
+    }}
+    if ctx.bar_idx == 1 {{
+        return [buy_stock(qqq, 5)];
+    }}
+    []
+}}
+
+fn on_exit_check(ctx, pos) {{
+    hold_position()
+}}
+"#
+    );
+
+    let loader = make_two_symbol_loader();
+    let mut params = std::collections::HashMap::new();
+    params.insert("CAPITAL".to_string(), serde_json::json!(100_000.0));
+
+    let result = run_script_backtest(&rhai, &params, &loader, None, None, None)
+        .await
+        .expect("Multi-symbol DSL backtest should succeed");
+
+    // Should have 2 trades (auto-closed at end)
+    assert_eq!(
+        result.result.trade_count, 2,
+        "Should have 2 trades (SPY + QQQ)"
+    );
+
+    // Verify both symbols were traded
+    let spy_trades: Vec<_> = result
+        .result
+        .trade_log
+        .iter()
+        .filter(|t| t.symbol.as_deref() == Some("SPY"))
+        .collect();
+    let qqq_trades: Vec<_> = result
+        .result
+        .trade_log
+        .iter()
+        .filter(|t| t.symbol.as_deref() == Some("QQQ"))
+        .collect();
+
+    assert_eq!(spy_trades.len(), 1, "Should have 1 SPY trade");
+    assert_eq!(qqq_trades.len(), 1, "Should have 1 QQQ trade");
+
+    // SPY is rising → positive P&L
+    assert!(
+        spy_trades[0].pnl > 0.0,
+        "SPY is rising, P&L should be positive, got {}",
+        spy_trades[0].pnl
+    );
+
+    // QQQ is falling → negative P&L
+    assert!(
+        qqq_trades[0].pnl < 0.0,
+        "QQQ is falling, P&L should be negative, got {}",
+        qqq_trades[0].pnl
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test: Multi-symbol DSL with param overrides
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dsl_multi_symbol_param_override() {
+    let dsl_source = r#"
+strategy "Override Test"
+  symbols SPY, QQQ
+  interval daily
+  data ohlcv
+
+on each bar
+  skip when has positions
+  buy 10 shares
+
+on exit check
+  hold position
+"#;
+
+    let rhai = dsl::transpile(dsl_source).unwrap();
+
+    let loader = make_two_symbol_loader();
+    // Override spy param to QQQ — the primary symbol should become QQQ
+    let mut params = std::collections::HashMap::new();
+    params.insert("spy".to_string(), serde_json::json!("QQQ"));
+    params.insert("CAPITAL".to_string(), serde_json::json!(100_000.0));
+
+    let result = run_script_backtest(&rhai, &params, &loader, None, None, None)
+        .await
+        .expect("Multi-symbol DSL backtest with override should succeed");
+
+    // Primary symbol should now be QQQ (overridden via spy param)
+    assert_eq!(
+        result.result.symbol.as_deref(),
+        Some("QQQ"),
+        "Primary symbol should be QQQ after param override"
+    );
+
+    // QQQ is declining, equity should be below initial capital
+    let last_equity = result.result.equity_curve.last().unwrap().equity;
+    assert!(
+        last_equity < 100_000.0,
+        "QQQ is declining, equity should be below initial capital, got {last_equity}"
+    );
 }
