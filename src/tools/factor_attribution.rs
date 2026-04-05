@@ -89,21 +89,15 @@ pub async fn execute(
     }
 
     // Align all series to minimum length
-    let min_len = std::iter::once(target_returns.len())
-        .chain(factor_series.iter().map(Vec::len))
-        .min()
-        .unwrap_or(0);
-
-    if min_len < 30 {
-        anyhow::bail!("Insufficient aligned observations: {min_len} (need at least 30)");
+    let mut all_series = vec![target_returns];
+    all_series.extend(factor_series);
+    let aligned = crate::tools::ai_helpers::align_to_min_len(&all_series);
+    let n = aligned[0].len();
+    if n < 30 {
+        anyhow::bail!("Insufficient aligned observations: {n} (need at least 30)");
     }
-
-    let y: Vec<f64> = target_returns[target_returns.len() - min_len..].to_vec();
-    let factors: Vec<Vec<f64>> = factor_series
-        .iter()
-        .map(|f| f[f.len() - min_len..].to_vec())
-        .collect();
-    let n = y.len();
+    let y = aligned[0].clone();
+    let factors: Vec<Vec<f64>> = aligned[1..].to_vec();
     let _k = factors.len() + 1; // +1 for intercept
 
     // Multi-factor OLS regression: y = alpha + sum(beta_i * factor_i) + epsilon

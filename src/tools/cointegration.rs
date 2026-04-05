@@ -55,21 +55,10 @@ pub async fn execute(
     .context(format!("Failed to load OHLCV data for {upper_b}"))?;
 
     // Align by date (inner join)
-    let mut map_a = std::collections::HashMap::new();
-    for p in &resp_a.prices {
-        map_a.insert(p.date, p.close);
-    }
-
-    let mut prices_a = Vec::new();
-    let mut prices_b = Vec::new();
-    let mut dates = Vec::new();
-    for p in &resp_b.prices {
-        if let Some(&close_a) = map_a.get(&p.date) {
-            prices_a.push(close_a);
-            prices_b.push(p.close);
-            dates.push(p.date);
-        }
-    }
+    let (dates, idx_a, idx_b) =
+        crate::tools::ai_helpers::align_by_date(&resp_a.prices, &resp_b.prices);
+    let prices_a: Vec<f64> = idx_a.iter().map(|&i| resp_a.prices[i].close).collect();
+    let prices_b: Vec<f64> = idx_b.iter().map(|&i| resp_b.prices[i].close).collect();
 
     let n = prices_a.len();
     if n < 30 {

@@ -73,15 +73,11 @@ pub async fn execute(
     let n_assets = upper_symbols.len();
 
     // Align all return series to minimum length (from the end)
-    let min_len = all_returns.iter().map(Vec::len).min().unwrap_or(0);
+    let aligned = crate::tools::ai_helpers::align_to_min_len(&all_returns);
+    let min_len = aligned.first().map_or(0, Vec::len);
     if min_len < 30 {
         anyhow::bail!("Insufficient aligned observations: {min_len}");
     }
-
-    let aligned: Vec<Vec<f64>> = all_returns
-        .iter()
-        .map(|r| r[r.len() - min_len..].to_vec())
-        .collect();
 
     // Compute mean returns and covariance matrix
     let means: Vec<f64> = aligned

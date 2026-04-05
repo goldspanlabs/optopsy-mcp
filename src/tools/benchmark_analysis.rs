@@ -29,14 +29,13 @@ pub async fn execute(
     let bench_returns = load_returns(cache, &bench_upper, &cutoff_str).await?;
 
     // Align to minimum length from end
-    let min_len = asset_returns.len().min(bench_returns.len());
-    if min_len < 30 {
-        anyhow::bail!("Insufficient aligned observations: {min_len} (need at least 30)");
+    let aligned = crate::tools::ai_helpers::align_to_min_len(&[asset_returns, bench_returns]);
+    let n = aligned[0].len();
+    if n < 30 {
+        anyhow::bail!("Insufficient aligned observations: {n} (need at least 30)");
     }
-
-    let asset_ret = &asset_returns[asset_returns.len() - min_len..];
-    let bench_ret = &bench_returns[bench_returns.len() - min_len..];
-    let n = min_len;
+    let asset_ret = &aligned[0];
+    let bench_ret = &aligned[1];
 
     // CAPM regression: R_asset = alpha + beta * R_benchmark + epsilon
     let mean_a = asset_ret.iter().sum::<f64>() / n as f64;

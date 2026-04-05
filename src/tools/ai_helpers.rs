@@ -147,6 +147,50 @@ pub(crate) async fn load_returns(
     Ok(returns)
 }
 
+// ── Multi-symbol alignment helpers ─────────────────────────────────────────
+
+/// Inner-join two price series by date, returning (dates, `idx_a`, `idx_b`).
+///
+/// Iterates `prices_b` and looks up matching dates in `prices_a`.
+/// The returned index vectors can be used to pick any field (close, open, etc.)
+/// from the original price bars.
+pub(crate) fn align_by_date(
+    prices_a: &[PriceBar],
+    prices_b: &[PriceBar],
+) -> (Vec<i64>, Vec<usize>, Vec<usize>) {
+    let map_a: std::collections::HashMap<i64, usize> = prices_a
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (p.date, i))
+        .collect();
+
+    let mut dates = Vec::new();
+    let mut idx_a = Vec::new();
+    let mut idx_b = Vec::new();
+
+    for (ib, pb) in prices_b.iter().enumerate() {
+        if let Some(&ia) = map_a.get(&pb.date) {
+            dates.push(pb.date);
+            idx_a.push(ia);
+            idx_b.push(ib);
+        }
+    }
+
+    (dates, idx_a, idx_b)
+}
+
+/// Trim multiple return series to the shortest length, aligned from the end.
+///
+/// Each series is truncated to `[len - min_len ..]` so that all outputs
+/// have the same length. Returns an empty `Vec` if any input is empty.
+pub(crate) fn align_to_min_len(series: &[Vec<f64>]) -> Vec<Vec<f64>> {
+    let min_len = series.iter().map(Vec::len).min().unwrap_or(0);
+    series
+        .iter()
+        .map(|s| s[s.len() - min_len..].to_vec())
+        .collect()
+}
+
 /// Compute p-value for a Pearson correlation coefficient.
 pub(crate) fn pearson_p_value(r: f64, n: usize) -> Option<f64> {
     if n <= 2 {

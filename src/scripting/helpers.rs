@@ -21,7 +21,7 @@ use super::types::BarContext;
 // ---------------------------------------------------------------------------
 
 /// Look up a single-param indicator value at a given bar index.
-pub(super) fn indicator_lookup(
+pub(crate) fn indicator_lookup(
     store: &IndicatorStore,
     bar_idx: usize,
     name: &str,
@@ -40,7 +40,7 @@ pub(super) fn indicator_lookup(
 }
 
 /// Look up a multi-param indicator value at a given bar index.
-pub(super) fn indicator_lookup_multi(
+pub(crate) fn indicator_lookup_multi(
     store: &IndicatorStore,
     bar_idx: usize,
     name: &str,
@@ -62,7 +62,7 @@ pub(super) fn indicator_lookup_multi(
 ///
 /// Extracts known param keys in a fixed order, converting floats to scaled integers
 /// following the `IndicatorStore` convention.
-pub(super) fn indicator_lookup_map(
+pub(crate) fn indicator_lookup_map(
     store: &IndicatorStore,
     bar_idx: usize,
     name: String,
@@ -105,7 +105,7 @@ pub(super) fn indicator_lookup_map(
 }
 
 /// Check if all declared indicators have warmed up at a given bar index.
-pub(super) fn indicators_all_ready(
+pub(crate) fn indicators_all_ready(
     store: &IndicatorStore,
     bar_idx: usize,
     indicators: rhai::Array,
@@ -187,7 +187,7 @@ pub(super) fn resolve_option_leg(
 
 /// Build a multi-leg options strategy from a legs array, resolving each leg.
 /// Returns `#{ legs, net_premium, symbol? }` or `()` if any leg fails.
-pub(super) fn build_strategy_from_legs(
+pub(crate) fn build_strategy_from_legs(
     legs: rhai::Array,
     options_by_date: &Option<Arc<DatePartitionedOptions>>,
     datetime: NaiveDateTime,
@@ -270,7 +270,7 @@ pub(super) fn build_strategy_from_legs(
 // Internal: build a leg map for passing to build_strategy()
 // ---------------------------------------------------------------------------
 
-pub(super) fn leg(side: &str, option_type: &str, delta: f64, dte: i64) -> Dynamic {
+pub(crate) fn leg(side: &str, option_type: &str, delta: f64, dte: i64) -> Dynamic {
     let mut map = rhai::Map::new();
     map.insert("side".into(), side.into());
     map.insert("option_type".into(), option_type.into());
@@ -280,7 +280,7 @@ pub(super) fn leg(side: &str, option_type: &str, delta: f64, dte: i64) -> Dynami
 }
 
 /// Wrap a resolved spread (from `build_strategy`) into a ready action map.
-fn wrap_spread_action(spread: Dynamic) -> Dynamic {
+pub(crate) fn wrap_spread_action(spread: Dynamic) -> Dynamic {
     if spread.is_unit() {
         return Dynamic::UNIT;
     }
@@ -444,34 +444,6 @@ pub fn cancel_orders_by_signal(signal: String) -> Dynamic {
 // ---------------------------------------------------------------------------
 
 impl BarContext {
-    /// Check if all listed indicators have valid (non-NaN) values at the current bar.
-    ///
-    /// Usage: `ctx.indicators_ready(["sma:50", "rsi:14", "atr:14", "obv"])`
-    pub fn indicators_ready(&mut self, indicators: rhai::Array) -> bool {
-        use super::indicators::{parse_indicator_declaration, IndicatorKey, IndicatorParam};
-
-        for item in indicators {
-            let Ok(s) = item.into_immutable_string() else {
-                return false;
-            };
-            let Ok((name, params)) = parse_indicator_declaration(&s) else {
-                return false;
-            };
-            let key = IndicatorKey {
-                name,
-                params: params
-                    .iter()
-                    .map(|&p| IndicatorParam::Int(p as i64))
-                    .collect(),
-            };
-            match self.indicator_store.get(&key, self.bar_idx) {
-                Some(v) if !v.is_nan() => {}
-                _ => return false,
-            }
-        }
-        true
-    }
-
     // -----------------------------------------------------------------------
     // Position sizing helpers
     // -----------------------------------------------------------------------
@@ -594,463 +566,12 @@ impl BarContext {
         qty.max(0)
     }
 
-    // -----------------------------------------------------------------------
-    // Singles
-    // -----------------------------------------------------------------------
-
-    /// Long call: buy one call at the given delta and DTE.
-    pub fn long_call(&mut self, call_delta: f64, dte: i64) -> Dynamic {
-        let legs = vec![leg("long", "call", call_delta, dte)];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Short call: sell one call at the given delta and DTE.
-    pub fn short_call(&mut self, call_delta: f64, dte: i64) -> Dynamic {
-        let legs = vec![leg("short", "call", call_delta, dte)];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Long put: buy one put at the given delta and DTE.
-    pub fn long_put(&mut self, put_delta: f64, dte: i64) -> Dynamic {
-        let legs = vec![leg("long", "put", put_delta, dte)];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Short put: sell one put at the given delta and DTE.
-    pub fn short_put(&mut self, put_delta: f64, dte: i64) -> Dynamic {
-        let legs = vec![leg("short", "put", put_delta, dte)];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Covered call: sell one call (assumes stock already held).
-    pub fn covered_call(&mut self, call_delta: f64, dte: i64) -> Dynamic {
-        let legs = vec![leg("short", "call", call_delta, dte)];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    // -----------------------------------------------------------------------
-    // Vertical Spreads
-    // -----------------------------------------------------------------------
-
-    /// Bull call spread: buy higher-delta (lower-strike) call, sell lower-delta (higher-strike) call.
-    pub fn bull_call_spread(
-        &mut self,
-        long_call_delta: f64,
-        short_call_delta: f64,
-        dte: i64,
-    ) -> Dynamic {
-        let legs = vec![
-            leg("long", "call", long_call_delta, dte),
-            leg("short", "call", short_call_delta, dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Bear call spread: sell higher-delta (lower-strike) call, buy lower-delta (higher-strike) call.
-    pub fn bear_call_spread(
-        &mut self,
-        short_call_delta: f64,
-        long_call_delta: f64,
-        dte: i64,
-    ) -> Dynamic {
-        let legs = vec![
-            leg("short", "call", short_call_delta, dte),
-            leg("long", "call", long_call_delta, dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Bull put spread: sell higher-delta put, buy lower-delta put.
-    pub fn bull_put_spread(
-        &mut self,
-        short_put_delta: f64,
-        long_put_delta: f64,
-        dte: i64,
-    ) -> Dynamic {
-        let legs = vec![
-            leg("short", "put", short_put_delta, dte),
-            leg("long", "put", long_put_delta, dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Bear put spread: buy higher-delta put, sell lower-delta put.
-    pub fn bear_put_spread(
-        &mut self,
-        long_put_delta: f64,
-        short_put_delta: f64,
-        dte: i64,
-    ) -> Dynamic {
-        let legs = vec![
-            leg("long", "put", long_put_delta, dte),
-            leg("short", "put", short_put_delta, dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    // -----------------------------------------------------------------------
-    // Straddles & Strangles
-    // -----------------------------------------------------------------------
-
-    /// Long straddle: buy call and put at specified deltas.
-    pub fn long_straddle(&mut self, call_delta: f64, put_delta: f64, dte: i64) -> Dynamic {
-        let legs = vec![
-            leg("long", "call", call_delta, dte),
-            leg("long", "put", put_delta, dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Short straddle: sell call and put at specified deltas.
-    pub fn short_straddle(&mut self, call_delta: f64, put_delta: f64, dte: i64) -> Dynamic {
-        let legs = vec![
-            leg("short", "call", call_delta, dte),
-            leg("short", "put", put_delta, dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Long strangle: buy OTM put and OTM call.
-    pub fn long_strangle(&mut self, put_delta: f64, call_delta: f64, dte: i64) -> Dynamic {
-        let legs = vec![
-            leg("long", "put", put_delta, dte),
-            leg("long", "call", call_delta, dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Short strangle: sell OTM put and OTM call.
-    pub fn short_strangle(&mut self, put_delta: f64, call_delta: f64, dte: i64) -> Dynamic {
-        let legs = vec![
-            leg("short", "put", put_delta, dte),
-            leg("short", "call", call_delta, dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    // -----------------------------------------------------------------------
-    // Butterflies
-    // -----------------------------------------------------------------------
-
-    /// Long call butterfly: long lower wing, 2x short center, long upper wing.
-    pub fn long_call_butterfly(
-        &mut self,
-        lower_call_delta: f64,
-        center_call_delta: f64,
-        upper_call_delta: f64,
-        dte: i64,
-    ) -> Dynamic {
-        let legs = vec![
-            leg("long", "call", lower_call_delta, dte),
-            leg("short", "call", center_call_delta, dte),
-            leg("short", "call", center_call_delta, dte),
-            leg("long", "call", upper_call_delta, dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Short call butterfly: short lower wing, 2x long center, short upper wing.
-    pub fn short_call_butterfly(
-        &mut self,
-        lower_call_delta: f64,
-        center_call_delta: f64,
-        upper_call_delta: f64,
-        dte: i64,
-    ) -> Dynamic {
-        let legs = vec![
-            leg("short", "call", lower_call_delta, dte),
-            leg("long", "call", center_call_delta, dte),
-            leg("long", "call", center_call_delta, dte),
-            leg("short", "call", upper_call_delta, dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Long put butterfly: long lower wing, 2x short center, long upper wing.
-    pub fn long_put_butterfly(
-        &mut self,
-        lower_put_delta: f64,
-        center_put_delta: f64,
-        upper_put_delta: f64,
-        dte: i64,
-    ) -> Dynamic {
-        let legs = vec![
-            leg("long", "put", lower_put_delta, dte),
-            leg("short", "put", center_put_delta, dte),
-            leg("short", "put", center_put_delta, dte),
-            leg("long", "put", upper_put_delta, dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Short put butterfly: short lower wing, 2x long center, short upper wing.
-    pub fn short_put_butterfly(
-        &mut self,
-        lower_put_delta: f64,
-        center_put_delta: f64,
-        upper_put_delta: f64,
-        dte: i64,
-    ) -> Dynamic {
-        let legs = vec![
-            leg("short", "put", lower_put_delta, dte),
-            leg("long", "put", center_put_delta, dte),
-            leg("long", "put", center_put_delta, dte),
-            leg("short", "put", upper_put_delta, dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    // -----------------------------------------------------------------------
-    // Condors (all same option type)
-    // -----------------------------------------------------------------------
-
-    /// Long call condor: long outer wings, short inner wings (all calls).
-    pub fn long_call_condor(
-        &mut self,
-        outer_lower_call_delta: f64,
-        inner_lower_call_delta: f64,
-        inner_upper_call_delta: f64,
-        outer_upper_call_delta: f64,
-        dte: i64,
-    ) -> Dynamic {
-        let legs = vec![
-            leg("long", "call", outer_lower_call_delta, dte),
-            leg("short", "call", inner_lower_call_delta, dte),
-            leg("short", "call", inner_upper_call_delta, dte),
-            leg("long", "call", outer_upper_call_delta, dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Short call condor: short outer wings, long inner wings (all calls).
-    pub fn short_call_condor(
-        &mut self,
-        outer_lower_call_delta: f64,
-        inner_lower_call_delta: f64,
-        inner_upper_call_delta: f64,
-        outer_upper_call_delta: f64,
-        dte: i64,
-    ) -> Dynamic {
-        let legs = vec![
-            leg("short", "call", outer_lower_call_delta, dte),
-            leg("long", "call", inner_lower_call_delta, dte),
-            leg("long", "call", inner_upper_call_delta, dte),
-            leg("short", "call", outer_upper_call_delta, dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Long put condor: long outer wings, short inner wings (all puts).
-    pub fn long_put_condor(
-        &mut self,
-        outer_lower_put_delta: f64,
-        inner_lower_put_delta: f64,
-        inner_upper_put_delta: f64,
-        outer_upper_put_delta: f64,
-        dte: i64,
-    ) -> Dynamic {
-        let legs = vec![
-            leg("long", "put", outer_lower_put_delta, dte),
-            leg("short", "put", inner_lower_put_delta, dte),
-            leg("short", "put", inner_upper_put_delta, dte),
-            leg("long", "put", outer_upper_put_delta, dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Short put condor: short outer wings, long inner wings (all puts).
-    pub fn short_put_condor(
-        &mut self,
-        outer_lower_put_delta: f64,
-        inner_lower_put_delta: f64,
-        inner_upper_put_delta: f64,
-        outer_upper_put_delta: f64,
-        dte: i64,
-    ) -> Dynamic {
-        let legs = vec![
-            leg("short", "put", outer_lower_put_delta, dte),
-            leg("long", "put", inner_lower_put_delta, dte),
-            leg("long", "put", inner_upper_put_delta, dte),
-            leg("short", "put", outer_upper_put_delta, dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    // -----------------------------------------------------------------------
-    // Iron Strategies (mixed put + call)
-    // -----------------------------------------------------------------------
-
-    /// Iron condor: short put + long put wing + short call + long call wing.
-    pub fn iron_condor(
-        &mut self,
-        short_put_delta: f64,
-        long_put_delta: f64,
-        short_call_delta: f64,
-        long_call_delta: f64,
-        dte: i64,
-    ) -> Dynamic {
-        let legs = vec![
-            leg("long", "put", long_put_delta, dte),
-            leg("short", "put", short_put_delta, dte),
-            leg("short", "call", short_call_delta, dte),
-            leg("long", "call", long_call_delta, dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Reverse iron condor: long put + short put wing + long call + short call wing.
-    pub fn reverse_iron_condor(
-        &mut self,
-        long_put_delta: f64,
-        short_put_delta: f64,
-        long_call_delta: f64,
-        short_call_delta: f64,
-        dte: i64,
-    ) -> Dynamic {
-        let legs = vec![
-            leg("short", "put", short_put_delta, dte),
-            leg("long", "put", long_put_delta, dte),
-            leg("long", "call", long_call_delta, dte),
-            leg("short", "call", short_call_delta, dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Iron butterfly: short ATM put + long OTM put wing + short ATM call + long OTM call wing.
-    pub fn iron_butterfly(
-        &mut self,
-        short_put_delta: f64,
-        long_put_delta: f64,
-        short_call_delta: f64,
-        long_call_delta: f64,
-        dte: i64,
-    ) -> Dynamic {
-        let legs = vec![
-            leg("long", "put", long_put_delta, dte),
-            leg("short", "put", short_put_delta, dte),
-            leg("short", "call", short_call_delta, dte),
-            leg("long", "call", long_call_delta, dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Reverse iron butterfly: long ATM put + short OTM put wing + long ATM call + short OTM call wing.
-    pub fn reverse_iron_butterfly(
-        &mut self,
-        long_put_delta: f64,
-        short_put_delta: f64,
-        long_call_delta: f64,
-        short_call_delta: f64,
-        dte: i64,
-    ) -> Dynamic {
-        let legs = vec![
-            leg("short", "put", short_put_delta, dte),
-            leg("long", "put", long_put_delta, dte),
-            leg("long", "call", long_call_delta, dte),
-            leg("short", "call", short_call_delta, dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    // -----------------------------------------------------------------------
-    // Calendar & Diagonal (multi-expiration)
-    // -----------------------------------------------------------------------
-
-    /// Call calendar: short near-term call, long far-term call.
-    pub fn call_calendar(
-        &mut self,
-        near_call_delta: f64,
-        far_call_delta: f64,
-        near_dte: i64,
-        far_dte: i64,
-    ) -> Dynamic {
-        let legs = vec![
-            leg("short", "call", near_call_delta, near_dte),
-            leg("long", "call", far_call_delta, far_dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Put calendar: short near-term put, long far-term put.
-    pub fn put_calendar(
-        &mut self,
-        near_put_delta: f64,
-        far_put_delta: f64,
-        near_dte: i64,
-        far_dte: i64,
-    ) -> Dynamic {
-        let legs = vec![
-            leg("short", "put", near_put_delta, near_dte),
-            leg("long", "put", far_put_delta, far_dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Call diagonal: short near-term OTM call, long far-term ATM/ITM call.
-    pub fn call_diagonal(
-        &mut self,
-        short_call_delta: f64,
-        long_call_delta: f64,
-        near_dte: i64,
-        far_dte: i64,
-    ) -> Dynamic {
-        let legs = vec![
-            leg("short", "call", short_call_delta, near_dte),
-            leg("long", "call", long_call_delta, far_dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Put diagonal: short near-term OTM put, long far-term ATM/ITM put.
-    pub fn put_diagonal(
-        &mut self,
-        short_put_delta: f64,
-        long_put_delta: f64,
-        near_dte: i64,
-        far_dte: i64,
-    ) -> Dynamic {
-        let legs = vec![
-            leg("short", "put", short_put_delta, near_dte),
-            leg("long", "put", long_put_delta, far_dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Double calendar: put calendar + call calendar.
-    pub fn double_calendar(
-        &mut self,
-        near_put_delta: f64,
-        far_put_delta: f64,
-        near_call_delta: f64,
-        far_call_delta: f64,
-        near_dte: i64,
-        far_dte: i64,
-    ) -> Dynamic {
-        let legs = vec![
-            leg("short", "put", near_put_delta, near_dte),
-            leg("long", "put", far_put_delta, far_dte),
-            leg("short", "call", near_call_delta, near_dte),
-            leg("long", "call", far_call_delta, far_dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
-    }
-
-    /// Double diagonal: put diagonal + call diagonal.
-    pub fn double_diagonal(
-        &mut self,
-        short_put_delta: f64,
-        long_put_delta: f64,
-        short_call_delta: f64,
-        long_call_delta: f64,
-        near_dte: i64,
-        far_dte: i64,
-    ) -> Dynamic {
-        let legs = vec![
-            leg("short", "put", short_put_delta, near_dte),
-            leg("long", "put", long_put_delta, far_dte),
-            leg("short", "call", short_call_delta, near_dte),
-            leg("long", "call", long_call_delta, far_dte),
-        ];
-        wrap_spread_action(self.build_strategy(legs))
+    /// Wrap a resolved spread into an action map for BarContext.
+    pub fn wrap_strategy_action(spread: Dynamic) -> Dynamic {
+        wrap_spread_action(spread)
     }
 }
+
+// Strategy methods generated by macro — single source of truth for both
+// BarContext and SymbolContext.
+impl_options_strategies!(BarContext);
