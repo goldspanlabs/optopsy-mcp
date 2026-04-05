@@ -39,19 +39,17 @@ pub async fn execute(
     let mut factor_names = vec!["Market".to_string()];
     let mut factor_series: Vec<Vec<f64>> = vec![market_returns.clone()];
 
+    // Helper: compute difference series between two return vectors
+    let diff_series =
+        |a: &[f64], b: &[f64]| -> Vec<f64> { a.iter().zip(b.iter()).map(|(x, y)| x - y).collect() };
+
     // Try to load SMB proxy (small cap - large cap)
     let small_cap = factor_proxies
         .and_then(|fp| fp.small_cap.as_deref())
         .unwrap_or("IWM");
     if let Ok(small_ret) = load_returns(cache, &small_cap.to_uppercase(), &cutoff_str).await {
-        // SMB = small cap returns - market returns (approximate)
-        let smb: Vec<f64> = small_ret
-            .iter()
-            .zip(market_returns.iter())
-            .map(|(s, m)| s - m)
-            .collect();
         factor_names.push("SMB (Size)".to_string());
-        factor_series.push(smb);
+        factor_series.push(diff_series(&small_ret, &market_returns));
     }
 
     // Try to load HML proxies (value - growth)
@@ -65,13 +63,8 @@ pub async fn execute(
         load_returns(cache, &value_sym.to_uppercase(), &cutoff_str).await,
         load_returns(cache, &growth_sym.to_uppercase(), &cutoff_str).await,
     ) {
-        let hml: Vec<f64> = val_ret
-            .iter()
-            .zip(grw_ret.iter())
-            .map(|(v, g)| v - g)
-            .collect();
         factor_names.push("HML (Value)".to_string());
-        factor_series.push(hml);
+        factor_series.push(diff_series(&val_ret, &grw_ret));
     }
 
     // Try to load Momentum proxy
@@ -79,35 +72,32 @@ pub async fn execute(
         .and_then(|fp| fp.momentum.as_deref())
         .unwrap_or("MTUM");
     if let Ok(mom_ret) = load_returns(cache, &mom_sym.to_uppercase(), &cutoff_str).await {
-        let mom: Vec<f64> = mom_ret
-            .iter()
-            .zip(market_returns.iter())
-            .map(|(m, mkt)| m - mkt)
-            .collect();
         factor_names.push("Momentum".to_string());
-        factor_series.push(mom);
+        factor_series.push(diff_series(&mom_ret, &market_returns));
     }
 
-    // Align all series to minimum length
-    let min_len = std::iter::once(target_returns.len())
-        .chain(factor_series.iter().map(Vec::len))
-        .min()
-        .unwrap_or(0);
+    // Align all series to minimum length from the end
+    let mut all_series: Vec<Vec<f64>> = vec![target_returns];
+    all_series.extend(factor_series);
+    let min_len = all_series.iter().map(Vec::len).min().unwrap_or(0);
 
     if min_len < 30 {
         anyhow::bail!("Insufficient aligned observations: {min_len} (need at least 30)");
     }
 
-    let y: Vec<f64> = target_returns[target_returns.len() - min_len..].to_vec();
-    let factors: Vec<Vec<f64>> = factor_series
-        .iter()
-        .map(|f| f[f.len() - min_len..].to_vec())
+    let trimmed: Vec<Vec<f64>> = all_series
+        .into_iter()
+        .map(|s| {
+            let start = s.len() - min_len;
+            s[start..].to_vec()
+        })
         .collect();
+    let y = &trimmed[0];
+    let factors: Vec<Vec<f64>> = trimmed[1..].to_vec();
     let n = y.len();
-    let _k = factors.len() + 1; // +1 for intercept
 
     // Multi-factor OLS regression: y = alpha + sum(beta_i * factor_i) + epsilon
-    let result = multi_factor_ols(&y, &factors);
+    let result = multi_factor_ols(y, &factors);
 
     let alpha = result.coefficients[0];
     let alpha_annualized = alpha * TRADING_DAYS_PER_YEAR; // Annualize daily alpha
