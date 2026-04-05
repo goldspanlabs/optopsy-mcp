@@ -178,9 +178,9 @@ pub struct WalkForwardParams {
     pub end_date: Option<String>,
     #[serde(default)]
     pub profile: Option<String>,
-    /// Pre-resolved script source; if None, reads from filesystem.
+    /// Pre-resolved Rhai script source (transpiled from DSL if needed).
     #[serde(skip)]
-    pub script_source: Option<String>,
+    pub script_source: String,
     /// Base parameters (strategy-specific) to merge before each run.
     #[serde(default)]
     pub base_params: Option<HashMap<String, Value>>,
@@ -247,22 +247,7 @@ pub async fn execute(
 ) -> Result<WalkForwardResponse> {
     let start = std::time::Instant::now();
 
-    // Load script source (use pre-resolved source if available, else read from filesystem)
-    let script_source = if let Some(src) = params.script_source {
-        src
-    } else {
-        let trading_path = format!("scripts/strategies/{}.trading", params.strategy);
-        let rhai_path = format!("scripts/strategies/{}.rhai", params.strategy);
-        let script_path = if tokio::fs::metadata(&trading_path).await.is_ok() {
-            trading_path
-        } else {
-            rhai_path
-        };
-        let raw = tokio::fs::read_to_string(&script_path)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to read strategy script '{script_path}': {e}"))?;
-        crate::tools::run_script::maybe_transpile(raw)?
-    };
+    let script_source = params.script_source;
 
     // Load OHLCV data to get the date range
     let start_date = params

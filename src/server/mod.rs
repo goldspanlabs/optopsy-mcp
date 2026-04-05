@@ -607,6 +607,17 @@ impl OptopsyServer {
                 params
                     .validate()
                     .map_err(|e| validation_err("walk_forward", e))?;
+                let (_id, script_source) =
+                    tools::run_script::resolve_script_source(
+                        &tools::run_script::RunScriptParams {
+                            strategy: Some(params.strategy.clone()),
+                            script: None,
+                            params: Default::default(),
+                            profile: None,
+                        },
+                        self.strategy_store.as_deref(),
+                    )
+                    .map_err(tool_err)?;
                 tools::walk_forward::execute(
                     &self.cache,
                     self.adjustment_store.clone(),
@@ -621,6 +632,7 @@ impl OptopsyServer {
                     params.start_date,
                     params.end_date,
                     params.profile,
+                    script_source,
                 )
                 .await
                 .map_err(tool_err)

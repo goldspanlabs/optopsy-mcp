@@ -657,7 +657,7 @@ pub async fn submit_walk_forward(
                 .get("PROFILE")
                 .and_then(Value::as_str)
                 .map(String::from),
-            script_source: Some(script_source),
+            script_source,
             base_params: Some(req.params.clone()),
         };
 

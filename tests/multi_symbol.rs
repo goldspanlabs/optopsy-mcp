@@ -1304,7 +1304,7 @@ fn on_exit_check(ctx, pos) {
         start_date: None,
         end_date: None,
         profile: None,
-        script_source: Some(script.to_string()),
+        script_source: script.to_string(),
         base_params: None,
     };
 

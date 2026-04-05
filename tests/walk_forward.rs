@@ -20,6 +20,19 @@ use optopsy_mcp::scripting::types::OhlcvBar;
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Load a strategy script from disk, transpiling DSL if needed.
+fn load_strategy_source(name: &str) -> String {
+    let trading = format!("scripts/strategies/{name}.trading");
+    let rhai = format!("scripts/strategies/{name}.rhai");
+    let (path, source) = if std::path::Path::new(&trading).exists() {
+        (&trading, std::fs::read_to_string(&trading).unwrap())
+    } else {
+        (&rhai, std::fs::read_to_string(&rhai).unwrap())
+    };
+    optopsy_mcp::tools::run_script::maybe_transpile(source)
+        .unwrap_or_else(|e| panic!("Failed to transpile {path}: {e}"))
+}
+
 fn bars_to_df(bars: &[OhlcvBar]) -> DataFrame {
     let datetimes: Vec<chrono::NaiveDateTime> = bars.iter().map(|b| b.datetime).collect();
     let opens: Vec<f64> = bars.iter().map(|b| b.open).collect();
@@ -218,7 +231,7 @@ async fn walk_forward_rolling_end_to_end() {
         start_date: None,
         end_date: None,
         profile: None,
-        script_source: None,
+        script_source: load_strategy_source("bb_mean_reversion"),
         base_params: None,
     };
 
@@ -313,7 +326,7 @@ async fn walk_forward_anchored_end_to_end() {
         start_date: None,
         end_date: None,
         profile: None,
-        script_source: None,
+        script_source: load_strategy_source("bb_mean_reversion"),
         base_params: None,
     };
 
@@ -358,7 +371,7 @@ async fn walk_forward_empty_grid_runs_with_base_params() {
         start_date: None,
         end_date: None,
         profile: None,
-        script_source: None,
+        script_source: load_strategy_source("bb_mean_reversion"),
         base_params: None,
     };
 

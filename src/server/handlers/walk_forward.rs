@@ -7,6 +7,7 @@ use axum::{extract::State, http::StatusCode, Json};
 use garde::Validate;
 use std::sync::Arc;
 
+use crate::server::handlers::sweeps::resolve_strategy_source;
 use crate::server::params::WalkForwardToolParams;
 use crate::server::state::AppState;
 use crate::tools::response_types::walk_forward::WalkForwardResponse;
@@ -20,6 +21,8 @@ pub async fn run_walk_forward(
     params
         .validate()
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Validation error: {e}")))?;
+
+    let (_id, script_source) = resolve_strategy_source(&state, &params.strategy)?;
 
     let cache = Arc::clone(&state.server.cache);
     let response = wf_tool::execute(
@@ -36,6 +39,7 @@ pub async fn run_walk_forward(
         params.start_date,
         params.end_date,
         params.profile,
+        script_source,
     )
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

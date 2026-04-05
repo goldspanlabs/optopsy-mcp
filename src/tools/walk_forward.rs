@@ -36,6 +36,7 @@ pub async fn execute(
     start_date: Option<String>,
     end_date: Option<String>,
     profile: Option<String>,
+    script_source: String,
 ) -> Result<WalkForwardResponse> {
     let wf_objective = match objective.as_deref() {
         Some("sortino") => WfObjective::Sortino,
@@ -66,7 +67,7 @@ pub async fn execute(
         start_date,
         end_date,
         profile,
-        script_source: None,
+        script_source,
         base_params: None,
     };
 
