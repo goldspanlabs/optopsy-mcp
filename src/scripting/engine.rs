@@ -2010,7 +2010,7 @@ fn has_fn(ast: &AST, name: &str, arity: usize) -> bool {
 /// Resolve symbol values from `extern_symbol` params, using case-insensitive
 /// param lookup with fallback to defaults. Shared by `validate_script` and
 /// `run_script_backtest` to prevent logic drift.
-fn resolve_symbols_from_extern_params(
+pub fn resolve_symbols_from_extern_params(
     script_source: &str,
     params: &HashMap<String, serde_json::Value>,
 ) -> Vec<String> {

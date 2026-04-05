@@ -204,13 +204,24 @@ pub async fn create_backtest(
                     .unwrap_or_else(|| req.strategy.clone());
                 let response = exec_result.response;
 
-                let symbol = req
-                    .params
-                    .get("SYMBOL")
-                    .or_else(|| req.params.get("symbol"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("UNKNOWN")
-                    .to_owned();
+                // Prefer the resolved symbol from the engine result (handles extern_symbol
+                // defaults), fall back to params only if the engine didn't populate it.
+                let symbol = response
+                    .result
+                    .symbol
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .map_or_else(
+                        || {
+                            req.params
+                                .get("SYMBOL")
+                                .or_else(|| req.params.get("symbol"))
+                                .and_then(Value::as_str)
+                                .unwrap_or("UNKNOWN")
+                                .to_owned()
+                        },
+                        str::to_owned,
+                    );
 
                 let capital = req
                     .params
