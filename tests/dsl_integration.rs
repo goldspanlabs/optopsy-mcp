@@ -603,26 +603,23 @@ fn all_rhai_strategies_compile_with_dsl_syntax() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn dsl_buy_shares_of_trades_correct_symbol() {
-    // DSL declares SPY as primary symbol. The on_bar callback buys SPY on bar 0,
-    // then buys QQQ on bar 1 using "buy N shares of qqq".
-    // We verify both symbols are traded with correct prices.
+    // No `symbol` in strategy block — both symbols declared via extern_symbol.
+    // Uses `buy N shares of IDENT` to target each symbol explicitly.
     let dsl_source = r#"
 strategy "Multi Symbol"
-  symbol SPY
   interval daily
   data ohlcv
-  cross_symbols QQQ
+
+extern_symbol spy = "SPY" "long leg"
+extern_symbol qqq = "QQQ" "short leg"
 "#;
 
-    // Transpile DSL header, then append hand-written callbacks using `of` syntax.
     let rhai = dsl::transpile(dsl_source).unwrap();
     let config_start = rhai.find("fn config()").unwrap();
     let header = &rhai[..config_start];
 
     let script = format!(
         r#"{header}
-let qqq = extern_symbol("qqq", "QQQ", "short leg");
-
 fn config() {{
     #{{
         capital: 100000,
@@ -634,7 +631,7 @@ fn config() {{
 
 fn on_bar(ctx) {{
     if ctx.bar_idx == 0 {{
-        return [buy 10 shares];
+        return [buy 10 shares of spy];
     }}
     if ctx.bar_idx == 1 {{
         return [buy 5 shares of qqq];

@@ -2,7 +2,6 @@
 # Converted from PineScript-style — entry and exit in a single body.
 
 strategy "RSI Mean Reversion" procedural
-  symbol SYMBOL
   capital CAPITAL
   interval daily
   category stock
@@ -10,6 +9,8 @@ strategy "RSI Mean Reversion" procedural
   hypothesis "RSI mean reversion with trend filter captures oversold bounces in uptrends"
   tags mean_reversion, rsi, momentum
   regime trending, bullish
+
+extern_symbol symbol = "SPY"
 
 extern OVERSOLD = 30 "RSI oversold threshold"
 extern OVERBOUGHT = 70 "RSI overbought threshold"

@@ -3,7 +3,6 @@
 # Buys when the spread z-score is extreme.
 
 strategy "Mean Reversion Pairs"
-  symbol SPY
   capital CAPITAL
   interval daily
   data ohlcv
@@ -14,6 +13,8 @@ strategy "Mean Reversion Pairs"
   hypothesis "Correlated ETF pairs revert to mean spread, providing low-risk entry signals"
   tags mean_reversion, pairs_trading, cross_asset
   regime range_bound
+
+extern_symbol symbol = "SPY"
 
 extern LOOKBACK = 20 "Z-score lookback period"
 extern ENTRY_Z = 2.0 "Z-score threshold for entry"

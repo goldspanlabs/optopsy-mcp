@@ -3,7 +3,6 @@
 # Uses a state machine: selling_puts -> holding_stock -> selling_calls -> selling_puts
 
 strategy "Wheel Strategy (DSL)"
-  symbol SPY
   capital CAPITAL
   interval daily
   data ohlcv, options
@@ -15,6 +14,8 @@ strategy "Wheel Strategy (DSL)"
   hypothesis "Selling premium via wheel strategy captures theta decay in range-bound markets"
   tags wheel, premium_selling, covered_call, cash_secured_put
   regime sideways, low_volatility
+
+extern_symbol symbol = "SPY"
 
 extern PUT_DELTA = 0.30 "Target delta for short puts"
 extern PUT_DTE = 45 "Days to expiration for puts"

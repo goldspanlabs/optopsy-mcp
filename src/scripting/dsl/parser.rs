@@ -40,7 +40,6 @@ pub struct DslProgram {
 #[derive(Debug)]
 pub struct StrategyBlock {
     pub name: String,
-    pub symbol: String,
     pub capital: String,
     pub interval: String,
     pub data_ohlcv: bool,
@@ -65,6 +64,7 @@ pub struct ParamDecl {
     pub default: String,
     pub description: String,
     pub choices: Vec<String>,
+    pub is_symbol: bool,
 }
 
 /// A `state` variable declaration with initial value.
@@ -264,6 +264,11 @@ pub fn parse(source: &str) -> Result<DslProgram, DslError> {
             }
             program.strategy = Some(block);
             i = next;
+        } else if content.starts_with("extern_symbol ") {
+            let mut p = parse_extern_symbol(line)?;
+            p.is_symbol = true;
+            program.params.push(p);
+            i += 1;
         } else if content.starts_with("extern ") {
             program.params.push(parse_extern(line)?);
             i += 1;
@@ -389,7 +394,6 @@ fn parse_strategy_block(lines: &[Line], start: usize) -> Result<(StrategyBlock, 
 
     let mut block = StrategyBlock {
         name,
-        symbol: "params.SYMBOL".to_string(),
         capital: "params.CAPITAL".to_string(),
         interval: "daily".to_string(),
         data_ohlcv: true,
@@ -412,9 +416,7 @@ fn parse_strategy_block(lines: &[Line], start: usize) -> Result<(StrategyBlock, 
         let line = &lines[i];
         let content = &line.content;
 
-        if let Some(rest) = content.strip_prefix("symbol ") {
-            block.symbol = rest.trim().to_string();
-        } else if let Some(rest) = content.strip_prefix("capital ") {
+        if let Some(rest) = content.strip_prefix("capital ") {
             block.capital = rest.trim().to_string();
         } else if let Some(rest) = content.strip_prefix("interval ") {
             block.interval = rest.trim().to_string();
@@ -609,6 +611,59 @@ fn parse_extern(line: &Line) -> Result<ParamDecl, DslError> {
         default,
         description,
         choices,
+        is_symbol: false,
+    })
+}
+
+fn parse_extern_symbol(line: &Line) -> Result<ParamDecl, DslError> {
+    // extern_symbol NAME = "DEFAULT"
+    // extern_symbol NAME = "DEFAULT" "description"  (optional)
+    let rest = line.content.strip_prefix("extern_symbol ").unwrap();
+
+    let eq_pos = rest.find('=').ok_or_else(|| {
+        DslError::new(
+            line.num,
+            "extern_symbol requires '=' (e.g., extern_symbol spy = \"SPY\")",
+        )
+    })?;
+
+    let name = rest[..eq_pos].trim().to_string();
+    let after_eq = rest[eq_pos + 1..].trim();
+
+    // Parse default value (quoted string like "SPY")
+    if !after_eq.starts_with('"') {
+        return Err(DslError::new(
+            line.num,
+            "extern_symbol default must be a quoted string (e.g., \"SPY\")",
+        ));
+    }
+    let after_open = &after_eq[1..];
+    let close = after_open
+        .find('"')
+        .ok_or_else(|| DslError::new(line.num, "unterminated default string"))?;
+    let default = after_eq[..close + 2].to_string(); // include quotes
+
+    // Optional description
+    let remainder = after_open[close + 1..].trim();
+    let description = if let Some(desc_inner) = remainder.strip_prefix('"') {
+        let desc_end = desc_inner
+            .find('"')
+            .ok_or_else(|| DslError::new(line.num, "unterminated description string"))?;
+        desc_inner[..desc_end].to_string()
+    } else {
+        name.clone()
+    };
+
+    if name.is_empty() {
+        return Err(DslError::new(line.num, "extern_symbol requires a name"));
+    }
+
+    Ok(ParamDecl {
+        name,
+        default,
+        description,
+        choices: vec![],
+        is_symbol: true,
     })
 }
 
@@ -1410,12 +1465,13 @@ mod tests {
 
     #[test]
     fn test_preprocess_strips_comments_and_blanks() {
-        let source = "# comment\nstrategy \"Test\"\n\n  symbol AAPL\n  # another comment\n  interval daily\n";
+        let source =
+            "# comment\nstrategy \"Test\"\n\n  interval daily\n  # another comment\n  data ohlcv\n";
         let lines = preprocess(source);
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0].content, "strategy \"Test\"");
         assert_eq!(lines[0].indent, 0);
-        assert_eq!(lines[1].content, "symbol AAPL");
+        assert_eq!(lines[1].content, "interval daily");
         assert!(lines[1].indent > 0);
     }
 
@@ -1463,8 +1519,9 @@ mod tests {
     fn test_parse_minimal_program() {
         let source = r#"
 strategy "Test"
-  symbol AAPL
   interval daily
+
+extern_symbol symbol = "AAPL"
 
 on each bar
   skip when has positions
@@ -1481,8 +1538,9 @@ on each bar
     fn test_parse_when_otherwise_chain() {
         let source = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on exit check
   when pos.pnl_pct > 0.50 then
@@ -1527,8 +1585,9 @@ on exit check
     fn test_rejects_duplicate_blocks() {
         let source = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   buy 100 shares

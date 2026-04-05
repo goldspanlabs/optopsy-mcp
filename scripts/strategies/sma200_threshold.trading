@@ -2,7 +2,6 @@
 # Buys when price breaks above SMA(200) * 1.04, sells when below SMA(200) * 0.97.
 
 strategy "SMA 200 Threshold (DSL)"
-  symbol SYMBOL
   capital CAPITAL
   interval daily
   category stock
@@ -10,6 +9,8 @@ strategy "SMA 200 Threshold (DSL)"
   hypothesis "Sustained momentum above the 200-day SMA signals trend continuation"
   tags trend_following, momentum, sma
   regime trending, bullish
+
+extern_symbol symbol = "SPY"
 
 extern ENTRY_THRESHOLD = 0.04 "Entry threshold above SMA (e.g. 0.04 = +4%)"
 extern EXIT_THRESHOLD = 0.03 "Exit threshold below SMA (e.g. 0.03 = -3%)"

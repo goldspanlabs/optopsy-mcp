@@ -250,30 +250,7 @@ pub fn generate(program: &DslProgram) -> String {
 
     out.push_str("// Auto-generated from Trading DSL — do not edit by hand.\n\n");
 
-    // Symbol extern — emitted from the strategy block's symbol field
-    if let Some(ref strat) = program.strategy {
-        let sym_val = &strat.symbol;
-        // Always bind to `symbol` so buy_stock(symbol, N) works regardless of DSL source.
-        // Default to "SPY" when no explicit symbol is given; callers override via params.
-        if sym_val == "params.SYMBOL" || sym_val == "SYMBOL" {
-            out.push_str("let symbol = extern_symbol(\"symbol\", \"SPY\", \"ticker to trade\");\n");
-        } else if sym_val.starts_with("params.") {
-            // Custom param name, e.g., params.TICKER → extern_symbol("TICKER", ...) bound to `symbol`
-            let param_name = sym_val.strip_prefix("params.").unwrap_or(sym_val);
-            out.push_str(&format!(
-                "let symbol = extern_symbol(\"{param_name}\", \"SPY\", \"ticker to trade\");\n"
-            ));
-        } else {
-            // Literal symbol like "AAPL" — use as default
-            let sym_upper = sym_val.to_uppercase();
-            out.push_str(&format!(
-                "let symbol = extern_symbol(\"symbol\", \"{sym_upper}\", \"ticker to trade\");\n"
-            ));
-        }
-        out.push('\n');
-    }
-
-    // Extern params
+    // Extern params (including extern_symbol)
     for p in &program.params {
         generate_param(&mut out, p);
     }
@@ -460,7 +437,12 @@ fn generate_config(out: &mut String, s: &StrategyBlock, program: &DslProgram) {
 // ---------------------------------------------------------------------------
 
 fn generate_param(out: &mut String, p: &ParamDecl) {
-    if p.choices.is_empty() {
+    if p.is_symbol {
+        out.push_str(&format!(
+            "let {} = extern_symbol(\"{}\", {}, \"{}\");\n",
+            p.name, p.name, p.default, p.description
+        ));
+    } else if p.choices.is_empty() {
         out.push_str(&format!(
             "let {} = extern(\"{}\", {}, \"{}\");\n",
             p.name, p.name, p.default, p.description

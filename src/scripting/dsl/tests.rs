@@ -6,9 +6,10 @@ use super::*;
 fn test_transpile_minimal_stock_strategy() {
     let dsl = r#"
 strategy "Buy and Hold"
-  symbol AAPL
   interval daily
   data ohlcv
+
+extern_symbol symbol = "AAPL"
 
 on each bar
   skip when has positions
@@ -19,7 +20,7 @@ on each bar
 
     // Should contain config function
     assert!(rhai.contains("fn config()"));
-    assert!(rhai.contains("extern_symbol(\"symbol\", \"AAPL\", \"ticker to trade\")"));
+    assert!(rhai.contains("extern_symbol(\"symbol\", \"AAPL\", \"symbol\")"));
     assert!(rhai.contains("interval: \"daily\""));
     assert!(rhai.contains("ohlcv: true"));
 
@@ -35,10 +36,11 @@ on each bar
 fn test_transpile_with_params_and_state() {
     let dsl = r#"
 strategy "SMA Crossover"
-  symbol SPY
   interval daily
   data ohlcv
   indicators sma:50, sma:200
+
+extern_symbol symbol = "SPY"
 
 extern THRESHOLD = 0.04 "Entry threshold"
 state wins = 0
@@ -98,13 +100,14 @@ on position closed
 fn test_transpile_options_strategy() {
     let dsl = r#"
 strategy "Iron Condor Income"
-  symbol SPY
   interval daily
   data ohlcv, options
   indicators rsi:14
   slippage mid
   expiration_filter monthly
   max_positions 1
+
+extern_symbol symbol = "SPY"
 
 extern PUT_DELTA = 0.30 "Short put delta"
 extern CALL_DELTA = 0.30 "Short call delta"
@@ -150,9 +153,10 @@ on exit check
 fn test_transpile_sell_validation() {
     let dsl = r#"
 strategy "Sell Test"
-  symbol AAPL
   interval daily
   data ohlcv
+
+extern_symbol symbol = "AAPL"
 
 on each bar
   sell 50 shares
@@ -170,10 +174,11 @@ on each bar
 fn test_transpile_plot_statement() {
     let dsl = r#"
 strategy "Plot Test"
-  symbol SPY
   interval daily
   data ohlcv
   indicators sma:200
+
+extern_symbol symbol = "SPY"
 
 on each bar
   set upper to sma(200) * 1.05
@@ -191,9 +196,10 @@ on each bar
 fn test_transpile_boolean_operators() {
     let dsl = r#"
 strategy "Boolean Test"
-  symbol SPY
   interval daily
   data ohlcv
+
+extern_symbol symbol = "SPY"
 
 on each bar
   skip when has positions
@@ -207,7 +213,7 @@ on each bar
 
 #[test]
 fn test_is_trading_dsl_detection() {
-    assert!(is_trading_dsl("strategy \"Test\"\n  symbol SPY\n"));
+    assert!(is_trading_dsl("strategy \"Test\"\n  interval daily\n"));
     assert!(is_trading_dsl("# comment\nstrategy \"Test\"\n"));
     assert!(!is_trading_dsl("fn config() {\n  #{}"));
     assert!(!is_trading_dsl("let x = 42;"));
@@ -224,8 +230,9 @@ fn test_error_on_bad_indent() {
 fn test_error_on_when_without_then() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   when close > 100
@@ -239,9 +246,10 @@ on each bar
 fn test_transpile_set_and_add() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
   data ohlcv
+
+extern_symbol symbol = "SPY"
 
 state counter = 0
 
@@ -260,10 +268,11 @@ on each bar
 fn test_transpile_cross_symbols() {
     let dsl = r#"
 strategy "Pairs"
-  symbol SPY
   interval daily
   data ohlcv
   cross_symbols QQQ, IWM
+
+extern_symbol symbol = "SPY"
 
 on each bar
   when price_of("QQQ") > close then
@@ -279,9 +288,11 @@ on each bar
 fn test_transpile_buy_shares_of_symbol() {
     let dsl = r#"
 strategy "Multi"
-  symbol SPY
   interval daily
   data ohlcv
+
+extern_symbol spy = "SPY" "long leg"
+extern_symbol qqq = "QQQ" "short leg"
 
 on each bar
   buy 10 shares of spy
@@ -297,15 +308,22 @@ on each bar
         rhai.contains("sell_stock(qqq, __sell_qty)"),
         "Should target qqq variable.\nGenerated:\n{rhai}"
     );
+    // extern_symbol should generate extern_symbol() not extern()
+    assert!(
+        rhai.contains("extern_symbol(\"spy\""),
+        "Should emit extern_symbol call.\nGenerated:\n{rhai}"
+    );
 }
 
 #[test]
 fn test_transpile_buy_shares_of_with_limit() {
     let dsl = r#"
 strategy "Multi"
-  symbol SPY
   interval daily
   data ohlcv
+
+extern_symbol spy = "SPY" "long leg"
+extern_symbol qqq = "QQQ" "short leg"
 
 on each bar
   buy 10 shares of spy at 150.00 limit
@@ -327,9 +345,11 @@ on each bar
 fn test_transpile_buy_shares_of_with_stop() {
     let dsl = r#"
 strategy "Multi"
-  symbol SPY
   interval daily
   data ohlcv
+
+extern_symbol spy = "SPY" "long leg"
+extern_symbol qqq = "QQQ" "short leg"
 
 on each bar
   buy 10 shares of spy at 95.00 stop
@@ -351,8 +371,9 @@ on each bar
 fn test_transpile_extern_with_choices() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 extern MODE = "fast" "Execution mode" choices fast, slow
 
@@ -368,8 +389,9 @@ on each bar
 fn test_transpile_raw_escape_hatch() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   raw let x = 42;
@@ -384,8 +406,9 @@ on each bar
 fn test_transpile_on_end_callback() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 state total_bars = 0
 
@@ -407,8 +430,9 @@ fn test_independent_when_blocks_without_otherwise() {
     // two separate `if` statements, not an if/else-if chain.
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   when close > 100 then
@@ -434,8 +458,9 @@ fn test_when_chain_with_otherwise_produces_else_if() {
     // Consecutive `when` blocks WITH `otherwise` should chain into if/else-if/else.
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on exit check
   when pos.pnl_pct > 0.50 then
@@ -474,8 +499,9 @@ on exit check
 fn test_for_each_loop() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   for each pos in positions()
@@ -493,8 +519,9 @@ on each bar
 fn test_subtract_from() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 state balance = 100
 
@@ -511,8 +538,9 @@ on each bar
 fn test_multiply_and_divide() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 state factor = 1.0
 
@@ -532,9 +560,10 @@ fn test_array_indexing_in_expressions() {
     // Verify that pos.legs[0].strike passes through rewriting unchanged
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
   data ohlcv, options
+
+extern_symbol symbol = "SPY"
 
 on exit check
   when pos.legs[0].strike > close then
@@ -556,8 +585,9 @@ fn test_underscore_group_variable() {
     // Verify that _group works as a state variable
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 state _group = "Cycle 1"
 
@@ -579,8 +609,9 @@ on position closed
 fn test_for_each_with_complex_body() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 state total_pnl = 0.0
 
@@ -599,9 +630,10 @@ on each bar
 fn test_mixed_dsl_and_raw_for_complex_patterns() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
   data ohlcv
+
+extern_symbol symbol = "SPY"
 
 on each bar
   raw let bb_width = (ctx.bbands_upper(20) - ctx.bbands_lower(20)) / ctx.sma(20);
@@ -623,8 +655,9 @@ on each bar
 fn test_buy_limit_order() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   buy 100 shares at 150.00 limit
@@ -641,8 +674,9 @@ on each bar
 fn test_buy_stop_order() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   buy 100 shares at 155.00 stop
@@ -659,8 +693,9 @@ on each bar
 fn test_sell_limit_order() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   sell 50 shares at 200.00 limit
@@ -677,8 +712,9 @@ on each bar
 fn test_sell_stop_order() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   sell 50 shares at entry_price - 2.0 stop
@@ -699,8 +735,9 @@ on each bar
 fn test_buy_at_market_explicit() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   buy 100 shares at market
@@ -717,8 +754,9 @@ on each bar
 fn test_cancel_all_orders() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   cancel all orders
@@ -736,8 +774,9 @@ on each bar
 fn test_cancel_orders_by_signal() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   cancel orders "old_entry"
@@ -755,8 +794,9 @@ on each bar
 fn test_position_awareness_properties() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   skip when market_position != 0
@@ -775,8 +815,9 @@ on each bar
 fn test_dynamic_limit_price_expression() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   buy 100 shares at close - atr(14) * 2 limit
@@ -793,8 +834,9 @@ on each bar
 fn test_capitalized_buy_next_bar_at_market() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   Buy 100 shares next bar at market
@@ -811,8 +853,9 @@ on each bar
 fn test_capitalized_sell_next_bar_at_limit() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   Sell 50 shares next bar at 200.00 limit
@@ -830,8 +873,9 @@ fn test_both_cases_accepted() {
     // Lowercase still works (backward compat)
     let dsl_lower = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   buy 100 shares
@@ -840,8 +884,9 @@ on each bar
     // Uppercase (TradeStation-style)
     let dsl_upper = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   Buy 100 shares next bar at market
@@ -859,10 +904,11 @@ on each bar
 fn test_transpile_lookback_strategy() {
     let dsl = r#"
 strategy "Lookback Test"
-  symbol SPY
   interval daily
   data ohlcv
   indicators sma:50, rsi:14
+
+extern_symbol symbol = "SPY"
 
 on each bar
   require sma:50
@@ -885,9 +931,10 @@ on each bar
 fn test_transpile_crosses_in_when() {
     let dsl = r#"
 strategy "Cross Test"
-  symbol SPY
   interval daily
   indicators sma:50, sma:200
+
+extern_symbol symbol = "SPY"
 
 on each bar
   require sma:50, sma:200
@@ -910,10 +957,11 @@ on each bar
 fn test_transpile_procedural_mode() {
     let dsl = r#"
 strategy "SMA Cross" procedural
-  symbol SYMBOL
   capital CAPITAL
   interval daily
   indicators sma:50, sma:200
+
+extern_symbol symbol = "SPY"
 
 extern FAST = 50 "Fast MA"
 
@@ -957,8 +1005,9 @@ when has positions and close crosses below sma(50) then
 fn test_procedural_rejects_event_blocks() {
     let dsl = r#"
 strategy "Test" procedural
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   buy 100 shares
@@ -976,8 +1025,9 @@ on each bar
 fn test_callback_rejects_bare_statements() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 buy 100 shares
 "#;
@@ -994,8 +1044,9 @@ buy 100 shares
 fn test_procedural_with_state() {
     let dsl = r#"
 strategy "Test" procedural
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 state counter = 0
 
@@ -1018,8 +1069,9 @@ when counter > 10 and no positions then
 fn test_auto_detect_indicators_from_body() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   when sma(200) > ema(50) and rsi(14) < 30 then
@@ -1035,9 +1087,10 @@ on each bar
 fn test_auto_detect_merges_with_explicit() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
   indicators atr:14
+
+extern_symbol symbol = "SPY"
 
 on each bar
   when sma(200) > 0 then
@@ -1058,8 +1111,9 @@ on each bar
 fn test_auto_detect_from_lookback_and_crossover() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   when sma(50)[1] > sma(200)[1] and rsi(14) crosses above 30 then
@@ -1075,8 +1129,9 @@ on each bar
 fn test_no_indicators_line_needed_procedural() {
     let dsl = r#"
 strategy "Test" procedural
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 require sma:50
 when sma(50) > close then
@@ -1093,8 +1148,9 @@ when sma(50) > close then
 fn test_transpile_per_order_stop_loss() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   Buy 100 shares next bar at market
@@ -1124,8 +1180,9 @@ on each bar
 fn test_transpile_per_order_dollar_stop() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   Buy 100 shares next bar at market
@@ -1142,8 +1199,9 @@ on each bar
 fn test_transpile_per_order_trailing_stop() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   Buy 100 shares next bar at market
@@ -1160,8 +1218,9 @@ on each bar
 fn test_transpile_buy_without_modifiers_unchanged() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   Buy 100 shares next bar at market
@@ -1178,8 +1237,9 @@ on each bar
 fn test_transpile_procedural_with_per_order_stops() {
     let dsl = r#"
 strategy "Test" procedural
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 when no positions and close > sma(200) then
   Buy 100 shares next bar at market
@@ -1201,7 +1261,6 @@ when no positions and close > sma(200) then
 fn test_transpile_metadata() {
     let dsl = r#"
 strategy "SMA Threshold"
-  symbol SYMBOL
   capital CAPITAL
   interval daily
   category stock
@@ -1209,6 +1268,8 @@ strategy "SMA Threshold"
   hypothesis "Momentum above 200-day SMA signals continuation"
   tags trend_following, momentum, sma
   regime trending, bullish
+
+extern_symbol symbol = "SPY"
 
 on each bar
   buy 100 shares
@@ -1245,9 +1306,10 @@ on each bar
 fn test_transpile_metadata_optional() {
     let dsl = r#"
 strategy "Minimal"
-  symbol SYMBOL
   capital CAPITAL
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   buy 100 shares
@@ -1275,8 +1337,9 @@ on each bar
 fn test_set_dotted_path() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 state stock = #{price: 0.0, basis: 0.0}
 
@@ -1302,8 +1365,9 @@ on each bar
 fn test_compound_assignment_dotted_path() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 state totals = #{premium: 0.0, count: 0}
 
@@ -1328,9 +1392,10 @@ on each bar
 fn test_transpile_try_open() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
   data ohlcv, options
+
+extern_symbol symbol = "SPY"
 
 state min_strike = 100.0
 
@@ -1364,9 +1429,10 @@ on each bar
 fn test_transpile_try_open_procedural() {
     let dsl = r#"
 strategy "Test" procedural
-  symbol SPY
   interval daily
   data ohlcv, options
+
+extern_symbol symbol = "SPY"
 
 try open short_put(0.30, 45) as order
   skip when close < sma(200)
@@ -1395,8 +1461,9 @@ try open short_put(0.30, 45) as order
 fn test_day_of_week_with_name() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   skip when day_of_week == monday
@@ -1414,8 +1481,9 @@ on each bar
 fn test_month_name_mapping() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   skip when month == january
@@ -1433,8 +1501,9 @@ on each bar
 fn test_time_literal_intraday() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval 5m
+
+extern_symbol symbol = "SPY"
 
 on each bar
   skip when time < 10:00
@@ -1457,8 +1526,9 @@ on each bar
 fn test_is_first_bar_intraday() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval 15m
+
+extern_symbol symbol = "SPY"
 
 on each bar
   skip when is_first_bar
@@ -1476,8 +1546,9 @@ on each bar
 fn test_is_expiry_week_daily() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   skip when is_expiry_week
@@ -1495,8 +1566,9 @@ on each bar
 fn test_trading_days_left_daily() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   skip when trading_days_left < 3
@@ -1514,8 +1586,9 @@ on each bar
 fn test_is_quarter_end_daily() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   when is_quarter_end then
@@ -1533,8 +1606,9 @@ on each bar
 fn test_intraday_keyword_error_on_daily() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   skip when time < 10:00
@@ -1556,8 +1630,9 @@ on each bar
 fn test_intraday_keyword_error_is_first_bar_daily() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   skip when is_first_bar
@@ -1575,8 +1650,9 @@ on each bar
 fn test_intraday_keyword_error_minutes_since_open_daily() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   skip when minutes_since_open < 30
@@ -1594,8 +1670,9 @@ on each bar
 fn test_day_names_all_map_correctly() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   skip when day_of_week == friday
@@ -1613,8 +1690,9 @@ on each bar
 fn test_multiple_time_keywords_combined() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   skip when day_of_week == monday
@@ -1636,8 +1714,9 @@ on each bar
 fn test_time_literal_single_digit_hour() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval 5m
+
+extern_symbol symbol = "SPY"
 
 on each bar
   skip when time < 9:30
@@ -1655,8 +1734,9 @@ on each bar
 fn test_callable_properties_with_parens_also_work() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval 5m
+
+extern_symbol symbol = "SPY"
 
 on each bar
   skip when time() < 10:00
@@ -1679,8 +1759,9 @@ on each bar
 fn test_invalid_time_literal_compile_error() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval 5m
+
+extern_symbol symbol = "SPY"
 
 on each bar
   skip when time < 25:00
@@ -1702,8 +1783,9 @@ on each bar
 fn test_invalid_time_minute_compile_error() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval 5m
+
+extern_symbol symbol = "SPY"
 
 on each bar
   skip when time > 10:75
@@ -1725,8 +1807,9 @@ on each bar
 fn test_reserved_name_extern_day() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 extern monday = 1 "A variable named monday"
 
@@ -1745,8 +1828,9 @@ on each bar
 fn test_reserved_name_state_month() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 state may = 0
 
@@ -1765,8 +1849,9 @@ on each bar
 fn test_non_reserved_name_accepted() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 extern monday_count = 0 "Not a reserved name"
 state may_trades = 0
@@ -1785,8 +1870,9 @@ on each bar
 fn test_reserved_name_set_variable() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   set march to 3
@@ -1804,8 +1890,9 @@ on each bar
 fn test_reserved_name_for_each_variable() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   for each friday in pos.legs
@@ -1827,8 +1914,9 @@ on each bar
 fn test_inline_if_else_in_set() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval 5m
+
+extern_symbol symbol = "SPY"
 
 extern VIX_THRESHOLD = 20 "VIX threshold"
 
@@ -1848,8 +1936,9 @@ on each bar
 fn test_inline_if_else_chained_in_set() {
     let dsl = r#"
 strategy "Test"
-  symbol SPY
   interval daily
+
+extern_symbol symbol = "SPY"
 
 on each bar
   set size to 1.0 if rsi(14) < 30 else 0.5 if rsi(14) > 70 else 0.75
@@ -1871,9 +1960,10 @@ on each bar
 fn test_portfolio_property_access() {
     let dsl = r#"
 strategy "Portfolio Test"
-  symbol SPY
   interval daily
   data ohlcv
+
+extern_symbol symbol = "SPY"
 
 on each bar
   skip when portfolio.exposure_pct > 0.50
@@ -1891,9 +1981,10 @@ on each bar
 fn test_portfolio_in_skip_when() {
     let dsl = r#"
 strategy "Portfolio Skip"
-  symbol SPY
   interval daily
   data ohlcv
+
+extern_symbol symbol = "SPY"
 
 on each bar
   skip when portfolio.drawdown < -0.10
@@ -1916,9 +2007,10 @@ on each bar
 fn test_portfolio_in_when_then() {
     let dsl = r#"
 strategy "Portfolio Guard"
-  symbol SPY
   interval daily
   data ohlcv
+
+extern_symbol symbol = "SPY"
 
 on each bar
   when portfolio.long_count >= 5 then
@@ -1938,9 +2030,10 @@ on each bar
 fn test_portfolio_unknown_property_rejected() {
     let dsl = r#"
 strategy "Bad Portfolio"
-  symbol SPY
   interval daily
   data ohlcv
+
+extern_symbol symbol = "SPY"
 
 on each bar
   skip when portfolio.foo > 1
@@ -1959,9 +2052,10 @@ on each bar
 fn test_portfolio_assignment_rejected() {
     let dsl = r#"
 strategy "Bad Assignment"
-  symbol SPY
   interval daily
   data ohlcv
+
+extern_symbol symbol = "SPY"
 
 on each bar
   set portfolio.cash to 1000
@@ -1984,9 +2078,10 @@ on each bar
 fn test_when_any_leg_condition() {
     let dsl = r#"
 strategy "Delta Check"
-  symbol SPY
   interval daily
   data ohlcv, options
+
+extern_symbol symbol = "SPY"
 
 on exit check
   when any leg in pos.legs has delta > 0.50 then
@@ -2010,9 +2105,10 @@ on exit check
 fn test_when_all_legs_condition() {
     let dsl = r#"
 strategy "All Legs Check"
-  symbol SPY
   interval daily
   data ohlcv, options
+
+extern_symbol symbol = "SPY"
 
 on exit check
   when all legs in pos.legs have current_price < 0.05 then
@@ -2036,9 +2132,10 @@ on exit check
 fn test_when_any_with_binding() {
     let dsl = r#"
 strategy "Binding Test"
-  symbol SPY
   interval daily
   data ohlcv, options
+
+extern_symbol symbol = "SPY"
 
 on exit check
   when any leg in pos.legs has delta > 0.50 as hot_leg then
@@ -2062,9 +2159,10 @@ on exit check
 fn test_legs_sum_aggregation() {
     let dsl = r#"
 strategy "Sum Delta"
-  symbol SPY
   interval daily
   data ohlcv, options
+
+extern_symbol symbol = "SPY"
 
 on exit check
   when pos.legs.sum(delta) > 1.0 then
@@ -2088,9 +2186,10 @@ on exit check
 fn test_legs_count_aggregation() {
     let dsl = r#"
 strategy "Count Legs"
-  symbol SPY
   interval daily
   data ohlcv, options
+
+extern_symbol symbol = "SPY"
 
 on exit check
   when pos.legs.count(side == "long") > 2 then
@@ -2114,9 +2213,10 @@ on exit check
 fn test_legs_min_max_avg_aggregation() {
     let dsl = r#"
 strategy "Min Price"
-  symbol SPY
   interval daily
   data ohlcv, options
+
+extern_symbol symbol = "SPY"
 
 on exit check
   when pos.legs.min(current_price) < 0.05 then
@@ -2140,9 +2240,10 @@ on exit check
 fn test_multiple_aggregations_in_same_expression() {
     let dsl = r#"
 strategy "Multi Agg"
-  symbol SPY
   interval daily
   data ohlcv, options
+
+extern_symbol symbol = "SPY"
 
 on exit check
   when pos.legs.sum(delta) + pos.legs.max(strike) > 100 then
@@ -2163,9 +2264,10 @@ on exit check
 fn test_quantifier_outside_pos_scope_rejected() {
     let dsl = r#"
 strategy "Bad Quantifier"
-  symbol SPY
   interval daily
   data ohlcv, options
+
+extern_symbol symbol = "SPY"
 
 on each bar
   when any leg in pos.legs has delta > 0.50 then
@@ -2184,9 +2286,10 @@ on each bar
 fn test_quantifier_inside_for_each_pos_allowed() {
     let dsl = r#"
 strategy "Nested Quantifier"
-  symbol SPY
   interval daily
   data ohlcv, options
+
+extern_symbol symbol = "SPY"
 
 on each bar
   for each pos in positions
@@ -2207,9 +2310,10 @@ on each bar
 fn test_invalid_leg_field_rejected() {
     let dsl = r#"
 strategy "Bad Field"
-  symbol SPY
   interval daily
   data ohlcv, options
+
+extern_symbol symbol = "SPY"
 
 on exit check
   when any leg in pos.legs has foo > 1 then
@@ -2228,9 +2332,10 @@ on exit check
 fn test_aggregation_on_non_numeric_field_rejected() {
     let dsl = r#"
 strategy "Bad Agg"
-  symbol SPY
   interval daily
   data ohlcv, options
+
+extern_symbol symbol = "SPY"
 
 on exit check
   when pos.legs.sum(option_type) > 1 then
@@ -2251,9 +2356,10 @@ on exit check
 fn test_portfolio_and_quantifier_together() {
     let dsl = r#"
 strategy "Combined"
-  symbol SPY
   interval daily
   data ohlcv, options
+
+extern_symbol symbol = "SPY"
 
 on each bar
   skip when portfolio.exposure_pct > 0.50
@@ -2275,9 +2381,10 @@ on exit check
 fn test_avg_aggregation() {
     let dsl = r#"
 strategy "Avg Delta"
-  symbol SPY
   interval daily
   data ohlcv, options
+
+extern_symbol symbol = "SPY"
 
 on exit check
   when pos.legs.avg(delta) > 0.30 then

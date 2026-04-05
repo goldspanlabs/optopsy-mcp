@@ -568,13 +568,14 @@ fn on_exit_check(ctx, pos) {
 fn dsl_transpiles_extern_symbol_and_buy_stock() {
     let dsl_source = r#"
 strategy "Test Buy"
-  symbol SPY
   interval daily
   data ohlcv
 
+extern_symbol symbol = "SPY"
+
 on each bar
   skip when has positions
-  buy 100 shares
+  buy 100 shares of symbol
 "#;
 
     let rhai = dsl::transpile(dsl_source).unwrap();
@@ -610,13 +611,14 @@ on each bar
 fn dsl_transpiles_sell_with_symbol() {
     let dsl_source = r#"
 strategy "Test Sell"
-  symbol AAPL
   interval daily
   data ohlcv
 
+extern_symbol symbol = "AAPL"
+
 on each bar
   skip when not has positions
-  sell 50 shares
+  sell 50 shares of symbol
 "#;
 
     let rhai = dsl::transpile(dsl_source).unwrap();
@@ -637,13 +639,14 @@ on each bar
 async fn dsl_transpiled_script_runs_backtest() {
     let dsl_source = r#"
 strategy "DSL Buy and Hold"
-  symbol SPY
   interval daily
   data ohlcv
 
+extern_symbol symbol = "SPY"
+
 on each bar
   skip when has positions
-  buy 10 shares
+  buy 10 shares of symbol
 
 on exit check
   hold position
@@ -688,13 +691,14 @@ on exit check
 async fn dsl_transpiled_script_symbol_override() {
     let dsl_source = r#"
 strategy "DSL Override"
-  symbol SPY
   interval daily
   data ohlcv
 
+extern_symbol symbol = "SPY"
+
 on each bar
   skip when has positions
-  buy 10 shares
+  buy 10 shares of symbol
 
 on exit check
   hold position
