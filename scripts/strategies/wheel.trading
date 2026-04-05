@@ -2,7 +2,7 @@
 # Sell puts, get assigned, sell covered calls, repeat.
 # Uses a state machine: selling_puts -> holding_stock -> selling_calls -> selling_puts
 
-strategy "Wheel Strategy (DSL)"
+strategy "Wheel Strategy"
   capital CAPITAL
   interval daily
   data ohlcv, options

@@ -1,7 +1,7 @@
 # Bollinger Band Mean Reversion Strategy
 # Enters when price breaks above upper BB, exits on reversion to SMA or max hold.
 
-strategy "BB Mean Reversion (DSL)"
+strategy "BB Mean Reversion"
   capital CAPITAL
   interval daily
   category stock

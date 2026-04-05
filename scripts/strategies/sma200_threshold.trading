@@ -1,7 +1,7 @@
 # SMA 200 Threshold Strategy
 # Buys when price breaks above SMA(200) * 1.04, sells when below SMA(200) * 0.97.
 
-strategy "SMA 200 Threshold (DSL)"
+strategy "SMA 200 Threshold"
   capital CAPITAL
   interval daily
   category stock
