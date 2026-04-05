@@ -208,15 +208,10 @@ fn dsl_sma_crossover_compiles_and_configures() {
         transpile_compile_and_configure("scripts/strategies/sma_crossover.trading", &params);
 
     // Verify config fields
-    assert_eq!(
-        config
-            .get("symbol")
-            .unwrap()
-            .clone()
-            .into_immutable_string()
-            .unwrap()
-            .as_str(),
-        "SPY"
+    // symbol is no longer in config — it's declared via extern_symbol()
+    assert!(
+        !config.contains_key("symbol"),
+        "symbol should not be in config"
     );
     assert_eq!(
         config

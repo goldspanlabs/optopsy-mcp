@@ -19,7 +19,7 @@ on each bar
 
     // Should contain config function
     assert!(rhai.contains("fn config()"));
-    assert!(rhai.contains("symbol: \"AAPL\""));
+    assert!(rhai.contains("extern_symbol(\"symbol\", \"AAPL\", \"ticker to trade\")"));
     assert!(rhai.contains("interval: \"daily\""));
     assert!(rhai.contains("ohlcv: true"));
 
@@ -27,7 +27,7 @@ on each bar
     assert!(rhai.contains("fn on_bar(ctx)"));
     assert!(rhai.contains("let __actions = [];"));
     assert!(rhai.contains("ctx.has_positions()"));
-    assert!(rhai.contains("buy_stock(100)"));
+    assert!(rhai.contains("buy_stock(symbol, 100)"));
     assert!(rhai.contains("__actions"));
 }
 
@@ -163,7 +163,7 @@ on each bar
     // Sell should include quantity validation guard
     assert!(rhai.contains("let __sell_qty = 50;"));
     assert!(rhai.contains("if __sell_qty > 0"));
-    assert!(rhai.contains("sell_stock(__sell_qty)"));
+    assert!(rhai.contains("sell_stock(symbol, __sell_qty)"));
 }
 
 #[test]
@@ -560,7 +560,7 @@ on each bar
 
     let rhai = transpile(dsl).unwrap();
     assert!(
-        rhai.contains("buy_limit(100, 150.00)"),
+        rhai.contains("buy_limit(symbol, 100, 150.00)"),
         "Should generate buy_limit call.\nGenerated:\n{rhai}"
     );
 }
@@ -578,7 +578,7 @@ on each bar
 
     let rhai = transpile(dsl).unwrap();
     assert!(
-        rhai.contains("buy_stop(100, 155.00)"),
+        rhai.contains("buy_stop(symbol, 100, 155.00)"),
         "Should generate buy_stop call.\nGenerated:\n{rhai}"
     );
 }
@@ -596,7 +596,7 @@ on each bar
 
     let rhai = transpile(dsl).unwrap();
     assert!(
-        rhai.contains("sell_limit(__sell_qty, 200.00)"),
+        rhai.contains("sell_limit(symbol, __sell_qty, 200.00)"),
         "Should generate sell_limit call with guard.\nGenerated:\n{rhai}"
     );
 }
@@ -636,7 +636,7 @@ on each bar
 
     let rhai = transpile(dsl).unwrap();
     assert!(
-        rhai.contains("buy_stock(100)"),
+        rhai.contains("buy_stock(symbol, 100)"),
         "Explicit 'at market' should generate buy_stock.\nGenerated:\n{rhai}"
     );
 }
@@ -712,7 +712,7 @@ on each bar
 
     let rhai = transpile(dsl).unwrap();
     assert!(
-        rhai.contains("buy_limit(100, ctx.close - ctx.atr(14) * 2)"),
+        rhai.contains("buy_limit(symbol, 100, ctx.close - ctx.atr(14) * 2)"),
         "Dynamic limit price should be rewritten.\nGenerated:\n{rhai}"
     );
 }
@@ -730,7 +730,7 @@ on each bar
 
     let rhai = transpile(dsl).unwrap();
     assert!(
-        rhai.contains("buy_stock(100)"),
+        rhai.contains("buy_stock(symbol, 100)"),
         "Capitalized Buy + next bar at market should work.\nGenerated:\n{rhai}"
     );
 }
@@ -779,8 +779,8 @@ on each bar
     let rhai_upper = transpile(dsl_upper).unwrap();
 
     // Both should generate buy_stock
-    assert!(rhai_lower.contains("buy_stock(100)"));
-    assert!(rhai_upper.contains("buy_stock(100)"));
+    assert!(rhai_lower.contains("buy_stock(symbol, 100)"));
+    assert!(rhai_upper.contains("buy_stock(symbol, 100)"));
 }
 
 #[test]
@@ -1031,7 +1031,7 @@ on each bar
 "#;
     let rhai = transpile(dsl).unwrap();
     assert!(
-        rhai.contains("let __order = buy_stock(100)"),
+        rhai.contains("let __order = buy_stock(symbol, 100)"),
         "Should use __order.\n{rhai}"
     );
     assert!(
@@ -1096,7 +1096,7 @@ on each bar
 "#;
     let rhai = transpile(dsl).unwrap();
     assert!(
-        rhai.contains("__actions.push(buy_stock(100))"),
+        rhai.contains("__actions.push(buy_stock(symbol, 100))"),
         "Should use direct push.\n{rhai}"
     );
     assert!(!rhai.contains("__order"), "Should not use __order.\n{rhai}");

@@ -9,8 +9,8 @@
 //!
 //! | DSL Syntax                        | Equivalent Rhai            |
 //! |-----------------------------------|---------------------------|
-//! | `buy EXPR shares`                 | `buy_stock(EXPR)`         |
-//! | `sell EXPR shares`                | `sell_stock(EXPR)`        |
+//! | `buy EXPR shares`                 | `buy_stock(symbol, EXPR)` |
+//! | `sell EXPR shares`                | `sell_stock(symbol, EXPR)`|
 //! | `sell validated EXPR shares`      | Quantity-validated sell    |
 //! | `exit_position REASON`            | `close_position(REASON)`  |
 //! | `hold`                            | `hold_position()`         |
@@ -34,7 +34,9 @@ pub fn register_dsl_syntax(engine: &mut Engine) {
     register_hold(engine);
 }
 
-/// `buy EXPR shares` → `buy_stock(EXPR)`
+/// `buy EXPR shares` → `buy_stock(symbol, EXPR)`
+///
+/// Reads `symbol` from the calling scope to populate the action map.
 fn register_buy_shares(engine: &mut Engine) {
     engine.register_custom_syntax_with_state_raw(
         "buy",
@@ -69,16 +71,26 @@ fn register_buy_shares(engine: &mut Engine) {
                 ))
             })?;
 
+            // Read `symbol` from scope (set by extern_symbol or let binding)
+            let sym = context
+                .scope()
+                .get_value::<rhai::ImmutableString>("symbol")
+                .map(Dynamic::from)
+                .unwrap_or_else(|| Dynamic::from(""));
+
             let mut map = rhai::Map::new();
             map.insert("action".into(), "open_stock".into());
             map.insert("side".into(), "long".into());
             map.insert("qty".into(), Dynamic::from(qty_int));
+            map.insert("symbol".into(), sym);
             Ok(Dynamic::from_map(map))
         },
     );
 }
 
-/// `sell EXPR shares` → `sell_stock(EXPR)`
+/// `sell EXPR shares` → `sell_stock(symbol, EXPR)`
+///
+/// Reads `symbol` from the calling scope to populate the action map.
 fn register_sell_shares(engine: &mut Engine) {
     engine.register_custom_syntax_with_state_raw(
         "sell",
@@ -120,10 +132,17 @@ fn register_sell_shares(engine: &mut Engine) {
                 ))
             })?;
 
+            let sym = context
+                .scope()
+                .get_value::<rhai::ImmutableString>("symbol")
+                .map(Dynamic::from)
+                .unwrap_or_else(|| Dynamic::from(""));
+
             let mut map = rhai::Map::new();
             map.insert("action".into(), "open_stock".into());
             map.insert("side".into(), "short".into());
             map.insert("qty".into(), Dynamic::from(qty_int));
+            map.insert("symbol".into(), sym);
             Ok(Dynamic::from_map(map))
         },
     );
@@ -157,10 +176,17 @@ fn register_sell_validated(engine: &mut Engine) {
                     return Ok(Dynamic::UNIT);
                 }
 
+                let sym = context
+                    .scope()
+                    .get_value::<rhai::ImmutableString>("symbol")
+                    .map(Dynamic::from)
+                    .unwrap_or_else(|| Dynamic::from(""));
+
                 let mut map = rhai::Map::new();
                 map.insert("action".into(), "open_stock".into());
                 map.insert("side".into(), "short".into());
                 map.insert("qty".into(), Dynamic::from(requested));
+                map.insert("symbol".into(), sym);
                 Ok(Dynamic::from_map(map))
             },
         )

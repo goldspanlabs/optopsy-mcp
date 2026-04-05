@@ -250,6 +250,29 @@ pub fn generate(program: &DslProgram) -> String {
 
     out.push_str("// Auto-generated from Trading DSL — do not edit by hand.\n\n");
 
+    // Symbol extern — emitted from the strategy block's symbol field
+    if let Some(ref strat) = program.strategy {
+        let sym_val = &strat.symbol;
+        // If symbol is "params.SYMBOL" or "SYMBOL", emit as required (no default)
+        if sym_val == "params.SYMBOL" || sym_val == "SYMBOL" {
+            out.push_str("let symbol = extern_symbol(\"symbol\", \"SPY\", \"ticker to trade\");\n");
+        } else if sym_val.starts_with("params.") {
+            // Custom param name, e.g., params.TICKER → extern_symbol("TICKER", ...)
+            let param_name = sym_val.strip_prefix("params.").unwrap_or(sym_val);
+            out.push_str(&format!(
+                "let {pn} = extern_symbol(\"{pn}\", \"SPY\", \"ticker to trade\");\n",
+                pn = param_name.to_lowercase()
+            ));
+        } else {
+            // Literal symbol like "AAPL" — use as default
+            let sym_upper = sym_val.to_uppercase();
+            out.push_str(&format!(
+                "let symbol = extern_symbol(\"symbol\", \"{sym_upper}\", \"ticker to trade\");\n"
+            ));
+        }
+        out.push('\n');
+    }
+
     // Extern params
     for p in &program.params {
         generate_param(&mut out, p);
@@ -368,7 +391,7 @@ fn config_value(val: &str) -> String {
 fn generate_config(out: &mut String, s: &StrategyBlock, program: &DslProgram) {
     out.push_str("fn config() {\n");
     out.push_str("    #{\n");
-    out.push_str(&format!("        symbol: {},\n", config_value(&s.symbol)));
+    // symbol is now declared via extern_symbol() — not in config
     out.push_str(&format!("        capital: {},\n", config_value(&s.capital)));
     out.push_str(&format!("        interval: \"{}\",\n", s.interval));
 
@@ -636,14 +659,14 @@ fn generate_stmts(
             } => {
                 let qty = rewrite_expr(qty_expr);
                 let call = match order_type {
-                    OrderModifier::Market => format!("buy_stock({qty})"),
+                    OrderModifier::Market => format!("buy_stock(symbol, {qty})"),
                     OrderModifier::Limit { price } => {
                         let p = rewrite_expr(price);
-                        format!("buy_limit({qty}, {p})")
+                        format!("buy_limit(symbol, {qty}, {p})")
                     }
                     OrderModifier::Stop { price } => {
                         let p = rewrite_expr(price);
-                        format!("buy_stop({qty}, {p})")
+                        format!("buy_stop(symbol, {qty}, {p})")
                     }
                 };
 
@@ -677,14 +700,14 @@ fn generate_stmts(
                 // Build the guarded call with __sell_qty directly to avoid
                 // string-replace corruption when qty appears in price expressions.
                 let call_with_guard = match order_type {
-                    OrderModifier::Market => "sell_stock(__sell_qty)".to_string(),
+                    OrderModifier::Market => "sell_stock(symbol, __sell_qty)".to_string(),
                     OrderModifier::Limit { price } => {
                         let p = rewrite_expr(price);
-                        format!("sell_limit(__sell_qty, {p})")
+                        format!("sell_limit(symbol, __sell_qty, {p})")
                     }
                     OrderModifier::Stop { price } => {
                         let p = rewrite_expr(price);
-                        format!("sell_stop(__sell_qty, {p})")
+                        format!("sell_stop(symbol, __sell_qty, {p})")
                     }
                 };
 

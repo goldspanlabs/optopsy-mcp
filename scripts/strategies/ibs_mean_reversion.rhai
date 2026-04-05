@@ -15,7 +15,8 @@
 // Uses size_by_risk for position sizing: risks RISK_PCT of equity per trade with
 // a stop at ATR_MULT ATR below entry. Falls back to 10% of equity if ATR unavailable.
 //
-// Required params: SYMBOL, CAPITAL
+// Required params: CAPITAL
+let symbol = extern_symbol("symbol", "SPY", "Ticker to trade");
 let IBS_THRESHOLD = extern("IBS_THRESHOLD", 0.3, "IBS entry threshold");
 let LOOKBACK = extern("LOOKBACK", 10, "Highest-high lookback period");
 let CHANNEL_MULT = extern("CHANNEL_MULT", 2.5, "Channel width multiplier");
@@ -24,7 +25,6 @@ let ATR_MULT = extern("ATR_MULT", 2.0, "ATR multiplier for stop distance");
 
 fn config() {
     #{
-        symbol: params.SYMBOL,
         capital: params.CAPITAL,
         interval: "daily",
         data: #{
@@ -72,7 +72,7 @@ fn on_bar(ctx) {
             ctx.size_by_equity(0.10)
         };
         if qty <= 0 { return []; }
-        [buy_stock(qty)]
+        [buy_stock(symbol, qty)]
     } else {
         []
     }

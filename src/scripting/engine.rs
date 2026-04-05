@@ -224,6 +224,21 @@ pub fn validate_script(
         },
     );
 
+    // extern_symbol behaves identically to extern at validation time
+    let params_clone_sym = params.clone();
+    engine.register_fn(
+        "extern_symbol",
+        move |name: &str, default: rhai::Dynamic, _desc: &str| -> rhai::Dynamic {
+            if let Some(value) = params_clone_sym.get(name) {
+                super::stdlib::json_to_dynamic(value)
+            } else if default.is_unit() {
+                rhai::Dynamic::from(format!("ERROR: Required parameter '{name}' not provided"))
+            } else {
+                default
+            }
+        },
+    );
+
     let ast = match engine.compile(script_source) {
         Ok(ast) => ast,
         Err(e) => {
@@ -345,7 +360,7 @@ pub fn validate_script(
         }
     };
 
-    let config = match parse_config(config_dynamic) {
+    let mut config = match parse_config(config_dynamic) {
         Ok(c) => c,
         Err(e) => {
             diagnostics.push(ValidationDiagnostic {
@@ -361,6 +376,46 @@ pub fn validate_script(
             };
         }
     };
+
+    // Auto-detect symbols from extern_symbol params if not specified in config
+    if config.symbols.is_empty() {
+        let mut symbol_values: Vec<String> = Vec::new();
+        for ep in &extern_params {
+            if ep.role == "symbol" {
+                let value = params
+                    .get(&ep.name)
+                    .and_then(|v| v.as_str().map(String::from))
+                    .or_else(|| {
+                        ep.default
+                            .as_ref()
+                            .and_then(|d| d.as_str().map(String::from))
+                    });
+                if let Some(sym) = value {
+                    let sym = sym.trim().to_uppercase();
+                    if !sym.is_empty() && !symbol_values.contains(&sym) {
+                        symbol_values.push(sym);
+                    }
+                }
+            }
+        }
+        if symbol_values.is_empty() {
+            diagnostics.push(ValidationDiagnostic {
+                level: DiagnosticLevel::Error,
+                message:
+                    "No symbols: declare extern_symbol() params or set symbol/symbols in config()"
+                        .to_string(),
+            });
+            return ValidationResult {
+                valid: false,
+                diagnostics,
+                callbacks,
+                config: None,
+                params: extern_params,
+            };
+        }
+        config.symbol.clone_from(&symbol_values[0]);
+        config.symbols = symbol_values;
+    }
 
     diagnostics.push(ValidationDiagnostic {
         level: DiagnosticLevel::Info,
@@ -459,6 +514,21 @@ pub async fn run_script_backtest(
         },
     );
 
+    // extern_symbol — identical to extern at runtime (role tag is only for extraction)
+    let p = Arc::clone(&params_arc);
+    engine.register_fn(
+        "extern_symbol",
+        move |name: &str, default: Dynamic, _desc: &str| -> Dynamic {
+            if let Some(value) = p.get(name) {
+                super::stdlib::json_to_dynamic(value)
+            } else if default.is_unit() {
+                Dynamic::from(format!("ERROR: Required parameter '{name}' not provided"))
+            } else {
+                default
+            }
+        },
+    );
+
     let ast = engine
         .compile(script_source)
         .map_err(|e| anyhow::anyhow!("Script compile error: {e}"))?;
@@ -478,7 +548,39 @@ pub async fn run_script_backtest(
     let config_map: Dynamic = call_fn_persistent(&engine, &mut scope, &ast, "config", ())?;
     let mut config = parse_config(config_map).context("Failed to parse config() return value")?;
 
-    // 3a. Override date bounds from params (used by walk-forward to set window dates)
+    // 3a. Auto-detect symbols from extern_symbol params if not specified in config()
+    if config.symbols.is_empty() {
+        let extern_params = super::stdlib::extract_extern_params(script_source);
+        let mut symbol_values: Vec<String> = Vec::new();
+        for ep in &extern_params {
+            if ep.role == "symbol" {
+                // Resolve value from params map, fall back to default
+                let value = params
+                    .get(&ep.name)
+                    .and_then(|v| v.as_str().map(String::from))
+                    .or_else(|| {
+                        ep.default
+                            .as_ref()
+                            .and_then(|d| d.as_str().map(String::from))
+                    });
+                if let Some(sym) = value {
+                    let sym = sym.trim().to_uppercase();
+                    if !sym.is_empty() && !symbol_values.contains(&sym) {
+                        symbol_values.push(sym);
+                    }
+                }
+            }
+        }
+        if symbol_values.is_empty() {
+            bail!(
+                "No symbols specified: declare extern_symbol() params or set symbol/symbols in config()"
+            );
+        }
+        config.symbol.clone_from(&symbol_values[0]);
+        config.symbols = symbol_values;
+    }
+
+    // 3b. Override date bounds from params (used by walk-forward to set window dates)
     if let Some(s) = params.get("START_DATE").and_then(|v| v.as_str()) {
         if let Ok(d) = s.parse::<chrono::NaiveDate>() {
             config.start_date = Some(d);
@@ -1879,8 +1981,9 @@ fn parse_config(map: Dynamic) -> Result<ScriptConfig> {
         .try_cast::<rhai::Map>()
         .ok_or_else(|| anyhow::anyhow!("config() must return a Map (#{{}}))"))?;
 
-    // Parse symbols: support both `symbols: [...]` (multi) and `symbol: "..."` (legacy).
-    // If both are present, `symbols` takes precedence.
+    // Parse symbols: support `symbols: [...]`, `symbol: "..."`, or auto-detect
+    // from extern_symbol params (populated after parse_config returns).
+    // If both symbol and symbols are present, `symbols` takes precedence.
     let symbols: Vec<String> = if let Some(arr_val) = map.get("symbols") {
         let arr = arr_val
             .clone()
@@ -1913,14 +2016,18 @@ fn parse_config(map: Dynamic) -> Result<ScriptConfig> {
             }
         }
         syms
-    } else {
+    } else if map.contains_key("symbol") {
         // Legacy single-symbol mode
         let sym = get_string(&map, "symbol")?;
         vec![sym.to_uppercase()]
+    } else {
+        // No symbol in config — will be resolved from extern_symbol params after parse
+        Vec::new()
     };
 
     // Primary symbol = first in the list (for backward compat: ctx.close, etc.)
-    let symbol = symbols[0].clone();
+    // Empty symbols means auto-detect from extern_symbol params (resolved by caller).
+    let symbol = symbols.first().cloned().unwrap_or_default();
 
     let capital = get_float(&map, "capital")?;
 

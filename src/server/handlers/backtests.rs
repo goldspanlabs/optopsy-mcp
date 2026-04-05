@@ -207,6 +207,7 @@ pub async fn create_backtest(
                 let symbol = req
                     .params
                     .get("SYMBOL")
+                    .or_else(|| req.params.get("symbol"))
                     .and_then(Value::as_str)
                     .unwrap_or("UNKNOWN")
                     .to_owned();

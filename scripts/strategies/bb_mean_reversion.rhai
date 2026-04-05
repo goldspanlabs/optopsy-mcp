@@ -15,7 +15,8 @@
 // Since the hypothesis found positive forward returns after upper band breaks,
 // we BUY the breakout (going long on mean reversion back toward the mean).
 //
-// Required params: SYMBOL, CAPITAL
+// Required params: CAPITAL
+let symbol = extern_symbol("symbol", "SPY", "Ticker to trade");
 let BB_PERIOD = extern("BB_PERIOD", 20, "Bollinger Band period");
 let MAX_HOLD = extern("MAX_HOLD", 10, "Max bars to hold position");
 let RISK_PCT = extern("RISK_PCT", 0.02, "Fraction of equity to risk per trade");
@@ -23,7 +24,6 @@ let ATR_MULT = extern("ATR_MULT", 2.0, "ATR multiplier for stop distance");
 
 fn config() {
     #{
-        symbol: params.SYMBOL,
         capital: params.CAPITAL,
         interval: "daily",
         data: #{
@@ -52,7 +52,7 @@ fn on_bar(ctx) {
             ctx.size_by_equity(0.10)
         };
         if qty <= 0 { return []; }
-        [buy_stock(qty)]
+        [buy_stock(symbol, qty)]
     } else {
         []
     }
