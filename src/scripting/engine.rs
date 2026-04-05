@@ -1732,8 +1732,12 @@ pub async fn run_script_backtest(
                 }
             }
         }
-        if let (Some(pt), Some(di)) = (&price_table, &date_index) {
-            crate::engine::positions::update_last_known(pt, di, today, &mut last_known);
+        // Single-symbol mode: update the shared last_known from primary price_table.
+        // In multi-symbol mode this is already handled per-symbol above.
+        if ctx_factory.per_symbol_data.is_none() {
+            if let (Some(pt), Some(di)) = (&price_table, &date_index) {
+                crate::engine::positions::update_last_known(pt, di, today, &mut last_known);
+            }
         }
 
         // Mark-to-market all open positions
