@@ -79,25 +79,16 @@ pub async fn execute(
     // Align all series to minimum length from the end
     let mut all_series: Vec<Vec<f64>> = vec![target_returns];
     all_series.extend(factor_series);
-    let min_len = all_series.iter().map(Vec::len).min().unwrap_or(0);
-
-    if min_len < 30 {
-        anyhow::bail!("Insufficient aligned observations: {min_len} (need at least 30)");
+    let mut trimmed = crate::tools::ai_helpers::align_to_min_len(&all_series);
+    let n = trimmed[0].len();
+    if n < 30 {
+        anyhow::bail!("Insufficient aligned observations: {n} (need at least 30)");
     }
-
-    let trimmed: Vec<Vec<f64>> = all_series
-        .into_iter()
-        .map(|s| {
-            let start = s.len() - min_len;
-            s[start..].to_vec()
-        })
-        .collect();
-    let y = &trimmed[0];
-    let factors: Vec<Vec<f64>> = trimmed[1..].to_vec();
-    let n = y.len();
+    let y = trimmed.remove(0);
+    let factors = trimmed;
 
     // Multi-factor OLS regression: y = alpha + sum(beta_i * factor_i) + epsilon
-    let result = multi_factor_ols(y, &factors);
+    let result = multi_factor_ols(&y, &factors);
 
     let alpha = result.coefficients[0];
     let alpha_annualized = alpha * TRADING_DAYS_PER_YEAR; // Annualize daily alpha

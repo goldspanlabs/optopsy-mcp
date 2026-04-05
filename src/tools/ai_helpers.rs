@@ -147,6 +147,51 @@ pub(crate) async fn load_returns(
     Ok(returns)
 }
 
+// ── Multi-symbol alignment helpers ─────────────────────────────────────────
+
+/// Inner-join two price series by date, returning (dates, `idx_a`, `idx_b`).
+///
+/// Iterates `prices_b` and looks up matching dates in `prices_a`.
+/// The returned index vectors can be used to pick any field (close, open, etc.)
+/// from the original price bars.
+pub(crate) fn align_by_date(
+    prices_a: &[PriceBar],
+    prices_b: &[PriceBar],
+) -> (Vec<i64>, Vec<usize>, Vec<usize>) {
+    let map_a: std::collections::HashMap<i64, usize> = prices_a
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (p.date, i))
+        .collect();
+
+    let mut dates = Vec::new();
+    let mut idx_a = Vec::new();
+    let mut idx_b = Vec::new();
+
+    for (ib, pb) in prices_b.iter().enumerate() {
+        if let Some(&ia) = map_a.get(&pb.date) {
+            dates.push(pb.date);
+            idx_a.push(ia);
+            idx_b.push(ib);
+        }
+    }
+
+    (dates, idx_a, idx_b)
+}
+
+/// Trim multiple return series to the shortest length, aligned from the end.
+///
+/// Each series is truncated to `[len - min_len ..]` so that all outputs
+/// have the same length. When any input is empty every output series will
+/// be empty (but the outer `Vec` retains the same number of entries).
+pub(crate) fn align_to_min_len(series: &[Vec<f64>]) -> Vec<Vec<f64>> {
+    let min_len = series.iter().map(Vec::len).min().unwrap_or(0);
+    series
+        .iter()
+        .map(|s| s[s.len() - min_len..].to_vec())
+        .collect()
+}
+
 /// Compute p-value for a Pearson correlation coefficient.
 pub(crate) fn pearson_p_value(r: f64, n: usize) -> Option<f64> {
     if n <= 2 {
@@ -327,5 +372,66 @@ mod tests {
                 "non-intraday interval {interval} should match epoch_to_date_string"
             );
         }
+    }
+
+    // ─── align_by_date ─────────────────────────────────────────────────
+
+    fn bar(date: i64, close: f64) -> PriceBar {
+        PriceBar {
+            date,
+            open: 0.0,
+            high: 0.0,
+            low: 0.0,
+            close,
+            adjclose: None,
+            volume: 0,
+        }
+    }
+
+    #[test]
+    fn align_by_date_returns_intersection_in_prices_b_order() {
+        let a = vec![bar(1, 10.0), bar(2, 11.0), bar(4, 12.0), bar(5, 13.0)];
+        let b = vec![bar(5, 20.0), bar(3, 21.0), bar(2, 22.0), bar(4, 23.0)];
+
+        let (dates, idx_a, idx_b) = align_by_date(&a, &b);
+
+        assert_eq!(dates, vec![5, 2, 4]);
+        assert_eq!(idx_a, vec![3, 1, 2]);
+        assert_eq!(idx_b, vec![0, 2, 3]);
+    }
+
+    #[test]
+    fn align_by_date_no_overlap_returns_empty() {
+        let a = vec![bar(1, 10.0), bar(2, 11.0)];
+        let b = vec![bar(3, 20.0), bar(4, 21.0)];
+
+        let (dates, idx_a, idx_b) = align_by_date(&a, &b);
+        assert!(dates.is_empty());
+        assert!(idx_a.is_empty());
+        assert!(idx_b.is_empty());
+    }
+
+    // ─── align_to_min_len ──────────────────────────────────────────────
+
+    #[test]
+    fn align_to_min_len_truncates_from_end() {
+        let aligned = align_to_min_len(&[
+            vec![1.0, 2.0, 3.0, 4.0],
+            vec![10.0, 11.0],
+            vec![20.0, 21.0, 22.0],
+        ]);
+        assert_eq!(
+            aligned,
+            vec![vec![3.0, 4.0], vec![10.0, 11.0], vec![21.0, 22.0]]
+        );
+    }
+
+    #[test]
+    fn align_to_min_len_empty_input_produces_empty_series() {
+        let aligned = align_to_min_len(&[vec![1.0, 2.0], Vec::new(), vec![3.0]]);
+        assert_eq!(
+            aligned,
+            vec![Vec::<f64>::new(), Vec::<f64>::new(), Vec::<f64>::new()]
+        );
     }
 }

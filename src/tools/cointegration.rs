@@ -6,7 +6,6 @@
 //! for mean-reversion / statistical arbitrage strategies.
 
 use anyhow::Result;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::data::cache::CachedStore;
@@ -47,18 +46,10 @@ pub async fn execute(
     .await?;
 
     // Align by date (inner join)
-    let map_a: HashMap<i64, f64> = prices_a_bars.iter().map(|p| (p.date, p.close)).collect();
-
-    let mut prices_a = Vec::new();
-    let mut prices_b = Vec::new();
-    let mut dates = Vec::new();
-    for p in &prices_b_bars {
-        if let Some(&close_a) = map_a.get(&p.date) {
-            prices_a.push(close_a);
-            prices_b.push(p.close);
-            dates.push(p.date);
-        }
-    }
+    let (dates, idx_a, idx_b) =
+        crate::tools::ai_helpers::align_by_date(&prices_a_bars, &prices_b_bars);
+    let prices_a: Vec<f64> = idx_a.iter().map(|&i| prices_a_bars[i].close).collect();
+    let prices_b: Vec<f64> = idx_b.iter().map(|&i| prices_b_bars[i].close).collect();
 
     let n = prices_a.len();
     if n < 30 {

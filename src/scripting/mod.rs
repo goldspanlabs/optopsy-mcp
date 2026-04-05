@@ -5,6 +5,8 @@
 //! The engine handles data loading, position management, and metrics calculation
 //! while scripts define trading logic.
 
+#[macro_use]
+pub mod macros;
 pub mod dsl;
 pub mod engine;
 pub mod helpers;

@@ -28,15 +28,13 @@ pub async fn execute(
     let asset_returns = load_returns(cache, &upper, &cutoff_str).await?;
     let bench_returns = load_returns(cache, &bench_upper, &cutoff_str).await?;
 
-    // Align to minimum length from end
-    let min_len = asset_returns.len().min(bench_returns.len());
-    if min_len < 30 {
-        anyhow::bail!("Insufficient aligned observations: {min_len} (need at least 30)");
+    // Align to minimum length from end (borrow slices to avoid cloning)
+    let n = asset_returns.len().min(bench_returns.len());
+    if n < 30 {
+        anyhow::bail!("Insufficient aligned observations: {n} (need at least 30)");
     }
-
-    let asset_ret = &asset_returns[asset_returns.len() - min_len..];
-    let bench_ret = &bench_returns[bench_returns.len() - min_len..];
-    let n = min_len;
+    let asset_ret = &asset_returns[asset_returns.len() - n..];
+    let bench_ret = &bench_returns[bench_returns.len() - n..];
 
     // CAPM regression: R_asset = alpha + beta * R_benchmark + epsilon
     let mean_a = asset_ret.iter().sum::<f64>() / n as f64;

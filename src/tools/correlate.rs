@@ -1,7 +1,6 @@
 //! Correlation analysis between two price series.
 
 use anyhow::{Context, Result};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::constants::P_VALUE_THRESHOLD;
@@ -65,26 +64,9 @@ pub async fn execute(
         (a.prices, b.prices)
     };
 
-    // Build date-indexed maps
-    let map_a: HashMap<i64, usize> = prices_a
-        .iter()
-        .enumerate()
-        .map(|(i, p)| (p.date, i))
-        .collect();
-
     // Align by date (inner join)
-    let mut aligned_dates: Vec<i64> = Vec::new();
-    let mut vals_a_raw: Vec<(f64, f64, f64, f64, f64)> = Vec::new();
-    let mut vals_b_raw: Vec<(f64, f64, f64, f64, f64)> = Vec::new();
-
-    for pb in &prices_b {
-        if let Some(&idx_a) = map_a.get(&pb.date) {
-            let pa = &prices_a[idx_a];
-            aligned_dates.push(pb.date);
-            vals_a_raw.push((pa.close, pa.open, pa.high, pa.low, pa.volume as f64));
-            vals_b_raw.push((pb.close, pb.open, pb.high, pb.low, pb.volume as f64));
-        }
-    }
+    let (aligned_dates, idx_a, idx_b) =
+        crate::tools::ai_helpers::align_by_date(&prices_a, &prices_b);
 
     if aligned_dates.len() < 2 {
         anyhow::bail!(
@@ -94,6 +76,22 @@ pub async fn execute(
             aligned_dates.len()
         );
     }
+
+    // Build aligned OHLCV tuples from index vectors
+    let vals_a_raw: Vec<(f64, f64, f64, f64, f64)> = idx_a
+        .iter()
+        .map(|&i| {
+            let p = &prices_a[i];
+            (p.close, p.open, p.high, p.low, p.volume as f64)
+        })
+        .collect();
+    let vals_b_raw: Vec<(f64, f64, f64, f64, f64)> = idx_b
+        .iter()
+        .map(|&i| {
+            let p = &prices_b[i];
+            (p.close, p.open, p.high, p.low, p.volume as f64)
+        })
+        .collect();
 
     // Extract the requested field
     let extract_field = |raw: &[(f64, f64, f64, f64, f64)], field: &str| -> Result<Vec<f64>> {
