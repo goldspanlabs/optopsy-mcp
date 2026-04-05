@@ -91,13 +91,13 @@ pub async fn execute(
     // Align all series to minimum length
     let mut all_series = vec![target_returns];
     all_series.extend(factor_series);
-    let aligned = crate::tools::ai_helpers::align_to_min_len(&all_series);
+    let mut aligned = crate::tools::ai_helpers::align_to_min_len(&all_series);
     let n = aligned[0].len();
     if n < 30 {
         anyhow::bail!("Insufficient aligned observations: {n} (need at least 30)");
     }
-    let y = aligned[0].clone();
-    let factors: Vec<Vec<f64>> = aligned[1..].to_vec();
+    let y = aligned.remove(0);
+    let factors = aligned;
     let _k = factors.len() + 1; // +1 for intercept
 
     // Multi-factor OLS regression: y = alpha + sum(beta_i * factor_i) + epsilon

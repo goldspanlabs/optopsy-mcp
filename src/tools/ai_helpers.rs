@@ -182,7 +182,8 @@ pub(crate) fn align_by_date(
 /// Trim multiple return series to the shortest length, aligned from the end.
 ///
 /// Each series is truncated to `[len - min_len ..]` so that all outputs
-/// have the same length. Returns an empty `Vec` if any input is empty.
+/// have the same length. When any input is empty every output series will
+/// be empty (but the outer `Vec` retains the same number of entries).
 pub(crate) fn align_to_min_len(series: &[Vec<f64>]) -> Vec<Vec<f64>> {
     let min_len = series.iter().map(Vec::len).min().unwrap_or(0);
     series
@@ -288,5 +289,66 @@ mod tests {
                 "non-intraday interval {interval} should match epoch_to_date_string"
             );
         }
+    }
+
+    // ─── align_by_date ─────────────────────────────────────────────────
+
+    fn bar(date: i64, close: f64) -> PriceBar {
+        PriceBar {
+            date,
+            open: 0.0,
+            high: 0.0,
+            low: 0.0,
+            close,
+            adjclose: None,
+            volume: 0,
+        }
+    }
+
+    #[test]
+    fn align_by_date_returns_intersection_in_prices_b_order() {
+        let a = vec![bar(1, 10.0), bar(2, 11.0), bar(4, 12.0), bar(5, 13.0)];
+        let b = vec![bar(5, 20.0), bar(3, 21.0), bar(2, 22.0), bar(4, 23.0)];
+
+        let (dates, idx_a, idx_b) = align_by_date(&a, &b);
+
+        assert_eq!(dates, vec![5, 2, 4]);
+        assert_eq!(idx_a, vec![3, 1, 2]);
+        assert_eq!(idx_b, vec![0, 2, 3]);
+    }
+
+    #[test]
+    fn align_by_date_no_overlap_returns_empty() {
+        let a = vec![bar(1, 10.0), bar(2, 11.0)];
+        let b = vec![bar(3, 20.0), bar(4, 21.0)];
+
+        let (dates, idx_a, idx_b) = align_by_date(&a, &b);
+        assert!(dates.is_empty());
+        assert!(idx_a.is_empty());
+        assert!(idx_b.is_empty());
+    }
+
+    // ─── align_to_min_len ──────────────────────────────────────────────
+
+    #[test]
+    fn align_to_min_len_truncates_from_end() {
+        let aligned = align_to_min_len(&[
+            vec![1.0, 2.0, 3.0, 4.0],
+            vec![10.0, 11.0],
+            vec![20.0, 21.0, 22.0],
+        ]);
+        assert_eq!(
+            aligned,
+            vec![vec![3.0, 4.0], vec![10.0, 11.0], vec![21.0, 22.0]]
+        );
+    }
+
+    #[test]
+    fn align_to_min_len_empty_input_produces_empty_series() {
+        let aligned = align_to_min_len(&[vec![1.0, 2.0], Vec::new(), vec![3.0]]);
+        assert_eq!(
+            aligned,
+            vec![Vec::<f64>::new(), Vec::<f64>::new(), Vec::<f64>::new()]
+        );
     }
 }
