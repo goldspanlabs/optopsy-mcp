@@ -1,12 +1,12 @@
 //! Integration tests for multi-symbol portfolio backtesting.
 //!
 //! Verifies:
-//! - extern_symbol auto-detection builds config.symbols
+//! - `extern_symbol` auto-detection builds `config.symbols`
 //! - Multi-symbol data loading (different bars per symbol)
-//! - ctx.sym("SYMBOL") returns correct per-symbol data
-//! - buy_stock(symbol, qty) targets the correct symbol
+//! - `ctx.sym("SYMBOL")` returns correct per-symbol data
+//! - `buy_stock(symbol, qty)` targets the correct symbol
 //! - Trade records carry the correct symbol field
-//! - Single-symbol extern_symbol works (backward compat)
+//! - Single-symbol `extern_symbol` works (backward compat)
 
 use std::collections::HashMap;
 
@@ -14,6 +14,7 @@ use anyhow::Result;
 use chrono::NaiveDate;
 use polars::prelude::*;
 
+use optopsy_mcp::scripting::dsl;
 use optopsy_mcp::scripting::engine::{run_script_backtest, DataLoader};
 use optopsy_mcp::scripting::types::OhlcvBar;
 
@@ -94,7 +95,7 @@ impl DataLoader for MultiSymbolLoader {
 /// SPY: 100, 102, 104, 106, 108
 /// QQQ: 200, 198, 196, 194, 192  (inverse movement)
 fn make_two_symbol_loader() -> MultiSymbolLoader {
-    let dates = vec![
+    let dates = [
         dt(2024, 1, 2),
         dt(2024, 1, 3),
         dt(2024, 1, 4),
@@ -145,7 +146,7 @@ fn make_two_symbol_loader() -> MultiSymbolLoader {
 // Test: extern_symbol auto-detection with single symbol
 // ---------------------------------------------------------------------------
 
-/// Verifies that a script using extern_symbol() without config.symbol
+/// Verifies that a script using `extern_symbol()` without `config.symbol`
 /// auto-detects the symbol and runs correctly.
 #[tokio::test(flavor = "multi_thread")]
 async fn extern_symbol_auto_detect_single() {
@@ -252,7 +253,7 @@ fn on_exit_check(ctx, pos) {
 // Test: Multi-symbol portfolio backtest
 // ---------------------------------------------------------------------------
 
-/// Verifies a script that declares two extern_symbol params loads data for
+/// Verifies a script that declares two `extern_symbol` params loads data for
 /// both symbols, and trades target the correct symbol with correct prices.
 #[tokio::test(flavor = "multi_thread")]
 async fn multi_symbol_portfolio_backtest() {
@@ -384,7 +385,7 @@ fn on_exit_check(ctx, pos) {
 // Test: Error when no symbol is declared
 // ---------------------------------------------------------------------------
 
-/// Verifies that a script with no extern_symbol and no config.symbol fails
+/// Verifies that a script with no `extern_symbol` and no `config.symbol` fails
 /// with a clear error message.
 #[tokio::test(flavor = "multi_thread")]
 async fn no_symbol_declared_fails() {
@@ -486,5 +487,167 @@ fn on_exit_check(ctx, pos) {
     assert!(
         pnl > -100.0,
         "P&L should be around -32.5 (using QQQ prices), not -452 (SPY prices), got {pnl}"
+    );
+}
+
+// ===========================================================================
+// DSL Integration Tests
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Test: DSL transpiles extern_symbol and symbol-aware buy_stock
+// ---------------------------------------------------------------------------
+
+/// Verifies that the DSL `strategy` block's `symbol` field generates an
+/// `extern_symbol` call and `buy N shares` generates `buy_stock(symbol, N)`.
+#[test]
+fn dsl_transpiles_extern_symbol_and_buy_stock() {
+    let dsl_source = r#"
+strategy "Test Buy"
+  symbol SPY
+  interval daily
+  data ohlcv
+
+on each bar
+  skip when has positions
+  buy 100 shares
+"#;
+
+    let rhai = dsl::transpile(dsl_source).unwrap();
+
+    // Should contain extern_symbol with SPY as default
+    assert!(
+        rhai.contains("extern_symbol"),
+        "Generated Rhai should contain extern_symbol call"
+    );
+    assert!(
+        rhai.contains("\"SPY\""),
+        "Generated Rhai should contain SPY as default symbol"
+    );
+
+    // Should contain buy_stock(symbol, 100) — not buy_stock(100)
+    assert!(
+        rhai.contains("buy_stock(symbol, 100)"),
+        "Generated Rhai should pass symbol to buy_stock, got:\n{rhai}"
+    );
+
+    // Should NOT contain symbol: in config
+    assert!(
+        !rhai.contains("symbol:"),
+        "Generated Rhai should not have symbol in config"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test: DSL sell generates symbol-aware sell_stock
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dsl_transpiles_sell_with_symbol() {
+    let dsl_source = r#"
+strategy "Test Sell"
+  symbol AAPL
+  interval daily
+  data ohlcv
+
+on each bar
+  skip when not has positions
+  sell 50 shares
+"#;
+
+    let rhai = dsl::transpile(dsl_source).unwrap();
+
+    assert!(
+        rhai.contains("sell_stock(symbol, __sell_qty)"),
+        "Generated Rhai should pass symbol to sell_stock, got:\n{rhai}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test: DSL transpiled script runs end-to-end backtest
+// ---------------------------------------------------------------------------
+
+/// Transpiles a DSL script and runs it through the full backtest engine,
+/// proving the generated `extern_symbol` + `buy_stock(symbol, N)` works.
+#[tokio::test(flavor = "multi_thread")]
+async fn dsl_transpiled_script_runs_backtest() {
+    let dsl_source = r#"
+strategy "DSL Buy and Hold"
+  symbol SPY
+  interval daily
+  data ohlcv
+
+on each bar
+  skip when has positions
+  buy 10 shares
+
+on exit check
+  hold position
+"#;
+
+    let rhai = dsl::transpile(dsl_source).unwrap();
+
+    let loader = make_two_symbol_loader();
+    let mut params = HashMap::new();
+    params.insert("CAPITAL".to_string(), serde_json::json!(100_000.0));
+
+    let result = run_script_backtest(&rhai, &params, &loader, None, None, None)
+        .await
+        .expect("DSL-transpiled backtest should succeed");
+
+    assert_eq!(
+        result.result.symbol.as_deref(),
+        Some("SPY"),
+        "Symbol should be SPY from extern_symbol default"
+    );
+    // Position is opened but never closed (hold position + no auto_close),
+    // so trade_count is 0. Verify via equity curve showing unrealized P&L.
+    assert!(
+        result.result.equity_curve.len() >= 4,
+        "Should have equity curve entries for each bar"
+    );
+    // Last equity point should differ from initial capital (position is open)
+    let last_equity = result.result.equity_curve.last().unwrap().equity;
+    assert!(
+        (last_equity - 100_000.0).abs() > 0.01,
+        "Equity should differ from initial capital (open position), got {last_equity}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test: DSL transpiled script respects symbol override via params
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dsl_transpiled_script_symbol_override() {
+    let dsl_source = r#"
+strategy "DSL Override"
+  symbol SPY
+  interval daily
+  data ohlcv
+
+on each bar
+  skip when has positions
+  buy 10 shares
+
+on exit check
+  hold position
+"#;
+
+    let rhai = dsl::transpile(dsl_source).unwrap();
+
+    let loader = make_two_symbol_loader();
+    let mut params = HashMap::new();
+    params.insert("symbol".to_string(), serde_json::json!("QQQ"));
+    params.insert("CAPITAL".to_string(), serde_json::json!(100_000.0));
+
+    let result = run_script_backtest(&rhai, &params, &loader, None, None, None)
+        .await
+        .expect("DSL-transpiled backtest should succeed with QQQ override");
+
+    assert_eq!(
+        result.result.symbol.as_deref(),
+        Some("QQQ"),
+        "Symbol should be overridden to QQQ via params"
     );
 }

@@ -113,6 +113,17 @@ fn build_test_engine(
             }
         },
     );
+    let p_sym = params.clone();
+    engine.register_fn(
+        "extern_symbol",
+        move |name: &str, default: rhai::Dynamic, _desc: &str| -> rhai::Dynamic {
+            if let Some(value) = p_sym.get(name) {
+                optopsy_mcp::scripting::stdlib::json_to_dynamic(value)
+            } else {
+                default
+            }
+        },
+    );
     engine
 }
 
