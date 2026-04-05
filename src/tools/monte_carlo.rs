@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use crate::data::cache::CachedStore;
 use crate::stats;
-use crate::tools::ai_helpers::load_prices;
+use crate::tools::ai_helpers;
 use crate::tools::response_types::{
     DrawdownDistribution, HistogramBin, MonteCarloPercentilePath, MonteCarloResponse, RuinAnalysis,
 };
@@ -30,29 +30,9 @@ pub async fn execute(
     years: u32,
     seed: Option<u64>,
 ) -> Result<MonteCarloResponse> {
-    let prices = load_prices(
-        cache,
-        symbol,
-        years,
-        60,
-        crate::engine::types::Interval::Daily,
-    )
-    .await?;
     let upper = symbol.to_uppercase();
-
-    // Compute daily returns
-    let returns: Vec<f64> = prices
-        .windows(2)
-        .filter_map(|w| {
-            if w[0].close == 0.0 {
-                None
-            } else {
-                Some((w[1].close - w[0].close) / w[0].close)
-            }
-        })
-        .filter(|r| r.is_finite())
-        .collect();
-
+    let cutoff_str = ai_helpers::compute_years_cutoff(years);
+    let returns = ai_helpers::load_returns(cache, &upper, &cutoff_str).await?;
     if returns.len() < 30 {
         anyhow::bail!("Insufficient return observations: {}", returns.len());
     }
