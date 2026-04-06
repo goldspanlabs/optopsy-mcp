@@ -1,7 +1,7 @@
 //! REST API handler for the backtest pipeline.
 //!
 //! Runs the full analysis pipeline
-//! (sweep -> significance_gate -> oos_data_gate -> walk-forward -> monte carlo)
+//! (`sweep` -> `significance_gate` -> `oos_data_gate` -> `walk-forward` -> `monte carlo`)
 //! and returns a `PipelineResponse` with stage statuses.
 //! Monte Carlo may be skipped when earlier gates do not pass.
 
