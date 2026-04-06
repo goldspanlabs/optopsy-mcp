@@ -17,6 +17,7 @@ use crate::server::handlers::sweeps::{
     SweepParamDef,
 };
 use crate::server::OptopsyServer;
+use crate::tools::response_types::pipeline::PipelineResponse;
 use crate::tools::response_types::sweep::SweepResponse;
 use crate::tools::run_script::RunScriptResponse;
 
@@ -34,6 +35,10 @@ fn default_objective() -> String {
 
 fn default_max_evaluations() -> usize {
     50
+}
+
+fn default_pipeline() -> bool {
+    true
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -83,6 +88,14 @@ pub struct BacktestToolParams {
     #[serde(default)]
     #[garde(skip)]
     pub thread_id: Option<String>,
+
+    /// When true (default), sweeps automatically run the full pipeline:
+    /// sweep -> significance gate -> walk-forward -> OOS gate -> monte carlo.
+    /// Set to false to get just the sweep result without downstream analysis.
+    /// Has no effect on single backtests (only applies when `sweep_params` is non-empty).
+    #[serde(default = "default_pipeline")]
+    #[garde(skip)]
+    pub pipeline: bool,
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -115,16 +128,19 @@ pub struct SweepBacktestResponse {
     pub suggested_next_steps: Vec<String>,
 }
 
-/// Response from the `backtest` tool — either a single run or a sweep.
+/// Response from the `backtest` tool — single run, sweep, or full pipeline.
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type")]
 pub enum BacktestToolResponse {
     /// Single backtest result with full equity curve, trade log, and metrics.
     #[serde(rename = "single")]
     Single(Box<SingleBacktestResponse>),
-    /// Parameter sweep result with ranked combinations.
+    /// Parameter sweep result with ranked combinations (pipeline=false).
     #[serde(rename = "sweep")]
     Sweep(Box<SweepBacktestResponse>),
+    /// Full pipeline: sweep + walk-forward + monte carlo with gate statuses.
+    #[serde(rename = "pipeline")]
+    Pipeline(Box<PipelineResponse>),
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -138,8 +154,47 @@ pub async fn execute(
 ) -> Result<BacktestToolResponse, anyhow::Error> {
     if params.sweep_params.is_empty() {
         execute_single(server, params).await
+    } else if params.pipeline {
+        // Full pipeline: sweep -> walk-forward -> monte carlo
+        let (sweep_id, run_ids, sweep_response, strategy, symbol, capital, objective) =
+            execute_sweep_raw(server, &params).await?;
+
+        let pipeline_response = crate::tools::pipeline::run_pipeline(
+            server,
+            &strategy,
+            &symbol,
+            capital,
+            &objective,
+            sweep_id,
+            run_ids,
+            sweep_response,
+        )
+        .await?;
+
+        Ok(BacktestToolResponse::Pipeline(Box::new(pipeline_response)))
     } else {
-        execute_sweep(server, params).await
+        // Sweep-only (no pipeline)
+        let (sweep_id, run_ids, sweep_response, strategy, symbol, _capital, _objective) =
+            execute_sweep_raw(server, &params).await?;
+
+        let upper = symbol.to_uppercase();
+        let suggested_next_steps = vec![
+            format!(
+                "[NEXT] Call walk_forward(strategy=\"{strategy}\", symbol=\"{upper}\", params_grid=<top param ranges>) to validate parameter robustness on unseen data",
+            ),
+            format!("[THEN] Call drawdown_analysis(symbol=\"{upper}\") to analyze drawdown episodes and risk profile"),
+            format!("[THEN] Call monte_carlo(symbol=\"{upper}\") to simulate forward-looking risk"),
+            format!("[TIP] Call factor_attribution(symbol=\"{upper}\") to check if alpha is genuine or factor exposure"),
+        ];
+
+        Ok(BacktestToolResponse::Sweep(Box::new(
+            SweepBacktestResponse {
+                sweep_id,
+                run_ids,
+                sweep: sweep_response,
+                suggested_next_steps,
+            },
+        )))
     }
 }
 
@@ -211,12 +266,25 @@ async fn execute_single(
     )))
 }
 
-/// Run a parameter sweep and persist the results.
-#[allow(clippy::too_many_lines)]
-async fn execute_sweep(
+/// Run a parameter sweep and persist the results, returning raw components.
+///
+/// Returns `(sweep_id, run_ids, sweep_response, strategy_key, symbol, capital, objective)`.
+#[allow(clippy::too_many_lines, clippy::type_complexity)]
+async fn execute_sweep_raw(
     server: &OptopsyServer,
-    params: BacktestToolParams,
-) -> Result<BacktestToolResponse, anyhow::Error> {
+    params: &BacktestToolParams,
+) -> Result<
+    (
+        String,
+        Vec<String>,
+        SweepResponse,
+        String,
+        String,
+        f64,
+        String,
+    ),
+    anyhow::Error,
+> {
     let run_store = server
         .run_store
         .as_ref()
@@ -256,6 +324,12 @@ async fn execute_sweep(
             .next()
         })
         .ok_or_else(|| anyhow::anyhow!("No symbol resolved — declare an `asset` in the script"))?;
+
+    let capital = params
+        .params
+        .get("CAPITAL")
+        .and_then(Value::as_f64)
+        .unwrap_or(100_000.0);
 
     // 5. Build CreateSweepRequest for the shared helpers
     let req = CreateSweepRequest {
@@ -346,25 +420,13 @@ async fn execute_sweep(
         .map(|detail| detail.runs.iter().map(|r| r.id.clone()).collect())
         .unwrap_or_default();
 
-    // 10. Build suggested next steps
-    let upper = symbol.to_uppercase();
-    let suggested_next_steps = vec![
-        format!(
-            "[NEXT] Call walk_forward(strategy=\"{}\", symbol=\"{upper}\", params_grid=<top param ranges>) to validate parameter robustness on unseen data",
-            params.strategy,
-        ),
-        format!("[THEN] Call drawdown_analysis(symbol=\"{upper}\") to analyze drawdown episodes and risk profile"),
-        format!("[THEN] Call monte_carlo(symbol=\"{upper}\") to simulate forward-looking risk"),
-        format!("[TIP] Call factor_attribution(symbol=\"{upper}\") to check if alpha is genuine or factor exposure"),
-    ];
-
-    // 11. Return response
-    Ok(BacktestToolResponse::Sweep(Box::new(
-        SweepBacktestResponse {
-            sweep_id,
-            run_ids,
-            sweep: sweep_response,
-            suggested_next_steps,
-        },
-    )))
+    Ok((
+        sweep_id,
+        run_ids,
+        sweep_response,
+        strategy_key,
+        symbol,
+        capital,
+        params.objective.clone(),
+    ))
 }
