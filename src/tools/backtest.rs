@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::application::{backtests, sweeps};
+use crate::application::{backtests, pipeline, sweeps};
 use crate::server::OptopsyServer;
 use crate::tools::response_types::pipeline::PipelineResponse;
 use crate::tools::response_types::sweep::SweepResponse;
@@ -146,24 +146,7 @@ pub async fn execute(
     if params.sweep_params.is_empty() {
         execute_single(server, params).await
     } else if params.pipeline {
-        // Full pipeline: sweep -> walk-forward -> monte carlo
-        let original_params = params.params.clone();
-        let (sweep_id, run_ids, sweep_response, strategy, symbol, capital, objective) =
-            execute_sweep_raw(server, &params).await?;
-
-        let pipeline_response = crate::tools::pipeline::run_pipeline(
-            server,
-            &strategy,
-            &symbol,
-            capital,
-            &objective,
-            sweep_id,
-            run_ids,
-            sweep_response,
-            original_params,
-        )
-        .await?;
-
+        let pipeline_response = pipeline::execute(server, &params, "agent").await?;
         Ok(BacktestToolResponse::Pipeline(Box::new(pipeline_response)))
     } else {
         // Sweep-only (no pipeline)

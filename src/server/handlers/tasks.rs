@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use crate::application::{backtests, sweeps};
+use crate::application::{backtests, pipeline, sweeps};
 use crate::engine::walk_forward::{WalkForwardParams, WfMode, WfObjective};
 use crate::scripting::engine::{CachingDataLoader, CancelCallback};
 use crate::server::state::AppState;
@@ -839,7 +839,7 @@ pub async fn submit_pipeline(
 
         tm.mark_running(&task.id);
 
-        let result = crate::tools::backtest::execute(&server, params).await;
+        let result = pipeline::execute(&server, &params, "manual").await;
 
         drop(permit);
 
@@ -849,15 +849,9 @@ pub async fn submit_pipeline(
         }
 
         match result {
-            Ok(crate::tools::backtest::BacktestToolResponse::Pipeline(response)) => {
-                let result_json = serde_json::to_value(&*response).unwrap_or(Value::Null);
+            Ok(response) => {
+                let result_json = serde_json::to_value(&response).unwrap_or(Value::Null);
                 tm.mark_completed(&task.id, result_json, response.sweep_id.clone());
-            }
-            Ok(_) => {
-                tm.mark_failed(
-                    &task.id,
-                    "Pipeline mode did not return a pipeline response".to_string(),
-                );
             }
             Err(e) => {
                 tm.mark_failed(&task.id, e.to_string());
