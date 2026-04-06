@@ -51,7 +51,8 @@ pub async fn execute_script_with_progress(
         .or(params.strategy.as_deref())
         .map(|id| parse_script_meta(id, &source));
 
-    let loader = CachingDataLoader::new(Arc::clone(&server.cache), server.adjustment_store.clone());
+    let loader =
+        CachingDataLoader::new(Arc::clone(&server.cache), server.adjustment_store_handle());
 
     let effective_params = if let Some(ref profile_name) = params.profile {
         use crate::scripting::stdlib::{load_profiles_registry, merge_profile_params};

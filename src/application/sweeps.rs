@@ -288,7 +288,7 @@ fn resolve_capital(req: &CreateSweepRequest) -> f64 {
 fn build_loader(server: &OptopsyServer) -> Arc<dyn DataLoader> {
     Arc::new(CachingDataLoader::new(
         Arc::clone(&server.cache),
-        server.adjustment_store.clone(),
+        server.adjustment_store_handle(),
     ))
 }
 
@@ -296,10 +296,7 @@ fn resolve_execution_context(
     server: &OptopsyServer,
     req: &CreateSweepRequest,
 ) -> Result<SweepExecutionContext> {
-    let strategy_store = server
-        .strategy_store
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Strategy store not configured"))?;
+    let strategy_store = server.require_strategy_store()?;
 
     let (strategy_key, script_source) =
         resolve_strategy_source_from_store(strategy_store.as_ref(), &req.strategy)

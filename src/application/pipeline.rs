@@ -25,10 +25,7 @@ pub async fn execute(
     request: &PipelineRequest,
     source: &str,
 ) -> Result<PipelineResponse> {
-    let run_store = server
-        .run_store
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Run store not configured — cannot persist results"))?;
+    let run_store = server.require_run_store()?;
 
     let sweep_req = sweeps::CreateSweepRequest {
         strategy: request.strategy.clone(),

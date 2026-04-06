@@ -193,10 +193,7 @@ async fn execute_single(
     server: &OptopsyServer,
     params: BacktestToolParams,
 ) -> Result<BacktestToolResponse, anyhow::Error> {
-    let run_store = server
-        .run_store
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Run store not configured — cannot persist results"))?;
+    let run_store = server.require_run_store()?;
 
     // Reuse the existing run_script handler for execution
     let run_params = crate::tools::run_script::RunScriptParams {
@@ -260,10 +257,7 @@ async fn execute_sweep_raw(
     ),
     anyhow::Error,
 > {
-    let run_store = server
-        .run_store
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Run store not configured — cannot persist results"))?;
+    let run_store = server.require_run_store()?;
 
     let req = sweeps::CreateSweepRequest {
         strategy: params.strategy.clone(),

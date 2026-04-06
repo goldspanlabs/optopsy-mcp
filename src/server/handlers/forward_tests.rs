@@ -131,7 +131,7 @@ pub async fn step_forward_test(
     let fwd_store = state.forward_test_store.clone();
     let strategy_store = state.server.strategy_store.clone();
     let cache = state.server.cache.clone();
-    let adjustment_store = state.server.adjustment_store.clone();
+    let adjustment_store = state.server.adjustment_store_handle();
 
     let result = forward_test::step(
         &fwd_store,

@@ -354,10 +354,13 @@ pub async fn submit_walk_forward(
         tm.mark_running(&task.id);
 
         // Resolve strategy
-        let Some(strategy_store) = server.strategy_store.as_ref() else {
-            tm.mark_failed(&task.id, "Strategy store not configured".to_string());
-            drop(permit);
-            return;
+        let strategy_store = match server.require_strategy_store() {
+            Ok(store) => store,
+            Err(e) => {
+                tm.mark_failed(&task.id, e.to_string());
+                drop(permit);
+                return;
+            }
         };
 
         let (strategy_key, script_source) = match sweeps::resolve_strategy_source_from_store(
@@ -386,7 +389,7 @@ pub async fn submit_walk_forward(
         };
 
         let loader =
-            CachingDataLoader::new(Arc::clone(&server.cache), server.adjustment_store.clone());
+            CachingDataLoader::new(Arc::clone(&server.cache), server.adjustment_store_handle());
 
         // Build cancellation check from task token
         let token = task.cancellation_token.clone();
