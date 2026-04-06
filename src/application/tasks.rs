@@ -8,6 +8,11 @@ use serde_json::Value;
 
 use crate::server::task_manager::{TaskInfo, TaskManager};
 
+pub struct TaskCompletion {
+    pub result_json: Value,
+    pub result_id: String,
+}
+
 /// Create a progress callback that writes into a task's atomic counters.
 pub fn progress_callback(task: &Arc<TaskInfo>) -> crate::scripting::engine::ProgressCallback {
     let task_for_progress = Arc::clone(task);
@@ -33,7 +38,7 @@ pub async fn execute_queued_task<Fut>(
     task: Arc<TaskInfo>,
     work: Fut,
 ) where
-    Fut: Future<Output = Result<(Value, String), String>>,
+    Fut: Future<Output = Result<TaskCompletion, String>>,
 {
     let permit = tokio::select! {
         p = task_manager.acquire_permit() => p,
@@ -61,7 +66,10 @@ pub async fn execute_queued_task<Fut>(
     }
 
     match result {
-        Ok((result_json, result_id)) => {
+        Ok(TaskCompletion {
+            result_json,
+            result_id,
+        }) => {
             task_manager.mark_completed(&task.id, result_json, result_id);
         }
         Err(error) => task_manager.mark_failed(&task.id, error),
