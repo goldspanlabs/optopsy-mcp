@@ -50,6 +50,13 @@ pub struct CreatePipelineRequest {
 pub(super) fn build_pipeline_params(
     req: CreatePipelineRequest,
 ) -> Result<pipeline::PipelineRequest, (StatusCode, String)> {
+    if req.strategy.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Validation error: strategy must have length at least 1".to_string(),
+        ));
+    }
+
     if req.sweep_params.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -57,7 +64,14 @@ pub(super) fn build_pipeline_params(
         ));
     }
 
-    let params = pipeline::PipelineRequest {
+    if req.num_permutations > 100_000 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Validation error: num_permutations must be <= 100000".to_string(),
+        ));
+    }
+
+    Ok(pipeline::PipelineRequest {
         strategy: req.strategy,
         mode: req.mode,
         objective: req.objective,
@@ -66,15 +80,7 @@ pub(super) fn build_pipeline_params(
         max_evaluations: req.max_evaluations,
         num_permutations: req.num_permutations,
         thread_id: req.thread_id,
-    };
-    if params.strategy.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Validation error: strategy must have length at least 1".to_string(),
-        ));
-    }
-
-    Ok(params)
+    })
 }
 
 /// `POST /runs/pipeline` — run the full pipeline synchronously and return the result.
