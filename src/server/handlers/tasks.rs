@@ -206,7 +206,10 @@ pub async fn submit_backtest(
                 "manual",
                 req.thread_id.as_deref(),
             )
-            .map_err(|(_status, msg)| format!("DB insert failed: {msg}"))?;
+            .map_err(|(status, msg)| match status {
+                StatusCode::INTERNAL_SERVER_ERROR => format!("DB insert failed: {msg}"),
+                _ => msg,
+            })?;
 
             let result_json = run_store
                 .get_run(&id)
