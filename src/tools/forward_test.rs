@@ -629,12 +629,17 @@ fn compute_forward_sharpe(snapshots: &[ForwardTestSnapshot]) -> Option<f64> {
 }
 
 fn compute_forward_win_rate(trades: &[ForwardTestTrade]) -> Option<f64> {
-    let closed: Vec<_> = trades.iter().filter(|t| t.action == "close").collect();
-    if closed.is_empty() {
+    let (closed, winners) = trades.iter().fold((0_usize, 0_usize), |(c, w), t| {
+        if t.action == "close" {
+            (c + 1, w + usize::from(t.pnl.unwrap_or(0.0) > 0.0))
+        } else {
+            (c, w)
+        }
+    });
+    if closed == 0 {
         return None;
     }
-    let winners = closed.iter().filter(|t| t.pnl.unwrap_or(0.0) > 0.0).count();
-    Some(winners as f64 / closed.len() as f64)
+    Some(winners as f64 / closed as f64)
 }
 
 fn compute_forward_max_dd(snapshots: &[ForwardTestSnapshot]) -> Option<f64> {

@@ -82,7 +82,18 @@ pub async fn create_forward_test(
         baseline_win_rate: body.baseline_win_rate,
         baseline_max_dd: body.baseline_max_dd,
     })
-    .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    .map_err(|e| {
+        let msg = e.to_string();
+        // Input validation errors → 400; internal failures → 500
+        if msg.contains("must be positive")
+            || msg.contains("not found")
+            || msg.contains("Required parameter")
+        {
+            (StatusCode::BAD_REQUEST, msg)
+        } else {
+            (StatusCode::INTERNAL_SERVER_ERROR, msg)
+        }
+    })?;
 
     Ok((StatusCode::CREATED, Json(result)))
 }
