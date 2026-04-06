@@ -426,12 +426,14 @@ pub async fn execute(
             serde_json::json!(window.test_end.to_string()),
         );
 
+        // Don't reuse precomputed options for OOS — the test window has different
+        // dates and needs its own options data loaded fresh.
         let oos_result = run_script_backtest(
             &script_source,
             &oos_params,
             data_loader,
             None,
-            precomputed.as_ref(),
+            None,
             Some(is_cancelled),
         )
         .await?;
