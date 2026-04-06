@@ -38,7 +38,7 @@ fn default_max_evaluations() -> usize {
 }
 
 fn default_pipeline() -> bool {
-    false
+    true
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -91,7 +91,7 @@ pub struct BacktestToolParams {
 
     /// When true, sweeps automatically run the full pipeline:
     /// sweep -> significance gate -> walk-forward -> OOS gate -> monte carlo.
-    /// Default false (sweep only). Set to true for full downstream validation.
+    /// Default true for sweeps; set `pipeline=false` to return sweep-only results.
     /// Has no effect on single backtests (only applies when `sweep_params` is non-empty).
     #[serde(default = "default_pipeline")]
     #[garde(skip)]
