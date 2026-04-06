@@ -62,7 +62,7 @@ pub async fn execute_queued_task<Fut>(
 
     match result {
         Ok((result_json, result_id)) => {
-            task_manager.mark_completed(&task.id, result_json, result_id)
+            task_manager.mark_completed(&task.id, result_json, result_id);
         }
         Err(error) => task_manager.mark_failed(&task.id, error),
     }

@@ -241,7 +241,7 @@ pub fn persist_sweep_to_store(
     Ok(sweep_id)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub async fn execute_sweep(
     server: &OptopsyServer,
     run_store: &dyn RunStore,

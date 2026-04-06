@@ -737,13 +737,17 @@ pub async fn submit_pipeline(
     let tm = Arc::clone(&state.task_manager);
     let server = state.server.clone();
     tokio::spawn(async move {
-        app_tasks::execute_queued_task(tm, Arc::clone(&task), async move {
-            let response = pipeline::execute(&server, &params, "manual")
-                .await
-                .map_err(|e| e.to_string())?;
-            let result_json = serde_json::to_value(&response).unwrap_or(Value::Null);
-            Ok((result_json, response.sweep_id.clone()))
-        })
+        Box::pin(app_tasks::execute_queued_task(
+            tm,
+            Arc::clone(&task),
+            async move {
+                let response = pipeline::execute(&server, &params, "manual")
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let result_json = serde_json::to_value(&response).unwrap_or(Value::Null);
+                Ok((result_json, response.sweep_id.clone()))
+            },
+        ))
         .await;
     });
 

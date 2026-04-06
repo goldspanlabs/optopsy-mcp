@@ -1,6 +1,7 @@
 //! Shared backtest workflow orchestration used by transport adapters.
 
 use std::collections::HashMap;
+use std::hash::BuildHasher;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -87,9 +88,9 @@ pub async fn execute_script_with_progress(
 }
 
 /// Resolve the symbol that should be persisted for a completed backtest.
-pub fn resolve_symbol(
+pub fn resolve_symbol<S: BuildHasher>(
     response: &RunScriptResponse,
-    params: &HashMap<String, Value>,
+    params: &HashMap<String, Value, S>,
 ) -> Result<String, (StatusCode, String)> {
     response
         .result
@@ -108,7 +109,7 @@ pub fn resolve_symbol(
 
 /// Resolve the capital value used by the backtest.
 #[must_use]
-pub fn resolve_capital(params: &HashMap<String, Value>) -> f64 {
+pub fn resolve_capital<S: BuildHasher>(params: &HashMap<String, Value, S>) -> f64 {
     params.get("CAPITAL").and_then(Value::as_f64).unwrap_or(0.0)
 }
 
@@ -135,10 +136,10 @@ fn strip_trades_from_result_json(response: &RunScriptResponse) -> String {
 }
 
 /// Insert a backtest result into the run store, returning `(id, created_at)`.
-pub fn persist_backtest(
+pub fn persist_backtest<S: BuildHasher>(
     run_store: &dyn RunStore,
     strategy_key: &str,
-    params: &HashMap<String, Value>,
+    params: &HashMap<String, Value, S>,
     response: &RunScriptResponse,
     source: &str,
     thread_id: Option<&str>,
