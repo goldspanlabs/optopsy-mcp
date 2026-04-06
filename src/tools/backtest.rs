@@ -1,22 +1,12 @@
 //! MCP tool handler for `backtest` — run a single backtest or parameter sweep and persist results.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-
 use garde::Validate;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 
-use crate::application::backtests;
-use crate::engine::bayesian::{run_bayesian, BayesianConfig};
-use crate::engine::permutation::apply_permutation_gate;
-use crate::engine::sweep::{run_grid_sweep, GridSweepConfig};
-use crate::scripting::engine::{CachingDataLoader, CancelCallback, DataLoader};
-use crate::server::handlers::sweeps::{
-    build_grid, persist_sweep_to_store, resolve_strategy_source_from_store, CreateSweepRequest,
-    SweepParamDef,
-};
+use crate::application::{backtests, sweeps};
 use crate::server::OptopsyServer;
 use crate::tools::response_types::pipeline::PipelineResponse;
 use crate::tools::response_types::sweep::SweepResponse;
@@ -71,7 +61,7 @@ pub struct BacktestToolParams {
     /// Parameter ranges to sweep. Omit for a single backtest.
     #[serde(default)]
     #[garde(skip)]
-    pub sweep_params: Vec<SweepParamDef>,
+    pub sweep_params: Vec<sweeps::SweepParamDef>,
 
     /// Maximum evaluations for bayesian mode. Default 50.
     #[serde(default = "default_max_evaluations")]
@@ -278,49 +268,7 @@ async fn execute_sweep_raw(
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("Run store not configured — cannot persist results"))?;
 
-    let strategy_store = server
-        .strategy_store
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Strategy store not configured"))?;
-
-    // 1. Resolve strategy source
-    let (strategy_key, script_source) =
-        resolve_strategy_source_from_store(strategy_store.as_ref(), &params.strategy)
-            .map_err(|(_status, msg)| anyhow::anyhow!("{msg}"))?;
-
-    // 2. Parse script meta
-    let script_meta = crate::scripting::stdlib::parse_script_meta(&strategy_key, &script_source);
-
-    // 3. Create data loader (Arc-wrapped for concurrent sweep tasks)
-    let loader: Arc<dyn DataLoader> = Arc::new(CachingDataLoader::new(
-        Arc::clone(&server.cache),
-        server.adjustment_store.clone(),
-    ));
-
-    // 4. Extract symbol from params or extern_symbol defaults in the script
-    let symbol = params
-        .params
-        .get("symbol")
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .or_else(|| {
-            crate::scripting::engine::resolve_symbols_from_extern_params(
-                &script_source,
-                &params.params,
-            )
-            .into_iter()
-            .next()
-        })
-        .ok_or_else(|| anyhow::anyhow!("No symbol resolved — declare an `asset` in the script"))?;
-
-    let capital = params
-        .params
-        .get("CAPITAL")
-        .and_then(Value::as_f64)
-        .unwrap_or(100_000.0);
-
-    // 5. Build CreateSweepRequest for the shared helpers
-    let req = CreateSweepRequest {
+    let req = sweeps::CreateSweepRequest {
         strategy: params.strategy.clone(),
         mode: params.mode.clone(),
         objective: params.objective.clone(),
@@ -330,91 +278,24 @@ async fn execute_sweep_raw(
         num_permutations: params.num_permutations,
     };
 
-    // 6. No-op cancellation — cancellation is handled via /tasks/* endpoints
-    let is_cancelled: CancelCallback = Box::new(|| false);
-
-    // 7. Run grid or bayesian sweep
-    let num_permutations = params.num_permutations;
-    let sweep_response: SweepResponse = match params.mode.as_str() {
-        "grid" => {
-            let param_grid = build_grid(&req.sweep_params);
-            let config = GridSweepConfig {
-                script_source,
-                base_params: req.params.clone(),
-                param_grid,
-                objective: req.objective.clone(),
-            };
-            run_grid_sweep(&config, Arc::clone(&loader), &is_cancelled, |_, _| {}).await?
-        }
-        "bayesian" => {
-            let continuous_params: Vec<(String, f64, f64, bool, Option<f64>)> = req
-                .sweep_params
-                .iter()
-                .map(|sp| {
-                    (
-                        sp.name.clone(),
-                        sp.start,
-                        sp.stop,
-                        sp.param_type == "int",
-                        sp.step,
-                    )
-                })
-                .collect();
-            let initial_samples = (params.max_evaluations / 3).max(2);
-            let config = BayesianConfig {
-                script_source,
-                base_params: req.params.clone(),
-                continuous_params,
-                max_evaluations: params.max_evaluations,
-                initial_samples,
-                objective: req.objective.clone(),
-            };
-            run_bayesian(&config, loader.as_ref(), &is_cancelled, |_, _| {}).await?
-        }
-        other => {
-            return Err(anyhow::anyhow!(
-                "Invalid mode '{other}', expected 'grid' or 'bayesian'"
-            ));
-        }
-    };
-
-    // 7b. Apply permutation gate (if requested) — CPU-intensive, run off async executor
-    let objective = req.objective.clone();
-    let sweep_response = if num_permutations > 0 {
-        tokio::task::spawn_blocking(move || {
-            apply_permutation_gate(sweep_response, num_permutations, &objective, Some(42))
-        })
-        .await?
-    } else {
-        sweep_response
-    };
-
-    // 8. Persist via persist_sweep with source = "agent"
-    let sweep_id = persist_sweep_to_store(
+    let result = sweeps::execute_sweep(
+        server,
         run_store.as_ref(),
-        &strategy_key,
-        &symbol,
         &req,
-        &sweep_response,
-        &script_meta,
         "agent",
         params.thread_id.as_deref(),
+        None,
+        None,
     )
-    .map_err(|(_status, msg)| anyhow::anyhow!("{msg}"))?;
-
-    // 9. Query back run_ids from the persisted sweep
-    let run_ids = run_store
-        .get_sweep(&sweep_id)?
-        .map(|detail| detail.runs.iter().map(|r| r.id.clone()).collect())
-        .unwrap_or_default();
+    .await?;
 
     Ok((
-        sweep_id,
-        run_ids,
-        sweep_response,
-        strategy_key,
-        symbol,
-        capital,
-        params.objective.clone(),
+        result.sweep_id,
+        result.run_ids,
+        result.response,
+        result.strategy_key,
+        result.symbol,
+        result.capital,
+        result.objective,
     ))
 }
