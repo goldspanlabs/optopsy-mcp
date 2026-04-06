@@ -565,6 +565,13 @@ pub async fn run_script_backtest(
         }
     }
 
+    config.declared_indicators =
+        crate::scripting::indicators::augment_declarations_from_runtime_params(
+            &config.declared_indicators,
+            script_source,
+            params,
+        );
+
     // 4. Load data
     let mut early_warnings: Vec<String> = Vec::new();
 

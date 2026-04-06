@@ -24,7 +24,7 @@ pub async fn run_walk_forward(
     let cache = Arc::clone(&state.server.cache);
     let response = wf_tool::execute(
         &cache,
-        state.server.adjustment_store.clone(),
+        state.server.adjustment_store_handle(),
         &params.strategy,
         &params.symbol,
         params.capital,

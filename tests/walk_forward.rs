@@ -1,7 +1,7 @@
 //! Integration test for walk-forward optimization end-to-end.
 //!
 //! Uses the `bb_mean_reversion` strategy with synthetic OHLCV data containing
-//! repeated Bollinger Band breakout patterns. Sweeps `BB_PERIOD` across windows
+//! repeated lower-band oversold patterns. Sweeps `BB_PERIOD` across windows
 //! to verify the full train/test/stitch pipeline.
 
 use std::collections::HashMap;
@@ -100,10 +100,11 @@ impl DataLoader for DateFilteringLoader {
     }
 }
 
-/// Generate 245 bars with repeating BB breakout patterns.
+/// Generate 245 bars with repeating BB mean-reversion patterns.
 ///
-/// Pattern: 25 bars of stable prices around a base, then a spike above the upper BB,
-/// then 5 bars of drift, then a reversion. Repeated 7 times (35 bars per cycle)
+/// Pattern: 25 bars of stable prices around a base, then a dip below the lower BB,
+/// then 5 bars of recovery, then a reversion above the mean. Repeated 7 times
+/// (35 bars per cycle)
 /// to give enough data for walk-forward windows.
 fn make_walk_forward_bars() -> Vec<OhlcvBar> {
     let mut bars = Vec::new();
@@ -128,25 +129,25 @@ fn make_walk_forward_bars() -> Vec<OhlcvBar> {
             day += 1;
         }
 
-        // Spike bar above upper BB
+        // Oversold dip below lower BB
         let date = start + chrono::Duration::days(day);
         bars.push(OhlcvBar {
             datetime: date.and_hms_opt(0, 0, 0).unwrap(),
             open: base,
-            high: base + 6.0,
-            low: base - 0.2,
-            close: base + 5.0,
+            high: base + 0.2,
+            low: base - 6.0,
+            close: base - 5.0,
             volume: 2_000_000.0,
         });
         day += 1;
 
-        // 5 bars staying above SMA
+        // 5 recovery bars that stay below SMA initially
         for i in 1..=5 {
-            let close = base + 3.0 - (f64::from(i) * 0.3);
+            let close = base - 3.5 + (f64::from(i) * 0.7);
             let date = start + chrono::Duration::days(day);
             bars.push(OhlcvBar {
                 datetime: date.and_hms_opt(0, 0, 0).unwrap(),
-                open: close + 0.1,
+                open: close - 0.1,
                 high: close + 0.3,
                 low: close - 0.3,
                 close,
@@ -155,21 +156,21 @@ fn make_walk_forward_bars() -> Vec<OhlcvBar> {
             day += 1;
         }
 
-        // Reversion bar below SMA
+        // Reversion bar above SMA
         let date = start + chrono::Duration::days(day);
         bars.push(OhlcvBar {
             datetime: date.and_hms_opt(0, 0, 0).unwrap(),
-            open: base,
-            high: base + 0.2,
-            low: base - 3.0,
-            close: base - 2.0,
+            open: base + 0.2,
+            high: base + 1.8,
+            low: base - 0.2,
+            close: base + 1.2,
             volume: 1_500_000.0,
         });
         day += 1;
 
-        // 3 bars of recovery back to base
+        // 3 bars settling back toward base
         for i in 1..=3 {
-            let close = base - 2.0 + (f64::from(i) * 0.7);
+            let close = base + 1.2 - (f64::from(i) * 0.4);
             let date = start + chrono::Duration::days(day);
             bars.push(OhlcvBar {
                 datetime: date.and_hms_opt(0, 0, 0).unwrap(),

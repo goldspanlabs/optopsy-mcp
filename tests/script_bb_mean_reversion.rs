@@ -78,11 +78,12 @@ fn bb_params() -> std::collections::HashMap<String, serde_json::Value> {
     let mut params = std::collections::HashMap::new();
     params.insert("symbol".to_string(), serde_json::json!("SPY"));
     params.insert("CAPITAL".to_string(), serde_json::json!(100_000));
+    params.insert("BB_PERIOD".to_string(), serde_json::json!(15));
     params
 }
 
-/// Generate bars: 30 bars of stable prices around 100, then a massive spike
-/// above the upper Bollinger Band, then a reversion back to the mean.
+/// Generate bars: 30 bars of stable prices around 100, then a sharp oversold
+/// dip below the lower Bollinger Band, then a recovery back above the mean.
 fn make_bb_test_bars() -> Vec<OhlcvBar> {
     let mut bars = Vec::new();
 
@@ -106,26 +107,24 @@ fn make_bb_test_bars() -> Vec<OhlcvBar> {
         });
     }
 
-    // Bar 30: massive spike above upper BB
-    // SMA(20) ≈ 100.0, std ≈ 0.1, upper BB ≈ 100.2
-    // Close at 105.0 — way above the band
+    // Bar 30: sharp oversold dip below lower BB.
     let spike_date = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap() + chrono::Duration::days(30);
     bars.push(OhlcvBar {
         datetime: spike_date.and_hms_opt(0, 0, 0).unwrap(),
         open: 100.0,
-        high: 106.0,
-        low: 99.8,
-        close: 105.0,
+        high: 100.2,
+        low: 94.0,
+        close: 95.0,
         volume: 2_000_000.0,
     });
 
-    // Bars 31-35: price stays above SMA (no exit yet)
+    // Bars 31-35: recovery stays below SMA initially (no exit yet)
     for i in 1..=5 {
         let date = spike_date + chrono::Duration::days(i);
-        let close = 103.0 - (i as f64 * 0.3); // 102.7, 102.4, 102.1, 101.8, 101.5
+        let close = 96.5 + (i as f64 * 0.6); // 97.1, 97.7, 98.3, 98.9, 99.5
         bars.push(OhlcvBar {
             datetime: date.and_hms_opt(0, 0, 0).unwrap(),
-            open: close + 0.1,
+            open: close - 0.1,
             high: close + 0.3,
             low: close - 0.3,
             close,
@@ -133,14 +132,14 @@ fn make_bb_test_bars() -> Vec<OhlcvBar> {
         });
     }
 
-    // Bar 36: price drops well below SMA(20) → take profit exit
+    // Bar 36: price recovers above SMA(20) -> take profit exit
     let exit_date = spike_date + chrono::Duration::days(6);
     bars.push(OhlcvBar {
         datetime: exit_date.and_hms_opt(0, 0, 0).unwrap(),
-        open: 100.0,
-        high: 100.2,
-        low: 97.0,
-        close: 97.0, // clearly below SMA → exit
+        open: 100.2,
+        high: 101.4,
+        low: 99.8,
+        close: 101.0, // clearly above SMA -> exit
         volume: 1_000_000.0,
     });
 
@@ -216,7 +215,7 @@ async fn bb_script_compiles_and_configures() {
     );
 }
 
-/// Run the strategy: enter on BB breakout, exit when price reverts below SMA.
+/// Run the strategy: enter on lower-band dip, exit when price reverts above SMA.
 #[tokio::test(flavor = "multi_thread")]
 async fn bb_entry_on_breakout_exit_on_reversion() {
     let bars = make_bb_test_bars();
@@ -263,7 +262,8 @@ async fn bb_entry_on_breakout_exit_on_reversion() {
     );
 }
 
-/// Test max hold exit: price stays above SMA for 10+ bars.
+/// Test max hold exit: price enters on an oversold dip and then recovers
+/// slowly without crossing back above the SMA for 10+ bars.
 #[tokio::test(flavor = "multi_thread")]
 async fn bb_max_hold_exit() {
     let mut bars = Vec::new();
@@ -287,21 +287,22 @@ async fn bb_max_hold_exit() {
         });
     }
 
-    // Bar 30: massive spike above upper BB
+    // Bar 30: sharp oversold dip below lower BB
     let spike_date = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap() + chrono::Duration::days(30);
     bars.push(OhlcvBar {
         datetime: spike_date.and_hms_opt(0, 0, 0).unwrap(),
         open: 100.0,
-        high: 106.0,
-        low: 99.8,
-        close: 105.0,
+        high: 100.2,
+        low: 94.0,
+        close: 95.0,
         volume: 2_000_000.0,
     });
 
-    // Bars 31-42: price stays ABOVE SMA for 12 bars (forces max_hold at day 10)
+    // Bars 31-42: recovery remains muted for 12 bars so price stays below the
+    // rolling SMA long enough to force a max-hold exit before mean reversion.
     for i in 1..=12 {
         let date = spike_date + chrono::Duration::days(i);
-        let close = 103.0 + (i as f64 * 0.1); // slowly rising, stays well above SMA
+        let close = 95.2 + (i as f64 * 0.08);
         bars.push(OhlcvBar {
             datetime: date.and_hms_opt(0, 0, 0).unwrap(),
             open: close - 0.1,

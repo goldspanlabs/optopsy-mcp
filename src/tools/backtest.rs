@@ -146,7 +146,8 @@ pub async fn execute(
     if params.sweep_params.is_empty() {
         execute_single(server, params).await
     } else if params.pipeline {
-        let pipeline_response = pipeline::execute(server, &params, "agent").await?;
+        let pipeline_request = build_pipeline_request(params);
+        let pipeline_response = pipeline::execute(server, &pipeline_request, "agent").await?;
         Ok(BacktestToolResponse::Pipeline(Box::new(pipeline_response)))
     } else {
         // Sweep-only (no pipeline)
@@ -174,15 +175,37 @@ pub async fn execute(
     }
 }
 
+fn build_pipeline_request(params: BacktestToolParams) -> pipeline::PipelineRequest {
+    let BacktestToolParams {
+        strategy,
+        mode,
+        objective,
+        params,
+        sweep_params,
+        max_evaluations,
+        num_permutations,
+        thread_id,
+        pipeline: _,
+    } = params;
+
+    pipeline::PipelineRequest {
+        strategy,
+        mode,
+        objective,
+        params,
+        sweep_params,
+        max_evaluations,
+        num_permutations,
+        thread_id,
+    }
+}
+
 /// Run a single backtest and persist the result.
 async fn execute_single(
     server: &OptopsyServer,
     params: BacktestToolParams,
 ) -> Result<BacktestToolResponse, anyhow::Error> {
-    let run_store = server
-        .run_store
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Run store not configured — cannot persist results"))?;
+    let run_store = server.require_run_store()?;
 
     // Reuse the existing run_script handler for execution
     let run_params = crate::tools::run_script::RunScriptParams {
@@ -246,10 +269,7 @@ async fn execute_sweep_raw(
     ),
     anyhow::Error,
 > {
-    let run_store = server
-        .run_store
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Run store not configured — cannot persist results"))?;
+    let run_store = server.require_run_store()?;
 
     let req = sweeps::CreateSweepRequest {
         strategy: params.strategy.clone(),

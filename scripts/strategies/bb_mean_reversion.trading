@@ -1,12 +1,12 @@
 # Bollinger Band Mean Reversion Strategy
-# Enters when price breaks above upper BB, exits on reversion to SMA or max hold.
+# Buys oversold lower-band touches and exits on reversion to the moving average.
 
 strategy "BB Mean Reversion"
   capital CAPITAL
   interval daily
   category stock
-  description "Short when price breaks above upper BBand (2σ), exit on reversion to SMA(20) or max 10 bars"
-  hypothesis "Bollinger Band squeezes followed by lower band touches signal mean reversion"
+  description "Buy when price closes below the lower Bollinger Band, exit on reversion to SMA or max hold"
+  hypothesis "Oversold lower-band touches in range-bound markets revert back toward the moving average"
   tags mean_reversion, bollinger_bands
   regime range_bound, low_volatility
 
@@ -18,10 +18,10 @@ extern ATR_MULT = 2.0 "ATR multiplier for stop distance"
 extern MAX_HOLD = 10 "Max bars to hold position"
 
 on each bar
-  require sma:20, bbands_upper:20, atr:14
+  require atr:14
   skip when has positions
 
-  when close > bbands_upper(BB_PERIOD) then
+  when close < bbands_lower(BB_PERIOD) then
     set stop_price to close - atr(14) * ATR_MULT
     set qty to size_by_risk(RISK_PCT, stop_price)
     when qty > 0 then
@@ -30,7 +30,7 @@ on each bar
 on exit check
   when pos.days_held >= MAX_HOLD then
     close position "max_hold"
-  when close < sma(BB_PERIOD) then
+  when close > sma(BB_PERIOD) then
     close position "take_profit"
   otherwise
     hold position

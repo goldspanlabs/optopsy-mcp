@@ -1938,4 +1938,49 @@ fn on_bar(ctx) { [] }
             Some(serde_json::Value::String("SPY".to_string()))
         );
     }
+
+    #[test]
+    fn test_runtime_param_indicator_expansion_for_single_param_calls() {
+        let source = r"
+fn on_bar(ctx) {
+    let lower = ctx.bbands_lower(BB_PERIOD);
+    let mean = ctx.sma(BB_PERIOD);
+    []
+}
+";
+        let params =
+            std::collections::HashMap::from([("BB_PERIOD".to_string(), serde_json::json!(18))]);
+
+        let declarations = crate::scripting::indicators::augment_declarations_from_runtime_params(
+            &["atr:14".to_string()],
+            source,
+            &params,
+        );
+
+        assert!(declarations.contains(&"atr:14".to_string()));
+        assert!(declarations.contains(&"bbands_lower:18".to_string()));
+        assert!(declarations.contains(&"sma:18".to_string()));
+    }
+
+    #[test]
+    fn test_runtime_param_indicator_expansion_scales_bbands_multiplier() {
+        let source = r"
+fn on_bar(ctx) {
+    let upper = ctx.bbands_upper(BB_PERIOD, BB_STD);
+    []
+}
+";
+        let params = std::collections::HashMap::from([
+            ("BB_PERIOD".to_string(), serde_json::json!(20)),
+            ("BB_STD".to_string(), serde_json::json!(2.0)),
+        ]);
+
+        let declarations = crate::scripting::indicators::augment_declarations_from_runtime_params(
+            &[],
+            source,
+            &params,
+        );
+
+        assert!(declarations.contains(&"bbands_upper:20:20".to_string()));
+    }
 }

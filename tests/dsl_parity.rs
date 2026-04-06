@@ -140,24 +140,24 @@ fn make_bb_test_bars() -> Vec<OhlcvBar> {
         });
     }
 
-    // Bar 30: massive spike above upper BB
+    // Bar 30: sharp oversold dip below lower BB.
     let spike_date = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap() + chrono::Duration::days(30);
     bars.push(OhlcvBar {
         datetime: spike_date.and_hms_opt(0, 0, 0).unwrap(),
         open: 100.0,
-        high: 106.0,
-        low: 99.8,
-        close: 105.0,
+        high: 100.2,
+        low: 94.0,
+        close: 95.0,
         volume: 2_000_000.0,
     });
 
-    // Bars 31-35: price stays above SMA (no exit yet)
+    // Bars 31-35: recovery stays below SMA initially (no exit yet)
     for i in 1..=5 {
         let date = spike_date + chrono::Duration::days(i);
-        let close = 103.0 - (i as f64 * 0.3);
+        let close = 96.5 + (i as f64 * 0.6);
         bars.push(OhlcvBar {
             datetime: date.and_hms_opt(0, 0, 0).unwrap(),
-            open: close + 0.1,
+            open: close - 0.1,
             high: close + 0.3,
             low: close - 0.3,
             close,
@@ -165,14 +165,14 @@ fn make_bb_test_bars() -> Vec<OhlcvBar> {
         });
     }
 
-    // Bar 36: price drops well below SMA(20) -> take profit exit
+    // Bar 36: price recovers above SMA(20) -> take profit exit
     let exit_date = spike_date + chrono::Duration::days(6);
     bars.push(OhlcvBar {
         datetime: exit_date.and_hms_opt(0, 0, 0).unwrap(),
-        open: 100.0,
-        high: 100.2,
-        low: 97.0,
-        close: 97.0,
+        open: 100.2,
+        high: 101.4,
+        low: 99.8,
+        close: 101.0,
         volume: 1_000_000.0,
     });
 
@@ -183,6 +183,7 @@ fn bb_params() -> HashMap<String, serde_json::Value> {
     let mut params = HashMap::new();
     params.insert("symbol".to_string(), serde_json::json!("SPY"));
     params.insert("CAPITAL".to_string(), serde_json::json!(100_000));
+    params.insert("BB_PERIOD".to_string(), serde_json::json!(15));
     params
 }
 
@@ -339,6 +340,25 @@ async fn bb_mean_reversion_equity_curve() {
 
     let final_equity = result.result.equity_curve.last().unwrap().equity;
     eprintln!("BB final equity: {final_equity:.2}");
+}
+
+#[tokio::test]
+async fn bb_mean_reversion_non_default_period_still_trades() {
+    let bars = make_bb_test_bars();
+    let mut params = bb_params();
+    params.insert("BB_PERIOD".to_string(), serde_json::json!(15));
+
+    let result = run_strategy(
+        "scripts/strategies/bb_mean_reversion.trading",
+        &params,
+        &bars,
+    )
+    .await;
+
+    assert!(
+        result.result.trade_count > 0,
+        "Swept BB_PERIOD should still precompute indicators and produce trades"
+    );
 }
 
 // ===========================================================================

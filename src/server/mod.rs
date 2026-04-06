@@ -147,6 +147,25 @@ impl OptopsyServer {
             )),
         }
     }
+
+    pub fn require_strategy_store(&self) -> anyhow::Result<&Arc<dyn StrategyStore>> {
+        self.strategy_store
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Strategy store not configured"))
+    }
+
+    pub fn require_run_store(&self) -> anyhow::Result<&Arc<dyn RunStore>> {
+        self.run_store
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Run store not configured — cannot persist results"))
+    }
+
+    #[must_use]
+    pub fn adjustment_store_handle(
+        &self,
+    ) -> Option<Arc<crate::data::adjustment_store::SqliteAdjustmentStore>> {
+        self.adjustment_store.clone()
+    }
 }
 
 use rmcp::handler::server::wrapper::Parameters;

@@ -66,6 +66,15 @@ pub struct ExecuteSweepResult {
     pub objective: String,
 }
 
+struct SweepExecutionContext {
+    strategy_key: String,
+    script_source: String,
+    script_meta: crate::scripting::stdlib::ScriptMeta,
+    loader: Arc<dyn DataLoader>,
+    symbol: String,
+    capital: f64,
+}
+
 /// Build a Cartesian grid from sweep param definitions.
 pub fn build_grid(sweep_params: &[SweepParamDef]) -> Result<HashMap<String, Vec<Value>>, String> {
     let mut grid: HashMap<String, Vec<Value>> = HashMap::new();
@@ -256,65 +265,80 @@ pub fn persist_sweep_to_store(
     Ok(sweep_id)
 }
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-pub async fn execute_sweep(
-    server: &OptopsyServer,
-    run_store: &dyn RunStore,
-    req: &CreateSweepRequest,
-    source: &str,
-    thread_id: Option<&str>,
-    progress: Option<ProgressCallback>,
-    is_cancelled: Option<&CancelCallback>,
-) -> Result<ExecuteSweepResult> {
-    let strategy_store = server
-        .strategy_store
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Strategy store not configured"))?;
-
-    let (strategy_key, script_source) =
-        resolve_strategy_source_from_store(strategy_store.as_ref(), &req.strategy)
-            .map_err(|(_status, msg)| anyhow::anyhow!("{msg}"))?;
-
-    let script_meta = crate::scripting::stdlib::parse_script_meta(&strategy_key, &script_source);
-    let loader: Arc<dyn DataLoader> = Arc::new(CachingDataLoader::new(
-        Arc::clone(&server.cache),
-        server.adjustment_store.clone(),
-    ));
-
-    let symbol = req
-        .params
+fn resolve_symbol(req: &CreateSweepRequest, script_source: &str) -> String {
+    req.params
         .get("symbol")
         .and_then(Value::as_str)
         .map(str::to_owned)
         .or_else(|| {
-            crate::scripting::engine::resolve_symbols_from_extern_params(
-                &script_source,
-                &req.params,
-            )
-            .into_iter()
-            .next()
+            crate::scripting::engine::resolve_symbols_from_extern_params(script_source, &req.params)
+                .into_iter()
+                .next()
         })
-        .unwrap_or_else(|| DEFAULT_SCRIPT_SYMBOL.to_string());
-    let capital = req
-        .params
+        .unwrap_or_else(|| DEFAULT_SCRIPT_SYMBOL.to_string())
+}
+
+fn resolve_capital(req: &CreateSweepRequest) -> f64 {
+    req.params
         .get("CAPITAL")
         .and_then(Value::as_f64)
-        .unwrap_or(DEFAULT_SCRIPT_CAPITAL);
+        .unwrap_or(DEFAULT_SCRIPT_CAPITAL)
+}
 
+fn build_loader(server: &OptopsyServer) -> Arc<dyn DataLoader> {
+    Arc::new(CachingDataLoader::new(
+        Arc::clone(&server.cache),
+        server.adjustment_store_handle(),
+    ))
+}
+
+fn resolve_execution_context(
+    server: &OptopsyServer,
+    req: &CreateSweepRequest,
+) -> Result<SweepExecutionContext> {
+    let strategy_store = server.require_strategy_store()?;
+
+    let (strategy_key, script_source) =
+        resolve_strategy_source_from_store(strategy_store.as_ref(), &req.strategy)
+            .map_err(|(_status, msg)| anyhow::anyhow!("{msg}"))?;
+    let script_meta = crate::scripting::stdlib::parse_script_meta(&strategy_key, &script_source);
+
+    Ok(SweepExecutionContext {
+        strategy_key,
+        script_meta,
+        loader: build_loader(server),
+        symbol: resolve_symbol(req, &script_source),
+        capital: resolve_capital(req),
+        script_source,
+    })
+}
+
+async fn run_sweep_mode(
+    req: &CreateSweepRequest,
+    context: &SweepExecutionContext,
+    progress: Option<ProgressCallback>,
+    is_cancelled: Option<&CancelCallback>,
+) -> Result<SweepResponse> {
     let noop_progress: ProgressCallback = Box::new(|_, _| {});
     let progress_ref = progress.as_ref().unwrap_or(&noop_progress);
     let noop_cancel: CancelCallback = Box::new(|| false);
     let cancel_ref = is_cancelled.unwrap_or(&noop_cancel);
 
-    let sweep_response = match req.mode.as_str() {
+    match req.mode.as_str() {
         "grid" => {
             let config = GridSweepConfig {
-                script_source,
+                script_source: context.script_source.clone(),
                 base_params: req.params.clone(),
                 param_grid: build_grid(&req.sweep_params).map_err(anyhow::Error::msg)?,
                 objective: req.objective.clone(),
             };
-            run_grid_sweep(&config, Arc::clone(&loader), cancel_ref, progress_ref).await?
+            run_grid_sweep(
+                &config,
+                Arc::clone(&context.loader),
+                cancel_ref,
+                progress_ref,
+            )
+            .await
         }
         "bayesian" => {
             let continuous_params: Vec<(String, f64, f64, bool, Option<f64>)> = req
@@ -331,55 +355,78 @@ pub async fn execute_sweep(
                 })
                 .collect();
             let config = BayesianConfig {
-                script_source,
+                script_source: context.script_source.clone(),
                 base_params: req.params.clone(),
                 continuous_params,
                 max_evaluations: req.max_evaluations,
                 initial_samples: (req.max_evaluations / 3).max(2),
                 objective: req.objective.clone(),
             };
-            run_bayesian(&config, loader.as_ref(), cancel_ref, progress_ref).await?
+            run_bayesian(&config, context.loader.as_ref(), cancel_ref, progress_ref).await
         }
         other => {
             anyhow::bail!("Invalid mode '{other}', expected 'grid' or 'bayesian'");
         }
-    };
+    }
+}
 
+async fn apply_permutation_if_needed(
+    req: &CreateSweepRequest,
+    sweep_response: SweepResponse,
+) -> Result<SweepResponse> {
     let objective = req.objective.clone();
     let num_permutations = req.num_permutations;
-    let sweep_response = if num_permutations > 0 {
-        tokio::task::spawn_blocking(move || {
+    if num_permutations > 0 {
+        Ok(tokio::task::spawn_blocking(move || {
             apply_permutation_gate(sweep_response, num_permutations, &objective, Some(42))
         })
-        .await?
+        .await?)
     } else {
-        sweep_response
-    };
+        Ok(sweep_response)
+    }
+}
 
+fn load_run_ids(run_store: &dyn RunStore, sweep_id: &str) -> Result<Vec<String>> {
+    Ok(run_store
+        .get_sweep(sweep_id)?
+        .map(|detail| detail.runs.iter().map(|r| r.id.clone()).collect())
+        .unwrap_or_default())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_sweep(
+    server: &OptopsyServer,
+    run_store: &dyn RunStore,
+    req: &CreateSweepRequest,
+    source: &str,
+    thread_id: Option<&str>,
+    progress: Option<ProgressCallback>,
+    is_cancelled: Option<&CancelCallback>,
+) -> Result<ExecuteSweepResult> {
+    let context = resolve_execution_context(server, req)?;
+    let sweep_response = run_sweep_mode(req, &context, progress, is_cancelled).await?;
+    let sweep_response = apply_permutation_if_needed(req, sweep_response).await?;
     let sweep_id = persist_sweep_to_store(
         run_store,
-        &strategy_key,
-        &symbol,
+        &context.strategy_key,
+        &context.symbol,
         req,
         &sweep_response,
-        &script_meta,
+        &context.script_meta,
         source,
         thread_id,
     )
     .map_err(|(_status, msg)| anyhow::anyhow!("{msg}"))?;
 
-    let run_ids = run_store
-        .get_sweep(&sweep_id)?
-        .map(|detail| detail.runs.iter().map(|r| r.id.clone()).collect())
-        .unwrap_or_default();
+    let run_ids = load_run_ids(run_store, &sweep_id)?;
 
     Ok(ExecuteSweepResult {
         sweep_id,
         run_ids,
         response: sweep_response,
-        strategy_key,
-        symbol,
-        capital,
+        strategy_key: context.strategy_key,
+        symbol: context.symbol,
+        capital: context.capital,
         objective: req.objective.clone(),
     })
 }
