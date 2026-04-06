@@ -1,7 +1,9 @@
 //! REST API handler for the backtest pipeline.
 //!
-//! Runs the full analysis pipeline (sweep -> walk-forward -> monte carlo)
+//! Runs the full analysis pipeline
+//! (sweep -> significance_gate -> oos_data_gate -> walk-forward -> monte carlo)
 //! and returns a `PipelineResponse` with stage statuses.
+//! Monte Carlo may be skipped when earlier gates do not pass.
 
 use axum::extract::State;
 use axum::http::StatusCode;
