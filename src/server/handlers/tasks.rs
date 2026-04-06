@@ -16,15 +16,9 @@ use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use crate::engine::bayesian::{run_bayesian, BayesianConfig};
-use crate::engine::permutation::apply_permutation_gate;
-use crate::engine::sweep::{run_grid_sweep, GridSweepConfig};
+use crate::application::{backtests, pipeline, sweeps, tasks as app_tasks};
 use crate::engine::walk_forward::{WalkForwardParams, WfMode, WfObjective};
-use crate::scripting::engine::{CachingDataLoader, CancelCallback, DataLoader};
-use crate::server::handlers::sweeps::{
-    build_grid, persist_sweep_to_store, resolve_strategy_source_from_store, CreateSweepRequest,
-    SweepParamDef,
-};
+use crate::scripting::engine::{CachingDataLoader, CancelCallback};
 use crate::server::state::AppState;
 use crate::server::task_manager::{TaskInfo, TaskKind, TaskStatus};
 use crate::tools::run_script::RunScriptParams;
@@ -50,7 +44,7 @@ pub struct SubmitSweepRequest {
     #[serde(default = "default_objective")]
     pub objective: String,
     pub params: HashMap<String, Value>,
-    pub sweep_params: Vec<SweepParamDef>,
+    pub sweep_params: Vec<sweeps::SweepParamDef>,
     #[serde(default = "default_max_evaluations")]
     pub max_evaluations: usize,
     /// Number of permutations for significance testing. Default 0 (off).
@@ -73,7 +67,7 @@ pub struct SubmitWalkForwardRequest {
     pub strategy: String,
     pub sweep_id: String,
     pub params: HashMap<String, Value>,
-    pub sweep_params: Vec<SweepParamDef>,
+    pub sweep_params: Vec<sweeps::SweepParamDef>,
     #[serde(default = "default_n_windows")]
     pub n_windows: usize,
     #[serde(default = "default_train_pct")]
@@ -175,117 +169,58 @@ pub async fn submit_backtest(
     );
     let task_id = task.id.clone();
 
-    // Spawn the background executor
     let tm = Arc::clone(&state.task_manager);
     let server = state.server.clone();
     let run_store = Arc::clone(&state.run_store);
     tokio::spawn(async move {
-        // Wait for permit (or cancellation)
-        let permit = tokio::select! {
-            p = tm.acquire_permit() => p,
-            () = task.cancellation_token.cancelled() => {
-                tm.mark_cancelled(&task.id);
-                return;
-            }
-        };
+        app_tasks::execute_queued_task(tm, Arc::clone(&task), async move {
+            let progress_cb = app_tasks::progress_callback(&task);
+            let is_cancelled = app_tasks::cancel_callback(&task);
 
-        // Check if cancelled while queued
-        if task.cancellation_token.is_cancelled() {
-            tm.mark_cancelled(&task.id);
-            drop(permit);
-            return;
-        }
+            let run_params = RunScriptParams {
+                strategy: Some(req.strategy.clone()),
+                script: None,
+                params: req.params.clone(),
+                profile: req.profile.clone(),
+            };
 
-        tm.mark_running(&task.id);
+            let exec_result = backtests::execute_script_with_progress(
+                &server,
+                run_params,
+                Some(progress_cb),
+                Some(&is_cancelled),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
 
-        // Build progress callback from task atomics
-        let task_for_progress = Arc::clone(&task);
-        let progress_cb: crate::scripting::engine::ProgressCallback =
-            Box::new(move |current, total| {
-                task_for_progress
-                    .progress_current
-                    .store(current, Ordering::Relaxed);
-                task_for_progress
-                    .progress_total
-                    .store(total, Ordering::Relaxed);
-            });
+            let strategy_key = exec_result
+                .resolved_strategy_id
+                .unwrap_or_else(|| req.strategy.clone());
+            let response = exec_result.response;
 
-        // Build cancellation check from task token
-        let token = task.cancellation_token.clone();
-        let is_cancelled: CancelCallback = Box::new(move || token.is_cancelled());
+            let (id, _) = backtests::persist_backtest(
+                run_store.as_ref(),
+                &strategy_key,
+                &req.params,
+                &response,
+                "manual",
+                req.thread_id.as_deref(),
+            )
+            .map_err(|(status, msg)| match status {
+                StatusCode::INTERNAL_SERVER_ERROR => format!("DB insert failed: {msg}"),
+                _ => msg,
+            })?;
 
-        let run_params = RunScriptParams {
-            strategy: Some(req.strategy.clone()),
-            script: None,
-            params: req.params.clone(),
-            profile: req.profile.clone(),
-        };
+            let result_json = run_store
+                .get_run(&id)
+                .ok()
+                .flatten()
+                .and_then(|d| serde_json::to_value(&d).ok())
+                .unwrap_or(Value::Null);
 
-        let result = super::run_script::execute_with_progress(
-            &server,
-            run_params,
-            Some(progress_cb),
-            Some(&is_cancelled),
-        )
+            Ok((result_json, id))
+        })
         .await;
-
-        // Drop permit to allow next task
-        drop(permit);
-
-        if task.cancellation_token.is_cancelled() {
-            tm.mark_cancelled(&task.id);
-            return;
-        }
-
-        match result {
-            Ok(exec_result) => {
-                let strategy_key = exec_result
-                    .resolved_strategy_id
-                    .unwrap_or_else(|| req.strategy.clone());
-                let response = exec_result.response;
-                let capital = req
-                    .params
-                    .get("CAPITAL")
-                    .and_then(Value::as_f64)
-                    .unwrap_or(0.0);
-
-                // Prefer symbol from engine result (resolves extern_symbol defaults)
-                let resolved_symbol = response
-                    .result
-                    .symbol
-                    .as_deref()
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or(&symbol);
-
-                match super::backtests::persist_backtest(
-                    run_store.as_ref(),
-                    &strategy_key,
-                    resolved_symbol,
-                    capital,
-                    &req.params,
-                    &response,
-                    "manual",
-                    req.thread_id.as_deref(),
-                ) {
-                    Ok((id, _)) => {
-                        // Fetch the full run detail as the result
-                        let result_json = run_store
-                            .get_run(&id)
-                            .ok()
-                            .flatten()
-                            .and_then(|d| serde_json::to_value(&d).ok())
-                            .unwrap_or(Value::Null);
-                        tm.mark_completed(&task.id, result_json, id);
-                    }
-                    Err((_status, msg)) => {
-                        tm.mark_failed(&task.id, format!("DB insert failed: {msg}"));
-                    }
-                }
-            }
-            Err(e) => {
-                tm.mark_failed(&task.id, e.to_string());
-            }
-        }
     });
 
     Json(SubmitResponse { task_id })
@@ -321,182 +256,42 @@ pub async fn submit_sweep(
     let server = state.server.clone();
     let run_store = Arc::clone(&state.run_store);
     tokio::spawn(async move {
-        // Wait for permit (or cancellation)
-        let permit = tokio::select! {
-            p = tm.acquire_permit() => p,
-            () = task.cancellation_token.cancelled() => {
-                tm.mark_cancelled(&task.id);
-                return;
-            }
-        };
+        app_tasks::execute_queued_task(tm, Arc::clone(&task), async move {
+            let progress = app_tasks::progress_callback(&task);
+            let is_cancelled = app_tasks::cancel_callback(&task);
 
-        if task.cancellation_token.is_cancelled() {
-            tm.mark_cancelled(&task.id);
-            drop(permit);
-            return;
-        }
-
-        tm.mark_running(&task.id);
-
-        // Resolve strategy
-        let Some(strategy_store) = server.strategy_store.as_ref() else {
-            tm.mark_failed(&task.id, "Strategy store not configured".to_string());
-            drop(permit);
-            return;
-        };
-
-        let (strategy_key, script_source) =
-            match resolve_strategy_source_from_store(strategy_store.as_ref(), &req.strategy) {
-                Ok(v) => v,
-                Err((_status, msg)) => {
-                    tm.mark_failed(&task.id, msg);
-                    drop(permit);
-                    return;
-                }
+            let sweep_req = sweeps::CreateSweepRequest {
+                strategy: req.strategy.clone(),
+                mode: req.mode.clone(),
+                objective: req.objective.clone(),
+                params: req.params.clone(),
+                sweep_params: req.sweep_params.clone(),
+                max_evaluations: req.max_evaluations,
+                num_permutations: req.num_permutations,
             };
 
-        let script_meta =
-            crate::scripting::stdlib::parse_script_meta(&strategy_key, &script_source);
-        let loader: Arc<dyn DataLoader> = Arc::new(CachingDataLoader::new(
-            Arc::clone(&server.cache),
-            server.adjustment_store.clone(),
-        ));
+            let result = sweeps::execute_sweep(
+                &server,
+                run_store.as_ref(),
+                &sweep_req,
+                "manual",
+                req.thread_id.as_deref(),
+                Some(progress),
+                Some(&is_cancelled),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
 
-        // Build cancellation check from task token
-        let token = task.cancellation_token.clone();
-        let is_cancelled: CancelCallback = Box::new(move || token.is_cancelled());
+            let result_json = run_store
+                .get_sweep(&result.sweep_id)
+                .ok()
+                .flatten()
+                .and_then(|d| serde_json::to_value(&d).ok())
+                .unwrap_or(Value::Null);
 
-        // Progress callback using task atomics
-        let task_for_progress = Arc::clone(&task);
-        let on_progress = move |cur: usize, tot: usize| {
-            task_for_progress
-                .progress_current
-                .store(cur, Ordering::Relaxed);
-            task_for_progress
-                .progress_total
-                .store(tot, Ordering::Relaxed);
-        };
-
-        // Resolve symbol from script before script_source is moved into sweep config
-        let resolved_symbol = if req.params.contains_key("symbol") {
-            symbol.clone()
-        } else {
-            let syms = crate::scripting::engine::resolve_symbols_from_extern_params(
-                &script_source,
-                &req.params,
-            );
-            syms.into_iter().next().unwrap_or(symbol.clone())
-        };
-
-        let sweep_result = match req.mode.as_str() {
-            "grid" => {
-                let param_grid = build_grid(&req.sweep_params);
-                let config = GridSweepConfig {
-                    script_source,
-                    base_params: req.params.clone(),
-                    param_grid,
-                    objective: req.objective.clone(),
-                };
-                run_grid_sweep(&config, Arc::clone(&loader), &is_cancelled, &on_progress).await
-            }
-            "bayesian" => {
-                let continuous_params: Vec<(String, f64, f64, bool, Option<f64>)> = req
-                    .sweep_params
-                    .iter()
-                    .map(|sp| {
-                        (
-                            sp.name.clone(),
-                            sp.start,
-                            sp.stop,
-                            sp.param_type == "int",
-                            sp.step,
-                        )
-                    })
-                    .collect();
-                let initial_samples = (req.max_evaluations / 3).max(2);
-                let config = BayesianConfig {
-                    script_source,
-                    base_params: req.params.clone(),
-                    continuous_params,
-                    max_evaluations: req.max_evaluations,
-                    initial_samples,
-                    objective: req.objective.clone(),
-                };
-                run_bayesian(&config, loader.as_ref(), &is_cancelled, &on_progress).await
-            }
-            other => {
-                tm.mark_failed(&task.id, format!("Invalid sweep mode '{other}'"));
-                drop(permit);
-                return;
-            }
-        };
-
-        drop(permit);
-
-        if task.cancellation_token.is_cancelled() {
-            tm.mark_cancelled(&task.id);
-            return;
-        }
-
-        match sweep_result {
-            Ok(sweep_response) => {
-                // Apply permutation gate — CPU-intensive, run off async executor
-                let n_perms = req.num_permutations;
-                let obj = req.objective.clone();
-                let sweep_response = if n_perms > 0 {
-                    match tokio::task::spawn_blocking(move || {
-                        apply_permutation_gate(sweep_response, n_perms, &obj, Some(42))
-                    })
-                    .await
-                    {
-                        Ok(r) => r,
-                        Err(e) => {
-                            tm.mark_failed(&task.id, format!("Permutation gate failed: {e}"));
-                            return;
-                        }
-                    }
-                } else {
-                    sweep_response
-                };
-                // Reconstruct CreateSweepRequest for persist_sweep_to_store
-                let sweep_req = CreateSweepRequest {
-                    strategy: req.strategy.clone(),
-                    mode: req.mode.clone(),
-                    objective: req.objective.clone(),
-                    params: req.params.clone(),
-                    sweep_params: req.sweep_params.clone(),
-                    max_evaluations: req.max_evaluations,
-                    num_permutations: req.num_permutations,
-                };
-
-                match persist_sweep_to_store(
-                    run_store.as_ref(),
-                    &strategy_key,
-                    &resolved_symbol,
-                    &sweep_req,
-                    &sweep_response,
-                    &script_meta,
-                    "manual",
-                    req.thread_id.as_deref(),
-                ) {
-                    Ok(sweep_id) => {
-                        let result_json = run_store
-                            .get_sweep(&sweep_id)
-                            .ok()
-                            .flatten()
-                            .and_then(|d| serde_json::to_value(&d).ok())
-                            .unwrap_or(Value::Null);
-                        tm.mark_completed(&task.id, result_json, sweep_id);
-                    }
-                    Err((_status, msg)) => {
-                        tm.mark_failed(&task.id, format!("DB insert failed: {msg}"));
-                    }
-                }
-            }
-            Err(e) => {
-                tm.mark_failed(&task.id, e.to_string());
-            }
-        }
+            Ok((result_json, result.sweep_id))
+        })
+        .await;
     });
 
     Ok(Json(SubmitResponse { task_id }))
@@ -559,15 +354,17 @@ pub async fn submit_walk_forward(
             return;
         };
 
-        let (strategy_key, script_source) =
-            match resolve_strategy_source_from_store(strategy_store.as_ref(), &req.strategy) {
-                Ok(v) => v,
-                Err((_status, msg)) => {
-                    tm.mark_failed(&task.id, msg);
-                    drop(permit);
-                    return;
-                }
-            };
+        let (strategy_key, script_source) = match sweeps::resolve_strategy_source_from_store(
+            strategy_store.as_ref(),
+            &req.strategy,
+        ) {
+            Ok(v) => v,
+            Err((_status, msg)) => {
+                tm.mark_failed(&task.id, msg);
+                drop(permit);
+                return;
+            }
+        };
 
         // Resolve symbol from script if not explicitly in params
         let symbol = if symbol_from_params {
@@ -637,7 +434,14 @@ pub async fn submit_walk_forward(
             strategy: strategy_key.clone(),
             symbol: symbol.clone(),
             capital,
-            params_grid: build_grid(&req.sweep_params),
+            params_grid: match sweeps::build_grid(&req.sweep_params) {
+                Ok(grid) => grid,
+                Err(msg) => {
+                    tm.mark_failed(&task.id, msg);
+                    drop(permit);
+                    return;
+                }
+            },
             objective: wf_objective,
             mode: wf_mode,
             n_windows: req.n_windows,
@@ -943,47 +747,18 @@ pub async fn submit_pipeline(
     let tm = Arc::clone(&state.task_manager);
     let server = state.server.clone();
     tokio::spawn(async move {
-        // Wait for permit (or cancellation)
-        let permit = tokio::select! {
-            p = tm.acquire_permit() => p,
-            () = task.cancellation_token.cancelled() => {
-                tm.mark_cancelled(&task.id);
-                return;
-            }
-        };
-
-        if task.cancellation_token.is_cancelled() {
-            tm.mark_cancelled(&task.id);
-            drop(permit);
-            return;
-        }
-
-        tm.mark_running(&task.id);
-
-        let result = crate::tools::backtest::execute(&server, params).await;
-
-        drop(permit);
-
-        if task.cancellation_token.is_cancelled() {
-            tm.mark_cancelled(&task.id);
-            return;
-        }
-
-        match result {
-            Ok(crate::tools::backtest::BacktestToolResponse::Pipeline(response)) => {
-                let result_json = serde_json::to_value(&*response).unwrap_or(Value::Null);
-                tm.mark_completed(&task.id, result_json, response.sweep_id.clone());
-            }
-            Ok(_) => {
-                tm.mark_failed(
-                    &task.id,
-                    "Pipeline mode did not return a pipeline response".to_string(),
-                );
-            }
-            Err(e) => {
-                tm.mark_failed(&task.id, e.to_string());
-            }
-        }
+        Box::pin(app_tasks::execute_queued_task(
+            tm,
+            Arc::clone(&task),
+            async move {
+                let response = pipeline::execute(&server, &params, "manual")
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let result_json = serde_json::to_value(&response).unwrap_or(Value::Null);
+                Ok((result_json, response.sweep_id.clone()))
+            },
+        ))
+        .await;
     });
 
     Ok(Json(SubmitResponse { task_id }))

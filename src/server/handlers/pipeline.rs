@@ -13,6 +13,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
 
+use crate::application::pipeline;
 use crate::server::handlers::sweeps::SweepParamDef;
 use crate::server::state::AppState;
 use crate::tools::backtest::BacktestToolParams;
@@ -84,16 +85,9 @@ pub async fn create_pipeline(
 ) -> Result<Json<PipelineResponse>, (StatusCode, String)> {
     let params = build_pipeline_params(req)?;
 
-    let result = crate::tools::backtest::execute(&state.server, params)
+    let result = pipeline::execute(&state.server, &params, "manual")
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // The pipeline path always returns BacktestToolResponse::Pipeline
-    match result {
-        crate::tools::backtest::BacktestToolResponse::Pipeline(response) => Ok(Json(*response)),
-        _ => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Pipeline mode did not return a pipeline response".to_string(),
-        )),
-    }
+    Ok(Json(result))
 }

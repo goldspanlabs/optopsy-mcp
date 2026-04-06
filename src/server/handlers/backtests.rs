@@ -2,7 +2,6 @@
 
 use axum::{
     extract::State,
-    http::StatusCode,
     response::sse::{Event, Sse},
     Json,
 };
@@ -13,8 +12,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use crate::data::traits::TradeRow;
-use crate::server::sanitize::{sanitize, trade_row_from_record};
+use crate::application::backtests;
 use crate::server::state::AppState;
 use crate::tools::run_script::RunScriptParams;
 
@@ -25,109 +23,6 @@ pub struct CreateBacktestRequest {
     pub params: HashMap<String, Value>,
     #[serde(default)]
     pub profile: Option<String>,
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ──────────────────────────────────────────────────────────────────────────────
-
-/// Build `TradeRow` vector from a `RunScriptResponse`.
-fn build_trades(response: &crate::tools::run_script::RunScriptResponse) -> Vec<TradeRow> {
-    response
-        .result
-        .trade_log
-        .iter()
-        .map(trade_row_from_record)
-        .collect()
-}
-
-/// Strip trades from a `RunScriptResponse` for storage (trades stored separately).
-fn strip_trades_from_result_json(response: &crate::tools::run_script::RunScriptResponse) -> String {
-    let mut value =
-        serde_json::to_value(response).unwrap_or(Value::Object(serde_json::Map::default()));
-    if let Some(obj) = value.as_object_mut() {
-        if let Some(result) = obj.get_mut("result") {
-            if let Some(result_obj) = result.as_object_mut() {
-                result_obj.remove("trade_log");
-            }
-        }
-    }
-    serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned())
-}
-
-/// Insert a backtest result into the run store, returning `(id, created_at)`.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn persist_backtest(
-    run_store: &dyn crate::data::traits::RunStore,
-    strategy_key: &str,
-    symbol: &str,
-    capital: f64,
-    params: &HashMap<String, Value>,
-    response: &crate::tools::run_script::RunScriptResponse,
-    source: &str,
-    thread_id: Option<&str>,
-) -> Result<(String, String), (StatusCode, String)> {
-    let id = uuid::Uuid::new_v4().to_string();
-    let m = &response.result.metrics;
-    let trades = build_trades(response);
-    let result_json = strip_trades_from_result_json(response);
-    let params_value = serde_json::to_value(params)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    let hypothesis = response
-        .script_meta
-        .as_ref()
-        .and_then(|m| m.hypothesis.as_deref());
-    let tags_str = response
-        .script_meta
-        .as_ref()
-        .and_then(|m| m.tags.as_ref())
-        .map(|t| t.join(","));
-    let regime_str = response
-        .script_meta
-        .as_ref()
-        .and_then(|m| m.regime.as_ref())
-        .map(|r| r.join(","));
-
-    let created_at = run_store
-        .insert_run(
-            &id,
-            None, // no sweep
-            Some(strategy_key),
-            symbol,
-            capital,
-            &params_value,
-            Some(sanitize(if capital > 0.0 {
-                response.result.total_pnl / capital * 100.0
-            } else {
-                0.0
-            })),
-            Some(sanitize(m.win_rate)),
-            Some(sanitize(m.max_drawdown)),
-            Some(sanitize(m.sharpe)),
-            Some(sanitize(m.sortino)),
-            Some(sanitize(m.cagr)),
-            Some(sanitize(m.profit_factor)),
-            Some(response.result.trade_count as i64),
-            Some(sanitize(m.expectancy)),
-            Some(sanitize(m.var_95)),
-            None, // p_value (single backtests don't run permutation test)
-            None, // significant
-            &result_json,
-            Some(response.execution_time_ms as i64),
-            hypothesis,
-            tags_str.as_deref(),
-            regime_str.as_deref(),
-            source,
-            thread_id,
-        )
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    run_store
-        .insert_trades(&id, &trades)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    Ok((id, created_at))
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -186,7 +81,7 @@ pub async fn create_backtest(
             profile: req.profile.clone(),
         };
 
-        let result = super::run_script::execute_with_progress(
+        let result = backtests::execute_script_with_progress(
             &state.server,
             run_params,
             Some(progress_cb),
@@ -204,27 +99,9 @@ pub async fn create_backtest(
                     .unwrap_or_else(|| req.strategy.clone());
                 let response = exec_result.response;
 
-                // Symbol must come from the engine result (resolved from asset/extern_symbol).
-                let symbol = response
-                    .result
-                    .symbol
-                    .as_deref()
-                    .filter(|s| !s.is_empty())
-                    .or_else(|| req.params.get("symbol").and_then(Value::as_str))
-                    .expect("No symbol resolved — declare an `asset` in the script")
-                    .to_owned();
-
-                let capital = req
-                    .params
-                    .get("CAPITAL")
-                    .and_then(Value::as_f64)
-                    .unwrap_or(0.0);
-
-                match persist_backtest(
+                match backtests::persist_backtest(
                     &*state.run_store,
                     &strategy_key,
-                    &symbol,
-                    capital,
                     &req.params,
                     &response,
                     "manual",
