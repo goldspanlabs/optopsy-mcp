@@ -7,30 +7,32 @@ use super::risk::MonteCarloResponse;
 use super::sweep::SweepResponse;
 use super::walk_forward::WalkForwardResponse;
 
-/// Status of a pipeline stage or gate, used by the frontend for rendering.
+/// Status of a pipeline execution stage or decision gate, used by the frontend
+/// for rendering.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StageStatus {
-    /// Stage ran successfully.
+    /// Stage ran successfully, or a gate condition was evaluated and passed.
     Completed,
-    /// Stage was not attempted because a gate condition was not met.
+    /// Stage was not attempted because an earlier gate condition was not met.
     Skipped,
-    /// Stage was attempted but encountered an error.
+    /// Stage execution failed, or a gate was evaluated and did not pass.
     Failed,
 }
 
 /// A single pipeline stage or gate result.
 ///
 /// The frontend renders each stage as a card/row colored by status:
-/// green (completed), yellow (skipped), red (failed).
+/// green (completed/passed), yellow (skipped), red (failed/error or gate not passed).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StageInfo {
     /// Stage identifier: `"sweep"`, `"significance_gate"`, `"walk_forward"`,
     /// `"oos_data_gate"`, `"monte_carlo"`.
     pub name: String,
-    /// Current status of this stage.
+    /// Current status of this stage or gate.
     pub status: StageStatus,
-    /// Human-readable explanation when skipped or failed (null when completed).
+    /// Human-readable explanation when skipped or failed, including execution
+    /// errors and gate-not-passed outcomes (null when completed).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     /// Wall-clock time in milliseconds (0 when skipped).
@@ -64,6 +66,8 @@ pub struct PipelineResponse {
 
     /// Key findings aggregated across all completed stages.
     pub key_findings: Vec<String>,
+    /// Suggested next analysis steps for the agent.
+    pub suggested_next_steps: Vec<String>,
     /// Total wall-clock time for the entire pipeline in milliseconds.
     pub total_duration_ms: u64,
 }

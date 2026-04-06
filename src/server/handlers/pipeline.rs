@@ -12,6 +12,7 @@ use std::collections::HashMap;
 
 use crate::server::handlers::sweeps::SweepParamDef;
 use crate::server::state::AppState;
+use crate::tools::backtest::BacktestToolParams;
 use crate::tools::response_types::pipeline::PipelineResponse;
 
 fn default_mode() -> String {
@@ -49,7 +50,12 @@ pub async fn create_pipeline(
     State(state): State<AppState>,
     Json(req): Json<CreatePipelineRequest>,
 ) -> Result<Json<PipelineResponse>, (StatusCode, String)> {
-    use crate::tools::backtest::BacktestToolParams;
+    if req.sweep_params.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "sweep_params must be non-empty for pipeline execution".to_string(),
+        ));
+    }
 
     let params = BacktestToolParams {
         strategy: req.strategy,

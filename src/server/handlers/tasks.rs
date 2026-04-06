@@ -919,6 +919,13 @@ pub async fn submit_pipeline(
     State(state): State<AppState>,
     Json(req): Json<super::pipeline::CreatePipelineRequest>,
 ) -> Result<Json<SubmitResponse>, (StatusCode, String)> {
+    if req.sweep_params.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "sweep_params must be non-empty for pipeline execution".to_string(),
+        ));
+    }
+
     let symbol = req
         .params
         .get("symbol")

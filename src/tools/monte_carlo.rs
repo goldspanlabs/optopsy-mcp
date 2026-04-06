@@ -9,6 +9,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;
 
+use crate::constants::MIN_RETURNS_FOR_BOOTSTRAP;
 use crate::data::cache::CachedStore;
 use crate::stats;
 use crate::tools::ai_helpers;
@@ -56,7 +57,7 @@ pub fn execute_from_returns(
     initial_capital: f64,
     seed: Option<u64>,
 ) -> Result<MonteCarloResponse> {
-    if returns.len() < 30 {
+    if returns.len() < MIN_RETURNS_FOR_BOOTSTRAP {
         anyhow::bail!("Insufficient return observations: {}", returns.len());
     }
 

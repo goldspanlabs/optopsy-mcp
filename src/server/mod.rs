@@ -576,7 +576,8 @@ impl OptopsyServer {
     ///
     /// Omit `sweep_params` for a single backtest (returns full equity curve, trade log, metrics).
     /// Provide `sweep_params` for a grid/bayesian sweep. By default (`pipeline=true`), sweeps
-    /// run the full analysis pipeline: sweep -> significance gate -> walk-forward -> monte carlo.
+    /// run the full analysis pipeline: sweep -> significance gate -> walk-forward ->
+    /// `oos_data_gate` -> monte carlo.
     /// Set `pipeline=false` to get just the sweep results.
     /// Results are persisted to the runs database.
     ///

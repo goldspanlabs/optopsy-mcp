@@ -101,6 +101,7 @@ pub async fn run_pipeline(
             None,
             key_findings,
             pipeline_start,
+            symbol,
         ));
     }
 
@@ -116,20 +117,19 @@ pub async fn run_pipeline(
     let wf_start = std::time::Instant::now();
 
     // Resolve script source from strategy store so WF doesn't need filesystem access
-    let script_source = server
-        .strategy_store
-        .as_ref()
-        .and_then(|store| {
-            store.get_source(strategy).ok().flatten().or_else(|| {
-                store
-                    .get_source_by_name(strategy)
-                    .ok()
-                    .flatten()
-                    .map(|(_id, src)| src)
-            })
+    let raw_source = server.strategy_store.as_ref().and_then(|store| {
+        store.get_source(strategy).ok().flatten().or_else(|| {
+            store
+                .get_source_by_name(strategy)
+                .ok()
+                .flatten()
+                .map(|(_id, src)| src)
         })
-        .map(|raw| crate::tools::run_script::maybe_transpile(raw).unwrap_or_else(|_| String::new()))
-        .filter(|s| !s.is_empty());
+    });
+    let script_source = match raw_source {
+        Some(raw) => Some(crate::tools::run_script::maybe_transpile(raw)?),
+        None => None,
+    };
 
     // Build base params from the best combo so WF has symbol/CAPITAL
     let base_params = top_combos.first().map(|combo| {
@@ -212,20 +212,23 @@ pub async fn run_pipeline(
                 None,
                 key_findings,
                 pipeline_start,
+                symbol,
             ));
         }
     };
 
-    // Gate 2: OOS data sufficiency
+    // Gate 2: OOS data sufficiency — gate on actual returns count, not equity points,
+    // since Monte Carlo needs MIN_RETURNS_FOR_BOOTSTRAP returns (equity.len() - 1).
     let wf_ref = wf_response.as_ref().unwrap();
-    let oos_equity_len = wf_ref.stitched_equity.len();
+    let returns = equity_to_returns(&wf_ref.stitched_equity);
+    let oos_returns_len = returns.len();
 
-    if oos_equity_len < MIN_RETURNS_FOR_BOOTSTRAP {
+    if oos_returns_len < MIN_RETURNS_FOR_BOOTSTRAP {
         stages.push(StageInfo {
             name: "oos_data_gate".to_string(),
             status: StageStatus::Failed,
             reason: Some(format!(
-                "Insufficient OOS data: {oos_equity_len} equity points < {MIN_RETURNS_FOR_BOOTSTRAP} minimum for bootstrap",
+                "Insufficient OOS data: {oos_returns_len} returns < {MIN_RETURNS_FOR_BOOTSTRAP} minimum for bootstrap",
             )),
             duration_ms: 0,
         });
@@ -237,7 +240,7 @@ pub async fn run_pipeline(
         });
 
         key_findings.push(format!(
-            "Monte Carlo skipped: only {oos_equity_len} OOS equity points (need {MIN_RETURNS_FOR_BOOTSTRAP})",
+            "Monte Carlo skipped: only {oos_returns_len} OOS returns (need {MIN_RETURNS_FOR_BOOTSTRAP})",
         ));
 
         return Ok(build_response(
@@ -249,6 +252,7 @@ pub async fn run_pipeline(
             None,
             key_findings,
             pipeline_start,
+            symbol,
         ));
     }
 
@@ -259,8 +263,7 @@ pub async fn run_pipeline(
         duration_ms: 0,
     });
 
-    // Stage 3: Monte Carlo on OOS equity returns
-    let returns = equity_to_returns(&wf_ref.stitched_equity);
+    // Stage 3: Monte Carlo on OOS equity returns (already computed above)
     let initial_capital_oos = wf_ref
         .stitched_equity
         .first()
@@ -310,10 +313,15 @@ pub async fn run_pipeline(
             None
         }
         Err(e) => {
+            let reason = if e.is_panic() {
+                format!("Monte Carlo task panicked: {e}")
+            } else {
+                format!("Monte Carlo task cancelled: {e}")
+            };
             stages.push(StageInfo {
                 name: "monte_carlo".to_string(),
                 status: StageStatus::Failed,
-                reason: Some(format!("Monte Carlo task panicked: {e}")),
+                reason: Some(reason),
                 duration_ms: mc_duration,
             });
             None
@@ -329,6 +337,7 @@ pub async fn run_pipeline(
         mc_response,
         key_findings,
         pipeline_start,
+        symbol,
     ))
 }
 
@@ -341,10 +350,8 @@ pub async fn run_pipeline(
 /// If a permutation test was run, returns combos where `significant == true`.
 /// Otherwise, returns the top N combos by objective (already ranked).
 fn select_top_combos(sweep: &SweepResponse) -> Vec<&HashMap<String, Value>> {
-    let has_permutation = sweep
-        .ranked_results
-        .first()
-        .is_some_and(|r| r.significant.is_some());
+    let has_permutation = sweep.multiple_comparisons.is_some()
+        || sweep.ranked_results.iter().any(|r| r.p_value.is_some());
 
     if has_permutation {
         // Return all significant combos (up to TOP_COMBOS_FOR_WF)
@@ -415,6 +422,7 @@ fn build_response(
     monte_carlo: Option<crate::tools::response_types::risk::MonteCarloResponse>,
     key_findings: Vec<String>,
     pipeline_start: std::time::Instant,
+    symbol: &str,
 ) -> PipelineResponse {
     let completed = stages
         .iter()
@@ -429,6 +437,9 @@ fn build_response(
         sweep.best_result.as_ref().map_or(0.0, |r| r.sharpe),
     );
 
+    let upper = symbol.to_uppercase();
+    let suggested_next_steps = build_suggested_next_steps(&stages, &upper);
+
     PipelineResponse {
         summary,
         stages,
@@ -438,7 +449,46 @@ fn build_response(
         walk_forward,
         monte_carlo,
         key_findings,
+        suggested_next_steps,
         total_duration_ms: pipeline_start.elapsed().as_millis() as u64,
+    }
+}
+
+/// Build suggested next steps based on which stages completed.
+fn build_suggested_next_steps(stages: &[StageInfo], symbol: &str) -> Vec<String> {
+    let sig_failed = stages
+        .iter()
+        .any(|s| s.name == "significance_gate" && matches!(s.status, StageStatus::Failed));
+    let wf_failed = stages
+        .iter()
+        .any(|s| s.name == "walk_forward" && matches!(s.status, StageStatus::Failed));
+    let mc_completed = stages
+        .iter()
+        .any(|s| s.name == "monte_carlo" && matches!(s.status, StageStatus::Completed));
+
+    if sig_failed {
+        vec![
+            "[NEXT] Re-run the sweep with wider parameter ranges or a different strategy".to_string(),
+            "[TIP] Consider running with num_permutations=0 to skip significance testing and force walk-forward validation".to_string(),
+        ]
+    } else if wf_failed {
+        vec![
+            "[NEXT] Check that the strategy and symbol have sufficient data for walk-forward windows".to_string(),
+            format!("[THEN] Call drawdown_analysis(symbol=\"{symbol}\") to evaluate risk profile"),
+        ]
+    } else if mc_completed {
+        vec![
+            format!("[NEXT] Call factor_attribution(symbol=\"{symbol}\") to check if alpha is genuine or factor exposure"),
+            format!("[THEN] Call benchmark_analysis(symbol=\"{symbol}\") for relative performance metrics"),
+            format!("[TIP] Call regime_detect(symbol=\"{symbol}\") to see if performance varies across market regimes"),
+        ]
+    } else {
+        // OOS gate failed but WF succeeded
+        vec![
+            format!("[NEXT] Call drawdown_analysis(symbol=\"{symbol}\") to analyze drawdown episodes"),
+            format!("[THEN] Call factor_attribution(symbol=\"{symbol}\") to decompose returns into factor exposures"),
+            "[TIP] Monte Carlo was skipped due to insufficient OOS data — consider longer backtest period".to_string(),
+        ]
     }
 }
 
