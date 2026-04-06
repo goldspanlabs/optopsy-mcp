@@ -15,3 +15,7 @@ pub const DEFAULT_ANALYSIS_YEARS: u32 = 5;
 /// Maximum finite value for profit factor when there are no losing trades.
 /// Avoids `f64::INFINITY` which is not valid JSON.
 pub const MAX_PROFIT_FACTOR: f64 = 999.99;
+
+/// Minimum number of return observations required for meaningful
+/// block-bootstrap Monte Carlo simulation.
+pub const MIN_RETURNS_FOR_BOOTSTRAP: usize = 30;

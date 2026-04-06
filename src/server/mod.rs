@@ -30,13 +30,12 @@ use crate::tools::response_types::{
     AggregatePricesResponse, BenchmarkAnalysisResponse, CointegrationResponse, CorrelateResponse,
     DistributionResponse, DrawdownAnalysisResponse, FactorAttributionResponse, HypothesisParams,
     HypothesisResponse, MonteCarloResponse, PortfolioOptimizeResponse, RegimeDetectResponse,
-    RollingMetricResponse, WalkForwardResponse,
+    RollingMetricResponse,
 };
 use params::{
     tool_err, validation_err, AggregatePricesParams, BenchmarkAnalysisParams, CointegrationParams,
     CorrelateParams, DistributionParams, DrawdownAnalysisParams, FactorAttributionParams,
     MonteCarloParams, PortfolioOptimizeParams, RegimeDetectParams, RollingMetricParams,
-    WalkForwardToolParams,
 };
 use sanitize::SanitizedResult;
 
@@ -589,66 +588,12 @@ impl OptopsyServer {
             .map_err(|e| format!("Failed to read scripting reference: {e}"))
     }
 
-    /// Run walk-forward optimization: split data into train/test windows, optimize parameters
-    /// on each training window, and validate on the out-of-sample test window.
-    ///
-    /// **When to use**: After finding a profitable strategy via backtest + sweep, to verify
-    /// that optimized parameters generalize to unseen data. The efficiency ratio (OOS/IS metric)
-    /// measures how well the strategy avoids overfitting.
-    ///
-    /// **Output**: Per-window IS/OOS metrics, best params per window, stitched OOS equity curve,
-    /// and efficiency ratio.
-    ///
-    /// **Example**:
-    /// ```json
-    /// {
-    ///   "strategy": "short_put",
-    ///   "symbol": "SPY",
-    ///   "capital": 100000,
-    ///   "params_grid": {
-    ///     "DELTA_TARGET": [0.20, 0.30, 0.40],
-    ///     "DTE_TARGET": [30, 45, 60]
-    ///   },
-    ///   "n_windows": 5,
-    ///   "objective": "sharpe"
-    /// }
-    /// ```
-    #[tool(name = "walk_forward", annotations(read_only_hint = true))]
-    async fn walk_forward(
-        &self,
-        Parameters(params): Parameters<WalkForwardToolParams>,
-    ) -> SanitizedResult<WalkForwardResponse, String> {
-        SanitizedResult(
-            async {
-                params
-                    .validate()
-                    .map_err(|e| validation_err("walk_forward", e))?;
-                tools::walk_forward::execute(
-                    &self.cache,
-                    self.adjustment_store.clone(),
-                    &params.strategy,
-                    &params.symbol,
-                    params.capital,
-                    params.params_grid,
-                    params.objective,
-                    Some(params.n_windows),
-                    params.mode,
-                    Some(params.train_pct),
-                    params.start_date,
-                    params.end_date,
-                    params.profile,
-                )
-                .await
-                .map_err(tool_err)
-            }
-            .await,
-        )
-    }
-
     /// Run a backtest or parameter sweep. Pass a saved strategy by display name.
     ///
     /// Omit `sweep_params` for a single backtest (returns full equity curve, trade log, metrics).
-    /// Provide `sweep_params` for a grid/bayesian sweep (returns ranked results).
+    /// Provide `sweep_params` for a grid/bayesian sweep. By default, sweeps run the
+    /// full analysis pipeline: sweep -> significance gate -> walk-forward ->
+    /// `oos_data_gate` -> monte carlo. Set `pipeline=false` to return sweep-only results.
     /// Results are persisted to the runs database.
     ///
     /// **Example (single backtest)**:
@@ -659,7 +604,7 @@ impl OptopsyServer {
     /// }
     /// ```
     ///
-    /// **Example (parameter sweep)**:
+    /// **Example (parameter sweep with full pipeline)**:
     /// ```json
     /// {
     ///   "strategy": "short_put",
@@ -667,7 +612,8 @@ impl OptopsyServer {
     ///   "sweep_params": [
     ///     { "name": "DELTA_TARGET", "start": 0.10, "stop": 0.40, "step": 0.05 },
     ///     { "name": "DTE_TARGET", "param_type": "int", "start": 30, "stop": 60, "step": 5 }
-    ///   ]
+    ///   ],
+    ///   "pipeline": true
     /// }
     /// ```
     #[tool(name = "backtest", annotations(read_only_hint = false))]
@@ -726,7 +672,7 @@ impl ServerHandler for OptopsyServer {
                 \n  - factor_attribution — decompose returns into factor exposures\
                 \n  - benchmark_analysis — compare vs. benchmark (alpha, beta, capture ratios)\
                 \n  - distribution — P&L or return distribution + normality tests\
-                \n  - walk_forward — walk-forward optimization to validate parameter robustness\
+                \n  - Walk-forward validation runs automatically as part of the backtest pipeline\
                 \n\
                 \n### 4. Market Analysis Tools\
                 \n  - aggregate_prices — seasonal/time-bucket return patterns\

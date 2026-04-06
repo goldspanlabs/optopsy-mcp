@@ -36,6 +36,8 @@ pub async fn run_walk_forward(
         params.start_date,
         params.end_date,
         params.profile,
+        None,
+        None,
     )
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

@@ -3,6 +3,7 @@
 pub mod backtests;
 pub mod chat;
 pub mod forward_tests;
+pub mod pipeline;
 pub mod profiles;
 pub mod run_script;
 pub mod runs;

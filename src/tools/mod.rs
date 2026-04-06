@@ -14,6 +14,7 @@ pub mod forward_test;
 pub mod hypothesis;
 pub mod list_symbols;
 pub mod monte_carlo;
+pub mod pipeline;
 pub mod portfolio_optimize;
 pub mod raw_prices;
 pub mod regime_detect;

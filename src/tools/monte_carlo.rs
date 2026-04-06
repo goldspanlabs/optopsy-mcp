@@ -9,6 +9,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;
 
+use crate::constants::MIN_RETURNS_FOR_BOOTSTRAP;
 use crate::data::cache::CachedStore;
 use crate::stats;
 use crate::tools::ai_helpers;
@@ -19,7 +20,7 @@ use crate::tools::response_types::{
 /// Block size for bootstrap resampling (trading days).
 const BLOCK_SIZE: usize = 21;
 
-/// Execute Monte Carlo simulation.
+/// Execute Monte Carlo simulation from a symbol's cached price data.
 #[allow(clippy::too_many_lines, clippy::similar_names)]
 pub async fn execute(
     cache: &Arc<CachedStore>,
@@ -33,7 +34,30 @@ pub async fn execute(
     let upper = symbol.to_uppercase();
     let cutoff_str = ai_helpers::compute_years_cutoff(years);
     let returns = ai_helpers::load_returns(cache, &upper, &cutoff_str).await?;
-    if returns.len() < 30 {
+    execute_from_returns(
+        &returns,
+        &upper,
+        n_simulations,
+        horizon_days,
+        initial_capital,
+        seed,
+    )
+}
+
+/// Execute Monte Carlo simulation from pre-computed returns.
+///
+/// Used by the pipeline to avoid re-loading data from parquet when returns
+/// are already available (e.g., derived from a walk-forward equity curve).
+#[allow(clippy::too_many_lines, clippy::similar_names)]
+pub fn execute_from_returns(
+    returns: &[f64],
+    label: &str,
+    n_simulations: usize,
+    horizon_days: usize,
+    initial_capital: f64,
+    seed: Option<u64>,
+) -> Result<MonteCarloResponse> {
+    if returns.len() < MIN_RETURNS_FOR_BOOTSTRAP {
         anyhow::bail!("Insufficient return observations: {}", returns.len());
     }
 
@@ -46,7 +70,7 @@ pub async fn execute(
     let mut terminal_values = Vec::with_capacity(n_simulations);
     let mut max_drawdowns = Vec::with_capacity(n_simulations);
     for _ in 0..n_simulations {
-        let (terminal, max_dd) = simulate_path(&returns, horizon_days, initial_capital, &mut rng);
+        let (terminal, max_dd) = simulate_path(returns, horizon_days, initial_capital, &mut rng);
         terminal_values.push(terminal);
         max_drawdowns.push(max_dd);
     }
@@ -61,12 +85,12 @@ pub async fn execute(
     let percentile_paths: Vec<MonteCarloPercentilePath> = percentiles
         .iter()
         .zip(labels.iter())
-        .map(|(&pct, &label)| {
+        .map(|(&pct, &lbl)| {
             let idx = ((pct / 100.0 * terminal_values.len() as f64).floor() as usize)
                 .min(terminal_values.len() - 1);
             let tv = terminal_values[idx];
             MonteCarloPercentilePath {
-                label: label.to_string(),
+                label: lbl.to_string(),
                 percentile: pct,
                 terminal_value: tv,
                 total_return_pct: (tv - initial_capital) / initial_capital * 100.0,
@@ -139,7 +163,7 @@ pub async fn execute(
         .map_or(0.0, |p| p.total_return_pct);
 
     let summary = format!(
-        "Monte Carlo simulation for {upper}: {n_simulations} paths over {horizon_days} days. \
+        "Monte Carlo simulation for {label}: {n_simulations} paths over {horizon_days} days. \
          Median terminal return={median_return:.1}%, P(loss)={:.1}%, \
          median max drawdown={:.1}%.",
         prob_negative * 100.0,
@@ -169,10 +193,10 @@ pub async fn execute(
 
     let suggested_next_steps = vec![
         format!(
-            "[NEXT] Call drawdown_analysis(symbol=\"{upper}\") to compare simulated vs historical drawdowns"
+            "[NEXT] Call drawdown_analysis(symbol=\"{label}\") to compare simulated vs historical drawdowns"
         ),
         format!(
-            "[THEN] Call regime_detect(symbol=\"{upper}\") to see if risk varies across market regimes"
+            "[THEN] Call regime_detect(symbol=\"{label}\") to see if risk varies across market regimes"
         ),
         "[TIP] Use the ruin probabilities to size positions — ensure P(ruin) is below your tolerance"
             .to_string(),
@@ -180,7 +204,7 @@ pub async fn execute(
 
     Ok(MonteCarloResponse {
         summary,
-        symbol: upper,
+        symbol: label.to_string(),
         n_simulations,
         horizon_days,
         initial_capital,

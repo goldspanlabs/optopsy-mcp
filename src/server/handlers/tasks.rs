@@ -909,3 +909,82 @@ pub async fn stream_task(
             .keep_alive(KeepAlive::default()),
     )
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Pipeline task
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// `POST /tasks/pipeline` — submit a full pipeline (sweep + walk-forward + monte carlo) as a background task.
+pub async fn submit_pipeline(
+    State(state): State<AppState>,
+    Json(req): Json<super::pipeline::CreatePipelineRequest>,
+) -> Result<Json<SubmitResponse>, (StatusCode, String)> {
+    let params = super::pipeline::build_pipeline_params(req)?;
+
+    let symbol = params
+        .params
+        .get("symbol")
+        .and_then(Value::as_str)
+        .unwrap_or("pending")
+        .to_owned();
+
+    let params_json =
+        serde_json::to_value(&params.params).unwrap_or(Value::Object(serde_json::Map::default()));
+
+    let task = state.task_manager.register(
+        TaskKind::Pipeline,
+        &params.strategy,
+        &symbol,
+        params.thread_id.clone(),
+        params_json,
+    );
+    let task_id = task.id.clone();
+
+    let tm = Arc::clone(&state.task_manager);
+    let server = state.server.clone();
+    tokio::spawn(async move {
+        // Wait for permit (or cancellation)
+        let permit = tokio::select! {
+            p = tm.acquire_permit() => p,
+            () = task.cancellation_token.cancelled() => {
+                tm.mark_cancelled(&task.id);
+                return;
+            }
+        };
+
+        if task.cancellation_token.is_cancelled() {
+            tm.mark_cancelled(&task.id);
+            drop(permit);
+            return;
+        }
+
+        tm.mark_running(&task.id);
+
+        let result = crate::tools::backtest::execute(&server, params).await;
+
+        drop(permit);
+
+        if task.cancellation_token.is_cancelled() {
+            tm.mark_cancelled(&task.id);
+            return;
+        }
+
+        match result {
+            Ok(crate::tools::backtest::BacktestToolResponse::Pipeline(response)) => {
+                let result_json = serde_json::to_value(&*response).unwrap_or(Value::Null);
+                tm.mark_completed(&task.id, result_json, response.sweep_id.clone());
+            }
+            Ok(_) => {
+                tm.mark_failed(
+                    &task.id,
+                    "Pipeline mode did not return a pipeline response".to_string(),
+                );
+            }
+            Err(e) => {
+                tm.mark_failed(&task.id, e.to_string());
+            }
+        }
+    });
+
+    Ok(Json(SubmitResponse { task_id }))
+}

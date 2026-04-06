@@ -8,7 +8,8 @@ use axum::Router;
 use tower_http::cors::CorsLayer;
 
 use crate::server::handlers::{
-    backtests, chat as chat_handlers, forward_tests, profiles, runs, strategies, sweeps, tasks,
+    backtests, chat as chat_handlers, forward_tests, pipeline, profiles, runs, strategies, sweeps,
+    tasks,
 };
 use crate::server::state::AppState;
 
@@ -119,6 +120,10 @@ pub fn build_api_router(state: AppState) -> Router {
             "/walk-forward",
             axum::routing::post(crate::server::handlers::walk_forward::run_walk_forward),
         )
+        .route(
+            "/runs/pipeline",
+            axum::routing::post(pipeline::create_pipeline),
+        )
         .with_state(state.clone());
 
     let task_routes = Router::new()
@@ -131,6 +136,10 @@ pub fn build_api_router(state: AppState) -> Router {
         .route(
             "/tasks/walk-forward",
             axum::routing::post(tasks::submit_walk_forward),
+        )
+        .route(
+            "/tasks/pipeline",
+            axum::routing::post(tasks::submit_pipeline),
         )
         .route(
             "/tasks/{id}",
