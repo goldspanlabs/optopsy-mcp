@@ -5,9 +5,9 @@ use std::hash::BuildHasher;
 use std::sync::Arc;
 
 use anyhow::Result;
-use axum::http::StatusCode;
 use serde_json::Value;
 
+use crate::application::error::{ApplicationError, ApplicationResult};
 use crate::data::traits::{RunStore, TradeRow};
 use crate::scripting::engine::{
     CachingDataLoader, CancelCallback, ProgressCallback, ScriptBacktestResult,
@@ -94,7 +94,7 @@ pub async fn execute_script_with_progress(
 pub fn resolve_symbol<S: BuildHasher>(
     response: &RunScriptResponse,
     params: &HashMap<String, Value, S>,
-) -> Result<String, (StatusCode, String)> {
+) -> ApplicationResult<String> {
     response
         .result
         .symbol
@@ -103,10 +103,7 @@ pub fn resolve_symbol<S: BuildHasher>(
         .or_else(|| params.get("symbol").and_then(Value::as_str))
         .map(ToOwned::to_owned)
         .ok_or_else(|| {
-            (
-                StatusCode::BAD_REQUEST,
-                "No symbol resolved — declare an `asset` in the script".to_string(),
-            )
+            ApplicationError::invalid_input("No symbol resolved — declare an `asset` in the script")
         })
 }
 
@@ -149,15 +146,15 @@ pub fn persist_backtest<S: BuildHasher>(
     response: &RunScriptResponse,
     source: &str,
     thread_id: Option<&str>,
-) -> Result<(String, String), (StatusCode, String)> {
+) -> ApplicationResult<(String, String)> {
     let id = uuid::Uuid::new_v4().to_string();
     let symbol = resolve_symbol(response, params)?;
     let capital = resolve_capital(params);
     let m = &response.result.metrics;
     let trades = build_trades(response);
     let result_json = strip_trades_from_result_json(response);
-    let params_value = serde_json::to_value(params)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let params_value =
+        serde_json::to_value(params).map_err(|e| ApplicationError::internal(e.to_string()))?;
 
     let hypothesis = response
         .script_meta
@@ -206,11 +203,11 @@ pub fn persist_backtest<S: BuildHasher>(
             source,
             thread_id,
         )
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| ApplicationError::storage(e.to_string()))?;
 
     run_store
         .insert_trades(&id, &trades)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| ApplicationError::storage(e.to_string()))?;
 
     Ok((id, created_at))
 }

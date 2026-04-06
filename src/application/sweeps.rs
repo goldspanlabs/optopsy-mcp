@@ -4,10 +4,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
-use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::application::error::{ApplicationError, ApplicationResult};
 use crate::data::traits::{RunStore, StrategyStore, TradeRow};
 use crate::engine::bayesian::{run_bayesian, BayesianConfig};
 use crate::engine::permutation::apply_permutation_gate;
@@ -20,11 +20,11 @@ use crate::tools::response_types::sweep::SweepResponse;
 const DEFAULT_SCRIPT_SYMBOL: &str = "SPY";
 const DEFAULT_SCRIPT_CAPITAL: f64 = 100_000.0;
 
-fn default_objective() -> String {
+pub fn default_objective() -> String {
     "sharpe".to_string()
 }
 
-fn default_max_evaluations() -> usize {
+pub fn default_max_evaluations() -> usize {
     50
 }
 
@@ -113,34 +113,31 @@ pub fn build_grid(sweep_params: &[SweepParamDef]) -> Result<HashMap<String, Vec<
 pub fn resolve_strategy_source_from_store(
     store: &dyn StrategyStore,
     name_or_id: &str,
-) -> Result<(String, String), (StatusCode, String)> {
+) -> ApplicationResult<(String, String)> {
     let (id, raw) = match store.get_source(name_or_id) {
         Ok(Some(source)) => (name_or_id.to_string(), source),
         Ok(None) => match store.get_source_by_name(name_or_id) {
             Ok(Some((id, source))) => (id, source),
             Ok(None) => {
-                return Err((
-                    StatusCode::NOT_FOUND,
-                    format!("Strategy '{name_or_id}' not found"),
-                ));
+                return Err(ApplicationError::not_found(format!(
+                    "Strategy '{name_or_id}' not found"
+                )))
             }
             Err(e) => {
-                return Err((
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Failed to resolve strategy '{name_or_id}' by name: {e}"),
-                ));
+                return Err(ApplicationError::storage(format!(
+                    "Failed to resolve strategy '{name_or_id}' by name: {e}"
+                )))
             }
         },
         Err(e) => {
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to resolve strategy '{name_or_id}' by id: {e}"),
-            ));
+            return Err(ApplicationError::storage(format!(
+                "Failed to resolve strategy '{name_or_id}' by id: {e}"
+            )))
         }
     };
 
     let source = crate::tools::run_script::maybe_transpile(raw)
-        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+        .map_err(|e| ApplicationError::invalid_input(e.to_string()))?;
     Ok((id, source))
 }
 
@@ -155,7 +152,7 @@ pub fn persist_sweep_to_store(
     script_meta: &crate::scripting::stdlib::ScriptMeta,
     source: &str,
     thread_id: Option<&str>,
-) -> Result<String, (StatusCode, String)> {
+) -> ApplicationResult<String> {
     let sweep_id = uuid::Uuid::new_v4().to_string();
 
     let sweep_config = serde_json::json!({
@@ -179,7 +176,7 @@ pub fn persist_sweep_to_store(
             source,
             thread_id,
         )
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| ApplicationError::storage(e.to_string()))?;
 
     let capital = req
         .params
@@ -247,7 +244,7 @@ pub fn persist_sweep_to_store(
                 source,
                 thread_id,
             )
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| ApplicationError::storage(e.to_string()))?;
 
         if let Some(full_result) = full {
             let trades: Vec<TradeRow> = full_result
@@ -258,7 +255,7 @@ pub fn persist_sweep_to_store(
                 .collect();
             run_store
                 .insert_trades(&run_id, &trades)
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                .map_err(|e| ApplicationError::storage(e.to_string()))?;
         }
     }
 
@@ -299,8 +296,7 @@ fn resolve_execution_context(
     let strategy_store = server.require_strategy_store()?;
 
     let (strategy_key, script_source) =
-        resolve_strategy_source_from_store(strategy_store.as_ref(), &req.strategy)
-            .map_err(|(_status, msg)| anyhow::anyhow!("{msg}"))?;
+        resolve_strategy_source_from_store(strategy_store.as_ref(), &req.strategy)?;
     let script_meta = crate::scripting::stdlib::parse_script_meta(&strategy_key, &script_source);
 
     Ok(SweepExecutionContext {
@@ -415,8 +411,7 @@ pub async fn execute_sweep(
         &context.script_meta,
         source,
         thread_id,
-    )
-    .map_err(|(_status, msg)| anyhow::anyhow!("{msg}"))?;
+    )?;
 
     let run_ids = load_run_ids(run_store, &sweep_id)?;
 

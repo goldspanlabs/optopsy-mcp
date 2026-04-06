@@ -21,25 +21,17 @@ fn default_mode() -> String {
     "grid".to_string()
 }
 
-fn default_objective() -> String {
-    "sharpe".to_string()
-}
-
-fn default_max_evaluations() -> usize {
-    50
-}
-
 /// Request body for `POST /runs/pipeline`.
 #[derive(Debug, Deserialize)]
 pub struct CreatePipelineRequest {
     pub strategy: String,
     #[serde(default = "default_mode")]
     pub mode: String,
-    #[serde(default = "default_objective")]
+    #[serde(default = "crate::application::sweeps::default_objective")]
     pub objective: String,
     pub params: HashMap<String, Value>,
     pub sweep_params: Vec<SweepParamDef>,
-    #[serde(default = "default_max_evaluations")]
+    #[serde(default = "crate::application::sweeps::default_max_evaluations")]
     pub max_evaluations: usize,
     #[serde(default)]
     pub num_permutations: usize,

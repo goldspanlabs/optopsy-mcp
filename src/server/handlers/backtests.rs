@@ -13,8 +13,18 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::application::backtests;
+use crate::application::error::{ApplicationError, ApplicationErrorKind};
 use crate::server::state::AppState;
 use crate::tools::run_script::RunScriptParams;
+
+fn app_error_message(error: &ApplicationError) -> String {
+    match error.kind() {
+        ApplicationErrorKind::Storage | ApplicationErrorKind::Internal => {
+            format!("DB insert failed: {error}")
+        }
+        _ => error.to_string(),
+    }
+}
 
 /// Request body for `POST /runs`.
 #[derive(Debug, Deserialize)]
@@ -113,12 +123,12 @@ pub async fn create_backtest(
                             let _ = tx.send(Event::default().event("result").data(json)).await;
                         }
                     }
-                    Err((_status, msg)) => {
+                    Err(error) => {
                         let _ = tx
                             .send(
                                 Event::default()
                                     .event("error")
-                                    .data(format!("DB insert failed: {msg}")),
+                                    .data(app_error_message(&error)),
                             )
                             .await;
                     }

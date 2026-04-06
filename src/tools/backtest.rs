@@ -222,7 +222,7 @@ async fn execute_single(
     let response = exec_result.response;
 
     let symbol = backtests::resolve_symbol(&response, &params.params)
-        .map_err(|(_status, msg)| anyhow::anyhow!("{msg}"))?;
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
     let (run_id, _created_at) = backtests::persist_backtest(
         run_store.as_ref(),
@@ -232,7 +232,7 @@ async fn execute_single(
         "agent",
         params.thread_id.as_deref(),
     )
-    .map_err(|(_status, msg)| anyhow::anyhow!("{msg}"))?;
+    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
     let upper = symbol.to_uppercase();
     let suggested_next_steps = vec![

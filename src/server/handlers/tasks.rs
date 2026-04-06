@@ -16,9 +16,10 @@ use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use crate::application::error::{ApplicationError, ApplicationErrorKind};
 use crate::application::{backtests, pipeline, sweeps, tasks as app_tasks};
 use crate::engine::walk_forward::{WalkForwardParams, WfMode, WfObjective};
-use crate::scripting::engine::{CachingDataLoader, CancelCallback};
+use crate::scripting::engine::CachingDataLoader;
 use crate::server::state::AppState;
 use crate::server::task_manager::{TaskInfo, TaskKind, TaskStatus};
 use crate::tools::run_script::RunScriptParams;
@@ -41,25 +42,17 @@ pub struct SubmitBacktestRequest {
 pub struct SubmitSweepRequest {
     pub strategy: String,
     pub mode: String,
-    #[serde(default = "default_objective")]
+    #[serde(default = "sweeps::default_objective")]
     pub objective: String,
     pub params: HashMap<String, Value>,
     pub sweep_params: Vec<sweeps::SweepParamDef>,
-    #[serde(default = "default_max_evaluations")]
+    #[serde(default = "sweeps::default_max_evaluations")]
     pub max_evaluations: usize,
     /// Number of permutations for significance testing. Default 0 (off).
     #[serde(default)]
     pub num_permutations: usize,
     #[serde(default)]
     pub thread_id: Option<String>,
-}
-
-fn default_objective() -> String {
-    "sharpe".to_string()
-}
-
-fn default_max_evaluations() -> usize {
-    50
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,7 +67,7 @@ pub struct SubmitWalkForwardRequest {
     pub train_pct: f64,
     #[serde(default = "default_wf_mode")]
     pub mode: String,
-    #[serde(default = "default_objective")]
+    #[serde(default = "sweeps::default_objective")]
     pub objective: String,
     #[serde(default)]
     pub thread_id: Option<String>,
@@ -112,6 +105,15 @@ pub struct TaskSnapshot {
     pub result: Option<Value>,
     pub result_id: Option<String>,
     pub error: Option<String>,
+}
+
+fn app_error_message(error: &ApplicationError) -> String {
+    match error.kind() {
+        ApplicationErrorKind::Storage | ApplicationErrorKind::Internal => {
+            format!("DB insert failed: {error}")
+        }
+        _ => error.to_string(),
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -206,10 +208,7 @@ pub async fn submit_backtest(
                 "manual",
                 req.thread_id.as_deref(),
             )
-            .map_err(|(status, msg)| match status {
-                StatusCode::INTERNAL_SERVER_ERROR => format!("DB insert failed: {msg}"),
-                _ => msg,
-            })?;
+            .map_err(|error| app_error_message(&error))?;
 
             let result_json = run_store
                 .get_run(&id)
@@ -336,163 +335,117 @@ pub async fn submit_walk_forward(
     let server = state.server.clone();
     let run_store = Arc::clone(&state.run_store);
     tokio::spawn(async move {
-        // Wait for permit (or cancellation)
-        let permit = tokio::select! {
-            p = tm.acquire_permit() => p,
-            () = task.cancellation_token.cancelled() => {
-                tm.mark_cancelled(&task.id);
-                return;
-            }
-        };
+        app_tasks::execute_queued_task(tm, Arc::clone(&task), async move {
+            let strategy_store = server.require_strategy_store().map_err(|e| e.to_string())?;
+            let (strategy_key, script_source) =
+                sweeps::resolve_strategy_source_from_store(strategy_store.as_ref(), &req.strategy)
+                    .map_err(|e| e.to_string())?;
 
-        if task.cancellation_token.is_cancelled() {
-            tm.mark_cancelled(&task.id);
-            drop(permit);
-            return;
-        }
+            let symbol = if symbol_from_params {
+                symbol
+            } else {
+                crate::scripting::engine::resolve_symbols_from_extern_params(
+                    &script_source,
+                    &req.params,
+                )
+                .into_iter()
+                .next()
+                .unwrap_or(symbol)
+            };
 
-        tm.mark_running(&task.id);
+            let loader =
+                CachingDataLoader::new(Arc::clone(&server.cache), server.adjustment_store_handle());
+            let is_cancelled = app_tasks::cancel_callback(&task);
+            let on_progress = app_tasks::progress_callback(&task);
 
-        // Resolve strategy
-        let strategy_store = match server.require_strategy_store() {
-            Ok(store) => store,
-            Err(e) => {
-                tm.mark_failed(&task.id, e.to_string());
-                drop(permit);
-                return;
-            }
-        };
+            let wf_mode = match req.mode.as_str() {
+                "rolling" => WfMode::Rolling,
+                "anchored" => WfMode::Anchored,
+                other => return Err(format!("Invalid walk-forward mode '{other}'")),
+            };
 
-        let (strategy_key, script_source) = match sweeps::resolve_strategy_source_from_store(
-            strategy_store.as_ref(),
-            &req.strategy,
-        ) {
-            Ok(v) => v,
-            Err((_status, msg)) => {
-                tm.mark_failed(&task.id, msg);
-                drop(permit);
-                return;
-            }
-        };
+            let wf_objective = match req.objective.as_str() {
+                "sharpe" => WfObjective::Sharpe,
+                "sortino" => WfObjective::Sortino,
+                "profit_factor" => WfObjective::ProfitFactor,
+                "cagr" => WfObjective::Cagr,
+                other => return Err(format!("Invalid walk-forward objective '{other}'")),
+            };
 
-        // Resolve symbol from script if not explicitly in params
-        let symbol = if symbol_from_params {
-            symbol
-        } else {
-            crate::scripting::engine::resolve_symbols_from_extern_params(
-                &script_source,
-                &req.params,
+            let wf_params = WalkForwardParams {
+                strategy: strategy_key,
+                symbol,
+                capital: req
+                    .params
+                    .get("CAPITAL")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(100_000.0),
+                params_grid: sweeps::build_grid(&req.sweep_params)?,
+                objective: wf_objective,
+                mode: wf_mode,
+                n_windows: req.n_windows,
+                train_pct: req.train_pct,
+                start_date: req
+                    .params
+                    .get("START_DATE")
+                    .and_then(Value::as_str)
+                    .map(String::from),
+                end_date: req
+                    .params
+                    .get("END_DATE")
+                    .and_then(Value::as_str)
+                    .map(String::from),
+                profile: req
+                    .params
+                    .get("PROFILE")
+                    .and_then(Value::as_str)
+                    .map(String::from),
+                script_source: Some(script_source),
+                base_params: Some(req.params.clone()),
+            };
+
+            let wf_response = match crate::engine::walk_forward::execute(
+                wf_params,
+                &loader,
+                &is_cancelled,
+                &on_progress,
             )
-            .into_iter()
-            .next()
-            .unwrap_or(symbol)
-        };
-
-        let loader =
-            CachingDataLoader::new(Arc::clone(&server.cache), server.adjustment_store_handle());
-
-        // Build cancellation check from task token
-        let token = task.cancellation_token.clone();
-        let is_cancelled: CancelCallback = Box::new(move || token.is_cancelled());
-
-        // Progress callback using task atomics
-        let task_for_progress = Arc::clone(&task);
-        let on_progress = move |cur: usize, tot: usize| {
-            task_for_progress
-                .progress_current
-                .store(cur, Ordering::Relaxed);
-            task_for_progress
-                .progress_total
-                .store(tot, Ordering::Relaxed);
-        };
-
-        // Map mode string to WfMode enum — reject invalid values
-        let wf_mode = match req.mode.as_str() {
-            "rolling" => WfMode::Rolling,
-            "anchored" => WfMode::Anchored,
-            other => {
-                tm.mark_failed(&task.id, format!("Invalid walk-forward mode '{other}'"));
-                drop(permit);
-                return;
-            }
-        };
-
-        // Map objective string to WfObjective enum — reject invalid values
-        let wf_objective = match req.objective.as_str() {
-            "sharpe" => WfObjective::Sharpe,
-            "sortino" => WfObjective::Sortino,
-            "profit_factor" => WfObjective::ProfitFactor,
-            "cagr" => WfObjective::Cagr,
-            other => {
-                tm.mark_failed(
-                    &task.id,
-                    format!("Invalid walk-forward objective '{other}'"),
-                );
-                drop(permit);
-                return;
-            }
-        };
-
-        let capital = req
-            .params
-            .get("CAPITAL")
-            .and_then(Value::as_f64)
-            .unwrap_or(100_000.0);
-
-        let wf_params = WalkForwardParams {
-            strategy: strategy_key.clone(),
-            symbol: symbol.clone(),
-            capital,
-            params_grid: match sweeps::build_grid(&req.sweep_params) {
-                Ok(grid) => grid,
-                Err(msg) => {
-                    tm.mark_failed(&task.id, msg);
-                    drop(permit);
-                    return;
+            .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    if !task.cancellation_token.is_cancelled() {
+                        let failed_id = uuid::Uuid::new_v4().to_string();
+                        let _ = run_store.insert_walk_forward_validation(
+                            &failed_id,
+                            &req.sweep_id,
+                            req.n_windows as i64,
+                            req.train_pct,
+                            &req.mode,
+                            &req.objective,
+                            None,
+                            None,
+                            None,
+                            None,
+                            "failed",
+                            None,
+                            None,
+                        );
+                    }
+                    return Err(error.to_string());
                 }
-            },
-            objective: wf_objective,
-            mode: wf_mode,
-            n_windows: req.n_windows,
-            train_pct: req.train_pct,
-            start_date: req
-                .params
-                .get("START_DATE")
-                .and_then(Value::as_str)
-                .map(String::from),
-            end_date: req
-                .params
-                .get("END_DATE")
-                .and_then(Value::as_str)
-                .map(String::from),
-            profile: req
-                .params
-                .get("PROFILE")
-                .and_then(Value::as_str)
-                .map(String::from),
-            script_source: Some(script_source),
-            base_params: Some(req.params.clone()),
-        };
+            };
 
-        let wf_result =
-            crate::engine::walk_forward::execute(wf_params, &loader, &is_cancelled, &on_progress)
-                .await;
+            let validation_id = uuid::Uuid::new_v4().to_string();
+            let window_results_json = serde_json::to_string(&wf_response.windows).ok();
+            let status = if task.cancellation_token.is_cancelled() {
+                "cancelled"
+            } else {
+                "completed"
+            };
 
-        drop(permit);
-
-        match wf_result {
-            Ok(wf_response) => {
-                let status = if task.cancellation_token.is_cancelled() {
-                    "cancelled"
-                } else {
-                    "completed"
-                };
-                let validation_id = uuid::Uuid::new_v4().to_string();
-
-                // Serialize per-window results to JSON for persistence
-                let window_results_json = serde_json::to_string(&wf_response.windows).ok();
-
-                match run_store.insert_walk_forward_validation(
+            run_store
+                .insert_walk_forward_validation(
                     &validation_id,
                     &req.sweep_id,
                     req.n_windows as i64,
@@ -506,50 +459,22 @@ pub async fn submit_walk_forward(
                     status,
                     Some(wf_response.execution_time_ms as i64),
                     window_results_json.as_deref(),
-                ) {
-                    Ok(_) => {
-                        if task.cancellation_token.is_cancelled() {
-                            tm.mark_cancelled(&task.id);
-                        } else {
-                            let result_json = run_store
-                                .get_sweep(&req.sweep_id)
-                                .ok()
-                                .flatten()
-                                .and_then(|d| serde_json::to_value(&d).ok())
-                                .unwrap_or(Value::Null);
-                            tm.mark_completed(&task.id, result_json, validation_id);
-                        }
-                    }
-                    Err(e) => {
-                        tm.mark_failed(&task.id, format!("DB insert failed: {e}"));
-                    }
-                }
-            }
-            Err(e) => {
-                if task.cancellation_token.is_cancelled() {
-                    tm.mark_cancelled(&task.id);
-                } else {
-                    // Mark WF as failed in DB too
-                    let failed_id = uuid::Uuid::new_v4().to_string();
-                    let _ = run_store.insert_walk_forward_validation(
-                        &failed_id,
-                        &req.sweep_id,
-                        req.n_windows as i64,
-                        req.train_pct,
-                        &req.mode,
-                        &req.objective,
-                        None,
-                        None,
-                        None,
-                        None,
-                        "failed",
-                        None,
-                        None,
-                    );
-                    tm.mark_failed(&task.id, e.to_string());
-                }
-            }
-        }
+                )
+                .map_err(|e| format!("DB insert failed: {e}"))?;
+
+            let result_json = run_store
+                .get_sweep(&req.sweep_id)
+                .ok()
+                .flatten()
+                .and_then(|d| serde_json::to_value(&d).ok())
+                .unwrap_or(Value::Null);
+
+            Ok(app_tasks::TaskCompletion {
+                result_json,
+                result_id: validation_id,
+            })
+        })
+        .await;
     });
 
     Ok(Json(SubmitResponse { task_id }))
