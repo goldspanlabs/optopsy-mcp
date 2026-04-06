@@ -17,6 +17,8 @@ use crate::server::sanitize::{sanitize, trade_row_from_record};
 use crate::server::OptopsyServer;
 use crate::tools::run_script::{format_indicator_data, RunScriptParams, RunScriptResponse};
 
+const DEFAULT_SCRIPT_CAPITAL: f64 = 100_000.0;
+
 /// Result of executing a script: the response plus the resolved strategy ID (if any).
 pub struct ExecuteResult {
     pub response: RunScriptResponse,
@@ -110,7 +112,10 @@ pub fn resolve_symbol<S: BuildHasher>(
 /// Resolve the capital value used by the backtest.
 #[must_use]
 pub fn resolve_capital<S: BuildHasher>(params: &HashMap<String, Value, S>) -> f64 {
-    params.get("CAPITAL").and_then(Value::as_f64).unwrap_or(0.0)
+    params
+        .get("CAPITAL")
+        .and_then(Value::as_f64)
+        .unwrap_or(DEFAULT_SCRIPT_CAPITAL)
 }
 
 fn build_trades(response: &RunScriptResponse) -> Vec<TradeRow> {

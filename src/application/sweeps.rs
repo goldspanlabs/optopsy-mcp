@@ -17,6 +17,9 @@ use crate::server::sanitize::{sanitize, trade_row_from_record};
 use crate::server::OptopsyServer;
 use crate::tools::response_types::sweep::SweepResponse;
 
+const DEFAULT_SCRIPT_SYMBOL: &str = "SPY";
+const DEFAULT_SCRIPT_CAPITAL: f64 = 100_000.0;
+
 fn default_objective() -> String {
     "sharpe".to_string()
 }
@@ -64,11 +67,23 @@ pub struct ExecuteSweepResult {
 }
 
 /// Build a Cartesian grid from sweep param definitions.
-pub fn build_grid(sweep_params: &[SweepParamDef]) -> HashMap<String, Vec<Value>> {
+pub fn build_grid(sweep_params: &[SweepParamDef]) -> Result<HashMap<String, Vec<Value>>, String> {
     let mut grid: HashMap<String, Vec<Value>> = HashMap::new();
     for sp in sweep_params {
         let is_int = sp.param_type == "int";
         let step = sp.step.unwrap_or(if is_int { 1.0 } else { 0.01 });
+        if sp.stop < sp.start {
+            return Err(format!(
+                "Invalid sweep param '{}' range: stop ({}) must be >= start ({})",
+                sp.name, sp.stop, sp.start
+            ));
+        }
+        if step <= 0.0 {
+            return Err(format!(
+                "Invalid sweep param '{}' step: step must be > 0",
+                sp.name
+            ));
+        }
         let mut v = sp.start;
         let mut values = Vec::new();
         while v <= sp.stop + f64::EPSILON {
@@ -82,7 +97,7 @@ pub fn build_grid(sweep_params: &[SweepParamDef]) -> HashMap<String, Vec<Value>>
         }
         grid.insert(sp.name.clone(), values);
     }
-    grid
+    Ok(grid)
 }
 
 /// Resolve strategy source from a strategy store.
@@ -161,7 +176,7 @@ pub fn persist_sweep_to_store(
         .params
         .get("CAPITAL")
         .and_then(Value::as_f64)
-        .unwrap_or(0.0);
+        .unwrap_or(DEFAULT_SCRIPT_CAPITAL);
 
     for (i, result) in sweep_response.ranked_results.iter().enumerate() {
         let run_id = uuid::Uuid::new_v4().to_string();
@@ -279,12 +294,12 @@ pub async fn execute_sweep(
             .into_iter()
             .next()
         })
-        .unwrap_or_else(|| "pending".to_string());
+        .unwrap_or_else(|| DEFAULT_SCRIPT_SYMBOL.to_string());
     let capital = req
         .params
         .get("CAPITAL")
         .and_then(Value::as_f64)
-        .unwrap_or(100_000.0);
+        .unwrap_or(DEFAULT_SCRIPT_CAPITAL);
 
     let noop_progress: ProgressCallback = Box::new(|_, _| {});
     let progress_ref = progress.as_ref().unwrap_or(&noop_progress);
@@ -296,7 +311,7 @@ pub async fn execute_sweep(
             let config = GridSweepConfig {
                 script_source,
                 base_params: req.params.clone(),
-                param_grid: build_grid(&req.sweep_params),
+                param_grid: build_grid(&req.sweep_params).map_err(anyhow::Error::msg)?,
                 objective: req.objective.clone(),
             };
             run_grid_sweep(&config, Arc::clone(&loader), cancel_ref, progress_ref).await?

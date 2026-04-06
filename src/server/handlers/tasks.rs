@@ -434,7 +434,14 @@ pub async fn submit_walk_forward(
             strategy: strategy_key.clone(),
             symbol: symbol.clone(),
             capital,
-            params_grid: sweeps::build_grid(&req.sweep_params),
+            params_grid: match sweeps::build_grid(&req.sweep_params) {
+                Ok(grid) => grid,
+                Err(msg) => {
+                    tm.mark_failed(&task.id, msg);
+                    drop(permit);
+                    return;
+                }
+            },
             objective: wf_objective,
             mode: wf_mode,
             n_windows: req.n_windows,
