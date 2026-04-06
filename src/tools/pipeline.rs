@@ -1,6 +1,6 @@
 //! Backtest pipeline orchestrator.
 //!
-//! When `pipeline=true` (default) on a sweep, this module chains:
+//! When `pipeline=true` on a sweep, this module chains:
 //! sweep -> significance gate -> walk-forward -> OOS data gate -> monte carlo.
 //! Each stage is fail-tolerant and reports status for frontend rendering.
 
