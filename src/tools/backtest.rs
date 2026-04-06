@@ -8,6 +8,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::application::backtests;
 use crate::engine::bayesian::{run_bayesian, BayesianConfig};
 use crate::engine::permutation::apply_permutation_gate;
 use crate::engine::sweep::{run_grid_sweep, GridSweepConfig};
@@ -218,33 +219,18 @@ async fn execute_single(
         profile: None,
     };
 
-    let exec_result = crate::server::handlers::run_script::execute(server, run_params).await?;
+    let exec_result = backtests::execute_script(server, run_params).await?;
     let strategy_key = exec_result
         .resolved_strategy_id
         .unwrap_or_else(|| params.strategy.clone());
     let response = exec_result.response;
 
-    // Symbol must come from the engine result (resolved from asset/extern_symbol).
-    let symbol = response
-        .result
-        .symbol
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .or_else(|| params.params.get("symbol").and_then(Value::as_str))
-        .ok_or_else(|| anyhow::anyhow!("No symbol resolved — declare an `asset` in the script"))?
-        .to_owned();
-    let capital = params
-        .params
-        .get("CAPITAL")
-        .and_then(Value::as_f64)
-        .unwrap_or(0.0);
+    let symbol = backtests::resolve_symbol(&response, &params.params)
+        .map_err(|(_status, msg)| anyhow::anyhow!("{msg}"))?;
 
-    // Persist via the existing backtest persistence helper
-    let (run_id, _created_at) = crate::server::handlers::backtests::persist_backtest(
+    let (run_id, _created_at) = backtests::persist_backtest(
         run_store.as_ref(),
         &strategy_key,
-        &symbol,
-        capital,
         &params.params,
         &response,
         "agent",

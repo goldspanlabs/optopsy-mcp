@@ -6,6 +6,7 @@
 // float_cmp: only in tests where assert_eq! on f64 is intentional.
 #![cfg_attr(test, allow(clippy::float_cmp))]
 
+pub mod application;
 pub mod constants;
 pub mod data;
 pub mod engine;

@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use crate::application::backtests;
 use crate::engine::bayesian::{run_bayesian, BayesianConfig};
 use crate::engine::permutation::apply_permutation_gate;
 use crate::engine::sweep::{run_grid_sweep, GridSweepConfig};
@@ -221,7 +222,7 @@ pub async fn submit_backtest(
             profile: req.profile.clone(),
         };
 
-        let result = super::run_script::execute_with_progress(
+        let result = backtests::execute_script_with_progress(
             &server,
             run_params,
             Some(progress_cb),
@@ -243,25 +244,10 @@ pub async fn submit_backtest(
                     .resolved_strategy_id
                     .unwrap_or_else(|| req.strategy.clone());
                 let response = exec_result.response;
-                let capital = req
-                    .params
-                    .get("CAPITAL")
-                    .and_then(Value::as_f64)
-                    .unwrap_or(0.0);
 
-                // Prefer symbol from engine result (resolves extern_symbol defaults)
-                let resolved_symbol = response
-                    .result
-                    .symbol
-                    .as_deref()
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or(&symbol);
-
-                match super::backtests::persist_backtest(
+                match backtests::persist_backtest(
                     run_store.as_ref(),
                     &strategy_key,
-                    resolved_symbol,
-                    capital,
                     &req.params,
                     &response,
                     "manual",
