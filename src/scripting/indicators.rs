@@ -12,6 +12,7 @@ use rust_ti::momentum_indicators::bulk as mti;
 use rust_ti::other_indicators::bulk as oti;
 use rust_ti::standard_indicators::bulk as sti;
 use rust_ti::trend_indicators::bulk as tti;
+use serde_json::Value;
 
 use super::types::OhlcvBar;
 
@@ -38,6 +39,37 @@ pub enum IndicatorParam {
 pub struct IndicatorStore {
     cache: HashMap<IndicatorKey, Vec<f64>>,
 }
+
+const PRECOMPUTED_INDICATORS: &[&str] = &[
+    "sma",
+    "ema",
+    "rsi",
+    "atr",
+    "macd_line",
+    "macd_signal",
+    "macd_hist",
+    "bbands_upper",
+    "bbands_mid",
+    "bbands_lower",
+    "stochastic",
+    "cci",
+    "obv",
+    "adx",
+    "plus_di",
+    "minus_di",
+    "psar",
+    "supertrend",
+    "keltner_upper",
+    "keltner_lower",
+    "donchian_upper",
+    "donchian_mid",
+    "donchian_lower",
+    "tr",
+    "williams_r",
+    "mfi",
+    "rank",
+    "iv_rank",
+];
 
 impl IndicatorStore {
     /// Create a new empty store.
@@ -148,6 +180,133 @@ impl Default for IndicatorStore {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Expand indicator declarations with runtime-resolved parameterized calls.
+///
+/// This lets sweeps over extern params like `BB_PERIOD` automatically precompute
+/// indicator series for calls such as `bbands_lower(BB_PERIOD)` and `sma(BB_PERIOD)`.
+#[must_use]
+pub fn augment_declarations_from_runtime_params(
+    declarations: &[String],
+    script_source: &str,
+    params: &HashMap<String, Value>,
+) -> Vec<String> {
+    use std::collections::HashSet;
+
+    let mut specs = declarations.to_vec();
+    let mut seen: HashSet<String> = declarations.iter().cloned().collect();
+    let bytes = script_source.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
+            let start = i;
+            while i < len && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            let word = &script_source[start..i];
+
+            if i < len
+                && bytes[i] == b'('
+                && PRECOMPUTED_INDICATORS.contains(&word)
+                && !matches!(bytes.get(start.saturating_sub(1)), Some(b) if b.is_ascii_alphanumeric() || *b == b'_')
+            {
+                let paren_start = i + 1;
+                let mut depth = 1usize;
+                let mut j = paren_start;
+                while j < len && depth > 0 {
+                    match bytes[j] {
+                        b'(' => depth += 1,
+                        b')' => depth -= 1,
+                        _ => {}
+                    }
+                    j += 1;
+                }
+
+                if depth == 0 {
+                    let args = &script_source[paren_start..j - 1];
+                    if let Some(spec) = indicator_spec_from_call(word, args, params) {
+                        if seen.insert(spec.clone()) {
+                            specs.push(spec);
+                        }
+                    }
+                    i = j;
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    specs
+}
+
+fn indicator_spec_from_call(
+    name: &str,
+    args: &str,
+    params: &HashMap<String, Value>,
+) -> Option<String> {
+    let resolved: Option<Vec<String>> = args
+        .split(',')
+        .map(str::trim)
+        .filter(|arg| !arg.is_empty())
+        .map(|arg| resolve_indicator_arg(name, arg, params))
+        .collect();
+
+    let resolved = resolved?;
+    if resolved.is_empty() {
+        return Some(name.to_string());
+    }
+    Some(format!("{name}:{}", resolved.join(":")))
+}
+
+fn resolve_indicator_arg(
+    indicator_name: &str,
+    arg: &str,
+    params: &HashMap<String, Value>,
+) -> Option<String> {
+    if let Ok(value) = arg.parse::<usize>() {
+        return Some(value.to_string());
+    }
+
+    if let Ok(value) = arg.parse::<f64>() {
+        return normalize_indicator_arg(indicator_name, value);
+    }
+
+    let param_value = params.get(arg)?;
+    if let Some(value) = param_value.as_u64() {
+        return Some(value.to_string());
+    }
+    if let Some(value) = param_value.as_i64() {
+        return Some(value.to_string());
+    }
+    if let Some(value) = param_value.as_f64() {
+        return normalize_indicator_arg(indicator_name, value);
+    }
+
+    None
+}
+
+fn normalize_indicator_arg(indicator_name: &str, value: f64) -> Option<String> {
+    if !value.is_finite() {
+        return None;
+    }
+
+    let scaled = match indicator_name {
+        "bbands_upper" | "bbands_lower" | "keltner_upper" | "keltner_lower" | "supertrend" => {
+            (value * 10.0).round()
+        }
+        "psar" => (value * 100.0).round(),
+        _ => value.round(),
+    };
+
+    if (scaled - scaled.round()).abs() > f64::EPSILON || scaled < 0.0 {
+        return None;
+    }
+
+    Some((scaled as i64).to_string())
 }
 
 /// Expand multi-series indicator families so that declaring any single variant
