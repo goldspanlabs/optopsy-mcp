@@ -919,14 +919,9 @@ pub async fn submit_pipeline(
     State(state): State<AppState>,
     Json(req): Json<super::pipeline::CreatePipelineRequest>,
 ) -> Result<Json<SubmitResponse>, (StatusCode, String)> {
-    if req.sweep_params.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "sweep_params must be non-empty for pipeline execution".to_string(),
-        ));
-    }
+    let params = super::pipeline::build_pipeline_params(req)?;
 
-    let symbol = req
+    let symbol = params
         .params
         .get("symbol")
         .and_then(Value::as_str)
@@ -934,13 +929,13 @@ pub async fn submit_pipeline(
         .to_owned();
 
     let params_json =
-        serde_json::to_value(&req.params).unwrap_or(Value::Object(serde_json::Map::default()));
+        serde_json::to_value(&params.params).unwrap_or(Value::Object(serde_json::Map::default()));
 
     let task = state.task_manager.register(
         TaskKind::Pipeline,
-        &req.strategy,
+        &params.strategy,
         &symbol,
-        req.thread_id.clone(),
+        params.thread_id.clone(),
         params_json,
     );
     let task_id = task.id.clone();
@@ -964,18 +959,6 @@ pub async fn submit_pipeline(
         }
 
         tm.mark_running(&task.id);
-
-        let params = crate::tools::backtest::BacktestToolParams {
-            strategy: req.strategy,
-            mode: req.mode,
-            objective: req.objective,
-            params: req.params,
-            sweep_params: req.sweep_params,
-            max_evaluations: req.max_evaluations,
-            num_permutations: req.num_permutations,
-            thread_id: req.thread_id,
-            pipeline: true,
-        };
 
         let result = crate::tools::backtest::execute(&server, params).await;
 

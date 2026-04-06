@@ -8,6 +8,7 @@
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
+use garde::Validate;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -47,11 +48,9 @@ pub struct CreatePipelineRequest {
     pub thread_id: Option<String>,
 }
 
-/// `POST /runs/pipeline` — run the full pipeline synchronously and return the result.
-pub async fn create_pipeline(
-    State(state): State<AppState>,
-    Json(req): Json<CreatePipelineRequest>,
-) -> Result<Json<PipelineResponse>, (StatusCode, String)> {
+pub(super) fn build_pipeline_params(
+    req: CreatePipelineRequest,
+) -> Result<BacktestToolParams, (StatusCode, String)> {
     if req.sweep_params.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -70,6 +69,20 @@ pub async fn create_pipeline(
         thread_id: req.thread_id,
         pipeline: true,
     };
+
+    params
+        .validate()
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Validation error: {e}")))?;
+
+    Ok(params)
+}
+
+/// `POST /runs/pipeline` — run the full pipeline synchronously and return the result.
+pub async fn create_pipeline(
+    State(state): State<AppState>,
+    Json(req): Json<CreatePipelineRequest>,
+) -> Result<Json<PipelineResponse>, (StatusCode, String)> {
+    let params = build_pipeline_params(req)?;
 
     let result = crate::tools::backtest::execute(&state.server, params)
         .await

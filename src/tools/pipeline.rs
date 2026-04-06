@@ -12,7 +12,7 @@ use serde_json::Value;
 use crate::constants::{MIN_RETURNS_FOR_BOOTSTRAP, P_VALUE_THRESHOLD};
 use crate::server::OptopsyServer;
 use crate::tools::response_types::pipeline::{PipelineResponse, StageInfo, StageStatus};
-use crate::tools::response_types::sweep::SweepResponse;
+use crate::tools::response_types::sweep::{SweepResponse, SweepResult};
 
 /// Number of top parameter combos to use when building the walk-forward grid.
 const TOP_COMBOS_FOR_WF: usize = 3;
@@ -51,10 +51,10 @@ pub async fn run_pipeline(
 
     // Collect top findings from sweep
     if let Some(best) = &sweep_response.best_result {
+        let (headline_metric, secondary_metric) =
+            best_sweep_combo_metrics(best, sweep_response.objective.as_str());
         key_findings.push(format!(
-            "Best sweep combo: Sharpe={:.2}, CAGR={:.1}%, max DD={:.1}% ({} trades)",
-            best.sharpe,
-            best.cagr * 100.0,
+            "Best sweep combo: {headline_metric}, {secondary_metric}, max DD={:.1}% ({} trades)",
             best.max_drawdown * 100.0,
             best.trades,
         ));
@@ -437,12 +437,7 @@ fn build_response(
     let best_metric = sweep
         .best_result
         .as_ref()
-        .map_or(0.0, |r| match objective.as_str() {
-            "sortino" => r.sortino,
-            "profit_factor" => r.profit_factor,
-            "cagr" => r.cagr,
-            _ => r.sharpe,
-        });
+        .map_or(0.0, |r| best_objective_metric(r, objective.as_str()).1);
     let summary = format!(
         "Pipeline completed: {completed}/{total} stages passed. \
          {} combos tested, best {objective}={best_metric:.2}.",
@@ -463,6 +458,36 @@ fn build_response(
         key_findings,
         suggested_next_steps,
         total_duration_ms: pipeline_start.elapsed().as_millis() as u64,
+    }
+}
+
+fn best_objective_metric(result: &SweepResult, objective: &str) -> (&'static str, f64) {
+    match objective {
+        "sortino" => ("Sortino", result.sortino),
+        "profit_factor" => ("Profit factor", result.profit_factor),
+        "cagr" => ("CAGR", result.cagr),
+        _ => ("Sharpe", result.sharpe),
+    }
+}
+
+fn best_sweep_combo_metrics(result: &SweepResult, objective: &str) -> (String, String) {
+    match objective {
+        "sortino" => (
+            format!("Sortino={:.2}", result.sortino),
+            format!("CAGR={:.1}%", result.cagr * 100.0),
+        ),
+        "profit_factor" => (
+            format!("Profit factor={:.2}", result.profit_factor),
+            format!("CAGR={:.1}%", result.cagr * 100.0),
+        ),
+        "cagr" => (
+            format!("CAGR={:.1}%", result.cagr * 100.0),
+            format!("Sharpe={:.2}", result.sharpe),
+        ),
+        _ => (
+            format!("Sharpe={:.2}", result.sharpe),
+            format!("CAGR={:.1}%", result.cagr * 100.0),
+        ),
     }
 }
 
@@ -558,5 +583,56 @@ mod tests {
 
         assert_eq!(grid["delta"].len(), 1); // deduplicated
         assert_eq!(grid["dte"].len(), 2);
+    }
+
+    #[test]
+    fn best_objective_metric_uses_requested_objective() {
+        let result = SweepResult {
+            rank: 1,
+            params: HashMap::new(),
+            sharpe: 1.2,
+            sortino: 2.4,
+            pnl: 1000.0,
+            trades: 10,
+            win_rate: 0.6,
+            max_drawdown: 0.1,
+            profit_factor: 1.8,
+            cagr: 0.15,
+            calmar: 1.5,
+            p_value: None,
+            significant: None,
+        };
+
+        assert_eq!(best_objective_metric(&result, "sortino"), ("Sortino", 2.4));
+        assert_eq!(
+            best_objective_metric(&result, "profit_factor"),
+            ("Profit factor", 1.8)
+        );
+        assert_eq!(best_objective_metric(&result, "cagr"), ("CAGR", 0.15));
+        assert_eq!(best_objective_metric(&result, "sharpe"), ("Sharpe", 1.2));
+    }
+
+    #[test]
+    fn best_sweep_combo_metrics_formats_cagr_without_duplication() {
+        let result = SweepResult {
+            rank: 1,
+            params: HashMap::new(),
+            sharpe: 1.2,
+            sortino: 2.4,
+            pnl: 1000.0,
+            trades: 10,
+            win_rate: 0.6,
+            max_drawdown: 0.1,
+            profit_factor: 1.8,
+            cagr: 0.15,
+            calmar: 1.5,
+            p_value: None,
+            significant: None,
+        };
+
+        assert_eq!(
+            best_sweep_combo_metrics(&result, "cagr"),
+            ("CAGR=15.0%".to_string(), "Sharpe=1.20".to_string())
+        );
     }
 }
