@@ -7,6 +7,7 @@
 #![cfg_attr(test, allow(clippy::float_cmp))]
 
 pub mod application;
+pub mod bootstrap;
 pub mod constants;
 pub mod data;
 pub mod engine;
