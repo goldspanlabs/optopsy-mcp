@@ -19,6 +19,7 @@ pub enum TaskKind {
     Single,
     Sweep,
     WalkForward,
+    Pipeline,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
