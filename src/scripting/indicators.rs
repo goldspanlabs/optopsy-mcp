@@ -211,7 +211,10 @@ pub fn augment_declarations_from_runtime_params(
             if i < len
                 && bytes[i] == b'('
                 && PRECOMPUTED_INDICATORS.contains(&word)
-                && !matches!(bytes.get(start.saturating_sub(1)), Some(b) if b.is_ascii_alphanumeric() || *b == b'_')
+                && !matches!(
+                    start.checked_sub(1).and_then(|idx| bytes.get(idx)),
+                    Some(b) if b.is_ascii_alphanumeric() || *b == b'_'
+                )
             {
                 let paren_start = i + 1;
                 let mut depth = 1usize;

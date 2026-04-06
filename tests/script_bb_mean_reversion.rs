@@ -262,7 +262,8 @@ async fn bb_entry_on_breakout_exit_on_reversion() {
     );
 }
 
-/// Test max hold exit: price stays above SMA for 10+ bars.
+/// Test max hold exit: price enters on an oversold dip and then recovers
+/// slowly without crossing back above the SMA for 10+ bars.
 #[tokio::test(flavor = "multi_thread")]
 async fn bb_max_hold_exit() {
     let mut bars = Vec::new();
@@ -286,21 +287,22 @@ async fn bb_max_hold_exit() {
         });
     }
 
-    // Bar 30: massive spike above upper BB
+    // Bar 30: sharp oversold dip below lower BB
     let spike_date = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap() + chrono::Duration::days(30);
     bars.push(OhlcvBar {
         datetime: spike_date.and_hms_opt(0, 0, 0).unwrap(),
         open: 100.0,
-        high: 106.0,
-        low: 99.8,
-        close: 105.0,
+        high: 100.2,
+        low: 94.0,
+        close: 95.0,
         volume: 2_000_000.0,
     });
 
-    // Bars 31-42: price stays ABOVE SMA for 12 bars (forces max_hold at day 10)
+    // Bars 31-42: recovery remains muted for 12 bars so price stays below the
+    // rolling SMA long enough to force a max-hold exit before mean reversion.
     for i in 1..=12 {
         let date = spike_date + chrono::Duration::days(i);
-        let close = 103.0 + (i as f64 * 0.1); // slowly rising, stays well above SMA
+        let close = 95.2 + (i as f64 * 0.08);
         bars.push(OhlcvBar {
             datetime: date.and_hms_opt(0, 0, 0).unwrap(),
             open: close - 0.1,
