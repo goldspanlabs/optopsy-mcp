@@ -7,6 +7,7 @@ pub mod adjustment_store;
 pub mod cache;
 pub mod chat_store;
 pub mod database;
+pub mod forward_test_store;
 pub mod parquet;
 pub mod run_store;
 pub mod strategy_store;

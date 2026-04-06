@@ -10,6 +10,7 @@ pub mod correlate;
 pub mod distribution;
 pub mod drawdown_analysis;
 pub mod factor_attribution;
+pub mod forward_test;
 pub mod hypothesis;
 pub mod list_symbols;
 pub mod monte_carlo;

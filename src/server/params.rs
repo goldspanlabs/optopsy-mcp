@@ -623,6 +623,73 @@ pub struct WalkForwardToolParams {
     pub profile: Option<String>,
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Forward Test
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Parameters for the `start_forward_test` tool.
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+pub struct StartForwardTestParams {
+    /// Strategy name (display name or ID from the strategy store).
+    #[garde(length(min = 1))]
+    pub strategy: String,
+
+    /// Symbol to forward test.
+    #[garde(length(min = 1))]
+    pub symbol: String,
+
+    /// Starting capital.
+    #[serde(default = "default_capital")]
+    #[garde(range(min = 1.0))]
+    pub capital: f64,
+
+    /// Parameters to inject into the script (frozen from your sweep/backtest).
+    #[serde(default)]
+    #[garde(skip)]
+    pub params: std::collections::HashMap<String, serde_json::Value>,
+
+    /// Start date for the forward test (ISO format, e.g. "2026-01-01").
+    /// If omitted, uses whatever date range the data supports.
+    #[serde(default)]
+    #[garde(skip)]
+    pub start_date: Option<String>,
+
+    /// Baseline Sharpe ratio from the backtest (for drift detection).
+    #[serde(default)]
+    #[garde(skip)]
+    pub baseline_sharpe: Option<f64>,
+
+    /// Baseline win rate from the backtest (for drift detection).
+    #[serde(default)]
+    #[garde(skip)]
+    pub baseline_win_rate: Option<f64>,
+
+    /// Baseline max drawdown from the backtest (for drift detection).
+    #[serde(default)]
+    #[garde(skip)]
+    pub baseline_max_dd: Option<f64>,
+}
+
+/// Parameters for the `step_forward_test` tool.
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+pub struct StepForwardTestParams {
+    /// Session ID returned by `start_forward_test`.
+    #[garde(length(min = 1))]
+    pub session_id: String,
+}
+
+/// Parameters for the `forward_test_status` tool.
+#[derive(Debug, Deserialize, JsonSchema, Validate)]
+pub struct ForwardTestStatusParams {
+    /// Session ID returned by `start_forward_test`.
+    #[garde(length(min = 1))]
+    pub session_id: String,
+}
+
+fn default_capital() -> f64 {
+    100_000.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
