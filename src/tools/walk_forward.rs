@@ -36,6 +36,8 @@ pub async fn execute(
     start_date: Option<String>,
     end_date: Option<String>,
     profile: Option<String>,
+    script_source: Option<String>,
+    base_params: Option<HashMap<String, Value>>,
 ) -> Result<WalkForwardResponse> {
     let wf_objective = match objective.as_deref() {
         Some("sortino") => WfObjective::Sortino,
@@ -66,8 +68,8 @@ pub async fn execute(
         start_date,
         end_date,
         profile,
-        script_source: None,
-        base_params: None,
+        script_source,
+        base_params,
     };
 
     let obj_str = engine_params.objective.clone();

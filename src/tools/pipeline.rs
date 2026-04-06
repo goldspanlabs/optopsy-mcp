@@ -115,6 +115,31 @@ pub async fn run_pipeline(
     let params_grid = build_wf_params_grid(&top_combos);
     let wf_start = std::time::Instant::now();
 
+    // Resolve script source from strategy store so WF doesn't need filesystem access
+    let script_source = server
+        .strategy_store
+        .as_ref()
+        .and_then(|store| {
+            store.get_source(strategy).ok().flatten().or_else(|| {
+                store
+                    .get_source_by_name(strategy)
+                    .ok()
+                    .flatten()
+                    .map(|(_id, src)| src)
+            })
+        })
+        .map(|raw| crate::tools::run_script::maybe_transpile(raw).unwrap_or_else(|_| String::new()))
+        .filter(|s| !s.is_empty());
+
+    // Build base params from the best combo so WF has symbol/CAPITAL
+    let base_params = top_combos.first().map(|combo| {
+        let mut bp = (**combo).clone();
+        if !bp.contains_key("symbol") {
+            bp.insert("symbol".to_string(), Value::String(symbol.to_string()));
+        }
+        bp
+    });
+
     let wf_result = crate::tools::walk_forward::execute(
         &server.cache,
         server.adjustment_store.clone(),
@@ -129,6 +154,8 @@ pub async fn run_pipeline(
         None, // start_date
         None, // end_date
         None, // profile
+        script_source,
+        base_params,
     )
     .await;
 

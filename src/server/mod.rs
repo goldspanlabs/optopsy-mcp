@@ -621,6 +621,8 @@ impl OptopsyServer {
                     params.start_date,
                     params.end_date,
                     params.profile,
+                    None,
+                    None,
                 )
                 .await
                 .map_err(tool_err)
