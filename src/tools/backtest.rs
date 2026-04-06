@@ -180,7 +180,7 @@ pub async fn execute(
         let upper = symbol.to_uppercase();
         let suggested_next_steps = vec![
             format!(
-                "[NEXT] Call walk_forward(strategy=\"{strategy}\", symbol=\"{upper}\", params_grid=<top param ranges>) to validate parameter robustness on unseen data",
+                "[NEXT] Re-run backtest(strategy=\"{strategy}\", symbol=\"{upper}\", pipeline=true) to run the full validation pipeline (walk-forward + monte carlo)",
             ),
             format!("[THEN] Call drawdown_analysis(symbol=\"{upper}\") to analyze drawdown episodes and risk profile"),
             format!("[THEN] Call monte_carlo(symbol=\"{upper}\") to simulate forward-looking risk"),

@@ -269,7 +269,7 @@ pub async fn run_pipeline(
         .first()
         .map_or(capital, |ep| ep.equity);
     let horizon = returns.len().min(252); // 1 year or available data
-    let mc_label = symbol.to_string();
+    let mc_label = symbol.to_uppercase();
 
     let mc_start = std::time::Instant::now();
     let mc_result = tokio::task::spawn_blocking(move || {
@@ -430,11 +430,20 @@ fn build_response(
         .count();
     let total = stages.len();
 
+    let objective = &sweep.objective;
+    let best_metric = sweep
+        .best_result
+        .as_ref()
+        .map_or(0.0, |r| match objective.as_str() {
+            "sortino" => r.sortino,
+            "profit_factor" => r.profit_factor,
+            "cagr" => r.cagr,
+            _ => r.sharpe,
+        });
     let summary = format!(
         "Pipeline completed: {completed}/{total} stages passed. \
-         {} combos tested, best Sharpe={:.2}.",
+         {} combos tested, best {objective}={best_metric:.2}.",
         sweep.combinations_run,
-        sweep.best_result.as_ref().map_or(0.0, |r| r.sharpe),
     );
 
     let upper = symbol.to_uppercase();
