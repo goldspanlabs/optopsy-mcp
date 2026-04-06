@@ -64,6 +64,16 @@ pub(super) fn build_pipeline_params(
         ));
     }
 
+    if !matches!(req.mode.as_str(), "grid" | "bayesian") {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Validation error: mode must be one of ['grid', 'bayesian'], got '{}'",
+                req.mode
+            ),
+        ));
+    }
+
     if req.num_permutations > 100_000 {
         return Err((
             StatusCode::BAD_REQUEST,

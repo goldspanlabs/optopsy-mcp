@@ -301,10 +301,11 @@ fn resolve_execution_context(
     let (strategy_key, script_source) =
         resolve_strategy_source_from_store(strategy_store.as_ref(), &req.strategy)
             .map_err(|(_status, msg)| anyhow::anyhow!("{msg}"))?;
+    let script_meta = crate::scripting::stdlib::parse_script_meta(&strategy_key, &script_source);
 
     Ok(SweepExecutionContext {
-        strategy_key: strategy_key.clone(),
-        script_meta: crate::scripting::stdlib::parse_script_meta(&strategy_key, &script_source),
+        strategy_key,
+        script_meta,
         loader: build_loader(server),
         symbol: resolve_symbol(req, &script_source),
         capital: resolve_capital(req),
