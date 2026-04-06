@@ -113,6 +113,7 @@ async fn main() -> Result<()> {
             run_store,
             chat_store,
             task_manager: Arc::clone(&task_manager),
+            forward_test_store: forward_test_store.clone(),
         };
 
         let strategy_store_for_mcp = strategy_store.clone();

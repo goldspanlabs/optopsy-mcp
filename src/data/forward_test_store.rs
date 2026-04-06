@@ -246,6 +246,17 @@ impl SqliteForwardTestStore {
         Ok(())
     }
 
+    /// Delete a session and all associated data (CASCADE handles snapshots + trades).
+    pub fn delete_session(&self, id: &str) -> Result<()> {
+        let conn = self.conn.lock().expect("mutex poisoned");
+        conn.execute(
+            "DELETE FROM forward_test_sessions WHERE id = ?1",
+            params![id],
+        )
+        .context("Failed to delete forward test session")?;
+        Ok(())
+    }
+
     /// Insert a daily snapshot.
     pub fn insert_snapshot(&self, session_id: &str, snap: &ForwardTestSnapshot) -> Result<()> {
         let conn = self.conn.lock().expect("mutex poisoned");

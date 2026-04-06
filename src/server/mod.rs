@@ -28,16 +28,15 @@ use crate::data::traits::{RunStore, StrategyStore};
 use crate::tools;
 use crate::tools::response_types::{
     AggregatePricesResponse, BenchmarkAnalysisResponse, CointegrationResponse, CorrelateResponse,
-    DistributionResponse, DrawdownAnalysisResponse, FactorAttributionResponse,
-    ForwardTestStatusResponse, HypothesisParams, HypothesisResponse, MonteCarloResponse,
-    PortfolioOptimizeResponse, RegimeDetectResponse, RollingMetricResponse,
-    StartForwardTestResponse, StepForwardTestResponse, WalkForwardResponse,
+    DistributionResponse, DrawdownAnalysisResponse, FactorAttributionResponse, HypothesisParams,
+    HypothesisResponse, MonteCarloResponse, PortfolioOptimizeResponse, RegimeDetectResponse,
+    RollingMetricResponse, WalkForwardResponse,
 };
 use params::{
     tool_err, validation_err, AggregatePricesParams, BenchmarkAnalysisParams, CointegrationParams,
     CorrelateParams, DistributionParams, DrawdownAnalysisParams, FactorAttributionParams,
-    ForwardTestStatusParams, MonteCarloParams, PortfolioOptimizeParams, RegimeDetectParams,
-    RollingMetricParams, StartForwardTestParams, StepForwardTestParams, WalkForwardToolParams,
+    MonteCarloParams, PortfolioOptimizeParams, RegimeDetectParams, RollingMetricParams,
+    WalkForwardToolParams,
 };
 use sanitize::SanitizedResult;
 
@@ -681,136 +680,6 @@ impl OptopsyServer {
                     .validate()
                     .map_err(|e| validation_err("backtest", e))?;
                 tools::backtest::execute(self, params)
-                    .await
-                    .map_err(tool_err)
-            }
-            .await,
-        )
-    }
-
-    /// Initialize a new forward test (paper trading) session.
-    ///
-    /// Creates a session that tracks strategy signals and paper positions over time
-    /// as new market data becomes available. Pass baseline metrics from your backtest
-    /// to enable drift detection.
-    ///
-    /// **When to use**: After a strategy passes all post-sweep validation (walk-forward,
-    /// monte carlo, factor attribution), start a forward test to verify it works
-    /// on truly unseen data before committing real capital.
-    ///
-    /// **Example**:
-    /// ```json
-    /// {
-    ///   "strategy": "short_put",
-    ///   "symbol": "SPY",
-    ///   "capital": 100000,
-    ///   "params": { "DELTA_TARGET": 0.30, "DTE_TARGET": 45 },
-    ///   "start_date": "2026-01-01",
-    ///   "baseline_sharpe": 1.2,
-    ///   "baseline_win_rate": 0.65,
-    ///   "baseline_max_dd": 0.15
-    /// }
-    /// ```
-    #[tool(name = "start_forward_test")]
-    async fn start_forward_test(
-        &self,
-        Parameters(params): Parameters<StartForwardTestParams>,
-    ) -> SanitizedResult<StartForwardTestResponse, String> {
-        SanitizedResult(
-            async {
-                params
-                    .validate()
-                    .map_err(|e| validation_err("start_forward_test", e))?;
-                let fwd_store = self
-                    .forward_test_store
-                    .as_ref()
-                    .ok_or_else(|| "Forward test store not configured".to_string())?;
-                tools::forward_test::start(
-                    fwd_store,
-                    self.strategy_store.as_deref(),
-                    &params.strategy,
-                    &params.symbol,
-                    params.capital,
-                    &params.params,
-                    params.start_date.as_deref(),
-                    params.baseline_sharpe,
-                    params.baseline_win_rate,
-                    params.baseline_max_dd,
-                )
-                .await
-                .map_err(tool_err)
-            }
-            .await,
-        )
-    }
-
-    /// Process new bars for an active forward test session.
-    ///
-    /// Re-runs the strategy engine through all available data, identifies new trades
-    /// and equity changes since the last step, and persists the updated state.
-    /// Call this after merging new market data into your parquet files.
-    ///
-    /// **Example**:
-    /// ```json
-    /// { "session_id": "abc-123" }
-    /// ```
-    #[tool(name = "step_forward_test")]
-    async fn step_forward_test(
-        &self,
-        Parameters(params): Parameters<StepForwardTestParams>,
-    ) -> SanitizedResult<StepForwardTestResponse, String> {
-        SanitizedResult(
-            async {
-                params
-                    .validate()
-                    .map_err(|e| validation_err("step_forward_test", e))?;
-                let fwd_store = self
-                    .forward_test_store
-                    .as_ref()
-                    .ok_or_else(|| "Forward test store not configured".to_string())?;
-                tools::forward_test::step(
-                    fwd_store,
-                    self.strategy_store.as_deref(),
-                    &self.cache,
-                    self.adjustment_store.clone(),
-                    &params.session_id,
-                )
-                .await
-                .map_err(tool_err)
-            }
-            .await,
-        )
-    }
-
-    /// Get comprehensive status for a forward test session.
-    ///
-    /// Returns the equity curve, recent trades, open positions, and drift analysis
-    /// comparing forward performance against backtest baseline metrics.
-    ///
-    /// **Confidence levels** based on trade count:
-    /// - `insufficient` (< 20 trades): Not enough data for meaningful comparison
-    /// - `preliminary` (20-29 trades): Metrics shown but low confidence
-    /// - `comparable` (30+ trades): Can meaningfully compare to backtest
-    ///
-    /// **Example**:
-    /// ```json
-    /// { "session_id": "abc-123" }
-    /// ```
-    #[tool(name = "forward_test_status", annotations(read_only_hint = true))]
-    async fn forward_test_status(
-        &self,
-        Parameters(params): Parameters<ForwardTestStatusParams>,
-    ) -> SanitizedResult<ForwardTestStatusResponse, String> {
-        SanitizedResult(
-            async {
-                params
-                    .validate()
-                    .map_err(|e| validation_err("forward_test_status", e))?;
-                let fwd_store = self
-                    .forward_test_store
-                    .as_ref()
-                    .ok_or_else(|| "Forward test store not configured".to_string())?;
-                tools::forward_test::status(fwd_store, &params.session_id)
                     .await
                     .map_err(tool_err)
             }
