@@ -8,7 +8,6 @@
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
-use garde::Validate;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -16,7 +15,6 @@ use std::collections::HashMap;
 use crate::application::pipeline;
 use crate::server::handlers::sweeps::SweepParamDef;
 use crate::server::state::AppState;
-use crate::tools::backtest::BacktestToolParams;
 use crate::tools::response_types::pipeline::PipelineResponse;
 
 fn default_mode() -> String {
@@ -51,7 +49,7 @@ pub struct CreatePipelineRequest {
 
 pub(super) fn build_pipeline_params(
     req: CreatePipelineRequest,
-) -> Result<BacktestToolParams, (StatusCode, String)> {
+) -> Result<pipeline::PipelineRequest, (StatusCode, String)> {
     if req.sweep_params.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -59,7 +57,7 @@ pub(super) fn build_pipeline_params(
         ));
     }
 
-    let params = BacktestToolParams {
+    let params = pipeline::PipelineRequest {
         strategy: req.strategy,
         mode: req.mode,
         objective: req.objective,
@@ -68,12 +66,13 @@ pub(super) fn build_pipeline_params(
         max_evaluations: req.max_evaluations,
         num_permutations: req.num_permutations,
         thread_id: req.thread_id,
-        pipeline: true,
     };
-
-    params
-        .validate()
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Validation error: {e}")))?;
+    if params.strategy.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Validation error: strategy must have length at least 1".to_string(),
+        ));
+    }
 
     Ok(params)
 }

@@ -146,7 +146,8 @@ pub async fn execute(
     if params.sweep_params.is_empty() {
         execute_single(server, params).await
     } else if params.pipeline {
-        let pipeline_response = pipeline::execute(server, &params, "agent").await?;
+        let pipeline_request = build_pipeline_request(&params);
+        let pipeline_response = pipeline::execute(server, &pipeline_request, "agent").await?;
         Ok(BacktestToolResponse::Pipeline(Box::new(pipeline_response)))
     } else {
         // Sweep-only (no pipeline)
@@ -171,6 +172,19 @@ pub async fn execute(
                 suggested_next_steps,
             },
         )))
+    }
+}
+
+fn build_pipeline_request(params: &BacktestToolParams) -> pipeline::PipelineRequest {
+    pipeline::PipelineRequest {
+        strategy: params.strategy.clone(),
+        mode: params.mode.clone(),
+        objective: params.objective.clone(),
+        params: params.params.clone(),
+        sweep_params: params.sweep_params.clone(),
+        max_evaluations: params.max_evaluations,
+        num_permutations: params.num_permutations,
+        thread_id: params.thread_id.clone(),
     }
 }
 

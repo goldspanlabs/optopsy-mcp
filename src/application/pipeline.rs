@@ -1,16 +1,28 @@
 //! Shared pipeline orchestration used by transport adapters.
 
 use anyhow::Result;
+use serde_json::Value;
+use std::collections::HashMap;
 
 use crate::application::sweeps;
 use crate::server::OptopsyServer;
-use crate::tools::backtest::BacktestToolParams;
 use crate::tools::response_types::pipeline::PipelineResponse;
+
+pub struct PipelineRequest {
+    pub strategy: String,
+    pub mode: String,
+    pub objective: String,
+    pub params: HashMap<String, Value>,
+    pub sweep_params: Vec<sweeps::SweepParamDef>,
+    pub max_evaluations: usize,
+    pub num_permutations: usize,
+    pub thread_id: Option<String>,
+}
 
 /// Execute the full pipeline: persisted sweep followed by pipeline validation stages.
 pub async fn execute(
     server: &OptopsyServer,
-    params: &BacktestToolParams,
+    request: &PipelineRequest,
     source: &str,
 ) -> Result<PipelineResponse> {
     let run_store = server
@@ -19,13 +31,13 @@ pub async fn execute(
         .ok_or_else(|| anyhow::anyhow!("Run store not configured — cannot persist results"))?;
 
     let sweep_req = sweeps::CreateSweepRequest {
-        strategy: params.strategy.clone(),
-        mode: params.mode.clone(),
-        objective: params.objective.clone(),
-        params: params.params.clone(),
-        sweep_params: params.sweep_params.clone(),
-        max_evaluations: params.max_evaluations,
-        num_permutations: params.num_permutations,
+        strategy: request.strategy.clone(),
+        mode: request.mode.clone(),
+        objective: request.objective.clone(),
+        params: request.params.clone(),
+        sweep_params: request.sweep_params.clone(),
+        max_evaluations: request.max_evaluations,
+        num_permutations: request.num_permutations,
     };
 
     let sweep_result = sweeps::execute_sweep(
@@ -33,7 +45,7 @@ pub async fn execute(
         run_store.as_ref(),
         &sweep_req,
         source,
-        params.thread_id.as_deref(),
+        request.thread_id.as_deref(),
         None,
         None,
     )
@@ -48,7 +60,7 @@ pub async fn execute(
         sweep_result.sweep_id,
         sweep_result.run_ids,
         sweep_result.response,
-        params.params.clone(),
+        request.params.clone(),
     )
     .await
 }
