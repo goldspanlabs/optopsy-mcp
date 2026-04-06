@@ -735,12 +735,6 @@ impl ServerHandler for OptopsyServer {
                 \n  - cointegration_test — pairs trading validation\
                 \n  - portfolio_optimize — optimal weight allocation (risk parity, min variance, max Sharpe)\
                 \n\
-                \n### 5. Forward Testing (Paper Trading)\
-                \n  After validation, forward test on truly unseen data:\
-                \n  - start_forward_test — create a session with frozen params + baseline metrics\
-                \n  - step_forward_test — process new bars after merging updated data\
-                \n  - forward_test_status — equity curve, drift detection, confidence level\
-                \n\
                 \n## RULES\
                 \n- Each tool response includes suggested_next_steps — follow them"
                     .into(),

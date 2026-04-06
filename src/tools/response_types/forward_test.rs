@@ -38,20 +38,6 @@ pub struct ForwardTestTradeEvent {
     pub exit_type: Option<String>,
 }
 
-/// An open position in the forward test.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ForwardTestPosition {
-    pub id: usize,
-    pub symbol: String,
-    pub entry_date: String,
-    pub position_type: String,
-    pub entry_cost: f64,
-    pub unrealized_pnl: f64,
-    pub days_held: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-}
-
 /// Response from `step_forward_test`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StepForwardTestResponse {
@@ -63,7 +49,6 @@ pub struct StepForwardTestResponse {
     pub daily_pnl: f64,
     pub cumulative_pnl: f64,
     pub trades: Vec<ForwardTestTradeEvent>,
-    pub open_positions: Vec<ForwardTestPosition>,
     pub total_trades: i64,
     pub key_findings: Vec<String>,
     pub suggested_next_steps: Vec<String>,
@@ -113,7 +98,6 @@ pub struct ForwardTestStatusResponse {
     pub days_running: i64,
     pub equity_curve: Vec<ForwardTestEquityPoint>,
     pub recent_trades: Vec<ForwardTestTradeEvent>,
-    pub open_positions: Vec<ForwardTestPosition>,
     pub drift: Option<DriftAnalysis>,
     pub confidence_level: String,
     pub key_findings: Vec<String>,

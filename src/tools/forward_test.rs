@@ -17,7 +17,10 @@ use crate::data::forward_test_store::{
     ForwardTestSnapshot, ForwardTestTrade, SqliteForwardTestStore,
 };
 use crate::scripting::engine::{CachingDataLoader, CancelCallback};
-use crate::tools::response_types::forward_test::*;
+use crate::tools::response_types::forward_test::{
+    DriftAnalysis, ForwardTestEquityPoint, ForwardTestStatusResponse, ForwardTestTradeEvent,
+    StartForwardTestResponse, StepForwardTestResponse,
+};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // start_forward_test
@@ -36,6 +39,11 @@ pub async fn start(
     baseline_win_rate: Option<f64>,
     baseline_max_dd: Option<f64>,
 ) -> Result<StartForwardTestResponse> {
+    // Validate capital
+    if capital <= 0.0 {
+        bail!("Capital must be positive, got {capital}");
+    }
+
     // Validate that the strategy exists
     let run_params = crate::tools::run_script::RunScriptParams {
         strategy: Some(strategy.to_string()),
@@ -151,9 +159,9 @@ pub async fn step(
         );
     }
 
-    // Reconstruct params from the stored session
-    let params: HashMap<String, Value> =
-        serde_json::from_value(session.params.clone()).unwrap_or_default();
+    // Reconstruct params from the stored session — fail explicitly if corrupted
+    let params: HashMap<String, Value> = serde_json::from_value(session.params.clone())
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize session params: {e}"))?;
 
     // Resolve and run the strategy
     let run_params = crate::tools::run_script::RunScriptParams {
@@ -201,17 +209,21 @@ pub async fn step(
         .map(|e| e.datetime.format("%Y-%m-%d").to_string())
         .unwrap_or_default();
 
-    let first_new_bar_date = if previous_trade_count == 0 {
+    // Count bars processed beyond previous state
+    let previous_last_date = session.last_bar_date.as_deref().unwrap_or("");
+    let first_new_bar_date = if previous_last_date.is_empty() {
         equity_curve
             .first()
             .map(|e| e.datetime.format("%Y-%m-%d").to_string())
             .unwrap_or_default()
     } else {
-        session.last_bar_date.clone().unwrap_or_default()
+        equity_curve
+            .iter()
+            .find(|e| e.datetime.format("%Y-%m-%d").to_string().as_str() > previous_last_date)
+            .map(|e| e.datetime.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| session.last_bar_date.clone().unwrap_or_default())
     };
 
-    // Count bars processed beyond previous state
-    let previous_last_date = session.last_bar_date.as_deref().unwrap_or("");
     let new_bars_count = equity_curve
         .iter()
         .filter(|e| e.datetime.format("%Y-%m-%d").to_string().as_str() > previous_last_date)
@@ -230,9 +242,10 @@ pub async fn step(
             daily_pnl: 0.0,
             cumulative_pnl: session.current_equity - session.capital,
             trades: vec![],
-            open_positions: vec![],
             total_trades: session.total_trades,
-            key_findings: vec!["No new data available — merge updated parquet files first".to_string()],
+            key_findings: vec![
+                "No new data available — merge updated parquet files first".to_string(),
+            ],
             suggested_next_steps: vec![
                 "Merge new market data with your existing parquet files".to_string(),
                 format!("[THEN] Call step_forward_test(session_id=\"{session_id}\") again"),
@@ -273,12 +286,12 @@ pub async fn step(
         trade_events.push(ForwardTestTradeEvent {
             date: exit_date.clone(),
             action: "close".to_string(),
-            description: close_desc,
+            description: close_desc.clone(),
             pnl: Some(trade.pnl),
             exit_type: Some(format!("{:?}", trade.exit_type)),
         });
 
-        // Persist trade to DB
+        // Persist trade to DB with close-specific description
         store.insert_trade(
             session_id,
             &ForwardTestTrade {
@@ -286,7 +299,7 @@ pub async fn step(
                 action: "close".to_string(),
                 date: exit_date,
                 symbol: session.symbol.clone(),
-                description: Some(open_desc),
+                description: Some(close_desc),
                 entry_cost: Some(trade.entry_cost),
                 exit_proceeds: Some(trade.exit_proceeds),
                 pnl: Some(trade.pnl),
@@ -296,26 +309,55 @@ pub async fn step(
         )?;
     }
 
-    // Build daily PnL from equity curve for the latest bar
+    // Build per-bar snapshots for all new bars (not just the last one)
+    let previous_equity_curve_len = session
+        .engine_state
+        .get("equity_curve_len")
+        .and_then(Value::as_u64)
+        .and_then(|len| usize::try_from(len).ok())
+        .unwrap_or(0)
+        .min(equity_curve.len());
+
+    // Build a map of trade counts per date for snapshot details
+    let mut trades_by_date: HashMap<String, i64> = HashMap::new();
+    for trade in &new_trades {
+        let trade_date = trade.exit_datetime.format("%Y-%m-%d").to_string();
+        *trades_by_date.entry(trade_date).or_insert(0) += 1;
+    }
+
+    for (idx, point) in equity_curve
+        .iter()
+        .enumerate()
+        .skip(previous_equity_curve_len)
+    {
+        let bar_daily_pnl = if idx > 0 {
+            point.equity - equity_curve[idx - 1].equity
+        } else {
+            0.0
+        };
+        let snapshot_date = point.datetime.format("%Y-%m-%d").to_string();
+        let trades_today = trades_by_date.get(&snapshot_date).copied().unwrap_or(0);
+
+        store.insert_snapshot(
+            session_id,
+            &ForwardTestSnapshot {
+                date: snapshot_date,
+                equity: point.equity,
+                daily_pnl: bar_daily_pnl,
+                cumulative_pnl: point.equity - session.capital,
+                open_positions: 0,
+                trades_today,
+                details: serde_json::json!({}),
+            },
+        )?;
+    }
+
+    // Daily PnL from equity curve for the latest bar
     let daily_pnl = if equity_curve.len() >= 2 {
         equity_curve[equity_curve.len() - 1].equity - equity_curve[equity_curve.len() - 2].equity
     } else {
         0.0
     };
-
-    // Insert snapshot for the latest date
-    store.insert_snapshot(
-        session_id,
-        &ForwardTestSnapshot {
-            date: last_bar_date.clone(),
-            equity: current_equity,
-            daily_pnl,
-            cumulative_pnl,
-            open_positions: 0, // Simplified — positions are transient in replay model
-            trades_today: new_trades.len() as i64,
-            details: serde_json::json!({}),
-        },
-    )?;
 
     // Update session state
     store.update_session_state(
@@ -366,7 +408,6 @@ pub async fn step(
         daily_pnl,
         cumulative_pnl,
         trades: trade_events,
-        open_positions: vec![], // Transient in replay model
         total_trades,
         key_findings,
         suggested_next_steps: vec![
@@ -461,7 +502,7 @@ pub async fn status(
         None
     };
 
-    // Forward max drawdown from equity snapshots
+    // Forward max drawdown from equity snapshots (with zero guard)
     let forward_max_dd = if snapshots.len() >= 2 {
         let mut peak = snapshots[0].equity;
         let mut max_dd = 0.0_f64;
@@ -469,9 +510,11 @@ pub async fn status(
             if s.equity > peak {
                 peak = s.equity;
             }
-            let dd = (peak - s.equity) / peak;
-            if dd > max_dd {
-                max_dd = dd;
+            if peak > f64::EPSILON {
+                let dd = (peak - s.equity) / peak;
+                if dd > max_dd {
+                    max_dd = dd;
+                }
             }
         }
         Some(max_dd)
@@ -567,7 +610,6 @@ pub async fn status(
         days_running,
         equity_curve,
         recent_trades,
-        open_positions: vec![],
         drift,
         confidence_level,
         key_findings,
