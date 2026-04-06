@@ -351,7 +351,7 @@ pub async fn run_pipeline(
 ///
 /// If a permutation test was run, returns combos where `significant == true`.
 /// Otherwise, returns the top N combos by objective (already ranked).
-fn select_top_combos(sweep: &SweepResponse) -> Vec<&HashMap<String, Value>> {
+pub(crate) fn select_top_combos(sweep: &SweepResponse) -> Vec<&HashMap<String, Value>> {
     let has_permutation = sweep.multiple_comparisons.is_some()
         || sweep.ranked_results.iter().any(|r| r.p_value.is_some());
 
@@ -381,7 +381,9 @@ fn select_top_combos(sweep: &SweepResponse) -> Vec<&HashMap<String, Value>> {
 ///
 /// For each parameter name, collect the distinct values across the top combos.
 /// This gives walk-forward a focused search space around the best-performing region.
-fn build_wf_params_grid(combos: &[&HashMap<String, Value>]) -> HashMap<String, Vec<Value>> {
+pub(crate) fn build_wf_params_grid(
+    combos: &[&HashMap<String, Value>],
+) -> HashMap<String, Vec<Value>> {
     let mut grid: HashMap<String, Vec<Value>> = HashMap::new();
 
     for params in combos {

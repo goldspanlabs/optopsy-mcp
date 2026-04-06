@@ -19,6 +19,21 @@ pub struct PipelineRequest {
     pub thread_id: Option<String>,
 }
 
+impl Clone for PipelineRequest {
+    fn clone(&self) -> Self {
+        Self {
+            strategy: self.strategy.clone(),
+            mode: self.mode.clone(),
+            objective: self.objective.clone(),
+            params: self.params.clone(),
+            sweep_params: self.sweep_params.clone(),
+            max_evaluations: self.max_evaluations,
+            num_permutations: self.num_permutations,
+            thread_id: self.thread_id.clone(),
+        }
+    }
+}
+
 /// Execute the full pipeline: persisted sweep followed by pipeline validation stages.
 pub async fn execute(
     server: &OptopsyServer,

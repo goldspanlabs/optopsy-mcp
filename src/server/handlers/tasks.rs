@@ -17,7 +17,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::application::error::{ApplicationError, ApplicationErrorKind};
-use crate::application::{backtests, pipeline, sweeps, tasks as app_tasks};
+use crate::application::{backtests, sweeps, tasks as app_tasks, workflows};
 use crate::engine::walk_forward::{WalkForwardParams, WfMode, WfObjective};
 use crate::scripting::engine::CachingDataLoader;
 use crate::server::state::AppState;
@@ -652,28 +652,32 @@ pub async fn stream_task(
 // Pipeline task
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// `POST /tasks/pipeline` — submit a full pipeline (sweep + walk-forward + monte carlo) as a background task.
-pub async fn submit_pipeline(
+/// `POST /tasks/baseline-validation` — submit the baseline validation workflow as a background task.
+pub async fn submit_baseline_validation(
     State(state): State<AppState>,
-    Json(req): Json<super::pipeline::CreatePipelineRequest>,
+    Json(req): Json<super::pipeline::CreateBaselineValidationRequest>,
 ) -> Result<Json<SubmitResponse>, (StatusCode, String)> {
-    let params = super::pipeline::build_pipeline_params(req)?;
+    let workflow = workflows::WorkflowRequest {
+        kind: crate::tools::response_types::workflow::WorkflowKind::BaselineValidation,
+        pipeline: super::pipeline::build_pipeline_params(req)?,
+    };
 
-    let symbol = params
+    let symbol = workflow
+        .pipeline
         .params
         .get("symbol")
         .and_then(Value::as_str)
         .unwrap_or("pending")
         .to_owned();
 
-    let params_json =
-        serde_json::to_value(&params.params).unwrap_or(Value::Object(serde_json::Map::default()));
+    let params_json = serde_json::to_value(&workflow.pipeline.params)
+        .unwrap_or(Value::Object(serde_json::Map::default()));
 
     let task = state.task_manager.register(
         TaskKind::Pipeline,
-        &params.strategy,
+        &workflow.pipeline.strategy,
         &symbol,
-        params.thread_id.clone(),
+        workflow.pipeline.thread_id.clone(),
         params_json,
     );
     let task_id = task.id.clone();
@@ -685,13 +689,67 @@ pub async fn submit_pipeline(
             tm,
             Arc::clone(&task),
             async move {
-                let response = pipeline::execute(&server, &params, "manual")
+                let response = workflows::execute(&server, &workflow, "manual")
                     .await
                     .map_err(|e| e.to_string())?;
                 let result_json = serde_json::to_value(&response).unwrap_or(Value::Null);
                 Ok(app_tasks::TaskCompletion {
                     result_json,
-                    result_id: response.sweep_id.clone(),
+                    result_id: workflow
+                        .pipeline
+                        .thread_id
+                        .clone()
+                        .unwrap_or_else(|| task.id.clone()),
+                })
+            },
+        ))
+        .await;
+    });
+
+    Ok(Json(SubmitResponse { task_id }))
+}
+
+/// `POST /tasks/workflows` — submit a named workflow as a background task.
+pub async fn submit_workflow(
+    State(state): State<AppState>,
+    Json(req): Json<super::pipeline::CreateWorkflowRequest>,
+) -> Result<Json<SubmitResponse>, (StatusCode, String)> {
+    let workflow = super::pipeline::build_workflow_params(req)?;
+
+    let symbol = workflow
+        .pipeline
+        .params
+        .get("symbol")
+        .and_then(Value::as_str)
+        .unwrap_or("pending")
+        .to_owned();
+
+    let params_json = serde_json::to_value(&workflow.pipeline.params)
+        .unwrap_or(Value::Object(serde_json::Map::default()));
+
+    let task = state.task_manager.register(
+        TaskKind::Workflow,
+        &workflow.pipeline.strategy,
+        &symbol,
+        workflow.pipeline.thread_id.clone(),
+        params_json,
+    );
+    let task_id = task.id.clone();
+
+    let tm = Arc::clone(&state.task_manager);
+    let server = state.server.clone();
+    tokio::spawn(async move {
+        Box::pin(app_tasks::execute_queued_task(
+            tm,
+            Arc::clone(&task),
+            async move {
+                let response = workflows::execute(&server, &workflow, "manual")
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let result_json = serde_json::to_value(&response).unwrap_or(Value::Null);
+                Ok(app_tasks::TaskCompletion {
+                    result_json,
+                    result_id: task.id.clone(),
                 })
             },
         ))

@@ -20,6 +20,7 @@ pub enum TaskKind {
     Sweep,
     WalkForward,
     Pipeline,
+    Workflow,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]

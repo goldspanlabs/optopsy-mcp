@@ -10,6 +10,7 @@ pub mod risk;
 pub mod stats;
 pub mod sweep;
 pub mod walk_forward;
+pub mod workflow;
 
 pub use common::*;
 pub use data::*;
@@ -20,3 +21,4 @@ pub use pipeline::*;
 pub use risk::*;
 pub use stats::*;
 pub use walk_forward::*;
+pub use workflow::*;

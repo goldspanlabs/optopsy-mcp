@@ -121,8 +121,12 @@ pub fn build_api_router(state: AppState) -> Router {
             axum::routing::post(crate::server::handlers::walk_forward::run_walk_forward),
         )
         .route(
-            "/runs/pipeline",
-            axum::routing::post(pipeline::create_pipeline),
+            "/runs/baseline-validation",
+            axum::routing::post(pipeline::create_baseline_validation),
+        )
+        .route(
+            "/runs/workflows",
+            axum::routing::post(pipeline::create_workflow),
         )
         .with_state(state.clone());
 
@@ -138,8 +142,12 @@ pub fn build_api_router(state: AppState) -> Router {
             axum::routing::post(tasks::submit_walk_forward),
         )
         .route(
-            "/tasks/pipeline",
-            axum::routing::post(tasks::submit_pipeline),
+            "/tasks/baseline-validation",
+            axum::routing::post(tasks::submit_baseline_validation),
+        )
+        .route(
+            "/tasks/workflows",
+            axum::routing::post(tasks::submit_workflow),
         )
         .route(
             "/tasks/{id}",
