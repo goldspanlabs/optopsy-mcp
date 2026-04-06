@@ -30,7 +30,7 @@ on each bar
 on exit check
   when pos.days_held >= MAX_HOLD then
     close position "max_hold"
-  when close < sma(BB_PERIOD) then
+  when close > sma(BB_PERIOD) then
     close position "take_profit"
   otherwise
     hold position
