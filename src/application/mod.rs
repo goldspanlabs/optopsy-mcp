@@ -3,3 +3,4 @@
 pub mod backtests;
 pub mod pipeline;
 pub mod sweeps;
+pub mod tasks;
