@@ -173,7 +173,7 @@ impl SqliteForwardTestStore {
         };
         let mut stmt = conn.prepare(&sql)?;
         let params_ref: Vec<&dyn rusqlite::types::ToSql> =
-            filter.iter().map(|b| b.as_ref()).collect();
+            filter.iter().map(AsRef::as_ref).collect();
         let rows = stmt
             .query_map(params_ref.as_slice(), |row| {
                 Ok(ForwardTestSession {

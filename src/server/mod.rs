@@ -127,6 +127,7 @@ impl OptopsyServer {
     }
 
     /// Attach a forward test store to this server instance.
+    #[must_use]
     pub fn with_forward_test_store(
         mut self,
         store: Arc<crate::data::forward_test_store::SqliteForwardTestStore>,

@@ -70,19 +70,18 @@ pub async fn create_forward_test(
     let fwd_store = state.forward_test_store.clone();
     let strategy_store = state.server.strategy_store.clone();
 
-    let result = forward_test::start(
-        &fwd_store,
-        strategy_store.as_deref(),
-        &body.strategy,
-        &body.symbol,
-        body.capital,
-        &body.params,
-        body.start_date.as_deref(),
-        body.baseline_sharpe,
-        body.baseline_win_rate,
-        body.baseline_max_dd,
-    )
-    .await
+    let result = forward_test::start(&forward_test::StartParams {
+        store: &fwd_store,
+        strategy_store: strategy_store.as_deref(),
+        strategy: &body.strategy,
+        symbol: &body.symbol,
+        capital: body.capital,
+        params: &body.params,
+        start_date: body.start_date.as_deref(),
+        baseline_sharpe: body.baseline_sharpe,
+        baseline_win_rate: body.baseline_win_rate,
+        baseline_max_dd: body.baseline_max_dd,
+    })
     .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
     Ok((StatusCode::CREATED, Json(result)))
@@ -108,9 +107,8 @@ pub async fn get_forward_test(
     Path(id): Path<String>,
 ) -> Result<Json<ForwardTestStatusResponse>, (StatusCode, String)> {
     let store = state.forward_test_store.clone();
-    let result = forward_test::status(&store, &id)
-        .await
-        .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+    let result =
+        forward_test::status(&store, &id).map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
     Ok(Json(result))
 }
 
