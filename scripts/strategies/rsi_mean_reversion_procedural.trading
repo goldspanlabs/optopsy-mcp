@@ -15,6 +15,14 @@ asset symbol = "SPY"
 extern OVERSOLD = 30 "RSI oversold threshold"
 extern OVERBOUGHT = 70 "RSI overbought threshold"
 
+sweep quick
+  OVERSOLD 20 to 40 step 10
+  OVERBOUGHT 60 to 80 step 10
+
+sweep comprehensive
+  OVERSOLD 15 to 40 step 5
+  OVERBOUGHT 60 to 85 step 5
+
 require rsi:14, sma:200
 
 when no positions and rsi(14) crosses above OVERSOLD and close > sma(200) then

@@ -21,6 +21,17 @@ extern ENTRY_Z = 2.0 "Z-score threshold for entry"
 extern EXIT_Z = 0.5 "Z-score threshold for exit"
 extern RISK_PCT = 0.02 "Risk per trade as fraction of equity"
 
+sweep quick
+  LOOKBACK 10 to 30 step 10
+  ENTRY_Z 1.5 to 2.5 step 0.5
+  EXIT_Z 0.25 to 0.75 step 0.25
+
+sweep comprehensive
+  LOOKBACK 10 to 40 step 5
+  ENTRY_Z 1.5 to 3.0 step 0.5
+  EXIT_Z 0.0 to 1.0 step 0.25
+  RISK_PCT 0.01 to 0.04 step 0.01
+
 state in_trade = false
 state spread_sum = 0.0
 state spread_sq_sum = 0.0

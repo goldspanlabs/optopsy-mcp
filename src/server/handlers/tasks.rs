@@ -659,7 +659,7 @@ pub async fn submit_baseline_validation(
 ) -> Result<Json<SubmitResponse>, (StatusCode, String)> {
     let workflow = workflows::WorkflowRequest {
         kind: crate::tools::response_types::workflow::WorkflowKind::BaselineValidation,
-        pipeline: super::pipeline::build_pipeline_params(req)?,
+        pipeline: super::pipeline::build_pipeline_params(req, Some(&state))?,
     };
 
     let symbol = workflow
@@ -714,7 +714,7 @@ pub async fn submit_workflow(
     State(state): State<AppState>,
     Json(req): Json<super::pipeline::CreateWorkflowRequest>,
 ) -> Result<Json<SubmitResponse>, (StatusCode, String)> {
-    let workflow = super::pipeline::build_workflow_params(req)?;
+    let workflow = super::pipeline::build_workflow_params(req, Some(&state))?;
 
     let symbol = workflow
         .pipeline

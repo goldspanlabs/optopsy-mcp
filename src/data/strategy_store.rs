@@ -52,9 +52,9 @@ impl StrategyRow {
             self.source.clone()
         };
         let params = extract_extern_params(&rhai_source);
-        let profiles = {
+        let (profiles, sweep_profiles) = {
             let meta = parse_script_meta(&self.id, &rhai_source);
-            meta.profiles
+            (meta.profiles, meta.sweep_profiles)
         };
 
         ScriptMeta {
@@ -67,6 +67,7 @@ impl StrategyRow {
             tags: self.tags,
             regime: self.regime,
             profiles,
+            sweep_profiles,
         }
     }
 }

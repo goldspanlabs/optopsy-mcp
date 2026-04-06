@@ -178,21 +178,28 @@ async fn run_walk_forward_robustness(
         },
     ];
 
-    let mut checks = Vec::with_capacity(configs.len());
-    for config in configs {
-        let response = execute_walk_forward_variant(
-            server,
-            &strategy_key,
-            &symbol,
-            capital,
-            &params_grid,
-            &request.objective,
-            config,
-            &script_source,
-            &base_params,
-        )
-        .await?;
+    let futures: Vec<_> = configs
+        .iter()
+        .map(|config| {
+            execute_walk_forward_variant(
+                server,
+                &strategy_key,
+                &symbol,
+                capital,
+                &params_grid,
+                &request.objective,
+                *config,
+                &script_source,
+                &base_params,
+            )
+        })
+        .collect();
 
+    let results = futures::future::join_all(futures).await;
+
+    let mut checks = Vec::with_capacity(configs.len());
+    for (config, result) in configs.iter().zip(results) {
+        let response = result?;
         checks.push(WalkForwardRobustnessCheck {
             label: config.label.to_string(),
             mode: response.mode,

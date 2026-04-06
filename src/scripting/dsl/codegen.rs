@@ -245,6 +245,24 @@ pub fn generate(program: &DslProgram) -> String {
         if !strat.regime.is_empty() {
             out.push_str(&format!("//! regime: {}\n", strat.regime.join(", ")));
         }
+        for profile in &program.sweep_profiles {
+            let params_str: Vec<String> = profile
+                .params
+                .iter()
+                .map(|p| {
+                    if let Some(step) = p.step {
+                        format!("{}={} to {} step {}", p.name, p.start, p.stop, step)
+                    } else {
+                        format!("{}={} to {}", p.name, p.start, p.stop)
+                    }
+                })
+                .collect();
+            out.push_str(&format!(
+                "//! sweep.{}: {}\n",
+                profile.name,
+                params_str.join(", ")
+            ));
+        }
         out.push('\n');
     }
 

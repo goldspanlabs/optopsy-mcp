@@ -2441,3 +2441,53 @@ on exit check
         "Should generate uniquely suffixed avg aggregation.\nGenerated:\n{rhai}"
     );
 }
+
+#[test]
+fn test_sweep_profile_roundtrip() {
+    let dsl = r#"
+strategy "Test Sweep"
+  interval daily
+
+asset symbol = "SPY"
+
+extern DELTA = 0.30 "Delta target"
+extern DTE = 45 "Days to expiration"
+
+sweep quick
+  DELTA 0.20 to 0.40 step 0.10
+  DTE 30 to 60 step 15
+
+sweep comprehensive
+  DELTA 0.10 to 0.50 step 0.10
+  DTE 20 to 60 step 10
+
+on each bar
+  hold position
+"#;
+
+    let rhai = transpile(dsl).unwrap();
+
+    // Verify codegen emits sweep headers
+    assert!(
+        rhai.contains("//! sweep.quick:"),
+        "Should contain sweep.quick header.\nGenerated:\n{rhai}"
+    );
+    assert!(
+        rhai.contains("//! sweep.comprehensive:"),
+        "Should contain sweep.comprehensive header.\nGenerated:\n{rhai}"
+    );
+
+    // Verify parse_script_meta extracts them
+    let meta = crate::scripting::stdlib::parse_script_meta("test", &rhai);
+    let profiles = meta.sweep_profiles.expect("should have sweep_profiles");
+    assert!(profiles.contains_key("quick"));
+    assert!(profiles.contains_key("comprehensive"));
+
+    let quick = &profiles["quick"];
+    assert_eq!(quick.len(), 2);
+    assert_eq!(quick[0].name, "DELTA");
+    assert!((quick[0].start - 0.20).abs() < f64::EPSILON);
+    assert!((quick[0].stop - 0.40).abs() < f64::EPSILON);
+    assert_eq!(quick[0].step, Some(0.10));
+    assert_eq!(quick[1].name, "DTE");
+}

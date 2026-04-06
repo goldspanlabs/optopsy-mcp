@@ -15,6 +15,14 @@ asset symbol = "SPY"
 extern ENTRY_THRESHOLD = 0.04 "Entry threshold above SMA (e.g. 0.04 = +4%)"
 extern EXIT_THRESHOLD = 0.03 "Exit threshold below SMA (e.g. 0.03 = -3%)"
 
+sweep quick
+  ENTRY_THRESHOLD 0.02 to 0.06 step 0.02
+  EXIT_THRESHOLD 0.01 to 0.05 step 0.02
+
+sweep comprehensive
+  ENTRY_THRESHOLD 0.01 to 0.08 step 0.01
+  EXIT_THRESHOLD 0.01 to 0.06 step 0.01
+
 on each bar
   require sma:200
 

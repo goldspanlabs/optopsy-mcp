@@ -27,6 +27,7 @@ pub struct DslProgram {
     pub strategy: Option<StrategyBlock>,
     pub params: Vec<ParamDecl>,
     pub states: Vec<StateDecl>,
+    pub sweep_profiles: Vec<SweepProfileDecl>,
     pub on_bar: Option<Vec<Stmt>>,
     pub on_exit_check: Option<Vec<Stmt>>,
     pub on_position_opened: Option<Vec<Stmt>>,
@@ -72,6 +73,22 @@ pub struct ParamDecl {
 pub struct StateDecl {
     pub name: String,
     pub default: String,
+}
+
+/// A `sweep` profile block declaring parameter ranges for workflow orchestration.
+#[derive(Debug)]
+pub struct SweepProfileDecl {
+    pub name: String,
+    pub params: Vec<SweepParamRange>,
+}
+
+/// A single parameter range within a `sweep` block.
+#[derive(Debug)]
+pub struct SweepParamRange {
+    pub name: String,
+    pub start: f64,
+    pub stop: f64,
+    pub step: Option<f64>,
 }
 
 /// Order type modifier for buy/sell statements.
@@ -237,6 +254,7 @@ pub fn parse(source: &str) -> Result<DslProgram, DslError> {
         strategy: None,
         params: vec![],
         states: vec![],
+        sweep_profiles: vec![],
         on_bar: None,
         on_exit_check: None,
         on_position_opened: None,
@@ -275,6 +293,10 @@ pub fn parse(source: &str) -> Result<DslProgram, DslError> {
         } else if content.starts_with("state ") {
             program.states.push(parse_state(line)?);
             i += 1;
+        } else if content.starts_with("sweep ") {
+            let (profile, next) = parse_sweep_profile(&lines, i)?;
+            program.sweep_profiles.push(profile);
+            i = next;
         } else if content == "on each bar" {
             if program.on_bar.is_some() {
                 return Err(DslError::new(line.num, "duplicate 'on each bar' block"));
@@ -680,6 +702,83 @@ fn parse_state(line: &Line) -> Result<StateDecl, DslError> {
     }
 
     Ok(StateDecl { name, default })
+}
+
+// ---------------------------------------------------------------------------
+// Sweep profile parsing
+// ---------------------------------------------------------------------------
+
+/// Parse a `sweep <name>` block with indented parameter range lines.
+///
+/// Each line inside the block has the form:
+///   `PARAM_NAME <start> to <stop> [step <step>]`
+fn parse_sweep_profile(
+    lines: &[Line],
+    start: usize,
+) -> Result<(SweepProfileDecl, usize), DslError> {
+    let header = &lines[start];
+    let name = header
+        .content
+        .strip_prefix("sweep ")
+        .unwrap()
+        .trim()
+        .to_string();
+    if name.is_empty() {
+        return Err(DslError::new(
+            header.num,
+            "sweep requires a profile name (e.g., sweep quick)",
+        ));
+    }
+
+    let (body, next) = parse_indented_body(lines, start)?;
+    let mut params = Vec::with_capacity(body.len());
+
+    for line in &body {
+        let content = line.content.trim();
+
+        // Split into: NAME rest
+        let (param_name, rest) = content.split_once(' ').ok_or_else(|| {
+            DslError::new(
+                line.num,
+                "sweep param requires: NAME <start> to <stop> [step <step>]",
+            )
+        })?;
+
+        // Parse: <start> to <stop> [step <step>]
+        let parts: Vec<&str> = rest.split_whitespace().collect();
+
+        // Expect: start "to" stop ["step" step_val]
+        if parts.len() < 3 || parts[1] != "to" {
+            return Err(DslError::new(
+                line.num,
+                format!("expected '{param_name} <start> to <stop> [step <step>]', got '{content}'"),
+            ));
+        }
+
+        let start_val: f64 = parts[0]
+            .parse()
+            .map_err(|_| DslError::new(line.num, format!("invalid start value: '{}'", parts[0])))?;
+        let stop_val: f64 = parts[2]
+            .parse()
+            .map_err(|_| DslError::new(line.num, format!("invalid stop value: '{}'", parts[2])))?;
+
+        let step_val = if parts.len() >= 5 && parts[3] == "step" {
+            Some(parts[4].parse::<f64>().map_err(|_| {
+                DslError::new(line.num, format!("invalid step value: '{}'", parts[4]))
+            })?)
+        } else {
+            None
+        };
+
+        params.push(SweepParamRange {
+            name: param_name.to_string(),
+            start: start_val,
+            stop: stop_val,
+            step: step_val,
+        });
+    }
+
+    Ok((SweepProfileDecl { name, params }, next))
 }
 
 // ---------------------------------------------------------------------------

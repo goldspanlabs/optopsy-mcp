@@ -17,6 +17,17 @@ extern RISK_PCT = 0.02 "Fraction of equity to risk per trade"
 extern ATR_MULT = 2.0 "ATR multiplier for stop distance"
 extern MAX_HOLD = 10 "Max bars to hold position"
 
+sweep quick
+  BB_PERIOD 15 to 30 step 5
+  ATR_MULT 1.5 to 2.5 step 0.5
+  MAX_HOLD 5 to 15 step 5
+
+sweep comprehensive
+  BB_PERIOD 10 to 40 step 5
+  RISK_PCT 0.01 to 0.04 step 0.01
+  ATR_MULT 1.0 to 3.0 step 0.5
+  MAX_HOLD 5 to 20 step 5
+
 on each bar
   require atr:14
   skip when has positions

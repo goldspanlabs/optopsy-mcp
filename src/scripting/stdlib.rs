@@ -135,15 +135,30 @@ pub struct ScriptMeta {
     /// Asset-class parameter profiles (parsed from `//! profile.<name>:` headers).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profiles: Option<HashMap<String, HashMap<String, serde_json::Value>>>,
+    /// Sweep profiles for workflow orchestration (parsed from `//! sweep.<name>:` headers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sweep_profiles: Option<HashMap<String, Vec<SweepParamMeta>>>,
+}
+
+/// A sweep parameter range from a script's sweep profile.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct SweepParamMeta {
+    pub name: String,
+    pub start: f64,
+    pub stop: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<f64>,
 }
 
 /// Parse `//!` doc-comment header from script source for metadata fields.
 ///
 /// Recognized keys: `name`, `description`, `category`, `hypothesis`, `tags`, `regime`,
-/// and `profile.<name>:` for asset-class parameter profiles.
+/// `profile.<name>:` for asset-class parameter profiles, and
+/// `sweep.<name>:` for sweep parameter range profiles.
 /// Lines must start with `//!` followed by `key: value`.
 /// `tags` and `regime` accept comma-separated values.
 /// `profile.<name>:` accepts comma-separated `key=value` pairs.
+/// `sweep.<name>:` accepts comma-separated `NAME=start to stop [step S]` entries.
 pub fn parse_script_meta(id: &str, source: &str) -> ScriptMeta {
     let mut name = None;
     let mut description = None;
@@ -152,6 +167,7 @@ pub fn parse_script_meta(id: &str, source: &str) -> ScriptMeta {
     let mut tags = None;
     let mut regime = None;
     let mut profiles: HashMap<String, HashMap<String, serde_json::Value>> = HashMap::new();
+    let mut sweep_profiles: HashMap<String, Vec<SweepParamMeta>> = HashMap::new();
 
     for line in source.lines() {
         let trimmed = line.trim();
@@ -213,6 +229,19 @@ pub fn parse_script_meta(id: &str, source: &str) -> ScriptMeta {
                         }
                     }
                 }
+            } else if let Some(rest_sweep) = rest.strip_prefix("sweep.") {
+                if let Some((profile_name, params_str)) = rest_sweep.split_once(':') {
+                    let profile_name = profile_name.trim();
+                    let params_str = params_str.trim();
+                    if !profile_name.is_empty() && !params_str.is_empty() {
+                        let entry = sweep_profiles.entry(profile_name.to_string()).or_default();
+                        for param_entry in params_str.split(',') {
+                            if let Some(p) = parse_sweep_param_entry(param_entry.trim()) {
+                                entry.push(p);
+                            }
+                        }
+                    }
+                }
             }
         } else if !trimmed.is_empty() && !trimmed.starts_with("//") {
             break; // Stop at first non-comment line
@@ -233,7 +262,38 @@ pub fn parse_script_meta(id: &str, source: &str) -> ScriptMeta {
         } else {
             Some(profiles)
         },
+        sweep_profiles: if sweep_profiles.is_empty() {
+            None
+        } else {
+            Some(sweep_profiles)
+        },
     }
+}
+
+/// Parse a single sweep param entry like `PUT_DELTA=0.20 to 0.40 step 0.10`.
+fn parse_sweep_param_entry(s: &str) -> Option<SweepParamMeta> {
+    let (name, rest) = s.split_once('=')?;
+    let name = name.trim();
+    let rest = rest.trim();
+
+    // Parse: start to stop [step S]
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+    if parts.len() < 3 || parts[1] != "to" {
+        return None;
+    }
+    let start = parts[0].parse().ok()?;
+    let stop = parts[2].parse().ok()?;
+    let step = if parts.len() >= 5 && parts[3] == "step" {
+        parts[4].parse().ok()
+    } else {
+        None
+    };
+    Some(SweepParamMeta {
+        name: name.to_string(),
+        start,
+        stop,
+        step,
+    })
 }
 
 /// Parse a scalar value string into a `serde_json::Value`.

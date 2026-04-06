@@ -27,6 +27,18 @@ extern PROFIT_TARGET = 0.50 "Take profit at this P&L percentage"
 extern MAX_HOLD_DAYS = 35 "Maximum days to hold before closing"
 extern MAX_CONSECUTIVE_LOSSES = 3 "Pause after this many losses"
 
+sweep quick
+  SHORT_PUT_DELTA 0.10 to 0.30 step 0.10
+  SHORT_CALL_DELTA 0.10 to 0.30 step 0.10
+  DTE 30 to 60 step 15
+
+sweep comprehensive
+  SHORT_PUT_DELTA 0.10 to 0.30 step 0.10
+  SHORT_CALL_DELTA 0.10 to 0.30 step 0.10
+  DTE 30 to 60 step 10
+  PROFIT_TARGET 0.30 to 0.70 step 0.10
+  MAX_HOLD_DAYS 21 to 42 step 7
+
 state wins = 0
 state losses = 0
 state consecutive_losses = 0

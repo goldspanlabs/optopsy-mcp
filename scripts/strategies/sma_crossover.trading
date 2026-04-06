@@ -19,6 +19,16 @@ extern ENTRY_THRESHOLD = 0.04 "Percentage above SMA to trigger entry"
 extern EXIT_THRESHOLD = 0.03 "Percentage below SMA to trigger exit"
 extern RSI_FLOOR = 30 "Minimum RSI to allow entry"
 
+sweep quick
+  ENTRY_THRESHOLD 0.02 to 0.06 step 0.02
+  EXIT_THRESHOLD 0.01 to 0.05 step 0.02
+  RSI_FLOOR 20 to 40 step 10
+
+sweep comprehensive
+  ENTRY_THRESHOLD 0.01 to 0.08 step 0.01
+  EXIT_THRESHOLD 0.01 to 0.06 step 0.01
+  RSI_FLOOR 15 to 45 step 5
+
 state consecutive_losses = 0
 
 on each bar
