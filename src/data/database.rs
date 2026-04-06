@@ -73,6 +73,12 @@ impl Database {
         super::chat_store::SqliteChatStore::new(self.conn.clone())
     }
 
+    /// Create a [`SqliteForwardTestStore`](super::forward_test_store::SqliteForwardTestStore)
+    /// backed by this database's connection.
+    pub fn forward_tests(&self) -> super::forward_test_store::SqliteForwardTestStore {
+        super::forward_test_store::SqliteForwardTestStore::new(self.conn.clone())
+    }
+
     /// Return the shared database connection handle.
     pub fn connection(&self) -> DbConnection {
         self.conn.clone()

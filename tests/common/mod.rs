@@ -180,14 +180,17 @@ pub fn test_app_state() -> (AppState, TempDir) {
     let run_store: Arc<dyn optopsy_mcp::data::traits::RunStore> = Arc::new(db.runs());
     let chat_store: Arc<dyn optopsy_mcp::data::traits::ChatStore> = Arc::new(db.chat());
     let adjustment_store = Arc::new(db.adjustments());
+    let forward_test_store = Arc::new(db.forward_tests());
     let server =
-        OptopsyServer::with_all_stores(cache, strategy_store, run_store.clone(), adjustment_store);
+        OptopsyServer::with_all_stores(cache, strategy_store, run_store.clone(), adjustment_store)
+            .with_forward_test_store(forward_test_store.clone());
     let task_manager = Arc::new(TaskManager::new(1));
     let state = AppState {
         server,
         run_store,
         chat_store,
         task_manager,
+        forward_test_store,
     };
     (state, tmp)
 }

@@ -2,6 +2,7 @@
 
 pub mod common;
 pub mod data;
+pub mod forward_test;
 pub mod hypothesis;
 pub mod inputs;
 pub mod risk;
@@ -11,6 +12,7 @@ pub mod walk_forward;
 
 pub use common::*;
 pub use data::*;
+pub use forward_test::*;
 pub use hypothesis::*;
 pub use inputs::*;
 pub use risk::*;
