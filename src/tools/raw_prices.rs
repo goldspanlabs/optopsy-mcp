@@ -243,21 +243,26 @@ pub async fn load_and_execute(
     let t0 = Instant::now();
     let upper = symbol.to_uppercase();
 
-    eprintln!(
-        "[get_raw_prices] symbol={upper} interval={interval:?} start={start_date:?} end={end_date:?} limit={limit:?}"
+    tracing::debug!(
+        symbol = %upper,
+        ?interval,
+        ?start_date,
+        ?end_date,
+        ?limit,
+        "get_raw_prices request"
     );
 
     // Search across OHLCV categories (etf, stocks, futures, indices)
     let path = cache.find_ohlcv(&upper).with_context(|| {
         format!("No OHLCV data found for {upper}. Upload parquet to the cache directory.")
     })?;
-    eprintln!("[get_raw_prices] found parquet: {}", path.display());
+    tracing::debug!(path = %path.display(), "get_raw_prices found parquet");
 
     // For intraday requests with no start_date, push a 7-day cutoff into
     // the parquet scan so Polars can skip irrelevant row groups (~100MB → ~2MB).
     let intraday_cutoff = if interval.is_intraday() && start_date.is_none() && end_date.is_none() {
         let cutoff = (chrono::Utc::now() - chrono::Duration::days(7)).naive_utc();
-        eprintln!("[get_raw_prices] intraday cutoff: {cutoff}");
+        tracing::debug!(%cutoff, "get_raw_prices intraday cutoff");
         Some(cutoff)
     } else {
         None
@@ -282,26 +287,26 @@ pub async fn load_and_execute(
     })
     .await
     .context("Parquet read task panicked")??;
-    eprintln!(
-        "[get_raw_prices] parquet loaded: {} rows, {:.0}ms",
-        df.height(),
-        t1.elapsed().as_millis()
+    tracing::debug!(
+        rows = df.height(),
+        elapsed_ms = t1.elapsed().as_millis(),
+        "get_raw_prices parquet loaded"
     );
 
     let t2 = Instant::now();
     let resp = execute(&df, &upper, start_date, end_date, limit, interval, tail)?;
-    eprintln!(
-        "[get_raw_prices] execute done: {} bars returned, sampled={}, {:.0}ms",
-        resp.returned_rows,
-        resp.sampled,
-        t2.elapsed().as_millis()
+    tracing::debug!(
+        returned_rows = resp.returned_rows,
+        sampled = resp.sampled,
+        elapsed_ms = t2.elapsed().as_millis(),
+        "get_raw_prices execute complete"
     );
 
     let json_size = serde_json::to_string(&resp).map(|s| s.len()).unwrap_or(0);
-    eprintln!(
-        "[get_raw_prices] total: {:.0}ms, response JSON ~{}KB",
-        t0.elapsed().as_millis(),
-        json_size / 1024
+    tracing::debug!(
+        elapsed_ms = t0.elapsed().as_millis(),
+        response_kb = json_size / 1024,
+        "get_raw_prices total"
     );
 
     Ok(resp)
