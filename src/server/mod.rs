@@ -575,10 +575,9 @@ impl OptopsyServer {
     /// Run a backtest or parameter sweep. Pass a saved strategy by display name.
     ///
     /// Omit `sweep_params` for a single backtest (returns full equity curve, trade log, metrics).
-    /// Provide `sweep_params` for a grid/bayesian sweep. By default (`pipeline=true`), sweeps
-    /// run the full analysis pipeline: sweep -> significance gate -> walk-forward ->
-    /// `oos_data_gate` -> monte carlo.
-    /// Set `pipeline=false` to get just the sweep results.
+    /// Provide `sweep_params` for a grid/bayesian sweep. Set `pipeline=true` to run the
+    /// full analysis pipeline: sweep -> significance gate -> walk-forward ->
+    /// `oos_data_gate` -> monte carlo. Default is sweep only.
     /// Results are persisted to the runs database.
     ///
     /// **Example (single backtest)**:
@@ -597,7 +596,8 @@ impl OptopsyServer {
     ///   "sweep_params": [
     ///     { "name": "DELTA_TARGET", "start": 0.10, "stop": 0.40, "step": 0.05 },
     ///     { "name": "DTE_TARGET", "param_type": "int", "start": 30, "stop": 60, "step": 5 }
-    ///   ]
+    ///   ],
+    ///   "pipeline": true
     /// }
     /// ```
     #[tool(name = "backtest", annotations(read_only_hint = false))]
