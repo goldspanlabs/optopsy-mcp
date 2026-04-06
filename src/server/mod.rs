@@ -55,6 +55,8 @@ pub struct OptopsyServer {
     pub run_store: Option<Arc<dyn RunStore>>,
     /// Adjustment factor store (splits/dividends) for correct options backtesting.
     pub adjustment_store: Option<Arc<crate::data::adjustment_store::SqliteAdjustmentStore>>,
+    /// Forward test session store for paper trading persistence.
+    pub forward_test_store: Option<Arc<crate::data::forward_test_store::SqliteForwardTestStore>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -67,6 +69,7 @@ impl OptopsyServer {
             strategy_store: None,
             run_store: None,
             adjustment_store: None,
+            forward_test_store: None,
             tool_router: Self::tool_router(),
         }
     }
@@ -82,6 +85,7 @@ impl OptopsyServer {
             strategy_store: Some(strategy_store),
             run_store: None,
             adjustment_store: None,
+            forward_test_store: None,
             tool_router: Self::tool_router(),
         }
     }
@@ -98,6 +102,7 @@ impl OptopsyServer {
             strategy_store: Some(strategy_store),
             run_store: Some(run_store),
             adjustment_store: None,
+            forward_test_store: None,
             tool_router: Self::tool_router(),
         }
     }
@@ -115,8 +120,19 @@ impl OptopsyServer {
             strategy_store: Some(strategy_store),
             run_store: Some(run_store),
             adjustment_store: Some(adjustment_store),
+            forward_test_store: None,
             tool_router: Self::tool_router(),
         }
+    }
+
+    /// Attach a forward test store to this server instance.
+    #[must_use]
+    pub fn with_forward_test_store(
+        mut self,
+        store: Arc<crate::data::forward_test_store::SqliteForwardTestStore>,
+    ) -> Self {
+        self.forward_test_store = Some(store);
+        self
     }
 
     /// Ensure OHLCV price data exists for a symbol.

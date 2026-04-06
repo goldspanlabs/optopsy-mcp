@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::data::forward_test_store::SqliteForwardTestStore;
 use crate::data::traits::{ChatStore, RunStore};
 use crate::server::task_manager::TaskManager;
 use crate::server::OptopsyServer;
@@ -14,4 +15,6 @@ pub struct AppState {
     pub chat_store: Arc<dyn ChatStore>,
     /// Task manager for queued/running backtest and sweep tasks.
     pub task_manager: Arc<TaskManager>,
+    /// Forward test session store for paper trading persistence.
+    pub forward_test_store: Arc<SqliteForwardTestStore>,
 }

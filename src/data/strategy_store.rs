@@ -187,6 +187,18 @@ impl SqliteStrategyStore {
             .map(|r| serde_json::to_string(r).unwrap_or_default());
         let now = chrono::Utc::now().to_rfc3339();
 
+        // Check if a strategy with this name already exists (different id)
+        let existing_id: Option<String> = conn
+            .query_row(
+                "SELECT id FROM strategies WHERE name = ?1 AND id != ?2",
+                rusqlite::params![row.name, row.id],
+                |r| r.get(0),
+            )
+            .ok();
+
+        // If name exists under a different id, update that row instead
+        let effective_id = existing_id.as_deref().unwrap_or(&row.id);
+
         conn.execute(
             "INSERT INTO strategies (id, name, description, category, hypothesis, tags, regime, source, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
@@ -200,7 +212,7 @@ impl SqliteStrategyStore {
                 source = excluded.source,
                 updated_at = excluded.updated_at",
             rusqlite::params![
-                row.id,
+                effective_id,
                 row.name,
                 row.description,
                 row.category,

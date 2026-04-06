@@ -99,23 +99,27 @@ async fn main() -> Result<()> {
             .unwrap_or(1usize);
         let task_manager = Arc::new(TaskManager::new(max_concurrent_tasks));
 
+        let forward_test_store = Arc::new(db.forward_tests());
         let server = server::OptopsyServer::with_all_stores(
             cache.clone(),
             strategy_store.clone(),
             run_store.clone(),
             adjustment_store.clone(),
-        );
+        )
+        .with_forward_test_store(forward_test_store.clone());
 
         let app_state = AppState {
             server,
             run_store,
             chat_store,
             task_manager: Arc::clone(&task_manager),
+            forward_test_store: forward_test_store.clone(),
         };
 
         let strategy_store_for_mcp = strategy_store.clone();
         let run_store_for_mcp = app_state.run_store.clone();
         let adjustment_store_for_mcp = adjustment_store.clone();
+        let forward_test_store_for_mcp = forward_test_store.clone();
         let service = StreamableHttpService::new(
             move || {
                 let srv = server::OptopsyServer::with_all_stores(
@@ -123,7 +127,8 @@ async fn main() -> Result<()> {
                     strategy_store_for_mcp.clone(),
                     run_store_for_mcp.clone(),
                     adjustment_store_for_mcp.clone(),
-                );
+                )
+                .with_forward_test_store(forward_test_store_for_mcp.clone());
                 Ok(srv)
             },
             LocalSessionManager::default().into(),
@@ -180,12 +185,14 @@ async fn main() -> Result<()> {
             std::path::Path::new("scripts/strategies"),
         )?;
 
+        let forward_test_store = Arc::new(db.forward_tests());
         let server = server::OptopsyServer::with_all_stores(
             cache,
             strategy_store,
             run_store,
             adjustment_store,
-        );
+        )
+        .with_forward_test_store(forward_test_store);
         let service = server.serve(rmcp::transport::stdio()).await?;
         service.waiting().await?;
     }
