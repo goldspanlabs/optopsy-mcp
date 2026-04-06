@@ -349,9 +349,10 @@ pub async fn execute(
     let steps_per_window = combos.len() + 1;
     let total_steps = windows.len() * steps_per_window;
 
-    // Precomputed options data — captured from the first backtest run and
-    // reused for all subsequent runs to avoid reloading parquet every time.
-    let mut precomputed: Option<crate::scripting::engine::PrecomputedOptionsData> = None;
+    // Precomputed options data — captured from the first backtest run within
+    // each window and reused for combos in that same window. Reset per window
+    // because each window has different date bounds.
+    let mut precomputed: Option<crate::scripting::engine::PrecomputedOptionsData>;
 
     for (idx, window) in windows.iter().enumerate() {
         if is_cancelled() {
@@ -359,6 +360,9 @@ pub async fn execute(
         }
 
         let window_base = idx * steps_per_window;
+
+        // Reset precomputed options for each window (date range changes)
+        precomputed = None;
 
         // --- Training phase: sweep all combos ---
         let mut best_metric = f64::NEG_INFINITY;
