@@ -188,6 +188,28 @@ pub async fn step(
     let equity_curve = &result.equity_curve;
 
     let previous_trade_count = session.total_trades as usize;
+    if trade_log.len() < previous_trade_count {
+        bail!(
+            "Forward test session {session_id} is inconsistent: replay produced {} trades, \
+             but persisted state expects at least {previous_trade_count}. \
+             The underlying data or strategy likely changed. Delete this session and start fresh.",
+            trade_log.len(),
+        );
+    }
+    let previous_equity_len = session
+        .engine_state
+        .get("equity_curve_len")
+        .and_then(Value::as_u64)
+        .and_then(|len| usize::try_from(len).ok())
+        .unwrap_or(0);
+    if equity_curve.len() < previous_equity_len {
+        bail!(
+            "Forward test session {session_id} is inconsistent: replay produced {} equity points, \
+             but persisted state expects at least {previous_equity_len}. \
+             The underlying data or strategy likely changed. Delete this session and start fresh.",
+            equity_curve.len(),
+        );
+    }
     let new_trades: Vec<_> = trade_log.iter().skip(previous_trade_count).collect();
     let total_trades = trade_log.len() as i64;
 
@@ -421,22 +443,25 @@ fn find_first_new_bar_date(
             .first()
             .map(|e| e.datetime.format("%Y-%m-%d").to_string())
             .unwrap_or_default()
-    } else {
-        match equity_curve
-            .iter()
-            .find(|e| e.datetime.format("%Y-%m-%d").to_string().as_str() > previous_last_date)
-        {
+    } else if let Ok(cutoff) = chrono::NaiveDate::parse_from_str(previous_last_date, "%Y-%m-%d") {
+        match equity_curve.iter().find(|e| e.datetime.date() > cutoff) {
             Some(e) => e.datetime.format("%Y-%m-%d").to_string(),
             None => session.last_bar_date.clone().unwrap_or_default(),
         }
+    } else {
+        session.last_bar_date.clone().unwrap_or_default()
     }
 }
 
 fn count_new_bars(equity_curve: &[EquityPoint], previous_last_date: &str) -> usize {
-    equity_curve
-        .iter()
-        .filter(|e| e.datetime.format("%Y-%m-%d").to_string().as_str() > previous_last_date)
-        .count()
+    if let Ok(cutoff) = chrono::NaiveDate::parse_from_str(previous_last_date, "%Y-%m-%d") {
+        equity_curve
+            .iter()
+            .filter(|e| e.datetime.date() > cutoff)
+            .count()
+    } else {
+        equity_curve.len()
+    }
 }
 
 fn record_trades(
@@ -587,12 +612,14 @@ fn compute_forward_sharpe(snapshots: &[ForwardTestSnapshot]) -> Option<f64> {
             }
         })
         .collect();
-    let mean = daily_returns.iter().sum::<f64>() / daily_returns.len() as f64;
+    let n = daily_returns.len() as f64;
+    let mean = daily_returns.iter().sum::<f64>() / n;
+    // Use sample variance (n-1) to match engine's std_dev calculation
     let variance = daily_returns
         .iter()
         .map(|r| (r - mean).powi(2))
         .sum::<f64>()
-        / daily_returns.len() as f64;
+        / (n - 1.0);
     let std_dev = variance.sqrt();
     if std_dev > f64::EPSILON {
         Some(mean / std_dev * (252.0_f64).sqrt())
