@@ -67,10 +67,10 @@ pub async fn run_pipeline(
         stages.push(StageInfo {
             name: "significance_gate".to_string(),
             status: StageStatus::Failed,
-            reason: Some(
-                "No parameter combos passed significance gate (all p > 0.05 or insufficient trades)"
-                    .to_string(),
-            ),
+            reason: Some(format!(
+                "No parameter combos passed significance gate (all p > {:.2} or insufficient trades)",
+                P_VALUE_THRESHOLD
+            )),
             duration_ms: 0,
         });
 
