@@ -99,6 +99,8 @@ async fn significance_gate_fails_skips_downstream() {
         make_result(2, params2, 0.5, Some(false), Some(0.78)),
     ]);
 
+    let base_params = HashMap::new(); // base params irrelevant — gate fails before WF
+
     let result = optopsy_mcp::tools::pipeline::run_pipeline(
         &state.server,
         "test_strategy",
@@ -108,6 +110,7 @@ async fn significance_gate_fails_skips_downstream() {
         "sweep-001".to_string(),
         vec!["run-1".to_string(), "run-2".to_string()],
         sweep,
+        base_params,
     )
     .await;
 
@@ -150,6 +153,8 @@ async fn no_permutation_passes_significance_gate() {
 
     let sweep = make_sweep(vec![make_result(1, params1, 1.2, None, None)]);
 
+    let base_params = HashMap::new(); // WF will fail anyway (nonexistent strategy)
+
     let result = optopsy_mcp::tools::pipeline::run_pipeline(
         &state.server,
         "nonexistent_strategy", // walk-forward will fail because strategy doesn't exist
@@ -159,6 +164,7 @@ async fn no_permutation_passes_significance_gate() {
         "sweep-002".to_string(),
         vec!["run-1".to_string()],
         sweep,
+        base_params,
     )
     .await;
 
@@ -184,13 +190,15 @@ async fn no_permutation_passes_significance_gate() {
 async fn full_pipeline_with_nvda_fixture() {
     let (state, _tmp, strategy_id) = common::test_app_state_with_ohlcv();
 
-    // No permutation test — significance gate will pass with top combos
-    // The strategy uses `symbol` extern param; NVDA data is in the temp cache
-    let mut params1 = HashMap::new();
-    params1.insert("symbol".to_string(), serde_json::json!("NVDA"));
-    params1.insert("CAPITAL".to_string(), serde_json::json!(100_000));
+    // SweepResult.params only contains swept combo keys (not base params)
+    let swept_combo = HashMap::new(); // no swept params — WF uses base_params grid
 
-    let sweep = make_sweep(vec![make_result(1, params1, 1.5, None, None)]);
+    let sweep = make_sweep(vec![make_result(1, swept_combo, 1.5, None, None)]);
+
+    // base_params carries the original sweep request params (symbol, CAPITAL, etc.)
+    let mut base_params = HashMap::new();
+    base_params.insert("symbol".to_string(), serde_json::json!("NVDA"));
+    base_params.insert("CAPITAL".to_string(), serde_json::json!(100_000));
 
     let result = optopsy_mcp::tools::pipeline::run_pipeline(
         &state.server,
@@ -201,6 +209,7 @@ async fn full_pipeline_with_nvda_fixture() {
         "sweep-003".to_string(),
         vec!["run-1".to_string()],
         sweep,
+        base_params,
     )
     .await;
 
@@ -274,6 +283,8 @@ async fn pipeline_preserves_sweep_metadata() {
         "run-ccc".to_string(),
     ];
 
+    let base_params = HashMap::new(); // base params irrelevant — gate fails before WF
+
     let result = optopsy_mcp::tools::pipeline::run_pipeline(
         &state.server,
         "test",
@@ -283,6 +294,7 @@ async fn pipeline_preserves_sweep_metadata() {
         "sweep-meta-test".to_string(),
         run_ids.clone(),
         sweep,
+        base_params,
     )
     .await
     .expect("Pipeline should not error");

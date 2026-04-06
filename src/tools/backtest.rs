@@ -156,6 +156,7 @@ pub async fn execute(
         execute_single(server, params).await
     } else if params.pipeline {
         // Full pipeline: sweep -> walk-forward -> monte carlo
+        let original_params = params.params.clone();
         let (sweep_id, run_ids, sweep_response, strategy, symbol, capital, objective) =
             execute_sweep_raw(server, &params).await?;
 
@@ -168,6 +169,7 @@ pub async fn execute(
             sweep_id,
             run_ids,
             sweep_response,
+            original_params,
         )
         .await?;
 

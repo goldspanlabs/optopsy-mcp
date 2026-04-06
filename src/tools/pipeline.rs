@@ -21,7 +21,11 @@ const TOP_COMBOS_FOR_WF: usize = 3;
 ///
 /// Receives the already-finished sweep result and chains walk-forward validation
 /// and Monte Carlo risk analysis, gated by statistical thresholds.
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    clippy::implicit_hasher
+)]
 pub async fn run_pipeline(
     server: &OptopsyServer,
     strategy: &str,
@@ -31,6 +35,7 @@ pub async fn run_pipeline(
     sweep_id: String,
     run_ids: Vec<String>,
     sweep_response: SweepResponse,
+    base_params: HashMap<String, Value>,
 ) -> Result<PipelineResponse> {
     let pipeline_start = std::time::Instant::now();
     let mut stages: Vec<StageInfo> = Vec::new();
@@ -131,14 +136,12 @@ pub async fn run_pipeline(
         None => None,
     };
 
-    // Build base params from the best combo so WF has symbol/CAPITAL
-    let base_params = top_combos.first().map(|combo| {
-        let mut bp = (**combo).clone();
-        if !bp.contains_key("symbol") {
-            bp.insert("symbol".to_string(), Value::String(symbol.to_string()));
-        }
-        bp
-    });
+    // Ensure base_params has the symbol for walk-forward data loading
+    let mut wf_base_params = base_params;
+    if !wf_base_params.contains_key("symbol") {
+        wf_base_params.insert("symbol".to_string(), Value::String(symbol.to_string()));
+    }
+    let wf_base_params = Some(wf_base_params);
 
     let wf_result = crate::tools::walk_forward::execute(
         &server.cache,
@@ -155,7 +158,7 @@ pub async fn run_pipeline(
         None, // end_date
         None, // profile
         script_source,
-        base_params,
+        wf_base_params,
     )
     .await;
 
