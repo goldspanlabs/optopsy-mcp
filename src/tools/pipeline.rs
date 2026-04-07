@@ -29,7 +29,6 @@ const TOP_COMBOS_FOR_WF: usize = 3;
     clippy::too_many_lines,
     clippy::implicit_hasher
 )]
-#[allow(clippy::too_many_arguments)]
 pub async fn run_pipeline(
     server: &OptopsyServer,
     strategy: &str,

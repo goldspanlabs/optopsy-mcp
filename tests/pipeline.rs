@@ -111,6 +111,7 @@ async fn significance_gate_fails_skips_downstream() {
         vec!["run-1".to_string(), "run-2".to_string()],
         sweep,
         base_params,
+        &None,
     )
     .await;
 
@@ -165,6 +166,7 @@ async fn no_permutation_passes_significance_gate() {
         vec!["run-1".to_string()],
         sweep,
         base_params,
+        &None,
     )
     .await;
 
@@ -210,6 +212,7 @@ async fn full_pipeline_with_nvda_fixture() {
         vec!["run-1".to_string()],
         sweep,
         base_params,
+        &None,
     )
     .await;
 
@@ -295,6 +298,7 @@ async fn pipeline_preserves_sweep_metadata() {
         run_ids.clone(),
         sweep,
         base_params,
+        &None,
     )
     .await
     .expect("Pipeline should not error");

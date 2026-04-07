@@ -34,7 +34,7 @@ pub async fn execute(
     request: &WorkflowRequest,
     source: &str,
 ) -> Result<WorkflowResponse> {
-    execute_with_stage(server, request, source, &None).await
+    execute_with_stage(server, request, source, &None, None, None).await
 }
 
 pub async fn execute_with_stage(
@@ -42,13 +42,31 @@ pub async fn execute_with_stage(
     request: &WorkflowRequest,
     source: &str,
     on_stage: &crate::tools::pipeline::StageCallback,
+    progress: Option<crate::scripting::engine::ProgressCallback>,
+    is_cancelled: Option<&crate::scripting::engine::CancelCallback>,
 ) -> Result<WorkflowResponse> {
     match request.kind {
         WorkflowKind::BaselineValidation => Ok(WorkflowResponse::BaselineValidation(
-            pipeline::execute_with_stage(server, &request.pipeline, source, on_stage).await?,
+            pipeline::execute_with_stage(
+                server,
+                &request.pipeline,
+                source,
+                on_stage,
+                progress,
+                is_cancelled,
+            )
+            .await?,
         )),
         WorkflowKind::StrategyEvaluation => Ok(WorkflowResponse::StrategyEvaluation(
-            execute_strategy_evaluation(server, &request.pipeline, source, on_stage).await?,
+            execute_strategy_evaluation(
+                server,
+                &request.pipeline,
+                source,
+                on_stage,
+                progress,
+                is_cancelled,
+            )
+            .await?,
         )),
     }
 }
@@ -58,6 +76,8 @@ async fn execute_strategy_evaluation(
     request: &PipelineRequest,
     source: &str,
     on_stage: &crate::tools::pipeline::StageCallback,
+    progress: Option<crate::scripting::engine::ProgressCallback>,
+    is_cancelled: Option<&crate::scripting::engine::CancelCallback>,
 ) -> Result<StrategyEvaluationResponse> {
     let started_at = Instant::now();
     let mut eval_request = request.clone();
@@ -65,7 +85,15 @@ async fn execute_strategy_evaluation(
         eval_request.num_permutations = DEFAULT_STRATEGY_EVAL_PERMUTATIONS;
     }
 
-    let pipeline = pipeline::execute_with_stage(server, &eval_request, source, on_stage).await?;
+    let pipeline = pipeline::execute_with_stage(
+        server,
+        &eval_request,
+        source,
+        on_stage,
+        progress,
+        is_cancelled,
+    )
+    .await?;
     let robustness_checks = if pipeline.walk_forward.is_some() {
         if let Some(cb) = on_stage {
             cb("Robustness Checks");

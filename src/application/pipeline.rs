@@ -5,6 +5,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::application::sweeps;
+use crate::scripting::engine::{CancelCallback, ProgressCallback};
 use crate::server::OptopsyServer;
 use crate::tools::pipeline::StageCallback;
 use crate::tools::response_types::pipeline::PipelineResponse;
@@ -41,15 +42,18 @@ pub async fn execute(
     request: &PipelineRequest,
     source: &str,
 ) -> Result<PipelineResponse> {
-    execute_with_stage(server, request, source, &None).await
+    execute_with_stage(server, request, source, &None, None, None).await
 }
 
 /// Execute the full pipeline with an optional stage progress callback.
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_with_stage(
     server: &OptopsyServer,
     request: &PipelineRequest,
     source: &str,
     on_stage: &StageCallback,
+    progress: Option<ProgressCallback>,
+    is_cancelled: Option<&CancelCallback>,
 ) -> Result<PipelineResponse> {
     let run_store = server.require_run_store()?;
 
@@ -73,8 +77,8 @@ pub async fn execute_with_stage(
         &sweep_req,
         source,
         request.thread_id.as_deref(),
-        None,
-        None,
+        progress,
+        is_cancelled,
     )
     .await?;
 

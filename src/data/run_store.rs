@@ -347,14 +347,18 @@ impl RunStore for SqliteRunStore {
                      FROM sweeps sw
                      LEFT JOIN strategies s ON s.id = sw.strategy_id
                      LEFT JOIN (
-                         SELECT r1.*
-                         FROM runs r1
-                         INNER JOIN (
-                             SELECT sweep_id, MAX(sharpe) as max_sharpe
-                             FROM runs
-                             WHERE sweep_id IS NOT NULL
-                             GROUP BY sweep_id
-                         ) r2 ON r1.sweep_id = r2.sweep_id AND r1.sharpe = r2.max_sharpe
+                         SELECT sweep_id,
+                                MAX(sharpe) as sharpe,
+                                MAX(sortino) as sortino,
+                                MAX(cagr) as cagr,
+                                MAX(profit_factor) as profit_factor,
+                                MAX(total_return) as total_return,
+                                MAX(win_rate) as win_rate,
+                                MIN(max_drawdown) as max_drawdown,
+                                MAX(trade_count) as trade_count
+                         FROM runs
+                         WHERE sweep_id IS NOT NULL
+                         GROUP BY sweep_id
                      ) br ON br.sweep_id = sw.id
                      LEFT JOIN (
                          SELECT sweep_id,

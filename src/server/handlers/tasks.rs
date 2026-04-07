@@ -355,16 +355,31 @@ pub async fn submit_pipeline(
                 };
 
                 // Stage progress callback — updates the task's stage_label
+                // and resets bar-level progress for non-sweep stages
                 let task_ref = Arc::clone(&task);
                 let on_stage: crate::tools::pipeline::StageCallback =
                     Some(Box::new(move |label: &str| {
                         *task_ref.stage_label.lock().unwrap() = label.to_string();
+                        if label != "Sweep" {
+                            task_ref.progress_current.store(0, Ordering::Relaxed);
+                            task_ref.progress_total.store(0, Ordering::Relaxed);
+                        }
                     }));
 
-                let result =
-                    workflows::execute_with_stage(&server, &wf_request, "manual", &on_stage)
-                        .await
-                        .map_err(|e| e.to_string())?;
+                // Progress + cancel callbacks for sweep bar-level progress
+                let progress = app_tasks::progress_callback(&task);
+                let is_cancelled = app_tasks::cancel_callback(&task);
+
+                let result = workflows::execute_with_stage(
+                    &server,
+                    &wf_request,
+                    "manual",
+                    &on_stage,
+                    Some(progress),
+                    Some(&is_cancelled),
+                )
+                .await
+                .map_err(|e| e.to_string())?;
 
                 // Extract sweep_id and persist analysis
                 let (sweep_id, result_json) = match &result {
