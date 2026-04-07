@@ -403,10 +403,25 @@ impl RunStore for SqliteRunStore {
                         .and_then(|p| p.as_object().cloned());
 
                     // Derive pipeline_status from analysis JSON (stages array)
-                    let pipeline_status: Option<String> = row
-                        .get::<_, Option<String>>(21)?
-                        .and_then(|s| serde_json::from_str::<Vec<Value>>(&s).ok())
-                        .map(|stages| derive_pipeline_status(&stages));
+                    let pipeline_status: Option<String> =
+                        row.get::<_, Option<String>>(21)?.and_then(|s| {
+                            // Try stages array (old format)
+                            if let Ok(stages) = serde_json::from_str::<Vec<Value>>(&s) {
+                                return Some(derive_pipeline_status(&stages));
+                            }
+                            // Try WorkflowResponse (new format): extract result.pipeline.stages
+                            if let Ok(obj) = serde_json::from_str::<Value>(&s) {
+                                if let Some(stages) = obj
+                                    .get("result")
+                                    .and_then(|r| r.get("pipeline"))
+                                    .and_then(|p| p.get("stages"))
+                                    .and_then(|s| s.as_array())
+                                {
+                                    return Some(derive_pipeline_status(stages));
+                                }
+                            }
+                            None
+                        });
 
                     Ok(RunRow::Sweep {
                         sweep_id: row.get(0)?,
