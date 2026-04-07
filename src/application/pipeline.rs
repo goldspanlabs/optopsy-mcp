@@ -63,16 +63,25 @@ pub async fn execute(
     )
     .await?;
 
-    crate::tools::pipeline::run_pipeline(
+    let response = crate::tools::pipeline::run_pipeline(
         server,
         &sweep_result.strategy_key,
         &sweep_result.symbol,
         sweep_result.capital,
         &sweep_result.objective,
-        sweep_result.sweep_id,
+        sweep_result.sweep_id.clone(),
         sweep_result.run_ids,
         sweep_result.response,
         request.params.clone(),
     )
-    .await
+    .await?;
+
+    // Persist pipeline stages to sweeps.analysis for tracking
+    let stages_json = serde_json::to_string(&response.stages)?;
+    let sweep_id = sweep_result.sweep_id;
+    let store = run_store.clone();
+    tokio::task::spawn_blocking(move || store.set_sweep_analysis(&sweep_id, &stages_json))
+        .await??;
+
+    Ok(response)
 }

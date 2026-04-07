@@ -1,7 +1,10 @@
 //! Response types for the backtest pipeline.
 
+use std::collections::HashMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::risk::MonteCarloResponse;
 use super::sweep::SweepResponse;
@@ -37,6 +40,10 @@ pub struct StageInfo {
     pub reason: Option<String>,
     /// Wall-clock time in milliseconds (0 when skipped).
     pub duration_ms: u64,
+    /// Gate-specific decision context (thresholds, counts, values used to make
+    /// the pass/fail decision). Always populated for gates, empty for non-gate stages.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub details: HashMap<String, Value>,
 }
 
 /// Full pipeline response. Always contains sweep results; downstream stages

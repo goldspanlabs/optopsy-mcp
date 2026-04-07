@@ -47,6 +47,7 @@ pub async fn run_pipeline(
         status: StageStatus::Completed,
         reason: None,
         duration_ms: sweep_response.execution_time_ms,
+        details: HashMap::new(),
     });
 
     // Collect top findings from sweep
@@ -63,6 +64,8 @@ pub async fn run_pipeline(
     // Gate 1: Significance — decide which combos to validate
     let top_combos = select_top_combos(&sweep_response);
 
+    let sig_details = build_significance_details(&sweep_response, &top_combos);
+
     if top_combos.is_empty() {
         stages.push(StageInfo {
             name: "significance_gate".to_string(),
@@ -71,6 +74,7 @@ pub async fn run_pipeline(
                 "No parameter combos passed significance gate (all p > {P_VALUE_THRESHOLD:.2} or insufficient trades)"
             )),
             duration_ms: 0,
+            details: sig_details,
         });
 
         // Skip remaining stages
@@ -79,18 +83,21 @@ pub async fn run_pipeline(
             status: StageStatus::Skipped,
             reason: Some("Skipped: significance gate failed".to_string()),
             duration_ms: 0,
+            details: HashMap::new(),
         });
         stages.push(StageInfo {
             name: "oos_data_gate".to_string(),
             status: StageStatus::Skipped,
             reason: Some("Skipped: significance gate failed".to_string()),
             duration_ms: 0,
+            details: HashMap::new(),
         });
         stages.push(StageInfo {
             name: "monte_carlo".to_string(),
             status: StageStatus::Skipped,
             reason: Some("Skipped: significance gate failed".to_string()),
             duration_ms: 0,
+            details: HashMap::new(),
         });
 
         key_findings
@@ -114,6 +121,7 @@ pub async fn run_pipeline(
         status: StageStatus::Completed,
         reason: None,
         duration_ms: 0,
+        details: sig_details,
     });
 
     // Stage 2: Walk-forward validation
@@ -170,6 +178,7 @@ pub async fn run_pipeline(
                 status: StageStatus::Completed,
                 reason: None,
                 duration_ms: wf_duration,
+                details: HashMap::new(),
             });
 
             key_findings.push(format!(
@@ -187,6 +196,7 @@ pub async fn run_pipeline(
                 status: StageStatus::Failed,
                 reason: Some(format!("Walk-forward failed: {e}")),
                 duration_ms: wf_duration,
+                details: HashMap::new(),
             });
 
             // Skip remaining stages
@@ -195,12 +205,14 @@ pub async fn run_pipeline(
                 status: StageStatus::Skipped,
                 reason: Some("Skipped: walk-forward failed".to_string()),
                 duration_ms: 0,
+                details: HashMap::new(),
             });
             stages.push(StageInfo {
                 name: "monte_carlo".to_string(),
                 status: StageStatus::Skipped,
                 reason: Some("Skipped: walk-forward failed".to_string()),
                 duration_ms: 0,
+                details: HashMap::new(),
             });
 
             key_findings.push(format!("Walk-forward validation failed: {e}"));
@@ -225,6 +237,17 @@ pub async fn run_pipeline(
     let returns = equity_to_returns(&wf_ref.stitched_equity);
     let oos_returns_len = returns.len();
 
+    let oos_gate_details = HashMap::from([
+        (
+            "oos_returns_count".to_string(),
+            Value::from(oos_returns_len),
+        ),
+        (
+            "min_required".to_string(),
+            Value::from(MIN_RETURNS_FOR_BOOTSTRAP),
+        ),
+    ]);
+
     if oos_returns_len < MIN_RETURNS_FOR_BOOTSTRAP {
         stages.push(StageInfo {
             name: "oos_data_gate".to_string(),
@@ -233,12 +256,14 @@ pub async fn run_pipeline(
                 "Insufficient OOS data: {oos_returns_len} returns < {MIN_RETURNS_FOR_BOOTSTRAP} minimum for bootstrap",
             )),
             duration_ms: 0,
+            details: oos_gate_details,
         });
         stages.push(StageInfo {
             name: "monte_carlo".to_string(),
             status: StageStatus::Skipped,
             reason: Some("Skipped: OOS data gate failed".to_string()),
             duration_ms: 0,
+            details: HashMap::new(),
         });
 
         key_findings.push(format!(
@@ -263,6 +288,7 @@ pub async fn run_pipeline(
         status: StageStatus::Completed,
         reason: None,
         duration_ms: 0,
+        details: oos_gate_details,
     });
 
     // Stage 3: Monte Carlo on OOS equity returns (already computed above)
@@ -294,6 +320,7 @@ pub async fn run_pipeline(
                 status: StageStatus::Completed,
                 reason: None,
                 duration_ms: mc_duration,
+                details: HashMap::new(),
             });
 
             key_findings.push(format!(
@@ -310,6 +337,7 @@ pub async fn run_pipeline(
                 status: StageStatus::Failed,
                 reason: Some(format!("Monte Carlo failed: {e}")),
                 duration_ms: mc_duration,
+                details: HashMap::new(),
             });
             key_findings.push(format!("Monte Carlo simulation failed: {e}"));
             None
@@ -325,6 +353,7 @@ pub async fn run_pipeline(
                 status: StageStatus::Failed,
                 reason: Some(reason),
                 duration_ms: mc_duration,
+                details: HashMap::new(),
             });
             None
         }
@@ -375,6 +404,30 @@ pub(crate) fn select_top_combos(sweep: &SweepResponse) -> Vec<&HashMap<String, V
             .map(|r| &r.params)
             .collect()
     }
+}
+
+/// Build gate decision details for the significance gate.
+fn build_significance_details(
+    sweep: &SweepResponse,
+    top_combos: &[&HashMap<String, Value>],
+) -> HashMap<String, Value> {
+    let combos_tested = sweep.ranked_results.len();
+    let combos_passed = top_combos.len();
+    let top_p_value = sweep
+        .ranked_results
+        .first()
+        .and_then(|r| r.p_value)
+        .unwrap_or(f64::NAN);
+
+    HashMap::from([
+        ("combos_tested".to_string(), Value::from(combos_tested)),
+        ("combos_passed".to_string(), Value::from(combos_passed)),
+        (
+            "p_value_threshold".to_string(),
+            Value::from(P_VALUE_THRESHOLD),
+        ),
+        ("top_combo_p_value".to_string(), Value::from(top_p_value)),
+    ])
 }
 
 /// Build a walk-forward `params_grid` from the top sweep combos.
