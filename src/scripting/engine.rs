@@ -678,23 +678,46 @@ pub async fn run_script_backtest(
             &splits, &dividends, &closes,
         ));
 
-        // Apply split-only adjustment to simulation bars
+        // OHLCV_ADJUST modes: "none" (default), "split" (raw→adjusted), "unadjust" (adjusted→raw)
+        let ohlcv_mode = std::env::var("OHLCV_ADJUST").unwrap_or_else(|_| "none".to_string());
         let bars = if split_timeline.is_empty() {
             bars
         } else {
-            bars.iter()
-                .map(|b| {
-                    let factor = split_timeline.factor_at(b.datetime.date());
-                    OhlcvBar {
-                        datetime: b.datetime,
-                        open: b.open * factor,
-                        high: b.high * factor,
-                        low: b.low * factor,
-                        close: b.close * factor,
-                        volume: b.volume,
-                    }
-                })
-                .collect()
+            match ohlcv_mode.as_str() {
+                "split" => bars
+                    .iter()
+                    .map(|b| {
+                        let factor = split_timeline.factor_at(b.datetime.date());
+                        OhlcvBar {
+                            datetime: b.datetime,
+                            open: b.open * factor,
+                            high: b.high * factor,
+                            low: b.low * factor,
+                            close: b.close * factor,
+                            volume: b.volume,
+                        }
+                    })
+                    .collect(),
+                "unadjust" => bars
+                    .iter()
+                    .map(|b| {
+                        let factor = split_timeline.factor_at(b.datetime.date());
+                        if factor.abs() > f64::EPSILON {
+                            OhlcvBar {
+                                datetime: b.datetime,
+                                open: b.open / factor,
+                                high: b.high / factor,
+                                low: b.low / factor,
+                                close: b.close / factor,
+                                volume: b.volume,
+                            }
+                        } else {
+                            b.clone()
+                        }
+                    })
+                    .collect(),
+                _ => bars, // "none" or unrecognized
+            }
         };
 
         // 5. Pre-compute indicators
@@ -2126,7 +2149,6 @@ fn parse_config(map: Dynamic) -> Result<ScriptConfig> {
     let defaults = parse_defaults_section(&map);
 
     let procedural = get_bool_or(&map, "procedural", false);
-
     Ok(ScriptConfig {
         symbol,
         symbols,
@@ -2696,7 +2718,14 @@ fn resolve_option_legs(
                     .select([col("delta")])
                     .collect()
                     .ok()
-                    .and_then(|df| df.column("delta").ok()?.f64().ok()?.get(0))
+                    .and_then(|df| {
+                        let ca = df.column("delta").ok()?.f64().ok()?;
+                        if ca.is_empty() {
+                            None
+                        } else {
+                            Some(ca.get(0).unwrap_or(0.0))
+                        }
+                    })
                     .unwrap_or(0.0);
                 Some(ResolvedLeg {
                     side: *side,
@@ -2748,7 +2777,13 @@ fn resolve_option_legs(
                         .column(col)
                         .ok()
                         .and_then(|c| c.f64().ok())
-                        .and_then(|ca| ca.get(0))
+                        .and_then(|ca| {
+                            if ca.is_empty() {
+                                None
+                            } else {
+                                Some(ca.get(0).unwrap_or(0.0))
+                            }
+                        })
                         .unwrap_or(0.0)
                 };
 
@@ -3850,23 +3885,46 @@ async fn load_multi_symbol_data(
             &splits, &dividends, &closes,
         ));
 
-        // Apply split adjustment to simulation bars
+        // OHLCV_ADJUST modes: "none" (default), "split" (raw→adjusted), "unadjust" (adjusted→raw)
+        let ohlcv_mode = std::env::var("OHLCV_ADJUST").unwrap_or_else(|_| "none".to_string());
         let bars: Vec<OhlcvBar> = if split_timeline.is_empty() {
             bars
         } else {
-            bars.iter()
-                .map(|b| {
-                    let factor = split_timeline.factor_at(b.datetime.date());
-                    OhlcvBar {
-                        datetime: b.datetime,
-                        open: b.open * factor,
-                        high: b.high * factor,
-                        low: b.low * factor,
-                        close: b.close * factor,
-                        volume: b.volume,
-                    }
-                })
-                .collect()
+            match ohlcv_mode.as_str() {
+                "split" => bars
+                    .iter()
+                    .map(|b| {
+                        let factor = split_timeline.factor_at(b.datetime.date());
+                        OhlcvBar {
+                            datetime: b.datetime,
+                            open: b.open * factor,
+                            high: b.high * factor,
+                            low: b.low * factor,
+                            close: b.close * factor,
+                            volume: b.volume,
+                        }
+                    })
+                    .collect(),
+                "unadjust" => bars
+                    .iter()
+                    .map(|b| {
+                        let factor = split_timeline.factor_at(b.datetime.date());
+                        if factor.abs() > f64::EPSILON {
+                            OhlcvBar {
+                                datetime: b.datetime,
+                                open: b.open / factor,
+                                high: b.high / factor,
+                                low: b.low / factor,
+                                close: b.close / factor,
+                                volume: b.volume,
+                            }
+                        } else {
+                            b.clone()
+                        }
+                    })
+                    .collect(),
+                _ => bars,
+            }
         };
 
         // Build indicator bars (dividend-adjusted)

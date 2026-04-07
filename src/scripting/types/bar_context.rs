@@ -279,6 +279,35 @@ impl BarContext {
         self.positions.iter().any(|p| !p.implicit)
     }
 
+    /// Sum of strike × multiplier for all open short put positions.
+    /// Represents cash reserved to cover potential assignment.
+    pub fn reserved_capital(&mut self) -> f64 {
+        use super::position::ScriptPositionInner;
+        use crate::engine::types::{OptionType, Side};
+
+        self.positions
+            .iter()
+            .filter(|p| !p.implicit)
+            .filter_map(|p| match &p.inner {
+                ScriptPositionInner::Options {
+                    legs, multiplier, ..
+                } => {
+                    let reserved: f64 = legs
+                        .iter()
+                        .filter(|l| l.side == Side::Short && l.option_type == OptionType::Put)
+                        .map(|l| l.strike * f64::from(l.qty) * f64::from(*multiplier))
+                        .sum();
+                    if reserved > 0.0 {
+                        Some(reserved)
+                    } else {
+                        None
+                    }
+                }
+                ScriptPositionInner::Stock { .. } => None,
+            })
+            .sum()
+    }
+
     // --- Indicators (current bar) ---
     pub(in crate::scripting) fn indicator_value(&self, name: &str, period: i64) -> Dynamic {
         crate::scripting::helpers::indicator_lookup(

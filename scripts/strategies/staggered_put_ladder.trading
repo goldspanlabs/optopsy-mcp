@@ -1,0 +1,50 @@
+# Staggered Put Ladder
+# Sell cash-secured puts weekly on a configurable day.
+# Each slot requires enough capital to cover assignment (strike × multiplier).
+# On assignment, sell stock at market immediately. No covered call phase.
+
+strategy "Staggered Put Ladder"
+  capital CAPITAL
+  interval daily
+  data ohlcv, options
+  slippage mid
+  expiration_filter weekly
+  max_positions 10
+  category options
+  description "Weekly cash-secured put ladder with staggered entries"
+  hypothesis "Rolling weekly put sales at consistent DTE captures steady theta decay with diversified expiration risk"
+  tags put_ladder, premium_selling, cash_secured_put, staggered
+  regime sideways, low_volatility
+
+asset symbol = "SPY"
+
+extern PUT_DELTA = 0.30 "Target delta for short puts"
+extern PUT_DTE = 45 "Days to expiration for puts"
+extern ENTRY_DAY = 1 "Day of week to open (1=Mon, 5=Fri)"
+extern SLIPPAGE = "mid" "Slippage model" choices mid, spread
+extern MULTIPLIER = 100 "Contract multiplier"
+
+sweep quick
+  PUT_DELTA 0.20 to 0.40 step 0.10
+  PUT_DTE 30 to 45 step 5
+  ENTRY_DAY 1 to 5 step 1
+
+sweep comprehensive
+  PUT_DELTA 0.10 to 0.50 step 0.10
+  PUT_DTE 7 to 42 step 7
+  ENTRY_DAY 1 to 5 step 1
+
+on each bar
+  # Close any implicit stock from assignment immediately
+  for each pos in positions()
+    when pos.source == "assignment" and pos.is_stock then
+      close position pos.id "liquidate_assignment"
+  # Open new put on entry day if capital allows
+  when day_of_week() == ENTRY_DAY then
+    raw let avail = ctx.cash - ctx.reserved_capital();
+    raw if avail >= ctx.close * MULTIPLIER {
+    open short_put(PUT_DELTA, PUT_DTE)
+    raw }
+
+on exit check
+  hold position
