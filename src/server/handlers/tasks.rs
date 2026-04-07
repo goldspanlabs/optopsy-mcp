@@ -22,6 +22,7 @@ use crate::engine::walk_forward::{WalkForwardParams, WfMode, WfObjective};
 use crate::scripting::engine::CachingDataLoader;
 use crate::server::state::AppState;
 use crate::server::task_manager::{TaskInfo, TaskKind, TaskStatus};
+use crate::tools::response_types::workflow::{WorkflowKind, WorkflowResponse};
 use crate::tools::run_script::RunScriptParams;
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -302,7 +303,8 @@ pub async fn submit_sweep(
     Ok(Json(SubmitResponse { task_id }))
 }
 
-/// `POST /tasks/pipeline` — Submit a full pipeline task (sweep + gates + WF + MC).
+/// `POST /tasks/pipeline` — Submit a full strategy evaluation task
+/// (sweep + gates + WF + MC + robustness checks + verdict).
 #[allow(clippy::unused_async)]
 pub async fn submit_pipeline(
     State(state): State<AppState>,
@@ -329,31 +331,53 @@ pub async fn submit_pipeline(
 
     let tm = Arc::clone(&state.task_manager);
     let server = state.server.clone();
+    let run_store = Arc::clone(&state.run_store);
     tokio::spawn(async move {
         Box::pin(app_tasks::execute_queued_task(
             tm,
             Arc::clone(&task),
             async move {
-                let pipeline_req = pipeline::PipelineRequest {
-                    strategy: req.strategy,
-                    mode: req.mode,
-                    objective: req.objective,
-                    params: req.params,
-                    sweep_params: req.sweep_params,
-                    max_evaluations: req.max_evaluations,
-                    num_permutations: req.num_permutations,
-                    thread_id: req.thread_id,
+                let wf_request = workflows::WorkflowRequest {
+                    kind: WorkflowKind::StrategyEvaluation,
+                    pipeline: pipeline::PipelineRequest {
+                        strategy: req.strategy,
+                        mode: req.mode,
+                        objective: req.objective,
+                        params: req.params,
+                        sweep_params: req.sweep_params,
+                        max_evaluations: req.max_evaluations,
+                        num_permutations: req.num_permutations,
+                        thread_id: req.thread_id,
+                    },
                 };
 
-                let result = pipeline::execute(&server, &pipeline_req, "manual")
+                let result = workflows::execute(&server, &wf_request, "manual")
                     .await
                     .map_err(|e| e.to_string())?;
 
-                let result_json = serde_json::to_value(&result).unwrap_or(Value::Null);
+                // Extract sweep_id and persist analysis
+                let (sweep_id, result_json) = match &result {
+                    WorkflowResponse::StrategyEvaluation(eval) => {
+                        let sid = eval.pipeline.sweep_id.clone();
+                        // Persist full evaluation to sweeps.analysis
+                        let analysis_json = serde_json::to_string(&result).unwrap_or_default();
+                        let store = run_store.clone();
+                        let sid_clone = sid.clone();
+                        let _ = tokio::task::spawn_blocking(move || {
+                            store.set_sweep_analysis(&sid_clone, &analysis_json)
+                        })
+                        .await;
+                        (sid, serde_json::to_value(&result).unwrap_or(Value::Null))
+                    }
+                    WorkflowResponse::BaselineValidation(pipeline) => (
+                        pipeline.sweep_id.clone(),
+                        serde_json::to_value(&result).unwrap_or(Value::Null),
+                    ),
+                };
 
                 Ok(app_tasks::TaskCompletion {
                     result_json,
-                    result_id: result.sweep_id,
+                    result_id: sweep_id,
                 })
             },
         ))
