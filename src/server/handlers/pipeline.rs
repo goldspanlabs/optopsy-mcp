@@ -90,7 +90,8 @@ fn resolve_sweep_params_from_script(
     let (_id, source) = sweeps::resolve_strategy_source_from_store(store.as_ref(), strategy)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
-    let meta = crate::scripting::stdlib::parse_script_meta(strategy, &source);
+    let mut meta = crate::scripting::stdlib::parse_script_meta(strategy, &source);
+    meta.params = crate::scripting::stdlib::extract_extern_params(&source);
     let profiles = meta.sweep_profiles.ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
