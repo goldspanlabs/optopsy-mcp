@@ -139,7 +139,7 @@ impl OptopsyServer {
     /// Returns the parquet file path.
     ///
     /// Searches `etf/`, `stocks/`, `futures/`, and `indices/` in order.
-    fn ensure_ohlcv(&self, symbol: &str) -> Result<String, String> {
+    pub fn ensure_ohlcv(&self, symbol: &str) -> Result<String, String> {
         match self.cache.find_ohlcv(symbol) {
             Some(path) => Ok(path.to_string_lossy().to_string()),
             None => Err(format!(
