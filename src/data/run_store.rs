@@ -236,7 +236,8 @@ impl RunStore for SqliteRunStore {
                     MAX(sharpe) as best_sharpe,
                     AVG(win_rate) as avg_win_rate,
                     AVG(sharpe) as avg_sharpe
-                 FROM runs",
+                 FROM runs
+                 WHERE sweep_id IS NULL",
                 [],
                 |row| {
                     Ok(RunsOverview {
@@ -1153,7 +1154,7 @@ mod tests {
             .unwrap();
 
         let response = store.list(None).unwrap();
-        assert_eq!(response.overview.total_runs, 2); // 2 runs total in runs table
+        assert_eq!(response.overview.total_runs, 1); // 1 standalone run (overview excludes sweep children)
         assert_eq!(response.rows.len(), 2); // 1 single + 1 sweep
     }
 
