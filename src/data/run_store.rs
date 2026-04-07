@@ -23,6 +23,21 @@ fn sanitize_option(v: Option<f64>) -> Option<f64> {
     v.and_then(sanitize_opt)
 }
 
+/// Derive a pipeline status string from the persisted stages JSON.
+///
+/// Returns `"passed"` if all stages completed, or `"failed:<gate_name>"` for
+/// the first failed gate.
+fn derive_pipeline_status(stages: &[Value]) -> String {
+    for stage in stages {
+        let status = stage.get("status").and_then(|s| s.as_str()).unwrap_or("");
+        let name = stage.get("name").and_then(|s| s.as_str()).unwrap_or("");
+        if status == "failed" {
+            return format!("failed:{name}");
+        }
+    }
+    "passed".to_string()
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // SqliteRunStore
 // ──────────────────────────────────────────────────────────────────────────────
@@ -327,7 +342,8 @@ impl RunStore for SqliteRunStore {
                             sw.created_at,
                             wfv.best_wfe, wfv.wf_count,
                             sw.sweep_config,
-                            COALESCE(wfv.last_wf_at, sw.created_at) as last_activity
+                            COALESCE(wfv.last_wf_at, sw.created_at) as last_activity,
+                            sw.analysis
                      FROM sweeps sw
                      LEFT JOIN strategies s ON s.id = sw.strategy_id
                      LEFT JOIN (
@@ -382,6 +398,12 @@ impl RunStore for SqliteRunStore {
                         .and_then(|c| c.get("params"))
                         .and_then(|p| p.as_object().cloned());
 
+                    // Derive pipeline_status from analysis JSON (stages array)
+                    let pipeline_status: Option<String> = row
+                        .get::<_, Option<String>>(21)?
+                        .and_then(|s| serde_json::from_str::<Vec<Value>>(&s).ok())
+                        .map(|stages| derive_pipeline_status(&stages));
+
                     Ok(RunRow::Sweep {
                         sweep_id: row.get(0)?,
                         strategy_id: row.get(1)?,
@@ -407,6 +429,7 @@ impl RunStore for SqliteRunStore {
                         wf_best_efficiency: row.get(17)?,
                         wf_validation_count: row.get(18)?,
                         last_activity: row.get(20)?,
+                        pipeline_status,
                     })
                 })
                 .context("Failed to query sweep rows")?

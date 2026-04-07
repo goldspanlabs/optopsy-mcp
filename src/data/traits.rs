@@ -174,6 +174,9 @@ pub enum RunRow {
         wf_validation_count: Option<i64>,
         /// Most recent activity (walk-forward or sweep creation)
         last_activity: String,
+        /// Pipeline status: `"passed"`, `"failed:<gate>"`, or null if no pipeline ran
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pipeline_status: Option<String>,
     },
 }
 
