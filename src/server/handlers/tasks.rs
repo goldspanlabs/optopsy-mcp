@@ -99,6 +99,8 @@ pub struct TaskSnapshot {
     pub status: TaskStatus,
     pub progress_current: usize,
     pub progress_total: usize,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub stage_label: String,
     pub queue_position: Option<usize>,
     pub created_at: String,
     pub started_at: Option<String>,
@@ -131,6 +133,7 @@ fn snapshot(task: &TaskInfo, queue_pos: Option<usize>) -> TaskSnapshot {
         status: task.status(),
         progress_current: task.progress_current.load(Ordering::Relaxed),
         progress_total: task.progress_total.load(Ordering::Relaxed),
+        stage_label: task.stage_label.lock().unwrap().clone(),
         queue_position: queue_pos,
         created_at: task.created_at.to_rfc3339(),
         started_at: m.started_at.map(|t| t.to_rfc3339()),
@@ -351,9 +354,17 @@ pub async fn submit_pipeline(
                     },
                 };
 
-                let result = workflows::execute(&server, &wf_request, "manual")
-                    .await
-                    .map_err(|e| e.to_string())?;
+                // Stage progress callback — updates the task's stage_label
+                let task_ref = Arc::clone(&task);
+                let on_stage: crate::tools::pipeline::StageCallback =
+                    Some(Box::new(move |label: &str| {
+                        *task_ref.stage_label.lock().unwrap() = label.to_string();
+                    }));
+
+                let result =
+                    workflows::execute_with_stage(&server, &wf_request, "manual", &on_stage)
+                        .await
+                        .map_err(|e| e.to_string())?;
 
                 // Extract sweep_id and persist analysis
                 let (sweep_id, result_json) = match &result {
@@ -633,10 +644,14 @@ pub async fn stream_task(
             TaskStatus::Running => {
                 let cur = task.progress_current.load(Ordering::Relaxed);
                 let tot = task.progress_total.load(Ordering::Relaxed);
+                let label = task.stage_label.lock().unwrap().clone();
                 emit(
                     &tx,
                     "progress",
-                    format!(r#"{{"current":{cur},"total":{tot}}}"#),
+                    format!(
+                        r#"{{"current":{cur},"total":{tot},"stage_label":{}}}"#,
+                        serde_json::to_string(&label).unwrap_or_else(|_| "\"\"".to_string())
+                    ),
                 )
                 .await;
             }
@@ -712,7 +727,12 @@ pub async fn stream_task(
                     break;
                 }
                 TaskStatus::Running => {
-                    let data = format!(r#"{{"current":{current},"total":{total}}}"#);
+                    let label = task.stage_label.lock().unwrap().clone();
+                    let label_json =
+                        serde_json::to_string(&label).unwrap_or_else(|_| "\"\"".to_string());
+                    let data = format!(
+                        r#"{{"current":{current},"total":{total},"stage_label":{label_json}}}"#
+                    );
                     if !emit(&tx, "progress", data).await {
                         break;
                     }

@@ -34,12 +34,21 @@ pub async fn execute(
     request: &WorkflowRequest,
     source: &str,
 ) -> Result<WorkflowResponse> {
+    execute_with_stage(server, request, source, &None).await
+}
+
+pub async fn execute_with_stage(
+    server: &OptopsyServer,
+    request: &WorkflowRequest,
+    source: &str,
+    on_stage: &crate::tools::pipeline::StageCallback,
+) -> Result<WorkflowResponse> {
     match request.kind {
         WorkflowKind::BaselineValidation => Ok(WorkflowResponse::BaselineValidation(
-            pipeline::execute(server, &request.pipeline, source).await?,
+            pipeline::execute_with_stage(server, &request.pipeline, source, on_stage).await?,
         )),
         WorkflowKind::StrategyEvaluation => Ok(WorkflowResponse::StrategyEvaluation(
-            execute_strategy_evaluation(server, &request.pipeline, source).await?,
+            execute_strategy_evaluation(server, &request.pipeline, source, on_stage).await?,
         )),
     }
 }
@@ -48,6 +57,7 @@ async fn execute_strategy_evaluation(
     server: &OptopsyServer,
     request: &PipelineRequest,
     source: &str,
+    on_stage: &crate::tools::pipeline::StageCallback,
 ) -> Result<StrategyEvaluationResponse> {
     let started_at = Instant::now();
     let mut eval_request = request.clone();
@@ -55,8 +65,11 @@ async fn execute_strategy_evaluation(
         eval_request.num_permutations = DEFAULT_STRATEGY_EVAL_PERMUTATIONS;
     }
 
-    let pipeline = pipeline::execute(server, &eval_request, source).await?;
+    let pipeline = pipeline::execute_with_stage(server, &eval_request, source, on_stage).await?;
     let robustness_checks = if pipeline.walk_forward.is_some() {
+        if let Some(cb) = on_stage {
+            cb("Robustness Checks");
+        }
         run_walk_forward_robustness(server, &eval_request, &pipeline).await?
     } else {
         Vec::new()

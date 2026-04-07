@@ -14,6 +14,9 @@ use crate::server::OptopsyServer;
 use crate::tools::response_types::pipeline::{PipelineResponse, StageInfo, StageStatus};
 use crate::tools::response_types::sweep::{SweepResponse, SweepResult};
 
+/// Optional callback invoked when the pipeline enters a new stage.
+pub type StageCallback = Option<Box<dyn Fn(&str) + Send + Sync>>;
+
 /// Number of top parameter combos to use when building the walk-forward grid.
 const TOP_COMBOS_FOR_WF: usize = 3;
 
@@ -26,6 +29,7 @@ const TOP_COMBOS_FOR_WF: usize = 3;
     clippy::too_many_lines,
     clippy::implicit_hasher
 )]
+#[allow(clippy::too_many_arguments)]
 pub async fn run_pipeline(
     server: &OptopsyServer,
     strategy: &str,
@@ -36,10 +40,17 @@ pub async fn run_pipeline(
     run_ids: Vec<String>,
     sweep_response: SweepResponse,
     base_params: HashMap<String, Value>,
+    on_stage: &StageCallback,
 ) -> Result<PipelineResponse> {
     let pipeline_start = std::time::Instant::now();
     let mut stages: Vec<StageInfo> = Vec::new();
     let mut key_findings: Vec<String> = Vec::new();
+
+    let notify = |label: &str| {
+        if let Some(cb) = on_stage {
+            cb(label);
+        }
+    };
 
     // Stage 1: Sweep (already completed)
     stages.push(StageInfo {
@@ -62,6 +73,7 @@ pub async fn run_pipeline(
     }
 
     // Gate 1: Significance — decide which combos to validate
+    notify("Significance Gate");
     let top_combos = select_top_combos(&sweep_response);
 
     let sig_details = build_significance_details(&sweep_response, &top_combos);
@@ -125,6 +137,7 @@ pub async fn run_pipeline(
     });
 
     // Stage 2: Walk-forward validation
+    notify("Walk-Forward");
     let params_grid = build_wf_params_grid(&top_combos);
     let wf_start = std::time::Instant::now();
 
@@ -232,6 +245,7 @@ pub async fn run_pipeline(
     };
 
     // Gate 2: OOS data sufficiency — gate on actual returns count, not equity points,
+    notify("OOS Data Gate");
     // since Monte Carlo needs MIN_RETURNS_FOR_BOOTSTRAP returns (equity.len() - 1).
     let wf_ref = wf_response.as_ref().unwrap();
     let returns = equity_to_returns(&wf_ref.stitched_equity);
@@ -292,6 +306,7 @@ pub async fn run_pipeline(
     });
 
     // Stage 3: Monte Carlo on OOS equity returns (already computed above)
+    notify("Monte Carlo");
     let initial_capital_oos = wf_ref
         .stitched_equity
         .first()

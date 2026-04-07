@@ -69,6 +69,8 @@ pub struct TaskInfo {
     pub created_at: chrono::DateTime<Utc>,
     pub progress_current: AtomicUsize,
     pub progress_total: AtomicUsize,
+    /// Current pipeline stage label (e.g. "Sweep", "Walk-Forward"). Empty when not in a pipeline.
+    pub stage_label: Mutex<String>,
     pub cancellation_token: CancellationToken,
     status: AtomicU8,
     pub mutable: Mutex<TaskMutable>,
@@ -122,6 +124,7 @@ impl TaskManager {
             created_at: Utc::now(),
             progress_current: AtomicUsize::new(0),
             progress_total: AtomicUsize::new(0),
+            stage_label: Mutex::new(String::new()),
             cancellation_token: CancellationToken::new(),
             status: AtomicU8::new(TaskStatus::Queued as u8),
             mutable: Mutex::new(TaskMutable {

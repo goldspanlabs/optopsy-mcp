@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 use crate::application::sweeps;
 use crate::server::OptopsyServer;
+use crate::tools::pipeline::StageCallback;
 use crate::tools::response_types::pipeline::PipelineResponse;
 
 pub struct PipelineRequest {
@@ -40,6 +41,16 @@ pub async fn execute(
     request: &PipelineRequest,
     source: &str,
 ) -> Result<PipelineResponse> {
+    execute_with_stage(server, request, source, &None).await
+}
+
+/// Execute the full pipeline with an optional stage progress callback.
+pub async fn execute_with_stage(
+    server: &OptopsyServer,
+    request: &PipelineRequest,
+    source: &str,
+    on_stage: &StageCallback,
+) -> Result<PipelineResponse> {
     let run_store = server.require_run_store()?;
 
     let sweep_req = sweeps::CreateSweepRequest {
@@ -51,6 +62,10 @@ pub async fn execute(
         max_evaluations: request.max_evaluations,
         num_permutations: request.num_permutations,
     };
+
+    if let Some(cb) = on_stage {
+        cb("Sweep");
+    }
 
     let sweep_result = sweeps::execute_sweep(
         server,
@@ -73,6 +88,7 @@ pub async fn execute(
         sweep_result.run_ids,
         sweep_result.response,
         request.params.clone(),
+        on_stage,
     )
     .await?;
 
