@@ -17,7 +17,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::application::error::{ApplicationError, ApplicationErrorKind};
-use crate::application::{backtests, sweeps, tasks as app_tasks, workflows};
+use crate::application::{backtests, pipeline, sweeps, tasks as app_tasks, workflows};
 use crate::engine::walk_forward::{WalkForwardParams, WfMode, WfObjective};
 use crate::scripting::engine::CachingDataLoader;
 use crate::server::state::AppState;
@@ -296,6 +296,67 @@ pub async fn submit_sweep(
                 result_id: result.sweep_id,
             })
         })
+        .await;
+    });
+
+    Ok(Json(SubmitResponse { task_id }))
+}
+
+/// `POST /tasks/pipeline` — Submit a full pipeline task (sweep + gates + WF + MC).
+#[allow(clippy::unused_async)]
+pub async fn submit_pipeline(
+    State(state): State<AppState>,
+    Json(req): Json<SubmitSweepRequest>,
+) -> Result<Json<SubmitResponse>, (StatusCode, String)> {
+    let symbol = req
+        .params
+        .get("symbol")
+        .and_then(Value::as_str)
+        .unwrap_or("pending")
+        .to_owned();
+
+    let params_json =
+        serde_json::to_value(&req.params).unwrap_or(Value::Object(serde_json::Map::default()));
+
+    let task = state.task_manager.register(
+        TaskKind::Sweep,
+        &req.strategy,
+        &symbol,
+        req.thread_id.clone(),
+        params_json,
+    );
+    let task_id = task.id.clone();
+
+    let tm = Arc::clone(&state.task_manager);
+    let server = state.server.clone();
+    tokio::spawn(async move {
+        Box::pin(app_tasks::execute_queued_task(
+            tm,
+            Arc::clone(&task),
+            async move {
+                let pipeline_req = pipeline::PipelineRequest {
+                    strategy: req.strategy,
+                    mode: req.mode,
+                    objective: req.objective,
+                    params: req.params,
+                    sweep_params: req.sweep_params,
+                    max_evaluations: req.max_evaluations,
+                    num_permutations: req.num_permutations,
+                    thread_id: req.thread_id,
+                };
+
+                let result = pipeline::execute(&server, &pipeline_req, "manual")
+                    .await
+                    .map_err(|e| e.to_string())?;
+
+                let result_json = serde_json::to_value(&result).unwrap_or(Value::Null);
+
+                Ok(app_tasks::TaskCompletion {
+                    result_json,
+                    result_id: result.sweep_id,
+                })
+            },
+        ))
         .await;
     });
 

@@ -8,8 +8,8 @@ use axum::Router;
 use tower_http::cors::CorsLayer;
 
 use crate::server::handlers::{
-    backtests, chat as chat_handlers, forward_tests, pipeline, profiles, runs, strategies, sweeps,
-    tasks,
+    backtests, chat as chat_handlers, forward_tests, hypotheses, pipeline, profiles, runs,
+    strategies, sweeps, tasks,
 };
 use crate::server::state::AppState;
 
@@ -77,6 +77,13 @@ pub fn build_api_router(state: AppState) -> Router {
         )
         .with_state(state.clone());
 
+    let analysis_routes = Router::new()
+        .route(
+            "/hypotheses",
+            axum::routing::post(hypotheses::generate_hypotheses),
+        )
+        .with_state(state.clone());
+
     let misc_routes = Router::new()
         .route("/profiles", axum::routing::get(profiles::list_profiles))
         .route("/health", axum::routing::get(|| async { "ok" }))
@@ -138,6 +145,10 @@ pub fn build_api_router(state: AppState) -> Router {
         )
         .route("/tasks/sweep", axum::routing::post(tasks::submit_sweep))
         .route(
+            "/tasks/pipeline",
+            axum::routing::post(tasks::submit_pipeline),
+        )
+        .route(
             "/tasks/walk-forward",
             axum::routing::post(tasks::submit_walk_forward),
         )
@@ -180,6 +191,7 @@ pub fn build_api_router(state: AppState) -> Router {
         .merge(run_routes)
         .merge(task_routes)
         .merge(forward_test_routes)
+        .merge(analysis_routes)
         .merge(misc_routes)
         .layer(CorsLayer::permissive())
 }
